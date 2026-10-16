@@ -36,6 +36,7 @@ import {
   makeTestHost,
   recordingWriteLocks,
   endedInRust,
+  TEST_HOST_NOW,
   type TestHostOverrides,
 } from 'movement-engine/services/movement_engine/test_host';
 import {
@@ -125,7 +126,7 @@ const PRELUDE = [
 
 interface Store {
   /** What resolveEntity answers for a record. */
-  candidates?: (record: Record<string, unknown>) => ExternalRecordRef[];
+  candidates?: (record: Record<string, unknown>, constraints: unknown) => ExternalRecordRef[];
   /** Current values, by id; absent ⇒ the adapter has no readRecord. */
   current?: Record<string, Record<string, unknown>>;
   describe?: (recordType: string) => SchemaTypeDescriptor | null;
@@ -158,7 +159,7 @@ function fake(adapterType: string, store: Store = {}) {
     },
     async resolveEntity(input) {
       calls.push(['resolveEntity', input]);
-      return { candidates: store.candidates?.(input.record) ?? [] };
+      return { candidates: store.candidates?.(input.record, input.constraints) ?? [] };
     },
     ...(store.current !== undefined
       ? {
@@ -242,9 +243,6 @@ interface Case {
   capBaselineMicrodollars?: number;
   limitPaused?: boolean;
   suspendAt?: string[];
-  /** The pin the run is under. Unpinned, a case compares under version 3
-   *  and under the current version (`agree`). */
-  languageVersion?: LanguageVersion;
   /** The movement fired, when the program holds more than one. */
   movementName?: string;
   /** The first language version whose checker refuses the program, so the
@@ -311,7 +309,7 @@ async function runOn(c: Case): Promise<Outcome> {
   };
   const input: RunMovementInput = {
     source: spelledFor(
-      c.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+      CURRENT_LANGUAGE_VERSION,
       PRELUDE + c.source,
       fromCatalogSnapshot(catalog),
     ),
@@ -330,7 +328,6 @@ async function runOn(c: Case): Promise<Outcome> {
       : {}),
     ...(c.limitPaused === true ? { limitPaused: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
-    ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
     ...(c.movementName !== undefined ? { movementName: c.movementName } : {}),
     host: makeTestHost({
       locks: recordingWriteLocks(locks),
@@ -379,12 +376,14 @@ async function runOn(c: Case): Promise<Outcome> {
   }
 }
 
+/** An instant the test host's fixed clock reads as that many days past. */
+const daysBeforeHostNow = (days: number) =>
+  new Date(Date.parse(TEST_HOST_NOW) - days * 86_400_000).toISOString();
+
 /** A rehearsal mints random ids: each run's, in the order they appear, read
  *  as the same placeholders. */
 function sameIds<T>(value: T): T {
   const ids = new Map<string, string>();
-  // Every wake is the host clock's answer plus the sleep on both engines,
-  // so it is compared too.
   const text = JSON.stringify(value);
   const normal = text.replace(
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
@@ -396,23 +395,13 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
-/** The case on the Rust engine, the version-5 reference. A case pinned below
- *  5 runs on the TypeScript engine and is not this suite's. */
-async function agree(c: Case) {
-  if (c.languageVersion !== undefined && c.languageVersion < 5)
-    throw new Error(`test: a case pinned to ${c.languageVersion} runs on the TypeScript engine`);
-  return onRust(c);
-}
-
 /** One run on the Rust engine: run whole, or ended at its check, and what
  *  the hosts saw and what the run handed back (or how it failed) held to the
  *  recorded snapshot, read for correctness when it was recorded. */
 async function onRust(c: Case) {
   resetRustRunStats();
   const rust = await runOn(c);
-  const atCheck =
-    c.endsAtCheckFrom !== undefined &&
-    (c.languageVersion ?? CURRENT_LANGUAGE_VERSION) >= c.endsAtCheckFrom;
+  const atCheck = c.endsAtCheckFrom !== undefined && CURRENT_LANGUAGE_VERSION >= c.endsAtCheckFrom;
   expect(isCheckFailure(rust.error) ? String(rust.error) : 'reached the engine').toEqual(
     atCheck ? expect.stringContaining('MOVENG_CHECK') : 'reached the engine',
   );
@@ -452,7 +441,7 @@ describe('the answers a segment sends the Rust engine', () => {
       '  write a-[:notes]-> { body: "${a.`minted`} ${a.externalId} / ${b.`minted`} ${b.externalId}" }',
       '}',
     ].join('\n');
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { sameAnswer: true },
@@ -466,7 +455,7 @@ describe('the answers a segment sends the Rust engine', () => {
 
 describe('writes in the Rust engine', () => {
   it('creates, pipes the handle into a linked write and a second create, as the TypeScript engine does', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source: DEALFLOW,
       event: webhook({ subject: 'Acme', text: 'acme.dev' }),
     });
@@ -480,7 +469,7 @@ describe('writes in the Rust engine', () => {
   });
 
   it('rehearses: the host captures the writes, in program order, and nothing commits', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source: DEALFLOW,
       event: webhook({ subject: 'Acme', text: 'acme.dev' }),
       dryRun: true,
@@ -502,8 +491,8 @@ describe('writes in the Rust engine', () => {
       '  }',
       '}',
     ].join('\n');
-    const updated = new Date(Date.now() - 3 * 86_400_000).toISOString();
-    const { rust } = await agree({
+    const updated = daysBeforeHostNow(3);
+    const { rust } = await onRust({
       source,
       event: webhook({ subject: 'Nova' }),
       attio: {
@@ -538,7 +527,7 @@ describe('writes in the Rust engine', () => {
       [{ stage: null, tags: [] }, 'update'],
     ];
     for (const [current, outcome] of cases) {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         source,
         event: webhook({ subject: 'Acme' }),
         attio: {
@@ -558,9 +547,8 @@ describe('writes in the Rust engine', () => {
       '}',
     ].join('\n');
     const kept: HostRecording[] = [];
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source,
-      languageVersion: 4,
       event: webhook({ subject: 'Acme' }),
       attio: {
         candidates: () => [{ adapterType: 'attio', externalId: 'co-7', data: { name: 'Acme' } }],
@@ -579,7 +567,7 @@ describe('writes in the Rust engine', () => {
       kept.map(
         (recording) => hostRecordingSchema.safeParse(JSON.parse(JSON.stringify(recording))).success,
       ),
-    ).toEqual([true, true]);
+    ).toEqual([true]);
   });
 
   it('sends nothing for a record already as written (noop), and only the parent for an attach', async () => {
@@ -589,7 +577,7 @@ describe('writes in the Rust engine', () => {
       '  write co-[:notes]-> { unique by (`body`) body: "same" }',
       '}',
     ].join('\n');
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: {
@@ -601,7 +589,7 @@ describe('writes in the Rust engine', () => {
     });
     expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['noop', 'attach']);
     // An adapter that cannot attach an existing record fails the write.
-    await agree({
+    await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: {
@@ -647,7 +635,7 @@ describe('writes in the Rust engine', () => {
           cost: [{ source: 'model:judge', microdollars: 7 }],
         };
       };
-    const merged = await agree({
+    const merged = await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { candidates: two },
@@ -661,7 +649,7 @@ describe('writes in the Rust engine', () => {
     expect(merged.rust.asked).toEqual([
       expect.objectContaining({ budget: { remainingMicrodollars: null } }),
     ]);
-    const created = await agree({
+    const created = await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { candidates: two },
@@ -684,14 +672,18 @@ describe('writes in the Rust engine', () => {
       '  }',
       '}',
     ].join('\n');
-    const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
-    for (const updated of [ago(400), ago(3)]) {
-      await agree({
+    // A candidate last updated 400 days ago is outside 30d: a create; 3 days ago, an update.
+    for (const [updated, outcome] of [
+      [daysBeforeHostNow(400), 'create'],
+      [daysBeforeHostNow(3), 'update'],
+    ] as const) {
+      const { rust } = await onRust({
         source,
         event: webhook({}),
         attio: {
-          candidates: (r) =>
-            r.domain !== undefined
+          // Only the domain key's search finds the record; the name key's finds none.
+          candidates: (_r, constraints) =>
+            JSON.stringify(constraints).includes('"domain"')
               ? [
                   {
                     adapterType: 'attio',
@@ -703,6 +695,7 @@ describe('writes in the Rust engine', () => {
           current: { 'co-9': { name: 'Old', domain: 'nova.dev', updated } },
         },
       });
+      expect(rust.result?.writes.map((w) => w.outcome)).toEqual([outcome]);
     }
   });
 
@@ -730,7 +723,7 @@ describe('writes in the Rust engine', () => {
       '  write co-[:notes]-> { body: msg.`missing` }',
       '}',
     ].join('\n');
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { describe },
@@ -739,7 +732,7 @@ describe('writes in the Rust engine', () => {
       'cannot create a Note record: required field(s) "body" have no value',
     );
     // And an adapter's own failure is the run's, its ledger with it.
-    await agree({
+    await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { failCreate: 'attio: 422' },
@@ -747,7 +740,7 @@ describe('writes in the Rust engine', () => {
   });
 
   it('expands a write spread by the fields the checker stamped on it', async () => {
-    await agree({
+    await onRust({
       source: [
         'movement m(msg: <inbox-[:message]->>) {',
         '  d = node { name: msg.`subject`, stage: msg.`missing` }',
@@ -768,7 +761,7 @@ describe('writes in the Rust engine', () => {
       '  await sleep(1h)',
       '}',
     ].join('\n');
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await onRust({ source, event: webhook({ subject: 'Acme' }) });
     // The park holds the graph as the TypeScript engine holds it: `owner` an
     // edge landing the handle, not a field. `co` and the edge are one write
     // handle under two names, so the park numbers it once (B7): the edge
@@ -783,18 +776,14 @@ describe('writes in the Rust engine', () => {
   });
 
   it('fails a delete of the event or of a value as the TypeScript engine fails it: no record position', async () => {
-    // Version 5 (Dancing Wren) refuses both at the check, on either engine
-    // (MOV_DELETE_NOT_DECLARED, MOV_DELETE_NOT_RECORD); 4 reaches the engine.
+    // Version 5 (Dancing Wren) refuses both at the check
+    // (MOV_DELETE_NOT_DECLARED, MOV_DELETE_NOT_RECORD).
     for (const body of ['  delete msg', '  x = "a"\n  delete x']) {
-      for (const languageVersion of [4, 5] as const) {
-        const { rust } = await agree({
-          source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
-          event: webhook({ subject: 'Acme' }),
-          languageVersion,
-          endsAtCheckFrom: 5,
-        });
-        if (languageVersion === 4) expect(String(rust.error)).toContain('needs a record position');
-      }
+      await onRust({
+        source: `movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+        event: webhook({ subject: 'Acme' }),
+        endsAtCheckFrom: 5,
+      });
     }
   });
 
@@ -814,7 +803,7 @@ describe('writes in the Rust engine', () => {
       '  await sleep(1h)',
       '}',
     ].join('\n');
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source,
       event: webhook({ when: at }),
       attio: { landings: { 'co-1': { name: 'Acme', updated: at } } },
@@ -853,28 +842,13 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
         '  persist(d, "positional")',
       ),
     ].join('\n');
-    const { rust } = await agree({ source, event, movementName: 'intake' });
+    const { rust } = await onRust({ source, event, movementName: 'intake' });
     expect(rust.result?.writes.map((w) => w.outcome)).toEqual([
       'create',
       'create',
       'create',
       'create',
     ]);
-  });
-
-  // A call written in another letter case reaches the file's function only before version 5.
-  it('reaches the callee by a call written in another letter case (versions 3 and 4)', async () => {
-    const source = [
-      NOTE,
-      'movement persist(n: <Note>) {',
-      '  write crm-[:companies]-> { unique by (`name`) name: n.`title` }',
-      '}',
-      intake('  d = node { title: "Beta", body: msg.`text` }', '  PERSIST(d)'),
-    ].join('\n');
-    for (const languageVersion of [3, 4] as const) {
-      const { rust } = await agree({ source, event, movementName: 'intake', languageVersion });
-      expect(rust.result?.writes.map((w) => w.outcome)).toEqual(['create']);
-    }
   });
 
   it('binds a call’s value: a value, a node, a record named again, and a value parameter typed by a field type', async () => {
@@ -899,7 +873,7 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
         '  write crm-[:companies]-> { name: "${l}/${again.`title`}/${n.`body`}" }',
       ),
     ].join('\n');
-    await agree({ source, event, movementName: 'intake' });
+    await onRust({ source, event, movementName: 'intake' });
   });
 
   it('passes the event, a handle an inline write made, and a walked record; reads them in the callee as the caller would', async () => {
@@ -914,7 +888,7 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
         '  }',
       ),
     ].join('\n');
-    await agree({
+    await onRust({
       source,
       event,
       movementName: 'intake',
@@ -933,8 +907,8 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
     // Version 4's checker refuses the unguarded read of a match that may
     // miss (MOV_ABSENT_REQUIRED): the run ends at its check there, and the
     // guarded form below is what version 4 runs.
-    await agree({ source, event, movementName: 'intake', endsAtCheckFrom: 4 });
-    await agree({
+    await onRust({ source, event, movementName: 'intake', endsAtCheckFrom: 4 });
+    await onRust({
       source,
       event,
       movementName: 'intake',
@@ -947,8 +921,8 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       '  write co-[:notes]-> { body: "found" }',
       '  if co != null {\n    write co-[:notes]-> { body: "found" }\n  }',
     );
-    await agree({ source: guarded, event, movementName: 'intake' });
-    await agree({
+    await onRust({ source: guarded, event, movementName: 'intake' });
+    await onRust({
       source: guarded,
       event,
       movementName: 'intake',
@@ -963,11 +937,10 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       '  write crm-[:companies]-> { name: msg.`subject` }',
       '  intake(msg: msg)',
     );
-    await agree({ source: recursive, event, languageVersion: 2 });
     const previous = process.env.MOVEMENT_MAX_CALL_DEPTH;
     process.env.MOVEMENT_MAX_CALL_DEPTH = '3';
     try {
-      const { rust } = await agree({ source: recursive, event });
+      const { rust } = await onRust({ source: recursive, event });
       expect(rust.result?.writes ?? []).toEqual([]);
     } finally {
       if (previous === undefined) delete process.env.MOVEMENT_MAX_CALL_DEPTH;
@@ -981,7 +954,7 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       '}',
       intake('  v = msg.`subject`', '  persist(c: v)'),
     ].join('\n');
-    await agree({ source: position, event, movementName: 'intake', endsAtCheckFrom: 1 });
+    await onRust({ source: position, event, movementName: 'intake', endsAtCheckFrom: 1 });
   });
 });
 
@@ -1009,7 +982,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:companies]-> { name: c.`name`, stage: c.`stage` }',
       '  }',
     ]);
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await onRust({ source, event: webhook({ subject: 'Acme' }) });
     expect(
       rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null]),
     ).toEqual([
@@ -1038,7 +1011,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
     ]);
     for (const index of [0, null]) {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         source,
         event: webhook({ subject: 'Seed' }),
         // As the question crossed: the landing it names is merged into after.
@@ -1072,7 +1045,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    }',
       '  }',
     ]);
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await onRust({ source, event: webhook({ subject: 'Acme' }) });
     expect(
       rust.result?.writes.map((w) => [w.adapterType, w.outcome, w.local?.edge ?? null]),
     ).toEqual([
@@ -1096,12 +1069,12 @@ describe('the graphs a run builds, in the Rust engine', () => {
       ]);
       // Version 4's checker refuses the unguarded read of a match that may
       // miss (MOV_ABSENT_REQUIRED); the guarded form is what version 4 runs.
-      await agree({ source, event: webhook({ subject: 'Acme' }), endsAtCheckFrom: 4 });
+      await onRust({ source, event: webhook({ subject: 'Acme' }), endsAtCheckFrom: 4 });
       const guarded = source.replace(
         '  write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }',
         '  if found != null {\n    write crm-[:companies]-> { name: found.`name`, stage: found.`stage` }\n  }',
       );
-      await agree({ source: guarded, event: webhook({ subject: 'Acme' }) });
+      await onRust({ source: guarded, event: webhook({ subject: 'Acme' }) });
     }
   });
 
@@ -1116,7 +1089,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:notes]-> { body: "${c.`name`}" }',
       '  }',
     ]);
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { current: {} },
@@ -1140,7 +1113,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:notes]-> { body: n.`label` }',
       '  }',
     ]);
-    await agree({
+    await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } },
@@ -1161,7 +1134,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
       '  write crm-[:notes]-> { body: COUNT(deduped-[:companies]->) }',
     ]);
-    await agree({ source, event: webhook({ subject: 'Acme' }) });
+    await onRust({ source, event: webhook({ subject: 'Acme' }) });
   });
 
   it('builds a graph of a declared shape: its children made, a write into one minting its landing, a record spread copying edges by its plan', async () => {
@@ -1178,7 +1151,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
       '  write crm-[:companies]-> { name: "${COUNT(g-[:founder]->)} ${COUNT(nested-[:founder]->)}" }',
     ]);
-    await agree({
+    await onRust({
       source,
       event: webhook({ subject: 'Acme', text: 'hello' }),
       attio: { landings: { 'co-1': { name: 'Acme' } } },
@@ -1199,7 +1172,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:companies]-> { name: JOIN(cos.`name`, ", ") }',
       '  }',
     ]);
-    await agree({
+    await onRust({
       source,
       event: webhook({ subject: 'Acme' }),
       attio: { landings: { 'co-1': { name: 'Acme' }, 'co-2': { name: 'Globex' } } },
@@ -1227,16 +1200,15 @@ describe('the graphs a run builds, in the Rust engine', () => {
       ],
       [['  n = node { a: 1 }', '  link n -[:kids]-> n'], 1],
     ] as const) {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         source: program([...lines]),
         event: webhook({ subject: 'Acme' }),
         ...(endsAtCheckFrom !== undefined ? { endsAtCheckFrom } : {}),
       });
       expect([lines, rust.failed]).toEqual([lines, true]);
     }
-    // A bare name in a hop WHERE over a node's landings: before 5 the engines
-    // read it as an edge property, which a landing has none of; from 5 the
-    // upgrade spells it as the hop's alias read, the landing's own field.
+    // A bare name in a hop WHERE over a node's landings: the upgrade spells it
+    // as the hop's alias read, the landing's own field.
     const overLandings = program([
       '  d = node { companies: <Company> }',
       '  write d-[:companies]-> { name: "a" }',
@@ -1244,18 +1216,9 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '    write crm-[:notes]-> { body: c.`name` }',
       '  }',
     ]);
-    for (const languageVersion of [3, 4] as const) {
-      const { rust } = await agree({
-        source: overLandings,
-        event: webhook({ subject: 'Acme' }),
-        languageVersion,
-      });
-      expect([languageVersion, rust.failed]).toEqual([languageVersion, true]);
-    }
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source: overLandings,
       event: webhook({ subject: 'Acme' }),
-      languageVersion: 5,
     });
     expect(rust.failed).toBe(false);
   });
@@ -1274,14 +1237,14 @@ describe('the graphs a run builds, in the Rust engine', () => {
       '  }',
     ]);
     const event = webhook({ subject: 'Acme' });
-    const { rust } = await agree({ source, event });
+    const { rust } = await onRust({ source, event });
     const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
     expect(text(rust)).toMatchSnapshot();
     expect(text(rust)).toContain(
       '"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}',
     );
     for (const parked of [rust, rust]) {
-      await agree({ source, event, resume: JSON.parse(text(parked)) as ParkedScopeState });
+      await onRust({ source, event, resume: JSON.parse(text(parked)) as ParkedScopeState });
     }
   });
 });
@@ -1310,7 +1273,7 @@ describe('parks in the Rust engine', () => {
       '  write crm-[:companies]-> { name: "after" }',
       '}',
     ].join('\n');
-    const { rust } = await agree({ source, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await onRust({ source, event: webhook({ subject: 'Acme' }) });
     for (const run of [rust, rust]) {
       expect(run.parks).toHaveLength(1);
       const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
@@ -1325,7 +1288,7 @@ describe('parks in the Rust engine', () => {
   });
 
   it('parks at a sleep with the state the TypeScript engine writes', async () => {
-    const { rust } = await agree({ source: PARKS, event: webhook({ subject: 'Acme' }) });
+    const { rust } = await onRust({ source: PARKS, event: webhook({ subject: 'Acme' }) });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(rust.parks[0]?.address).toBe('s2.b0.s0');
     // Key for key, in order: the string, not `toEqual`, which ignores order.
@@ -1355,7 +1318,7 @@ describe('parks in the Rust engine', () => {
     // proves nothing about one.
     expect(fetchUrl).toBeDefined();
     const event = webhook({ subject: 'Acme' });
-    const { rust } = await agree({ source, event });
+    const { rust } = await onRust({ source, event });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
     // Key for key, in order: the file scope's plugin, shape and values included.
     expect(JSON.stringify(rust.parks[0]?.state)).toMatchSnapshot();
@@ -1367,7 +1330,7 @@ describe('parks in the Rust engine', () => {
     });
     for (const parked of [rust, rust]) {
       const resume = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-      const resumed = await agree({ source, event, resume });
+      const resumed = await onRust({ source, event, resume });
       expect(resumed.rust.result?.writes.map((w) => w.writtenValues)).toEqual([
         { name: 'Acme ROUTE INFRA!', stage: 'route infra' },
       ]);
@@ -1375,7 +1338,7 @@ describe('parks in the Rust engine', () => {
   });
 
   it('a rehearsal fast-forwards past a sleep', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       source: PARKS,
       event: webhook({ subject: 'Acme' }),
       dryRun: true,
@@ -1387,7 +1350,7 @@ describe('parks in the Rust engine', () => {
     const event = webhook({ subject: 'Acme' });
     const run = await runOn({ source: PARKS, event });
     const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
-    const { rust } = await agree({ source: PARKS, event, resume: state });
+    const { rust } = await onRust({ source: PARKS, event, resume: state });
     expect(rust.result?.parked).toBeUndefined();
     expect(rust.result?.writes.map((w) => w.recordType)).toEqual(['note', 'company']);
   });
@@ -1403,14 +1366,14 @@ describe('parks in the Rust engine', () => {
       '}',
     ].join('\n');
     const event = webhook({ subject: 'Acme' });
-    const { rust } = await agree({ source, event });
+    const { rust } = await onRust({ source, event });
     expect(JSON.stringify(rust.parks[0]?.state)).toMatchSnapshot();
     expect(JSON.stringify(rust.parks[0]?.state)).toContain(
       '"rows":{"kind":"positions","landings":[]}',
     );
     for (const parked of [rust, rust]) {
       const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-      const resumed = await agree({ source, event, resume: state });
+      const resumed = await onRust({ source, event, resume: state });
       // An empty list, written to a field the adapter does not describe as
       // many: the joined text of nothing.
       expect(resumed.rust.result?.writes[0]?.writtenValues).toEqual({ name: 'after', blob: '' });
@@ -1426,7 +1389,7 @@ describe('parks in the Rust engine', () => {
         data: { name: 'Acme', stage: 'Seed' },
       },
     ];
-    const cases: Array<[string, string[], Store, LanguageVersion?]> = [
+    const cases: Array<[string, string[], Store]> = [
       [
         'a match',
         [
@@ -1437,25 +1400,6 @@ describe('parks in the Rust engine', () => {
           '  }',
         ],
         { candidates: () => FOUND, current: { 'co-1': { domain: 'acme.dev' } } },
-      ],
-      [
-        // A link's body form, which version 4 retires
-        // (MOV_LINK_MATCH_BODY_RETIRED): compared under version 3.
-        'a link whose body matches',
-        [
-          '  co = write crm-[:companies]-> { name: msg.`subject` }',
-          '  found = link co -[:notes]-> { unique by (`body`), body: "hello" }',
-          '  await sleep(30s)',
-          '  write crm-[:companies]-> { name: "${found.externalId} ${found.`body`}" }',
-        ],
-        {
-          candidates: (record) =>
-            record.body === 'hello'
-              ? [{ adapterType: 'attio', externalId: 'n-9', data: { body: 'hello' } }]
-              : [],
-          links: true,
-        },
-        3,
       ],
       [
         'a write with a target WHERE, bound',
@@ -1484,15 +1428,14 @@ describe('parks in the Rust engine', () => {
         },
       ],
     ];
-    for (const [what, lines, attio, languageVersion] of cases) {
+    for (const [what, lines, attio] of cases) {
       it(`${what}: parked as one string on both engines, resumed by either from either`, async () => {
         const source = ['movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
         const event = webhook({ subject: 'Acme' });
-        const { rust } = await agree({
+        const { rust } = await onRust({
           source,
           event,
           attio,
-          ...(languageVersion !== undefined ? { languageVersion } : {}),
         });
         expect(rust.result).toMatchObject({ parked: true });
         const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
@@ -1500,12 +1443,11 @@ describe('parks in the Rust engine', () => {
         const fromTs = JSON.parse(text(rust)) as ParkedScopeState;
         const fromRust = JSON.parse(text(rust)) as ParkedScopeState;
         for (const state of [fromTs, fromRust]) {
-          const resumed = await agree({
+          const resumed = await onRust({
             source,
             event,
             attio,
             resume: state,
-            ...(languageVersion !== undefined ? { languageVersion } : {}),
           });
           expect(resumed.rust.result?.parked).toBeUndefined();
           expect(JSON.stringify(resumed.rust.result)).toMatchSnapshot();
@@ -1528,7 +1470,7 @@ describe('parks in the Rust engine', () => {
     const parked = await runOn({ source, event });
     // As stored: a JSON round trip keeps insertion order, as jsonb keeps its own.
     const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-    const { rust } = await agree({ source, event, resume: state });
+    const { rust } = await onRust({ source, event, resume: state });
     // `toEqual` ignores key order: the strings are the point.
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe(
       '{"name":"after","blob":{"name":"Acme","amount":1,"zeta":true,"alpha":{"b":1,"a":2}}}',
@@ -1549,7 +1491,7 @@ describe('parks in the Rust engine', () => {
       JSON.stringify(parked.parks[0]?.state).replace('{"name":"Acme"}', '{"kind":"event"}'),
     ) as ParkedScopeState;
     expect(JSON.stringify(state)).toContain('"d":{"kind":"value","value":{"kind":"event"}');
-    const { rust } = await agree({ source, event, resume: state });
+    const { rust } = await onRust({ source, event, resume: state });
     expect(JSON.stringify(rust.result?.writes[0]?.writtenValues)).toBe(
       '{"name":"after","blob":{"kind":"event"}}',
     );
@@ -1567,8 +1509,13 @@ describe('parks in the Rust engine', () => {
     };
     for (const [resume, reason] of [[state, 'resume_state_kind:blockMeta']] as const) {
       resetRustRunStats();
-      await runOn({ source: PARKS, event, resume });
-      expect(rustRunStats.unsupported).toEqual({ [reason]: 1 });
+      const refused = await runOn({ source: PARKS, event, resume });
+      const cause = runFailureCause(refused.error);
+      expect(cause).toBeInstanceOf(MovementEngineError);
+      expect(cause instanceof MovementEngineError ? cause.code : undefined).toBe(
+        'MOVENG_UNSUPPORTED',
+      );
+      expect(String(cause)).toContain(reason);
       expect(rustRunStats.hostCalls).toEqual({});
     }
   });
@@ -1622,7 +1569,7 @@ describe('the cost cap in the Rust engine', () => {
   });
 
   it('pauses where the TypeScript engine pauses: the same pause, suspension, trace and partial effects', async () => {
-    const { rust } = await agree(capped());
+    const { rust } = await onRust(capped());
     // The first judge took the run past its cap and its write stands; the
     // second was refused, and the run suspended just before its statement.
     expect(rust.result).toMatchObject({
@@ -1683,23 +1630,23 @@ describe('the cost cap in the Rust engine', () => {
         costCapMicrodollars: 1_000,
       },
     ]) {
-      await agree({ ...c, event: webhook({ subject: 'Acme' }) });
+      await onRust({ ...c, event: webhook({ subject: 'Acme' }) });
     }
   });
 
   it('meets a cap the run has spent exactly, and not one it has not', async () => {
-    const exactly = await agree(capped({ judge: judge(1_000) }));
+    const exactly = await onRust(capped({ judge: judge(1_000) }));
     expect(exactly.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(exactly.rust.limitPauses).toEqual([
       { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_000 },
     ]);
     // One microdollar left: the second judge may spend, and nothing after it is priced.
-    const under = await agree(capped({ judge: judge(999) }));
+    const under = await onRust(capped({ judge: judge(999) }));
     expect(under.rust.result?.parked).toBeUndefined();
     expect(under.rust.result).toMatchObject({ spentMicrodollars: 1_998 });
     expect(under.rust.limitPauses).toEqual([]);
     // Spent before this segment, past the cap: the first judge is refused.
-    const before = await agree(capped({ priorSpentMicrodollars: 1_200 }));
+    const before = await onRust(capped({ priorSpentMicrodollars: 1_200 }));
     expect(before.rust.result).toMatchObject({ parked: true, parkedAddress: 's0', writes: [] });
     expect(before.rust.limitPauses).toEqual([
       { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_200 },
@@ -1720,7 +1667,7 @@ describe('the cost cap in the Rust engine', () => {
         priorSpentMicrodollars: 1_500,
         capBaselineMicrodollars: 1_500,
       });
-    const { rust } = await agree(resume(fromRust));
+    const { rust } = await onRust(resume(fromRust));
     expect(rust.result?.parked).toBeUndefined();
     // The pause was the operator's to clear: the resumed run marks none.
     expect(rust.limitPauses).toEqual([]);
@@ -1731,7 +1678,7 @@ describe('the cost cap in the Rust engine', () => {
     expect(rust.asked).toEqual([{ budget: { remainingMicrodollars: 1_000 } }]);
     // Resumed still over the cap (no reset), it suspends again at the same
     // statement, and marks the run paused again.
-    const again = await agree(
+    const again = await onRust(
       capped({ resume: fromRust, reenter: true, priorSpentMicrodollars: 1_500 }),
     );
     expect(again.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
@@ -1744,7 +1691,7 @@ describe('the cost cap in the Rust engine', () => {
   it('pauses at a capped PLAIN write whose search finds several candidates, as the TypeScript engine does', async () => {
     // No `unique by`: the descriptor's fuzzy resolution searches by name, two
     // candidates come back, and the judge decides — a priced call all the same.
-    const { rust } = await agree(
+    const { rust } = await onRust(
       capped({ source: PRICED.replaceAll('unique by (FUZZY `name`) ', '') }),
     );
     expect(rust.result).toMatchObject({
@@ -1760,12 +1707,12 @@ describe('the cost cap in the Rust engine', () => {
   });
 
   it('fails on the cap where the sink cannot suspend, and suspends unmarked where it keeps no pause', async () => {
-    const { rust } = await agree(capped({ suspends: 'neither' }));
+    const { rust } = await onRust(capped({ suspends: 'neither' }));
     const cause = runFailureCause(rust.error);
     expect(cause).toBeInstanceOf(RunCostCapExceeded);
     expect(cause).toMatchObject({ capMicrodollars: 1_000, spentMicrodollars: 1_500 });
     expect(rust.limitPauses).toEqual([]);
-    const unmarked = await agree(capped({ suspends: 'suspension_only' }));
+    const unmarked = await onRust(capped({ suspends: 'suspension_only' }));
     expect(unmarked.rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(unmarked.rust.trace).toContainEqual(
       expect.objectContaining({ code: 'RUN_PAUSED_COST_CAP' }),
@@ -1782,13 +1729,13 @@ describe('the cost cap in the Rust engine', () => {
     ].join('\n');
     const parked = await runOn({ source: SLEEPS, event });
     const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-    const { rust } = await agree({ source: SLEEPS, event, resume: state, limitPaused: true });
+    const { rust } = await onRust({ source: SLEEPS, event, resume: state, limitPaused: true });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2', writes: [] });
     expect(rust.suspensions.map((s) => s.address)).toEqual(['s2']);
     // The pause is already marked: no flow marks it again.
     expect(rust.limitPauses).toEqual([]);
     // A paused run whose sink cannot suspend runs on.
-    const runsOn = await agree({
+    const runsOn = await onRust({
       source: SLEEPS,
       event,
       resume: state,
@@ -1800,10 +1747,10 @@ describe('the cost cap in the Rust engine', () => {
 
   it('suspends at a suspendAt address, once, and fails where it has nowhere to park', async () => {
     const source = PRICED.replaceAll('unique by (FUZZY `name`) ', '');
-    const { rust } = await agree({ source, event, suspendAt: ['s2.b0.s1', 's1'] });
+    const { rust } = await onRust({ source, event, suspendAt: ['s2.b0.s1', 's1'] });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's1' });
     expect(rust.result?.writes).toHaveLength(1);
-    const nowhere = await agree({ source, event, suspendAt: ['s1'], suspends: 'neither' });
+    const nowhere = await onRust({ source, event, suspendAt: ['s1'], suspends: 'neither' });
     expect(String(runFailureCause(nowhere.rust.error))).toContain(
       "the run was asked to suspend at 's1' and has nowhere durable to park",
     );
