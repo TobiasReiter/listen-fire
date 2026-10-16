@@ -55,10 +55,14 @@ fn codes_of(found: &[Diagnostic]) -> Vec<&str> {
 fn a_plugin_is_imported_by_its_exact_camel_case_name_under_5() {
     let new = "import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(u)\n}";
     let old = "import { fetch_url } from plugins\nmovement go(u: <text>) {\n  p = fetch_url(url: u)\n}";
-    assert_eq!(codes_of(&check_with(new, 5, PLUGINS)), codes_of(&check_with(old, 4, PLUGINS)));
+    // What 4 says, less its refusal of a plugin that declares no row: from 5
+    // that is an ordinary call (22c3e889).
+    let under_4 = check_with(old, 4, PLUGINS);
+    let expected: Vec<&str> = codes_of(&under_4).into_iter().filter(|c| *c != "MOV_PLUGIN_ROW_UNDECLARED").collect();
+    assert_eq!(codes_of(&check_with(new, 5, PLUGINS)), expected);
     // Under its own name as an alias, too.
     let aliased = "import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(u)\n}";
-    assert_eq!(codes_of(&check_with(aliased, 5, PLUGINS)), codes_of(&check_with(old, 4, PLUGINS)));
+    assert_eq!(codes_of(&check_with(aliased, 5, PLUGINS)), expected);
 }
 
 #[test]

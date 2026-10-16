@@ -56,7 +56,9 @@ fn stages_calls_and_annotations_say_what_the_typescript_says() {
             ("MOV_EXTRACT_CONFIG", (15, 44), (15, 87)),
             ("MOV_EXTRACT_CONFIG", (15, 44), (15, 87)),
             ("MOV_ABSENT_REQUIRED", (16, 9), (16, 33)),
-            ("MOV_PLUGIN_ROW_UNDECLARED", (17, 3), (17, 14)),
+            // `lookup("x")`: from 5 there is no stage to send a plugin that
+            // declares no row to, so it is an ordinary call (its effects
+            // partial) and not MOV_PLUGIN_ROW_UNDECLARED (22c3e889).
         ]
     );
     assert_eq!(found[3].message, "'nubmer' is not a type — annotate with a primitive (text, number, boolean, date, datetime, file, json), a type you declare (`type nubmer = <\"A\" | \"B\">`), or another field's type by path (<crm-[:companies]->.`funding_stage`>) — did you mean 'number'?");

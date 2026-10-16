@@ -80,8 +80,11 @@ describe('a plugin', () => {
   it('is imported by its exact camelCase name under 5, as by the catalog key under 4', () => {
     const v5 = 'import { fetchUrl } from plugins\nfunction go(u: <text>) {\n  p = fetchUrl(u)\n}';
     const aliased = 'import { fetchUrl as get } from plugins\nfunction go(u: <text>) {\n  p = get(u)\n}';
-    expect(codes(checkWith(v5, 5))).toEqual(codes(checkWith(old, 4)));
-    expect(codes(checkWith(aliased, 5))).toEqual(codes(checkWith(old, 4)));
+    // What 4 says, less its refusal of a plugin that declares no row: from 5
+    // that is an ordinary call (22c3e889).
+    const expected = codes(checkWith(old, 4)).filter((c) => c !== 'MOV_PLUGIN_ROW_UNDECLARED');
+    expect(codes(checkWith(v5, 5))).toEqual(expected);
+    expect(codes(checkWith(aliased, 5))).toEqual(expected);
   });
 
   it("is refused under 5 by the catalog's key, the local name kept by the fix", () => {
