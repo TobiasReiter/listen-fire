@@ -1682,6 +1682,9 @@ describe('every family crosses as JSON', () => {
     expect(h.crm.creates).toEqual([{ recordType: 'note', fields: { title: 'the digest' } }]);
   });
 
+  // Only the extraction keyword stamps its sources with minted ids, and the
+  // keyword is versions 1–4 only (from 5 nothing a program writes reaches
+  // `ids.mint`), so this family's run is pinned to 4 in its spelling.
   familyRun('the clock and ids: a segment with no firing instant, an extraction stamping its sources', async () => {
     const minted: number[] = [];
     const h = roundTrip(
@@ -1706,9 +1709,10 @@ describe('every family crosses as JSON', () => {
           },
         },
       },
+      { version4: true },
     );
     // The source is a resource before the model is asked anything.
-    await expect(h.run({ firedAt: undefined })).rejects.toThrow('test: no model');
+    await expect(h.run({ firedAt: undefined, languageVersion: 4 })).rejects.toThrow('test: no model');
     expect(minted).toEqual([1]);
   });
 

@@ -102,10 +102,7 @@ import { anthropicChat } from '../../../lib/anthropic';
 import { runFailureCause, runMovement } from 'movement-engine/services/movement_engine/run';
 
 import { MovementEngineError } from 'movement-engine/services/movement_engine/expression';
-import type {
-  LlmCallInput,
-  LlmCallResult,
-} from '../../translation_graph/engine/batched_extraction';
+import type { ExtractCallLlmInput, ExtractCallLlmResult } from 'movement-engine/services/movement_engine/extraction_call';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import type {
   Adapter,
@@ -397,22 +394,25 @@ function webhookEvent(adapterType: string, payload: Record<string, unknown>): Tr
   };
 }
 
-// ── LLM shims (per extraction.unit.test.ts) ─────────────────────────────────
+// ── LLM shims (per extraction_call.unit.test.ts) ────────────────────────────
 
 function queuedMovementLlm(responses: unknown[]): {
-  calls: LlmCallInput[];
-  client: { call(input: LlmCallInput): Promise<LlmCallResult> };
+  calls: ExtractCallLlmInput[];
+  extractCall: { call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> };
 } {
-  const calls: LlmCallInput[] = [];
+  const calls: ExtractCallLlmInput[] = [];
   return {
     calls,
-    client: {
-      async call(input: LlmCallInput): Promise<LlmCallResult> {
+    extractCall: {
+      async call(input: ExtractCallLlmInput): Promise<ExtractCallLlmResult> {
         calls.push(input);
         if (calls.length > responses.length) {
-          throw new Error(`test: unexpected extraction call #${calls.length}:\n${input.system}`);
+          throw new Error(`test: unexpected extraction call #${calls.length}`);
         }
-        return { parsedJson: responses[calls.length - 1] };
+        return {
+          parsedJson: responses[calls.length - 1],
+          usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+        };
       },
     },
   };
@@ -495,15 +495,16 @@ const GOLDEN_PATH = [
   '',
   'function intake(msg: <inbox-[:message]->>) {',
   '',
-  '  deals = extract from [msg.`text`] {',
+  '  deals = extractOne([msg.`text`], node Deals: "the funding rounds in this message" {',
   '    node round: "each funding round announced in this message" {',
-  '      company: "the raising company\'s name"',
-  '      amount:  "the round amount"',
+  '      company: <text> "the raising company\'s name"',
+  '      amount:  <text> "the round amount"',
   '      node investor: "each investor participating in this round" {',
-  '        name: "the investor\'s name"',
+  '        name: <text> "the investor\'s name"',
   '      }',
   '    }',
-  '  }',
+  '  })',
+  '  if (deals == null) { fail("nothing extracted") }',
   '',
   '  deals-[r:round]-> {',
   '    fr = write graph-[:funding_round]-> {',
@@ -521,18 +522,17 @@ const GOLDEN_PATH = [
   '}',
 ].join('\n');
 
+/** extractOne's envelope: the one record the content describes. */
 const GOLDEN_MOVEMENT_RESPONSE = {
-  'x:extract_result#1': [
-    {
-      round: [
-        {
-          company: wrap('Acme'),
-          amount: wrap('5M'),
-          investor: [{ name: wrap('Alice Capital') }, { name: wrap('Bob Ventures') }],
-        },
-      ],
-    },
-  ],
+  record: {
+    round: [
+      {
+        company: wrap('Acme'),
+        amount: wrap('5M'),
+        investor: [{ name: wrap('Alice Capital') }, { name: wrap('Bob Ventures') }],
+      },
+    ],
+  },
 };
 
 const goldenEvent = () =>
@@ -557,7 +557,7 @@ async function runGoldenThroughMovementEngine(input: {
       adapters: {
         resolve: makeResolver({ email: makeFakeSource('email'), [KG]: input.kg.adapter }),
       },
-      llm: { client: llm.client },
+      llm: { extractCall: llm.extractCall },
     }),
     ...(input.dryRun !== undefined ? { dryRun: input.dryRun } : {}),
   });
@@ -634,7 +634,7 @@ describe('golden-path KG movement through runMovement', () => {
       company: [
         {
           kind: 'extraction',
-          site: 'x:round#2',
+          site: 'xc:deals#1',
           field: 'company',
           description: "the raising company's name",
           quote: 'q',
@@ -643,7 +643,7 @@ describe('golden-path KG movement through runMovement', () => {
       amount: [
         {
           kind: 'extraction',
-          site: 'x:round#2',
+          site: 'xc:deals#1',
           field: 'amount',
           description: 'the round amount',
           quote: 'q',
@@ -654,7 +654,7 @@ describe('golden-path KG movement through runMovement', () => {
       name: [
         {
           kind: 'extraction',
-          site: 'x:investor#3',
+          site: 'xc:deals#1',
           field: 'name',
           description: "the investor's name",
           quote: 'q',
@@ -671,16 +671,12 @@ describe('golden-path KG movement through runMovement', () => {
       adapterType: 'email',
       field: 'text',
     };
+    // One site per extraction call: the call's shape, whichever of its
+    // nodes the cited field sits in.
     expect(runResult.extractionSites).toEqual({
-      'x:round#2': {
-        node: 'round',
-        description: 'each funding round announced in this message',
-        stage: 0,
-        dataSources: [textSource],
-      },
-      'x:investor#3': {
-        node: 'investor',
-        description: 'each investor participating in this round',
+      'xc:deals#1': {
+        node: 'Deals',
+        description: 'the funding rounds in this message',
         stage: 0,
         dataSources: [textSource],
       },
@@ -785,13 +781,13 @@ describe('dry-run — KG writes are captured by the sink, never committed', () =
     expect(result.writes[0].provenance.company).toEqual([
       {
         kind: 'extraction',
-        site: 'x:round#2',
+        site: 'xc:deals#1',
         field: 'company',
         description: "the raising company's name",
         quote: 'q',
       },
     ]);
-    expect(Object.keys(result.extractionSites)).toEqual(['x:round#2', 'x:investor#3']);
+    expect(Object.keys(result.extractionSites)).toEqual(['xc:deals#1']);
     // Matching still ran against the (empty) live graph.
     expect(kg.resolveCalls.map((c) => c.recordType)).toEqual([
       'funding_round',
