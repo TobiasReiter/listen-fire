@@ -4899,9 +4899,9 @@ class Checker {
   /**
    * One body's collected `return`s, as its value. A body has ONE value, so
    * returns that disagree about which PLANE they are on — a record position
-   * versus a value — is an error naming both. (Returns that agree on the plane
-   * but differ in type take the first one's; a real union of position types
-   * arrives with the type-model wave.)
+   * versus a value — is an error naming both. Returns of records are joined
+   * by the union rule (`joinedReturns`); other returns that agree on the plane
+   * but differ in type take the first one's.
    */
   private closeReturns(collector: ReturnCollector): ReturnShape {
     const first = collector.returns[0];
@@ -4924,6 +4924,8 @@ class Checker {
     if (closures.length > 1 && closures.length === collector.returns.length) {
       return { returns: true, posType: oneOfClosures(closures, { typedBy: since(this.languageVersion, 5) ? 'every' : 'first' }) };
     }
+    const records = this.joinedReturns(collector.returns);
+    if (records !== undefined) return records;
     // What the value may hold is what ANY return may hold — TypeScript's
     // return type is the union of its returns. The type stays the first's;
     // the union travels as the walk input a bound conditional's arms do, so a
@@ -4951,6 +4953,39 @@ class Checker {
       ...(first.fieldType !== undefined ? { fieldType: first.fieldType } : {}),
       ...(revealed !== undefined ? { mayHold: revealed } : {}),
     };
+  }
+
+  /**
+   * Returns that each hand back a record are what the union rule makes of
+   * them (`oneRecordOf`), as an IF of them is: one type where they are one,
+   * keeping what every return vouches for, and a `oneOf` where they are not.
+   * Before version 5 the body's type was its FIRST return's, so a read off
+   * the call was checked against that record alone; under an older pin that
+   * stays, and the rule is told it differed. Undefined where a return is no
+   * record, or the rule says what the first already says.
+   */
+  private joinedReturns(returns: ReadonlyArray<ReturnShape & { span: Span }>): ReturnShape | undefined {
+    const first = returns[0];
+    if (first === undefined || returns.length < 2) return undefined;
+    const arms: FieldType[] = [];
+    for (const returned of returns) {
+      const arm = returned.mayHold ?? returned.fieldType ?? recordValueOf(returned.posType);
+      if (arm === undefined) return undefined;
+      arms.push(arm);
+    }
+    const joined = oneRecordOf(arms);
+    const record = recordIn(joined);
+    if (joined === undefined || record === undefined || record.position === undefined) return undefined;
+    const firstArm = arms[0]!;
+    if (record.position === recordIn(firstArm)?.position && isMaybeAbsent(joined) === isMaybeAbsent(firstArm)) return undefined;
+    const rule = this.recordJoin();
+    if (!rule.joins) {
+      rule.onWithheld?.();
+      return undefined;
+    }
+    if (first.posType === undefined || first.mayHold !== undefined) return { returns: true, fieldType: joined };
+    const position = record.position;
+    return { returns: true, posType: isMaybeAbsent(joined) && position.kind !== 'maybeEmpty' ? { kind: 'maybeEmpty', of: position } : position };
   }
 
   /** Is this concise body's call one whose callee is known to return nothing? */

@@ -105,6 +105,25 @@ describe.each<LanguageVersion>([3, 4, 5])('a value that may be People or Compani
   });
 });
 
+describe.each<LanguageVersion>([3, 4, 5])("a function's returns join by the same rule (version %i)", version => {
+  const pickOne = ['function pickOne(c: <boolean>) {', '  lead = write crm-[:people]-> { Name: "Ann" }', '  co = write crm-[:companies]-> { Name: "Acme" }', '  if c {', '    return lead', '  }', '  return co', '}'];
+
+  it('a read every return offers is typed; one a return lacks is refused, not read off the first', () => {
+    expect(codes(version, ['  who = pickOne(c: 1 > 0)', '  x = who.Score + 1'], pickOne)).toEqual([]);
+    expect(codes(version, ['  who = pickOne(c: 1 > 0)', '  x = who.Email'], pickOne)).toEqual([
+      ['MOV_UNKNOWN_PROPERTY', from5(version)],
+    ]);
+  });
+
+  it('a write in place to the value is held to every return', () => {
+    // Before 5 the value was the first return's, People, which already
+    // refused this; the union refuses it of People too, said once more.
+    const refused = codes(version, ['  who = pickOne(c: 1 > 0)', '  write who { Domains: ["a.com"] }'], pickOne);
+    expect(refused).toEqual(version >= 5 ? [['MOV_WRITE_UNKNOWN_FIELD', 'error']] : [['MOV_WRITE_UNKNOWN_FIELD', 'error'], ['MOV_WRITE_UNKNOWN_FIELD', 'warning']]);
+    expect(codes(version, ['  who = pickOne(c: 1 > 0)', '  write who { Name: "B" }'], pickOne)).toEqual([]);
+  });
+});
+
 describe.each<LanguageVersion>([3, 4, 5])("a list literal's members join by the same rule (version %i)", version => {
   it('a member of [lead, co] reads only what both offer', () => {
     expect(codes(version, [LEAD, CO, '  both = [lead, co]', '  x = FIRST(both).Score + 1'])).toEqual([]);
