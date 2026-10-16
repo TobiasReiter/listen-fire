@@ -20,6 +20,11 @@ const RECEIPT_RECORD = "pinned as accepted a `parallel` receipt whose literal ar
 const PARALLEL_RETIRED_ROW =
   "a table over the current release's versions, and its version 5 row writes `await parallel(arms)`: `parallel` is retired under Dancing Wren (5) (MOV_PARALLEL_RETIRED — MAP over the functions, calling each, is the join), a version 5 rule, not a version 4 behaviour. Its rows under 3 and 4 still check clean, pinned by the current tree's record_in_field_value test, which checks the version 5 row as the retirement's rewrite (`MAP(arms, { concurrency: 2 }, (f) => f())`) and finds it clean too";
 
+// A table over the current release's versions runs a version 5 row in the
+// spelling this corpus was written in; only that row is ruled out.
+const WRITTEN_IN_V4 = "written in the v4 surface; version 5 respells it — the v5 behaviour is held by the rewritten current suites";
+const VERSION_5_ROW = (row) => (Array.isArray(row) ? row[0] : row) === 5;
+
 exports.triage = [
   { file: VERSIONS, test: 'names each integer once; the current version is the newest and supported', reason: RELEASE_TABLE },
   { file: VERSIONS, test: 'the default release is this one', reason: RELEASE_TABLE },
@@ -30,4 +35,14 @@ exports.triage = [
   { file: 'checker/__test__/check_typed.unit.test.ts', test: 'MOV_CALL_ARG_TYPE across two instances of the same adapter — a parameter is typed against ITS instance', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'two instances of the SAME adapter are two entries — identity is the graph, not the adapter', reason: SYSTEM_IS_ITS_ADDRESS },
   { file: 'checker/__test__/effect_row.unit.test.ts', test: 'the entry IS the graph token the type checker compares by, not the spelling', reason: SYSTEM_IS_ITS_ADDRESS },
+  { file: 'checker/__test__/one_grammar_rulings.unit.test.ts', test: 'a bare walk is its landings in any value position (version %d)', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: "under language version %i, a record inside a field's value is refused", rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: 'under language version %i', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: "under language version %i, a record inside a plugin argument's value is refused", rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/record_in_field_value.unit.test.ts', test: 'under language version %i, a conditional of a record and a map', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: "under language version %i, a file inside a field's value is refused", rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: 'under language version %i, a file field takes a file and never a record', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: 'under language version %i', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: 'under language version %i, a record\'s file field, spread', rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
+  { file: 'checker/__test__/file_in_field_value.unit.test.ts', test: "under language version %i, a file in a plugin's structured argument is refused", rows: VERSION_5_ROW, reason: WRITTEN_IN_V4 },
 ];
