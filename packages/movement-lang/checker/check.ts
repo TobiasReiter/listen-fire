@@ -203,6 +203,9 @@ import {
   bindPluginArgs,
   bindStageArgs,
   callArgSpan,
+  memberLocal,
+  packageMembers,
+  type PackageMember,
   pluginArgMisfitMessage,
   pluginPositionalParams,
   type PluginCallSite,
@@ -3932,6 +3935,9 @@ class Checker {
    *  argument's value starts — what the parser's finding for it needs for
    *  its fix. */
   readonly namedOrders = new Map<string, ArgOrder>();
+  /** Each plugin package imported (version 5), by its local name: the members
+   *  it binds as `web.fetchUrl` (`declarePackage`). */
+  readonly packages = new Map<string, PackageMember[]>();
   /** The old spellings (language version 5) of the libraries this file
    *  imports, each at the import that pulled its library in. Kept apart from
    *  `diagnostics`: a finding's message names the old spelling, which the
@@ -5710,6 +5716,7 @@ class Checker {
     };
     for (const { name, alias } of statement.names) {
       const local = alias ?? name;
+      if (this.declarePackage(statement, name, local, scope)) continue;
       let symbol: ScopeSymbol;
       if (statement.source.kind === 'file') {
         const resolved = fileImports
@@ -5756,6 +5763,61 @@ class Checker {
         );
       }
     }
+  }
+
+  /** A package imported from plugins under version 5 (design §2.10): each
+   *  member declared as the plugin it is, under `web.fetchUrl`. False when the
+   *  import names no package, which is then an import of one plugin. */
+  private declarePackage(statement: ImportStatement, name: string, local: string, scope: Scope): boolean {
+    if (!since(this.languageVersion, 5) || statement.source.kind !== 'builtin' || statement.source.namespace !== 'plugins') {
+      return false;
+    }
+    const members = packageMembers(this.catalog, name);
+    if (members.length === 0) return false;
+    for (const member of members) {
+      const memberName = memberLocal(local, member.name);
+      const symbol: ScopeSymbol = { name: memberName, importedName: member.key, kind: 'plugin', span: statement.span };
+      const existing = this.declareAuthored(scope, symbol, statement.span);
+      if (existing) {
+        this.report(
+          DiagnosticCodes.IMPORT_DUPLICATE,
+          `Duplicate import '${memberName}' — already declared as ${describeKind[existing.kind]}`,
+          statement.span,
+        );
+      }
+    }
+    // The package's own name binds no value: only its members are names.
+    scope.pending.delete(local);
+    this.packages.set(local, members);
+    return true;
+  }
+
+  /** `web.nope(…)`: a package imported here has no member of that name
+   *  (MOV_V5_UNKNOWN_MEMBER), its members listed. Undefined when the head
+   *  names no package. */
+  private unknownPackageMember(written: string): string | undefined {
+    const dot = written.indexOf('.');
+    if (dot < 0) return undefined;
+    const head = written.slice(0, dot);
+    const member = written.slice(dot + 1);
+    const members = this.packages.get(head);
+    if (members === undefined) return undefined;
+    const names = members.map(m => m.name);
+    const closest = closestByEditDistance(member, names);
+    const hint = closest !== undefined ? ` — did you mean \`${closest}\`?` : '';
+    return `\`${head}\` has no member \`${member}\` (its members: ${names.map(n => `\`${n}\``).join(', ')})${hint}`;
+  }
+
+  /** `web.fetchUrl` where an expression calls it: the member of a package
+   *  imported here, as the one dotted name it is bound to. A local binding is
+   *  never a package (design §4.3). */
+  private packageMemberCallee(callee: MExpr, scope: Scope): string | undefined {
+    if (callee.kind !== 'member' || callee.object.kind !== 'name') return undefined;
+    const head = callee.object.name;
+    if (head.quoted || callee.property.quoted || !this.packages.has(head.text) || scope.resolve(head.text).kind !== 'unknown') {
+      return undefined;
+    }
+    return memberLocal(head.text, callee.property.text);
   }
 
   // ── Assignment ──
@@ -6318,6 +6380,11 @@ class Checker {
     resolution: Exclude<Resolution, { kind: 'found' }>,
     scope: Scope,
   ): void {
+    const unknownMember = resolution.kind === 'unknown' ? this.unknownPackageMember(name) : undefined;
+    if (unknownMember !== undefined) {
+      this.report(DiagnosticCodes.V5_UNKNOWN_MEMBER, unknownMember, span);
+      return;
+    }
     if (
       resolution.kind !== 'unknown'
       || before(this.languageVersion, 3)
@@ -6419,6 +6486,9 @@ class Checker {
 
   /** Whether a call in an expression is one the engine runs (./nested_calls.ts). */
   private runsAsCall(call: CallNode, scope: Scope): boolean {
+    // A package's member runs as the plugin it is; one it lacks is read as a
+    // call too, so the call's check names the package's members.
+    if (this.packageMemberCallee(call.callee, scope) !== undefined) return true;
     const callScope = this.callScope(scope);
     return runsAsCall(
       call,
@@ -14781,7 +14851,10 @@ class Checker {
   private checkPluginCall(plugin: PluginCall, scope: Scope, fields: ThroughFieldsContext): void {
     const resolution = scope.resolve(plugin.plugin);
     let spec;
-    if (resolution.kind !== 'found') {
+    const unknownMember = resolution.kind === 'unknown' ? this.unknownPackageMember(plugin.plugin) : undefined;
+    if (unknownMember !== undefined) {
+      this.report(DiagnosticCodes.V5_UNKNOWN_MEMBER, unknownMember, plugin.span);
+    } else if (resolution.kind !== 'found') {
       this.reportResolutionFailure(plugin.plugin, plugin.span, resolution);
     } else if (resolution.symbol.kind !== 'plugin') {
       this.report(
