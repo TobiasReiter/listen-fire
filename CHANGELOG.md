@@ -177,6 +177,12 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Changed
 
+- On every language version, a binding, function or closure whose inferred type has more than
+  10,000 distinct parts is refused (`MOV_TYPE_TOO_LARGE`); split the value into named parts or
+  declare its shape. Why: a chain of closures, each returning a map of the last one's value, made
+  saving an automation take minutes. The checker is now linear in a type's distinct parts, and this
+  limit bounds what one program can cost to check. It is a safety limit, not a language rule: no
+  program that reaches it ever checked in reasonable time.
 - From language version 5, a dotted call of a function that is no built-in (`o.nope()`, `box.g()`) is
   `MOV_FUNCTION_UNKNOWN`. The engine runs `o.f(…)` as `f` in `o`'s scope, and outside a write field
   there was never such a function: the run always failed where it reached the call. Versions 1–4
