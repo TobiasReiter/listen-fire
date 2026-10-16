@@ -20,6 +20,7 @@ jest.mock('../store', () => ({
   recordValidityOutcome: jest.fn(),
 }));
 jest.mock('../version_store', () => ({ movementSourceHash: () => 'hash' }));
+jest.mock('../provision', () => ({ saveMovement: jest.fn() }));
 
 import {
   CURRENT_LANGUAGE_VERSION,
@@ -97,6 +98,7 @@ function fakeStore(input: {
   const events: Array<{ teamId: string; kind: string; reason: string; version: string }> = [];
   const runs: Array<{ tag: string; languageRelease: string; summary: DeployCheckSummary }> = [];
   const validations: Array<Parameters<ValidateUnder>[0]> = [];
+  const sources = new Map<string, string>();
 
   const deps: DeployCheckDeps = {
     release: { tag: 'v0.8.0', language: input.release ?? RELEASE },
@@ -119,8 +121,10 @@ function fakeStore(input: {
     recordUpgradeCheck: async ({ movement: m, diagnostics }) => {
       upgradeDiagnostics.set(m.id, diagnostics);
     },
-    advance: async ({ movement: m, to }) => {
+    advance: async ({ movement: m, to, source }) => {
       pins.set(m.id, to);
+      if (source !== undefined) sources.set(m.id, source);
+      return { ok: true };
     },
     emit: async ({ teamId, kind, payload }) => {
       events.push({ teamId, kind: kind.typeId, reason: payload.reason, version: payload.version });
@@ -130,7 +134,7 @@ function fakeStore(input: {
     },
     now: () => new Date('2026-09-29T12:00:00.000Z'),
   };
-  return { deps, pins, upgradeDiagnostics, validity, events, runs, validations };
+  return { deps, pins, upgradeDiagnostics, validity, events, runs, validations, sources };
 }
 
 describe('the deploy check', () => {
@@ -396,6 +400,113 @@ describe('an explicit upgrade: errors block, meaning-changed warnings are acknow
       validate: async () => ({ diagnostics: [error, meaningChanged('changed meaning')], gaps: [] }),
     });
     expect(result.status).toBe('blocked');
+  });
+});
+
+describe('the upgrade rewrites the text by its fixes first', () => {
+  // A validation that refuses each old spelling with its rewrite, as the
+  // checker does under 5 (`MOV_V5_SPELLING`), and anything else it is told.
+  const OLD = 'chat = slack()\nmovement go() {\n  x = UPPER("a")\n}';
+  const NEW = 'chat = connect slack\nfunction go() {\n  x = Text.upper("a")\n}';
+  const spelling = (line: number, from: string, to: string, source: string): AuthoringDiagnostic[] => {
+    const text = source.split('\n')[line - 1] ?? '';
+    const col = text.indexOf(from) + 1;
+    if (col === 0) return [];
+    return [
+      {
+        ...diagnostic('error', `\`${from}\` is written \`${to}\``),
+        code: 'MOV_V5_SPELLING',
+        line,
+        col,
+        endLine: line,
+        endCol: col + from.length,
+        fix: { edits: [{ line, col, endLine: line, endCol: col + from.length, text: to }] },
+      },
+    ];
+  };
+  const underFive =
+    (extra: AuthoringDiagnostic[] = []): ValidateUnder =>
+    async ({ movement: m, languageVersion, source }) => {
+      const text = source ?? m.source;
+      if (languageVersion !== CURRENT_LANGUAGE_VERSION) return { diagnostics: [], gaps: [] };
+      return {
+        diagnostics: [
+          ...spelling(1, 'slack()', 'connect slack', text),
+          ...spelling(2, 'movement', 'function', text),
+          ...spelling(3, 'UPPER', 'Text.upper', text),
+          ...extra,
+        ],
+        gaps: [],
+      };
+    };
+  const FIVE: LanguageRelease = {
+    current: CURRENT_LANGUAGE_VERSION,
+    supported: new Set([4, CURRENT_LANGUAGE_VERSION]),
+    deprecated: new Set<LanguageVersion>(),
+  };
+
+  it('the deploy check advances a movement clean after the rewrite, saving the rewritten text with the pin', async () => {
+    const store = fakeStore({ movements: [movement({ id: 'old', languageVersion: 4, source: OLD })], verdicts: {}, release: FIVE });
+    store.deps.validate = underFive();
+    const summary = await runDeployCheck(store.deps);
+    expect(summary?.automations.map((a) => a.outcome)).toEqual(['advanced']);
+    expect(store.pins.get('old')).toBe(CURRENT_LANGUAGE_VERSION);
+    expect(store.sources.get('old')).toBe(NEW);
+  });
+
+  it('the deploy check keeps the text and the pin when the rewrite leaves an error, and says what is left', async () => {
+    const left = diagnostic('error', 'no field Nope on note');
+    const store = fakeStore({ movements: [movement({ id: 'old', languageVersion: 4, source: OLD })], verdicts: {}, release: FIVE });
+    store.deps.validate = underFive([left]);
+    const summary = await runDeployCheck(store.deps);
+    expect(summary?.automations.map((a) => [a.outcome, a.detail])).toEqual([['warned', 'line 3: no field Nope on note']]);
+    expect(store.pins.get('old')).toBe(4);
+    expect(store.sources.has('old')).toBe(false);
+    expect(store.upgradeDiagnostics.get('old')).toEqual([left]);
+  });
+
+  it('a movement already in the new spelling is not rewritten', async () => {
+    const store = fakeStore({ movements: [movement({ id: 'new', languageVersion: 4, source: NEW })], verdicts: {}, release: FIVE });
+    store.deps.validate = underFive();
+    await runDeployCheck(store.deps);
+    expect(store.pins.get('new')).toBe(CURRENT_LANGUAGE_VERSION);
+    expect(store.sources.has('new')).toBe(false);
+  });
+
+  it('an explicit upgrade shows the rewrite, and saves it with the pin once acknowledged', async () => {
+    jest.mocked(getMovementRow).mockResolvedValue(movement({ id: 'old', languageVersion: 4, source: OLD }));
+    const shown = await upgradeMovement({ teamId: 'team-1', id: 'old', acknowledge: false, validate: underFive() });
+    expect(shown).toEqual(expect.objectContaining({ status: 'needs_acknowledgement', upgradedSource: NEW, diagnostics: [] }));
+
+    jest.mocked(assessMovementValidity).mockReturnValueOnce({ status: 'valid', reason: null } as never);
+    const advanced: Array<{ to: LanguageVersion; source?: string }> = [];
+    const done = await upgradeMovement({
+      teamId: 'team-1',
+      id: 'old',
+      acknowledge: true,
+      validate: underFive(),
+      advance: async ({ to, source }) => {
+        advanced.push({ to, ...(source !== undefined ? { source } : {}) });
+        return { ok: true };
+      },
+    });
+    expect(done.status).toBe('upgraded');
+    expect(advanced).toEqual([{ to: CURRENT_LANGUAGE_VERSION, source: NEW }]);
+    jest.mocked(getMovementRow).mockReset();
+  });
+
+  it('an acknowledged move whose save does not ship is unverified, with why', async () => {
+    jest.mocked(getMovementRow).mockResolvedValueOnce(movement({ id: 'old', languageVersion: 4, source: OLD }));
+    const result = await upgradeMovement({
+      teamId: 'team-1',
+      id: 'old',
+      acknowledge: true,
+      validate: underFive(),
+      advance: async () => ({ ok: false, detail: 'the rewritten text did not ship: a system could not be read' }),
+    });
+    expect(result).toEqual(
+      expect.objectContaining({ status: 'unverified', detail: 'the rewritten text did not ship: a system could not be read' }),
+    );
   });
 });
 

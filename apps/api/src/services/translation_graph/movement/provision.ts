@@ -695,6 +695,11 @@ export interface SaveMovementInput {
    *  `needsConfirmation` so the caller can self-repair or confirm with the
    *  user. See plans/2026-07-13-movement-validity-lifecycle. */
   acknowledgeErrors?: boolean;
+  /** Set only by the language upgrade (language_upgrade.ts): this text is the
+   *  movement rewritten into version `to`, and it saves under that version —
+   *  the pin and the text it is written in move in the one row update. An
+   *  ordinary save never moves the pin. */
+  languageUpgrade?: { to: LanguageVersion };
 }
 
 export interface SavedMovement extends ProvisionedMovement {
@@ -932,6 +937,7 @@ async function runSave(
       source: input.source,
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.userId !== undefined ? { userId: input.userId } : {}),
+      ...(input.languageUpgrade !== undefined ? { languageVersion: input.languageUpgrade.to } : {}),
     }),
   );
 
