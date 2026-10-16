@@ -873,10 +873,6 @@ impl Checker<'_> {
             Position::Position(p) => p.instance.clone(),
             Position::Handle(h) => h.instance.clone(),
             Position::Union(u) => u.instance.clone(),
-            // A record that may be empty is told only where no guard proves
-            // it there, which the walk does not yet track for every guard
-            // (`IS`); an extraction's result is the extraction family's.
-            Position::Extract { .. } | Position::MaybeEmpty(_) => return described,
             other => {
                 self.report(
                     codes::WRITE_POSITION_NOT_RECORD,

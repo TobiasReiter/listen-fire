@@ -2,21 +2,21 @@
 
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
-- Codes at parity: **231 of 242** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 35062 of 35347; 237 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 27818 of 28328.
-- Rust side: 44.2s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Codes at parity: **242 of 242** codes the TypeScript checker reports on this corpus.
+- Diagnostics matched: 35347 of 35347; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 28307 of 28328.
+- Rust side: 36.5s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 5805 | 5685 | 5689 |
-| checks v1 | 2246 | 2185 | 2186 |
-| checks v2 | 2544 | 2533 | 2534 |
-| checks v3 | 3339 | 3258 | 3262 |
-| checks v4 | 5450 | 5322 | 5326 |
-| checks v5 | 5759 | 5650 | 5657 |
+| checks under v5 | 5805 | 5801 | 5805 |
+| checks v1 | 2246 | 2245 | 2246 |
+| checks v2 | 2544 | 2543 | 2544 |
+| checks v3 | 3339 | 3335 | 3339 |
+| checks v4 | 5450 | 5446 | 5450 |
+| checks v5 | 5759 | 5752 | 5759 |
 | checks v99 | 9 | 9 | 9 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -26,20 +26,20 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| calls | 28 | 26 | 1646 | 1621 | 22 | 0 | 3 |
+| calls | 28 | 28 | 1646 | 1646 | 0 | 0 | 0 |
 | closures | 15 | 15 | 885 | 885 | 0 | 0 | 0 |
-| extraction | 20 | 19 | 439 | 357 | 82 | 0 | 0 |
+| extraction | 20 | 20 | 439 | 439 | 0 | 0 | 0 |
 | flow | 10 | 10 | 108 | 108 | 0 | 0 | 0 |
 | imports | 5 | 5 | 66 | 66 | 0 | 0 | 0 |
 | listens | 12 | 12 | 24305 | 24305 | 0 | 0 | 0 |
 | names | 11 | 11 | 780 | 780 | 0 | 0 | 0 |
-| nodes | 28 | 26 | 712 | 691 | 21 | 59 | 0 |
-| records | 11 | 10 | 810 | 786 | 24 | 4 | 0 |
+| nodes | 28 | 28 | 712 | 712 | 0 | 0 | 0 |
+| records | 11 | 11 | 810 | 810 | 0 | 0 | 0 |
 | systems | 8 | 8 | 166 | 166 | 0 | 0 | 0 |
-| values | 22 | 21 | 2272 | 2266 | 6 | 0 | 0 |
+| values | 22 | 22 | 2272 | 2272 | 0 | 0 | 0 |
 | versions | 2 | 2 | 11 | 11 | 0 | 0 | 0 |
 | walks | 22 | 22 | 1201 | 1201 | 0 | 0 | 0 |
-| writes | 48 | 44 | 1946 | 1819 | 78 | 174 | 49 |
+| writes | 48 | 48 | 1946 | 1946 | 0 | 0 | 0 |
 
 ## By code
 
@@ -70,10 +70,10 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_CALLBACK_NOT_MOVEMENT | listens | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_CALLBACK_PARAM_NOT_VALUE | listens | 22 | 22 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_DUPLICATE | calls | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_CALL_ARG_MAYBE_RECORD | records | 99 | 75 | 24 | 4 | 0 |  |
+| MOV_CALL_ARG_MAYBE_RECORD | records | 99 | 99 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_MISSING | calls | 43 | 43 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_OPAQUE_RECORD | records | 364 | 364 | 0 | 0 | 0 | yes |
-| MOV_CALL_ARG_TYPE | calls | 955 | 931 | 21 | 0 | 3 |  |
+| MOV_CALL_ARG_TYPE | calls | 955 | 955 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARG_UNKNOWN | calls | 28 | 28 | 0 | 0 | 0 | yes |
 | MOV_CALL_ARITY | calls | 42 | 42 | 0 | 0 | 0 | yes |
 | MOV_CALL_CLOSURE_RETURNS | calls | 4 | 4 | 0 | 0 | 0 | yes |
@@ -114,7 +114,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_EXTRACT_ANNOTATE | extraction | 21 | 21 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_CALL_NESTED | extraction | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_CONFIG | extraction | 27 | 27 | 0 | 0 | 0 | yes |
-| MOV_EXTRACT_CONTENT | extraction | 118 | 36 | 82 | 0 | 0 |  |
+| MOV_EXTRACT_CONTENT | extraction | 118 | 118 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_FIELD_DUPLICATE | extraction | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_NEEDS_ANNOTATION | extraction | 11 | 11 | 0 | 0 | 0 | yes |
 | MOV_EXTRACT_SHAPE_COMPUTED | extraction | 12 | 12 | 0 | 0 | 0 | yes |
@@ -126,14 +126,14 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_FUNCTION_NAME_COLLISION | names | 13 | 13 | 0 | 0 | 0 | yes |
 | MOV_FUNCTION_UNKNOWN | calls | 23 | 23 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_ENTRY_KIND | nodes | 16 | 16 | 0 | 0 | 0 | yes |
-| MOV_GRAPH_ENTRY_RECORD | nodes | 127 | 126 | 1 | 59 | 0 |  |
+| MOV_GRAPH_ENTRY_RECORD | nodes | 127 | 127 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_FIELD_MISSING | nodes | 34 | 34 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_FIELD_TYPE | nodes | 25 | 25 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_FIELD_UNKNOWN | nodes | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_REFERENCE_SHAPE | nodes | 16 | 16 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_SHAPE | nodes | 4 | 4 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_SPREAD_NOT_MAP | nodes | 6 | 6 | 0 | 0 | 0 | yes |
-| MOV_GRAPH_SPREAD_RECORD | nodes | 43 | 23 | 20 | 0 | 0 |  |
+| MOV_GRAPH_SPREAD_RECORD | nodes | 43 | 43 | 0 | 0 | 0 | yes |
 | MOV_GRAPH_SPREAD_UNTYPED | nodes | 10 | 10 | 0 | 0 | 0 | yes |
 | MOV_HANDLE_FIELD_RETIRED | records | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_HANDLE_FILE_NOT_SENT | records | 3 | 3 | 0 | 0 | 0 | yes |
@@ -174,7 +174,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_LISTEN_NOT_INSTANCE | listens | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_PARAM_MISMATCH | listens | 220 | 220 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_SHAPE_MISMATCH | listens | 36 | 36 | 0 | 0 | 0 | yes |
-| MOV_LIST_MIXED | values | 51 | 45 | 6 | 0 | 0 |  |
+| MOV_LIST_MIXED | values | 51 | 51 | 0 | 0 | 0 | yes |
 | MOV_LIST_SPREAD_NOT_A_LIST | values | 16 | 16 | 0 | 0 | 0 | yes |
 | MOV_MAP_KEY_OVERWRITTEN | values | 13 | 13 | 0 | 0 | 0 | yes |
 | MOV_MAP_SPREAD_NOT_KEYED | values | 77 | 77 | 0 | 0 | 0 | yes |
@@ -224,7 +224,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_RETURN_NOT_A_VALUE | calls | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_RETURN_OUTSIDE_BODY | calls | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_RETURN_PLANE_MISMATCH | calls | 7 | 7 | 0 | 0 | 0 | yes |
-| MOV_RETURN_TYPE | calls | 34 | 33 | 1 | 0 | 0 |  |
+| MOV_RETURN_TYPE | calls | 34 | 34 | 0 | 0 | 0 | yes |
 | MOV_SHADOWED_NAME | names | 59 | 59 | 0 | 0 | 0 | yes |
 | MOV_SHAPE_FIELD_PROTO | nodes | 22 | 22 | 0 | 0 | 0 | yes |
 | MOV_SHAPE_HOP_RETIRED | walks | 12 | 12 | 0 | 0 | 0 | yes |
@@ -269,7 +269,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_BIND_UNIQUE | writes | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_WRITE_DISCRIMINANT_NOT_LITERAL | writes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_WRITE_EPHEMERAL_BOUND | writes | 12 | 12 | 0 | 0 | 0 | yes |
-| MOV_WRITE_FIELD_TYPE | writes | 673 | 586 | 38 | 0 | 49 |  |
+| MOV_WRITE_FIELD_TYPE | writes | 673 | 673 | 0 | 0 | 0 | yes |
 | MOV_WRITE_GENERIC_NOT_LITERAL | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_LINK_FIELD_NUDGE | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_MAY_BE_EMPTY | writes | 154 | 154 | 0 | 0 | 0 | yes |
@@ -277,8 +277,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_MISSING_REQUIRED_FIELD | writes | 66 | 66 | 0 | 0 | 0 | yes |
 | MOV_WRITE_ONLY_EDGE | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_ONLY_PROPERTY | writes | 6 | 6 | 0 | 0 | 0 | yes |
-| MOV_WRITE_POSITION_NOT_RECORD | writes | 31 | 10 | 21 | 0 | 0 |  |
-| MOV_WRITE_POSITION_NO_UPDATE | writes | 14 | 14 | 0 | 174 | 0 |  |
+| MOV_WRITE_POSITION_NOT_RECORD | writes | 31 | 31 | 0 | 0 | 0 | yes |
+| MOV_WRITE_POSITION_NO_UPDATE | writes | 14 | 14 | 0 | 0 | 0 | yes |
 | MOV_WRITE_POSITION_UNIQUE | writes | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_WRITE_READ_ONLY_EDGE | writes | 53 | 53 | 0 | 0 | 0 | yes |
 | MOV_WRITE_SHAPE_RETIRED | writes | 22 | 22 | 0 | 0 | 0 | yes |
@@ -286,4 +286,4 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_WRITE_TARGET_NOT_GRAPH | writes | 25 | 25 | 0 | 0 | 0 | yes |
 | MOV_WRITE_TUPLE_MISMATCH | writes | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_WRITE_UNION_UNSATISFIED | writes | 30 | 30 | 0 | 0 | 0 | yes |
-| MOV_WRITE_UNKNOWN_FIELD | writes | 156 | 137 | 19 | 0 | 0 |  |
+| MOV_WRITE_UNKNOWN_FIELD | writes | 156 | 156 | 0 | 0 | 0 | yes |

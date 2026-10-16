@@ -1349,6 +1349,11 @@
     }
    },
    "plugins": {}
+  },
+  "none": {
+   "adapters": {},
+   "credentials": {},
+   "plugins": {}
   }
  },
  "cases": [
@@ -2997,6 +3002,105 @@
    "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    node company: \"each company\" {\n      name: \"the name\"\n      stage: <crm-[:companies]->.`Na.me`> \"the stage\"\n    }\n  }\n}\nlisten to inbox fire m\n",
    "expected": [
     "MOV_BORROW_MALFORMED 10:7-10:54 'crm.companies.Na.me' is not a borrowable path — a borrowed type names another graph's field: an edge, then the field (e.g. <crm-[:companies]->.`funding_stage`>)"
+   ]
+  },
+  {
+   "name": "a record this run built that may be empty is not written in place unless a != NULL guard proves it there",
+   "snapshot": "none",
+   "version": 3,
+   "source": "node Company: \"each company named here\" {\n  name: <text> \"the company's name\"\n  site: <text | null> \"its website\"\n}\nmovement m(t: <text>) {\n  found = EXTRACT([t], Company)\n  one = EXTRACTONE([t], Company)\n  write found { name: \"x\" }\n  write one { name: \"y\" }\n  if one != NULL {\n    write one { name: \"h\" }\n  }\n  if one IS <Company> {\n    write one { name: \"i\" }\n  }\n  first = AT(found, 0)\n  write first { name: \"w\" }\n  deduped = node { companies: <Company> order by arrival }\n  write deduped-[:companies]-> { name: \"Acme\" }\n  pick = AT(deduped-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_WRITE_POSITION_NOT_RECORD 9:9-9:12 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 14:11-14:14 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 17:9-17:14 'first' is an extracted 'Company' record (which may be empty) — 'write first { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 21:9-21:13 'pick' is Company.Company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "a record this run built that may be empty is not written in place unless a != NULL guard proves it there",
+   "snapshot": "none",
+   "version": 4,
+   "source": "node Company: \"each company named here\" {\n  name: <text> \"the company's name\"\n  site: <text | null> \"its website\"\n}\nmovement m(t: <text>) {\n  found = EXTRACT([t], Company)\n  one = EXTRACTONE([t], Company)\n  write found { name: \"x\" }\n  write one { name: \"y\" }\n  if one != NULL {\n    write one { name: \"h\" }\n  }\n  if one IS <Company> {\n    write one { name: \"i\" }\n  }\n  first = AT(found, 0)\n  write first { name: \"w\" }\n  deduped = node { companies: <Company> order by arrival }\n  write deduped-[:companies]-> { name: \"Acme\" }\n  pick = AT(deduped-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_WRITE_POSITION_NOT_RECORD 9:9-9:12 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 14:11-14:14 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 17:9-17:14 'first' is an extracted 'Company' record (which may be empty) — 'write first { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 21:9-21:13 'pick' is Company.Company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "a record this run built that may be empty is not written in place unless a != NULL guard proves it there",
+   "snapshot": "none",
+   "version": 5,
+   "source": "node Company: \"each company named here\" {\n  name: <text> \"the company's name\"\n  site: <text | null> \"its website\"\n}\nmovement m(t: <text>) {\n  found = EXTRACT([t], Company)\n  one = EXTRACTONE([t], Company)\n  write found { name: \"x\" }\n  write one { name: \"y\" }\n  if one != NULL {\n    write one { name: \"h\" }\n  }\n  if one IS <Company> {\n    write one { name: \"i\" }\n  }\n  first = AT(found, 0)\n  write first { name: \"w\" }\n  deduped = node { companies: <Company> order by arrival }\n  write deduped-[:companies]-> { name: \"Acme\" }\n  pick = AT(deduped-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_WRITE_POSITION_NOT_RECORD 9:9-9:12 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 14:11-14:14 'one' is an extracted 'Company' record (which may be empty) — 'write one { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 17:9-17:14 'first' is an extracted 'Company' record (which may be empty) — 'write first { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NOT_RECORD 21:9-21:13 'pick' is Company.Company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "an extraction's result is not a record to write in place",
+   "snapshot": "none",
+   "version": 3,
+   "source": "movement m(t: <text>) {\n  ex = extract from [t] {\n    company: \"the company\"\n  }\n  write ex { company: \"x\" }\n  return 1\n}\n",
+   "expected": [
+    "MOV_WRITE_POSITION_NOT_RECORD 5:9-5:11 'ex' is the extract result — 'write ex { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "an extraction's result is not a record to write in place",
+   "snapshot": "none",
+   "version": 4,
+   "source": "movement m(t: <text>) {\n  ex = extract from [t] {\n    company: \"the company\"\n  }\n  write ex { company: \"x\" }\n  return 1\n}\n",
+   "expected": [
+    "MOV_WRITE_POSITION_NOT_RECORD 5:9-5:11 'ex' is the extract result — 'write ex { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "an extraction's result is not a record to write in place",
+   "snapshot": "none",
+   "version": 5,
+   "source": "movement m(t: <text>) {\n  ex = extract from [t] {\n    company: \"the company\"\n  }\n  write ex { company: \"x\" }\n  return 1\n}\n",
+   "expected": [
+    "MOV_WRITE_POSITION_NOT_RECORD 5:9-5:11 'ex' is the extract result — 'write ex { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "a system's record that may be empty is not written in place unless a != NULL guard proves it there",
+   "snapshot": "maybe",
+   "version": 3,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"A\" }\n  pick = AT(crm-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  if pick IS <crm-[:company]->> {\n    write pick { name: \"r\" }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_FOLD_NEEDS_ORDER 6:10-6:35 AT reads a position in a sequence, and 'companies' comes back in no particular order — every index picks an arbitrary member. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_WRITE_POSITION_NOT_RECORD 7:9-7:13 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NO_UPDATE 9:11-9:15 'crm' can't update records in place — its system has no update-by-id. To change crm.company, create a new record (a graph-root, linked, or tuple-path write) instead of 'write pick { … }'",
+    "MOV_WRITE_POSITION_NOT_RECORD 12:11-12:15 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "a system's record that may be empty is not written in place unless a != NULL guard proves it there",
+   "snapshot": "maybe",
+   "version": 4,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"A\" }\n  pick = AT(crm-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  if pick IS <crm-[:company]->> {\n    write pick { name: \"r\" }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_FOLD_NEEDS_ORDER 6:10-6:35 AT reads a position in a sequence, and 'companies' comes back in no particular order — every index picks an arbitrary member. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_WRITE_POSITION_NOT_RECORD 7:9-7:13 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NO_UPDATE 9:11-9:15 'crm' can't update records in place — its system has no update-by-id. To change crm.company, create a new record (a graph-root, linked, or tuple-path write) instead of 'write pick { … }'",
+    "MOV_WRITE_POSITION_NOT_RECORD 12:11-12:15 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
+   ]
+  },
+  {
+   "name": "a system's record that may be empty is not written in place unless a != NULL guard proves it there",
+   "snapshot": "maybe",
+   "version": 5,
+   "source": "import { attio } from adapters\nimport { crm_cred } from credentials\ncrm = attio(credentials: crm_cred)\nmovement m() {\n  org = write crm-[:companies]-> { name: \"A\" }\n  pick = AT(crm-[:companies]->, 0)\n  write pick { name: \"p\" }\n  if pick != NULL {\n    write pick { name: \"q\" }\n  }\n  if pick IS <crm-[:company]->> {\n    write pick { name: \"r\" }\n  }\n  return 1\n}\n",
+   "expected": [
+    "MOV_FOLD_NEEDS_ORDER 6:10-6:35 AT reads a position in a sequence, and 'companies' comes back in no particular order — every index picks an arbitrary member. Order the hop (`-[:companies ORDER BY `…` DESC]->`), or reach for a relationship the source keeps in order.",
+    "MOV_WRITE_POSITION_NOT_RECORD 7:9-7:13 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result",
+    "MOV_WRITE_POSITION_NO_UPDATE 9:11-9:15 'crm' can't update records in place — its system has no update-by-id. To change crm.company, create a new record (a graph-root, linked, or tuple-path write) instead of 'write pick { … }'",
+    "MOV_WRITE_POSITION_NOT_RECORD 12:11-12:15 'pick' is crm.company (which may be empty) — 'write pick { … }' updates an already-identified record in place, so it needs a record position: a traversal alias or a prior write result"
    ]
   }
  ]
