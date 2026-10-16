@@ -33,8 +33,11 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  it for a person): 3,862 of 4,449, with 241 programs left holding it.
  *  Lowered again by the upgrade warning on ORDER BY / LIMIT over records the
  *  run holds (MOV_IN_MEMORY_HOP_ORDER, which 4 ignored and 5 reads, so a
- *  person decides): 4,903 of 5,667, with 104 programs left holding it. */
-const FLOOR = 0.865;
+ *  person decides): 4,903 of 5,667, with 104 programs left holding it.
+ *  Lowered again by MOV_EVENT_UNDESCRIBED (a read or write off an event the
+ *  catalog does not describe is refused from 5, and only a person can describe
+ *  it): 4,890 of 5,673, with 27 programs left holding it. */
+const FLOOR = 0.86;
 
 interface Program {
   source: string;
