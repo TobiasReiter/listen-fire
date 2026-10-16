@@ -97,7 +97,7 @@ describe('plugin-declared handbook sections', () => {
     ['a through stage', 'x = y through [tidy_up]'],
     ['the anonymous node literal', 'deal = node { Title: m.Subject }'],
     ['a movement declaration', 'movement `Log Lead`(l: <Lead>) { }'],
-    ['ONLY around an extraction', 'one = ONLY(extract(content, Company))'],
+    ['only around an extraction', 'one = only(extract(content, Company))'],
     ['a named-argument call', '`Log Lead`(l: msg)'],
     ['a named-argument call of a declared function', 'function log_lead(l: <Lead>) { }\nlog_lead(l: msg)'],
     ['a passage about an old form', 'The keyword is still supported for saved automations.'],
@@ -110,15 +110,15 @@ describe('plugin-declared handbook sections', () => {
       'node Company: "each company" { name: <text> "its name" }',
       'function `Log Lead`(l: <Lead>, cfg: <{ mode: text }>) { }',
       'function log_lead(l: <Lead>) { }',
-      'crm = attio(credentials: acme, dry_run: true)',
+      'crm = connect attio using acme { dryRun: true }',
       'page = fetch_url(url: c.website)',
-      'found = extract(content, Company, { tier: \'careful\' })',
+      'found = extract(content, Company, { tier: "careful" })',
       'one = extractOne(content, node Sender: "the sender" { name: <text> "their name" })',
       'msg = graph<Message> { Body: m.Body, Files: m-[a:Attachments]-> { Name: a.Name } }',
       '`Log Lead`(graph<Lead> { Name: msg.Subject })',
       'log_lead(msg)',
-      'again = callback(`Chase`(company), { once: FALSE })',
-      'await until(() => done, every: 1h)',
+      'again = callback(() => `Chase`(company), { once: false })',
+      'await until(() => done, { every: 1h })',
       'r = all(() => { return 1 })',
     ].join('\n');
     expect(proseViolations(sectionWith(`\`\`\`\n${modern}\n\`\`\``))).toEqual([]);
@@ -133,7 +133,7 @@ describe('the shipped plugin sections', () => {
   // record already carries. The research one is the choice not to choose: it
   // takes whatever the record has, and resolves a profile address from a name.
   it.each([
-    ['plugin:vc_url_retrieval', 'vc_url_retrieval(text: msg.`Body`)'],
+    ['plugin:vc_url_retrieval', 'vc_url_retrieval(text: msg.Body)'],
     ['plugin:fetch_url', 'fetch_url(url: c.website)'],
     ['plugin:linkedin_research', 'linkedin_research(url: p.linkedin)'],
     ['plugin:web_research', 'web_research(name: c.name, context: c.description'],

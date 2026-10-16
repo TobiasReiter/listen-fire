@@ -7,7 +7,7 @@
 // added there is searchable the moment it exists; its worked example, where
 // one is written, is read from that function's section of the builtins
 // chapter. Recipes and system sections are read from their chapters at call
-// time. Only the language's own control forms (`ERROR`, `race`, …), which are
+// time. Only the language's own control forms (`fail`, `race`, …), which are
 // grammar rather than library, are written here — and their examples are
 // probes the checker holds, like the front page's.
 //
@@ -18,11 +18,13 @@
 import { getMovementHandbook } from './index';
 
 import {
+  CURRENT_LANGUAGE_VERSION,
   describeFieldType,
   standardLibrary,
   type Builtin,
   type BuiltinParam,
 } from 'movement-lang';
+import { spellMessage, surfaceTable, type SpellingRow } from 'movement-lang/parser/surface';
 
 import type { Chapter, EngineClaim } from './types';
 
@@ -62,10 +64,10 @@ interface ControlForm {
  *  not in the standard-library registry and are described here instead. */
 export const CONTROL_FORMS: readonly ControlForm[] = [
   {
-    name: 'ERROR',
-    signature: 'ERROR(reason: text)',
+    name: 'fail',
+    signature: 'fail(reason: text)',
     purpose: 'fail the run, with a reason; there is no throw or try',
-    example: { body: 'if m.Subject == "" { ERROR("the email has no subject") }' },
+    example: { body: 'if (m.Subject == "") { fail("the email has no subject") }' },
     anchor: 'front#errors-and-return',
   },
   {
@@ -77,19 +79,19 @@ export const CONTROL_FORMS: readonly ControlForm[] = [
   },
   {
     name: 'race',
-    signature: 'race(() => { … }, …) → receipt; AT(r, i) is arm i\'s returned value, null unless it settled first',
+    signature: 'race(() => { … }, …) → receipt; r[i] is arm i\'s returned value, null unless it settled first',
     purpose: 'wait for whichever of several things happens first, such as an answer or a timeout',
     example: {
-      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = race(\n  () => {\n    a = await FIRST(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n)\napproved = AT(r, 0) == TRUE',
+      body: 'q = write asks-[:Check]-> { Prompt: "Log ${m.Subject}?" }\nr = race(\n  () => {\n    a = await first(q-[:Response]->)\n    return a.Answer\n  },\n  () => { await sleep(2d) },\n)\napproved = r[0] == true',
     },
     anchor: 'front#runs',
   },
   {
     name: 'all',
-    signature: 'all(() => { … }, …, { concurrency?, onError? }) → one slot per function; AT(r, i) is what function i returned (replaces `parallel`)',
+    signature: 'all(() => { … }, …, { concurrency?, onError? }) → one slot per function; r[i] is what function i returned',
     purpose: 'run several independent pieces of work at once and wait for all of them',
     example: {
-      body: 'r = all(\n  () => { return UPPER(m.Subject) },\n  () => { return LOWER(m.Subject) },\n)\nboth = "${AT(r, 0)} / ${AT(r, 1)}"',
+      body: 'r = all(\n  () => { return Text.upper(m.Subject) },\n  () => { return Text.lower(m.Subject) },\n)\nboth = "${r[0]} / ${r[1]}"',
     },
     anchor: 'front#runs',
   },
@@ -98,16 +100,16 @@ export const CONTROL_FORMS: readonly ControlForm[] = [
     signature: 'callback({ … } | (value: <T>) => { … }, { once?: boolean, ttl?: duration }) → { id, url }',
     purpose: 'work a person triggers later from a button (its id) or a link (its url)',
     example: {
-      body: 'q = write asks-[:Check]-> { Prompt: "Pursue ${m.Subject}?" }\nyes = callback({ write q-[:Response]-> { Answer: TRUE } })\nlinks = "${q.Url} or ${yes.url}"',
+      body: 'q = write asks-[:Check]-> { Prompt: "Pursue ${m.Subject}?" }\nyes = callback({ write q-[:Response]-> { Answer: true } })\nlinks = "${q.Url} or ${yes.url}"',
     },
     anchor: 'reviews#in-chat-answers',
   },
   {
     name: 'until',
-    signature: 'await until(() => { … return condition }, every: duration)',
+    signature: 'await until(() => { … return condition }, { every: duration })',
     purpose: 're-check a condition on a cadence and resume the run once it holds',
     example: {
-      body: 'co = write crm-[:Companies]-> { unique by (Name), Name: m.Subject }\nawait until(() => {\n  refresh co\n  return co.Description != ""\n}, every: 1h)',
+      body: 'co = write crm-[:Companies]-> { unique by (Name), Name: m.Subject }\nawait until(() => {\n  refresh co\n  return co.Description != ""\n}, { every: 1h })',
     },
     anchor: 'reviews#timeout-and-escalation',
   },
@@ -128,15 +130,57 @@ function describeParam(param: BuiltinParam): string {
   return `${param.rest ? '…' : ''}${param.name}${param.optional ? '?' : ''}: ${param.type}`;
 }
 
-/** `JOIN(collection: any, separator?: text) → text` — generated, never written. */
-export function builtinSignature(entry: Builtin): string {
-  const returns = entry.returns === 'derived' ? 'follows from its arguments' : describeFieldType(entry.returns);
-  return `${entry.name}(${entry.params.map(describeParam).join(', ')}) → ${returns}`;
+/** The registry names built-ins canonically (`JOIN`); the language a saved
+ *  automation is written in today spells them as the surface table says. */
+function spelling(entry: Builtin): SpellingRow | undefined {
+  return surfaceTable().spellings.find((row) => row.canonical === entry.name && !row.newOnly);
 }
 
-/** A built-in kept only so old automations still read — never offered. */
+/** Calls the table does not respell keep their own core-word spelling. */
+const CORE_SPELLING: Record<string, string> = { EXTRACT: 'extract', EXTRACTONE: 'extractOne' };
+
+/** `Text.join` for `JOIN` — the name an author writes. */
+export function builtinName(entry: Builtin): string {
+  return spelling(entry)?.v5 ?? CORE_SPELLING[entry.name] ?? entry.name;
+}
+
+const settingsParam = (keys: string): BuiltinParam => ({ name: `settings { ${keys} }`, type: 'options', optional: true });
+
+/** The registry's parameters in the order the author writes them. */
+function writtenParams(entry: Builtin): readonly BuiltinParam[] {
+  const [first, second, third] = entry.params;
+  const shape = spelling(entry)?.shape;
+  switch (shape) {
+    case 'settingsLast':
+    case 'reduceOrder':
+      return [first, third, second];
+    case 'sortKey':
+      return [first, { ...second, type: 'function' }, settingsParam('order')];
+    case 'aiTier':
+      return [first, settingsParam('tier')];
+    case 'jsonStringify':
+      return [first];
+    default:
+      return entry.params;
+  }
+}
+
+/** A summary names built-ins as the author writes them. */
+export function builtinSummary(entry: Builtin): string {
+  return spellMessage(entry.summary, CURRENT_LANGUAGE_VERSION);
+}
+
+/** `Text.join(collection: any, separator?: text) → text` — generated, never written. */
+export function builtinSignature(entry: Builtin): string {
+  const returns = entry.returns === 'derived' ? 'follows from its arguments' : describeFieldType(entry.returns);
+  return `${builtinName(entry)}(${writtenParams(entry).map(describeParam).join(', ')}) → ${returns}`;
+}
+
+/** A built-in kept only so old automations still read — never offered. A
+ *  call the surface writes as an operator (`x == null`, `xs[i]`) is not a
+ *  function an author calls. */
 function isRetired(entry: Builtin): boolean {
-  return entry.summary.startsWith('RETIRED');
+  return entry.summary.startsWith('RETIRED') || spelling(entry)?.oldOnly === true;
 }
 
 /** The documented built-ins: every registry entry except the retired ones. */
@@ -182,9 +226,9 @@ function builtinEntries(builtinsChapter: Chapter | undefined): LanguageEntry[] {
     const example = slice?.ok ? firstCodeBlock(slice.content) : undefined;
     const anchor = sectioned ? `builtins#${entry.name}` : BUILTIN_HOME[entry.name];
     return {
-      name: entry.name,
+      name: builtinName(entry),
       kind: 'function' as const,
-      purpose: entry.summary,
+      purpose: builtinSummary(entry),
       detail: builtinSignature(entry),
       ...(example ? { example } : {}),
       ...(anchor ? { anchor } : {}),
@@ -291,6 +335,7 @@ function stem(word: string): string {
 
 export function searchTokens(text: string): string[] {
   return text
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length > 0 && !STOPWORDS.has(w))

@@ -128,8 +128,8 @@ const EVERTRACE_HANDBOOK_CONTENT = `Evertrace watches public profiles and raises
 ### signals — pulling what Evertrace already found
 
 \`\`\`
-since = DATE.ADD_DAYS(@current_date, -30)
-evertrace-[s:Signals WHERE \`Score\` >= 8 AND \`Discovered At\` >= since]->
+since = Date.addDays(@current_date, -30)
+evertrace-[s:Signals WHERE s.Score >= 8 AND s.\`Discovered At\` >= since]->
 \`\`\`
 
 There is no default time window: an unbounded walk covers the whole corpus, so give the WHERE a \`Discovered At\` lower bound and a \`Score\` floor.
@@ -159,7 +159,7 @@ What arrives is the entry rather than the signal: \`Signal\` is the person, \`Li
 A list owns its entries, so an entry lives under its list, and a signal's \`List Entries\` is that same membership seen from the other end. Both ends are required, so filing names them together:
 
 \`\`\`
-write (list-[:Entries]->, signal-[:List Entries]->) { }
+write (list-[:Entries]->, signal-[:\`List Entries\`]->) { }
 \`\`\`
 
 Adding is idempotent on the pair, so a repeat run never doubles a member. \`delete\` removes an entry. \`Lists\` and \`Searches\` are creatable, renameable and removable at the root; writing a search's \`Filters\` replaces the whole set rather than merging into it.
@@ -167,19 +167,19 @@ Adding is idempotent on the pair, so a repeat run never doubles a member. \`dele
 ### lists — reading what is on one
 
 \`\`\`
-since = DATE.ADD_DAYS(@current_date, -7)
-list-[e:Entries WHERE \`Added At\` >= since ORDER BY \`Added At\` DESC LIMIT 5]-> {
+since = Date.addDays(@current_date, -7)
+list-[e:Entries WHERE e.\`Added At\` >= since ORDER BY e.\`Added At\` DESC LIMIT 5]-> {
   …
 }
 \`\`\`
 
-\`Added At\` is when the signal went onto the list, and it is the one thing Evertrace sorts entries by. Every other \`WHERE\` and \`ORDER BY\` runs over the list's entries once they arrive — the list is what bounds them, so an \`AI()\` or \`EXISTS()\` test is allowed here. A signal's \`List Entries\` reads the same memberships from the other end, and takes the same bracket.
+\`Added At\` is when the signal went onto the list, and it is the one thing Evertrace sorts entries by. Every other \`WHERE\` and \`ORDER BY\` runs over the list's entries once they arrive — the list is what bounds them, so a \`filter\` that calls \`ai\` over them is allowed here. A signal's \`List Entries\` reads the same memberships from the other end, and takes the same bracket.
 
-Entries come back oldest first, so \`FIRST\`, \`LAST\` and a bare \`LIMIT\` read them with no \`ORDER BY\`:
+Entries come back oldest first, so \`first\`, \`List.last\` and a bare \`LIMIT\` read them with no \`ORDER BY\`:
 
 \`\`\`
-oldest = FIRST(list-[e:Entries]->)
-Message: "Longest on the list: \${oldest-[s:Signal]->.\`Name\`}"
+oldest = first(list-[e:Entries]->)
+Message: "Longest on the list: \${oldest-[s:Signal]->.Name}"
 \`\`\`
 
 A saved search's \`Signals\` takes the same bracket, and its own filters are what bound it — there is no order to lean on, so an \`ORDER BY\` says which one you mean.

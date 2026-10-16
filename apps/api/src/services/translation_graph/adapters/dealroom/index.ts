@@ -118,27 +118,27 @@ const DEALROOM_HANDBOOK_CONTENT = `Dealroom is a database of \`Companies\`, \`In
 ### looking something up
 
 \`\`\`
-company = FIRST(dealroom-[c:Companies WHERE \`Website\` = "acme.com"]->)
+company = first(dealroom-[c:Companies WHERE c.Website == "acme.com"]->)
 \`\`\`
 
-A domain is the surest way to land on one company; a \`Name\` equality is an exact-name search and \`contains\` is a fuzzy one. Filter on \`Website\`, the domain on its own — \`Website URL\` holds the full URL and is applied after the fetch. Dealroom takes part of the WHERE itself and the rest is applied to what comes back, so the result is the same either way — only the amount fetched changes. What reaches Dealroom on \`Companies\`: \`Name\`, \`Website\`, \`Industries\`, \`Tags\`, \`Growth Stage\`, \`Company Status\`, \`HQ City\`, \`HQ Country\`, \`Total Funding\` and \`Launch Year\` bounds, and lower bounds on \`Last Updated\` and \`Created At\`. \`Investors\` takes \`Name\`, \`Website\`, \`Investor Type\`, \`Investment Stages\`, \`Industry Experience\` and the HQ location; \`People\` takes \`Name\`, \`Website\`, \`Gender\`, \`Backgrounds\`, the HQ location and flags like \`Is Strong Founder\`; \`Funding Rounds\` takes \`Round\`, \`Date\` bounds, \`Amount\` bounds and \`Is Verified\`.
+A domain is the surest way to land on one company; a \`Name\` equality is an exact-name search and \`CONTAINS\` is a fuzzy one. Filter on \`Website\`, the domain on its own — \`Website URL\` holds the full URL and is applied after the fetch. Dealroom takes part of the WHERE itself and the rest is applied to what comes back, so the result is the same either way — only the amount fetched changes. What reaches Dealroom on \`Companies\`: \`Name\`, \`Website\`, \`Industries\`, \`Tags\`, \`Growth Stage\`, \`Company Status\`, \`HQ City\`, \`HQ Country\`, \`Total Funding\` and \`Launch Year\` bounds, and lower bounds on \`Last Updated\` and \`Created At\`. \`Investors\` takes \`Name\`, \`Website\`, \`Investor Type\`, \`Investment Stages\`, \`Industry Experience\` and the HQ location; \`People\` takes \`Name\`, \`Website\`, \`Gender\`, \`Backgrounds\`, the HQ location and flags like \`Is Strong Founder\`; \`Funding Rounds\` takes \`Round\`, \`Date\` bounds, \`Amount\` bounds and \`Is Verified\`.
 
 An \`ORDER BY\` on \`Name\`, \`Total Funding\`, \`Last Updated\` or \`Created At\` reaches Dealroom's own sort, so \`LIMIT 5\` is one page rather than a scan. An unbounded walk stops at Dealroom's 10,000-result ceiling with an error rather than a short answer — narrow it or bound it.
 
 ### walking out from a company
 
 \`\`\`
-company-[r:Funding Rounds]-> { … }
+company-[r:\`Funding Rounds\`]-> { … }
 company-[i:Investors]-> { … }
-company-[t:Team WHERE \`Is Founder\` = true]-> { … }
+company-[t:Team WHERE t.\`Is Founder\` == TRUE]-> { … }
 \`\`\`
 
 Each of these is the FULL list from its own endpoint, not the five that ride the company record. \`Similar Companies\` is Dealroom's own "companies like this one".
 
-Give every fold over a Dealroom walk — \`JOIN\`, \`FIRST\`, \`LAST\`, \`LIMIT\` — an explicit \`ORDER BY\`, since Dealroom hands a walk back in no inherent order:
+Give every fold over a Dealroom walk — \`Text.join\`, \`first\`, \`List.last\`, \`LIMIT\` — an explicit \`ORDER BY\`, since Dealroom hands a walk back in no inherent order:
 
 \`\`\`
-rounds = JOIN(company-[r:\`Funding Rounds\` ORDER BY \`Date\` DESC]->.\`Round\`, ", ")
+rounds = Text.join(company-[r:\`Funding Rounds\` ORDER BY r.Date DESC]->.Round, ", ")
 \`\`\`
 
 \`Team\` lands on a membership rather than the person: \`Titles\`, \`Is Founder\`, \`Is Executive\`, \`Is Partner\`, \`Past\`, \`Start Year\` and \`End Year\` are facts about the pair. \`Person\` from there is the full profile, and costs a fetch.
@@ -182,8 +182,8 @@ export const DEALROOM_MANIFEST: AdapterManifest = {
     'Website (the domain on its own) rather than Name; Website URL holds the ' +
     'full URL and filters after the fetch. A root walk with no WHERE covers the ' +
     'corpus and fails at the 10,000-result ceiling, so narrow it or give it a ' +
-    'LIMIT. Every fold over a Dealroom walk — JOIN, FIRST, LAST, LIMIT — needs ' +
-    'an explicit ORDER BY, as in ORDER BY `Date` DESC. ' +
+    'LIMIT. Every fold over a Dealroom walk — Text.join, first, List.last, LIMIT — ' +
+    'needs an explicit ORDER BY on the hop, as in -[r:Rounds ORDER BY r.Date DESC]->. ' +
     'Team memberships and a round’s investors are nodes in their own right ' +
     'because the titles and the lead flag belong to the pair; walk Person or ' +
     'Investor from one for the full record, at the cost of a fetch. A listener ' +

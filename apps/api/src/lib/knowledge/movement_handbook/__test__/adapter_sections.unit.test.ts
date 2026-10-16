@@ -145,7 +145,7 @@ describe('the shipped sections', () => {
     ['system:slack', 'Block Kit'],
     ['system:telegram', 'inline_keyboard'],
     ['system:whatsapp', 'interactive.body.text'],
-    ['system:kg', 'import { kg } from adapters'],
+    ['system:kg', 'import { `@lf/kg` as kg } from adapters'],
     ['system:affinity', 'List Entries'],
   ])('%s is on the shelf and reads back', (chapter, marker) => {
     const read = readBook({ bookId: 'automations', chapter });

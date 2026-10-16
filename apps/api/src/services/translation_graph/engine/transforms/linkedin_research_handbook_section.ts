@@ -22,17 +22,17 @@ node Person: "each person named in this message" {
   linkedin: <text> "their LinkedIn address, if the message has one"
 }
 
-MAP(extract(content, Person), (p) => {
+map(extract(content, Person), (p) => {
   activity = linkedin_research(url: p.linkedin)
   write crm-[:People]-> {
-    unique by (FUZZY \`Name\`)
+    unique by (FUZZY Name)
     Name:          p.name
     Description ?: activity.activity_summary
   }
 })
 \`\`\`
 
-It runs once per person, inside the \`MAP\`, researching that person's own address. A person whose \`linkedin\` came back empty is skipped — no research, no error.
+It runs once per person, inside the \`map\`, researching that person's own address. A person whose \`linkedin\` came back empty is skipped — no research, no error.
 
 ### what-comes-back
 
@@ -53,15 +53,15 @@ A result counts as this person's only when it is consistent with their own profi
 `,
   engineClaims: [
     {
-      construct: 'linkedin_research called per person inside MAP, its write-up filled into a record',
+      construct: 'linkedin_research called per person inside map, its write-up filled into a record',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 import { linkedin_research } from plugins
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Person: "each person named in this message" {
   name:     <text> "the person's name"
@@ -69,10 +69,10 @@ node Person: "each person named in this message" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  MAP(extract([m.\`Body\`], Person), (p) => {
+  map(extract([m.Body], Person), (p) => {
     activity = linkedin_research(url: p.linkedin)
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name:          p.name
       Description ?: activity.activity_summary
     }

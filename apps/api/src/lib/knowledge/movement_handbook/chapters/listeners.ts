@@ -10,7 +10,7 @@ Use \`listen\` to say when an automation runs. Everything that starts a run — 
 ### listen
 
 \`\`\`
-inbox = email()
+inbox = connect email
 …
 listen as "Deal intake" to inbox { key: "deals" } fire \`Intake\`
 \`\`\`
@@ -24,22 +24,22 @@ Saving the file registers its listeners; if one can't go live, the save says so.
 
 ### inbound-mail
 
-\`email()\` is inbound mail. Which carrier delivers it is a setting of the deployment, not a choice an automation makes.`,
+\`connect email\` is inbound mail. Which carrier delivers it is a setting of the deployment, not a choice an automation makes.`,
   engineClaims: [
     {
       construct: 'listen as "…" — two aliased lanes on one channel firing one movement',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
   write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
-    Name: m.\`Subject\`
+    unique by (FUZZY Name)
+    Name: m.Subject
   }
 }
 
@@ -51,17 +51,17 @@ listen as "Intro intake" to inbox { key: "intros" } fire \`Intake\`
       construct: 'suppress_self on a listener (opt-in two-way-sync echo suppression)',
       status: 'runs',
       probe: `
-import { attio } from adapters
+import { \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 
-crm = attio(credentials: acme)
+crm = connect attio using acme
 
 function \`Mirror Company\`(ev: <crm-[:\`Webhook Event\`]->>) {
-  if ev IS <crm-[:\`Webhook Event\` WHERE \`action\` == "record.updated"]->> {
+  if (ev is <crm-[e:\`Webhook Event\` WHERE e.action == "record.updated"]->>) {
     ev-[rec:Companies]-> {
       write crm-[:Companies]-> {
-        unique by (\`Name\`)
-        Name: rec.\`Name\`
+        unique by (Name)
+        Name: rec.Name
       }
     }
   }

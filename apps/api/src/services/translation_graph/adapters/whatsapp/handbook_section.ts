@@ -64,8 +64,8 @@ A tapped reply button hands its \`id\` straight back, so the id to put there is 
 
 \`\`\`
 q = write questions-[:Check]-> { Prompt: "Send the update?" }
-send = callback({ write q-[:Response]-> { Answer: TRUE } })
-hold = callback({ write q-[:Response]-> { Answer: FALSE } })
+send = callback({ write q-[:Response]-> { Answer: true } })
+hold = callback({ write q-[:Response]-> { Answer: false } })
 
 write msg-[:Replies]-> {
   Interactive: {
@@ -78,7 +78,7 @@ write msg-[:Replies]-> {
   }
 }
 
-answer = await FIRST(q-[:Response]->)
+answer = await first(q-[:Response]->)
 \`\`\`
 
 WhatsApp captures nothing at tap time — a button's id is fixed when the message is sent — so a button always fires a callback that takes no values. A picked date or a typed answer needs a plain reply instead, read off the next inbound message.
@@ -101,18 +101,18 @@ WhatsApp cannot edit a message it already sent, and there is nothing like a toas
       construct: 'a WhatsApp interactive reply-button send whose button ids carry callback ids, one per answer',
       status: 'runs',
       probe: `
-import { whatsapp, ask } from adapters
+import { \`@lf/whatsapp\` as whatsapp, \`@lf/ask\` as ask } from adapters
 
-wa = whatsapp()
-questions = ask()
+wa = connect whatsapp
+questions = connect ask
 
-function confirm_send(msg: <wa-[:\`Message\`]->>) {
+function confirm_send(msg: <wa-[:Message]->>) {
   q = write questions-[:Check]-> {
     Prompt: "Send the update?"
-    Detail: "\${msg.\`Body\`}"
+    Detail: "\${msg.Body}"
   }
-  send = callback({ write q-[:Response]-> { Answer: TRUE } })
-  hold = callback({ write q-[:Response]-> { Answer: FALSE } })
+  send = callback({ write q-[:Response]-> { Answer: true } })
+  hold = callback({ write q-[:Response]-> { Answer: false } })
 
   write msg-[:Replies]-> {
     Interactive: {
@@ -125,8 +125,8 @@ function confirm_send(msg: <wa-[:\`Message\`]->>) {
     }
   }
 
-  answer = await FIRST(q-[:Response]->)
-  if answer.Answer {
+  answer = await first(q-[:Response]->)
+  if (answer.Answer) {
     write msg-[:Replies]-> { Body: "Sending now." }
   }
 }
@@ -138,11 +138,11 @@ listen to wa {} fire confirm_send
       construct: 'a WhatsApp interactive reply button that waits on a body-less callback (the minimal confirmation)',
       status: 'runs',
       probe: `
-import { whatsapp } from adapters
+import { \`@lf/whatsapp\` as whatsapp } from adapters
 
-wa = whatsapp()
+wa = connect whatsapp
 
-function wait_for_go(msg: <wa-[:\`Message\`]->>) {
+function wait_for_go(msg: <wa-[:Message]->>) {
   go = callback()
 
   write msg-[:Replies]-> {
@@ -153,8 +153,8 @@ function wait_for_go(msg: <wa-[:\`Message\`]->>) {
     }
   }
 
-  tap = await FIRST(go-[:Called]->)
-  write msg-[:Replies]-> { Body: "Off we go (\${tap.\`At\`})." }
+  tap = await first(go-[:Called]->)
+  write msg-[:Replies]-> { Body: "Off we go (\${tap.At})." }
 }
 
 listen to wa {} fire wait_for_go

@@ -54,9 +54,9 @@ Read the message's \`From\` for this, not its \`To\` — on a forward, \`To\` is
 The substance of a dealflow message is in the deck, and a deck arrives two ways. Read **both**:
 
 \`\`\`
-decks     = vc_url_retrieval(text: msg.\`Body\`, email: @user_email)
-content   = [msg.\`Body\`, ...msg-[a:Attachments]->.\`File\`, ...MAP(decks, (d) => COALESCE(d.text, ""))]
-companies = extract(content, Company, { tier: 'careful' })
+decks     = vc_url_retrieval(text: msg.Body, email: @user_email)
+content   = [msg.Body, ...msg-[a:Attachments]->.File, ...map(decks, (d) => coalesce(d.text, ""))]
+companies = extract(content, Company, { tier: "careful" })
 \`\`\`
 
 The content carries the body *and* the attached files (a PDF, a slide deck, a voice note whose spoken words are transcribed). \`vc_url_retrieval\` covers the other channel — it finds the deck *links* in the body, works out which are decks, and loads them. Extract from the body alone and the deck never reaches the model.
@@ -70,12 +70,12 @@ Everything after the extraction is the ordinary shape: each founder written alon
       construct: 'dealflow extraction (body, attachments and retrieved deck links as content → a nested tree → linked fuzzy writes, plus the sender by extractOne)',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { vc_url_retrieval } from plugins
 import { acme } from credentials
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Company: "each company this message is about — the one being pitched for investment, not competitors or customers named in passing" {
   name:    <text> "the company's name"
@@ -92,21 +92,21 @@ node Introducer: "the person who sent or forwarded this message to us" {
 }
 
 function \`Log Dealflow\`(msg: <inbox-[:Email]->>) {
-  decks     = vc_url_retrieval(text: msg.\`Body\`, email: @user_email)
-  content   = [msg.\`Body\`, ...msg-[a:Attachments]->.\`File\`, ...MAP(decks, (d) => COALESCE(d.text, ""))]
-  companies = extract(content, Company, { tier: 'careful' })
-  introducer = extractOne(content, Introducer, { tier: 'careful' })
+  decks     = vc_url_retrieval(text: msg.Body, email: @user_email)
+  content   = [msg.Body, ...msg-[a:Attachments]->.File, ...map(decks, (d) => coalesce(d.text, ""))]
+  companies = extract(content, Company, { tier: "careful" })
+  introducer = extractOne(content, Introducer, { tier: "careful" })
 
-  MAP(companies, (c) => {
+  map(companies, (c) => {
     company = write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name:    c.name
       Domains: c.website
       Description ?: "Introduced by \${introducer.name}"
     }
     c-[f:founder]-> {
       write company-[:Team]-> {
-        unique by (FUZZY \`Name\`)
+        unique by (FUZZY Name)
         Name:        f.name
         \`Job Title\`: f.role
       }

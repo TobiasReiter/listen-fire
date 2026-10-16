@@ -99,8 +99,8 @@ A listener fires once per message that has arrived since the last look, a minute
 
 \`\`\`
 function triage(msg: <gmail-[:Message]->>) {
-  who  = msg.\`From\`
-  what = msg.\`Body\`
+  who  = msg.From
+  what = msg.Body
 }
 \`\`\`
 
@@ -109,7 +109,7 @@ function triage(msg: <gmail-[:Message]->>) {
 ### searching the mailbox
 
 \`\`\`
-recent = gmail-[m:Messages WHERE \`From\` contains "acme.com" AND \`Date\` >= DATE.TODAY - 7 DAYS]->
+recent = gmail-[m:Messages WHERE m.From CONTAINS "acme.com" AND m.Date WITHIN 7d]->
 \`\`\`
 
 \`Subject\`, \`From\`, \`To\`, \`Cc\`, \`Labels\`, \`Date\` and \`Body\` reach Gmail's own search; everything else is applied after the fetch, so the result is the same either way and only the amount fetched changes. A walk stops at ${GMAIL_SEARCH_CEILING} messages, because every message costs its own request — narrow it or give it a \`LIMIT\` rather than expecting the whole mailbox. Gmail answers newest first, so \`ORDER BY Date DESC LIMIT n\` costs n requests; any other \`ORDER BY\` fetches up to ${GMAIL_SEARCH_CEILING} and sorts them here.
@@ -117,7 +117,7 @@ recent = gmail-[m:Messages WHERE \`From\` contains "acme.com" AND \`Date\` >= DA
 ### attachments
 
 \`\`\`
-msg-[a:Attachments]-> { … a.\`File\` … }
+msg-[a:Attachments]-> { … a.File … }
 \`\`\`
 
 Listing them is free — the names, types and sizes ride the message. Only reading \`File\` fetches bytes, so a message whose files nobody opens costs nothing. \`Has Attachments\` answers "are there any" without a walk.

@@ -30,11 +30,11 @@ node Profile: "the company" {
   location: <text> "where the company is based"
 }
 
-MAP(extract(content, Company), (c) => {
+map(extract(content, Company), (c) => {
   found   = research(name: c.name, context: c.description, questions: "what it does, which sector it is in, where it is based", website: c.website, linkedin: c.linkedin)
-  profile = extractOne([...content, TEXT.SERIALISE(c, 'JSON'), COALESCE(found.dossier, "")], Profile)
+  profile = extractOne([...content, Json.stringify(c), coalesce(found.dossier, "")], Profile)
   write crm-[:Companies]-> {
-    unique by (FUZZY \`Name\`)
+    unique by (FUZZY Name)
     Name:          c.name
     Domains ?:     found.website
     Description ?: profile.summary
@@ -42,7 +42,7 @@ MAP(extract(content, Company), (c) => {
 })
 \`\`\`
 
-It runs once per company, inside the \`MAP\`.
+It runs once per company, inside the \`map\`.
 
 ### what-you-want-to-know
 
@@ -69,15 +69,15 @@ A record, every field of which may be absent: \`summary\` (the answer to \`quest
 `,
   engineClaims: [
     {
-      construct: 'research called per record inside MAP, its resolved address written and its dossier read by a second extraction',
+      construct: 'research called per record inside map, its resolved address written and its dossier read by a second extraction',
       status: 'runs',
       probe: `
-import { email, attio } from adapters
+import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
 import { acme } from credentials
 import { research } from plugins
 
-inbox = email()
-crm   = attio(credentials: acme)
+inbox = connect email
+crm   = connect attio using acme
 
 node Company: "each company named in this message" {
   name:        <text> "the company's name"
@@ -93,12 +93,12 @@ node Profile: "the company" {
 }
 
 function \`Intake\`(m: <inbox-[:Email]->>) {
-  content = [m.\`Body\`]
-  MAP(extract(content, Company), (c) => {
+  content = [m.Body]
+  map(extract(content, Company), (c) => {
     found   = research(name: c.name, context: c.description, questions: "what it does, which sector it is in, where it is based", website: c.website, linkedin: c.linkedin)
-    profile = extractOne([...content, TEXT.SERIALISE(c, 'JSON'), COALESCE(found.dossier, "")], Profile)
+    profile = extractOne([...content, Json.stringify(c), coalesce(found.dossier, "")], Profile)
     write crm-[:Companies]-> {
-      unique by (FUZZY \`Name\`)
+      unique by (FUZZY Name)
       Name:          c.name
       Domains ?:     found.website
       Description ?: profile.summary
