@@ -1103,6 +1103,11 @@ export function instanceOfType(type: PositionTypeRef): InstanceRef | undefined {
       return type.instance;
     case 'maybeEmpty':
       return instanceOfType(type.of);
+    // The graph every record it may be is in, where they share one.
+    case 'oneOf': {
+      const [first, ...rest] = type.members.map(instanceOfType);
+      return first !== undefined && rest.every(each => each?.token === first.token) ? first : undefined;
+    }
     case 'local':
     case 'extract':
     case 'closure':
@@ -3655,6 +3660,7 @@ export function positionsMatch(arg: PositionTypeRef, param: PositionTypeRef): bo
     case 'closure':
     case 'local':
     case 'maybeEmpty':
+    case 'oneOf':
       // Parameters come from TypeRefs; these kinds cannot be declared.
       return undefined;
   }
@@ -4066,6 +4072,11 @@ export function lookupPropertyType(
     case 'maybeEmpty':
       // A field of a maybe-empty node is itself possibly-absent (F19).
       return maybeAbsent(lookupPropertyType(position.of, propertyId));
+    // A field every record it may be has, as the union of their types.
+    case 'oneOf': {
+      const types = position.members.map(member => lookupPropertyType(member, propertyId));
+      return types.every((type): type is FieldType => type !== undefined) ? joinFieldTypes(types) : undefined;
+    }
     case 'local':
       return position.reads[propertyId];
     case 'closure':
@@ -4356,6 +4367,12 @@ export function narrowPresent(
   switch (position.kind) {
     case 'maybeEmpty':
       return isMaybeAbsent(lookupPropertyType(position, propertyId)) ? position.of : undefined;
+    // - one of several records: the proof discharges the field in each.
+    case 'oneOf': {
+      const narrowed = position.members.map(member => narrowPresent(member, propertyId));
+      if (narrowed.every(each => each === undefined)) return undefined;
+      return joinPositions(narrowed.map((each, i) => each ?? position.members[i]!));
+    }
     // - an extracted TYPED field is `T | absent` on a node that is always
     //   there, so the proof discharges just that field (text is already
     //   present, and testing it is refused elsewhere).

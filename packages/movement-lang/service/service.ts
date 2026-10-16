@@ -1876,6 +1876,8 @@ function hoverTypeDetail(posType: PositionTypeRef): string[] | undefined {
     }
     case 'maybeEmpty':
       return hoverTypeDetail(posType.of);
+    case 'oneOf':
+      return posType.members.flatMap(member => hoverTypeDetail(member) ?? []);
   }
 }
 

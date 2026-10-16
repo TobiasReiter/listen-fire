@@ -2362,6 +2362,11 @@ function traversalFrom(type: PositionTypeRef | undefined): 'graph' | 'result' | 
       return undefined;
     case 'maybeEmpty':
       return traversalFrom(type.of);
+    // One answer where every record it may be gives it.
+    case 'oneOf': {
+      const [first, ...rest] = type.members.map(traversalFrom);
+      return rest.every(each => each === first) ? first : undefined;
+    }
   }
 }
 
