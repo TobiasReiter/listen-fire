@@ -2222,13 +2222,13 @@ function spanWithin(slot: ExprSlot, pos: number | undefined): Span {
 /** The distinct names a `unique by` clause predicate references (fields and/or
  *  bound handles), for the native-uniqueness comparison. Undefined when the
  *  predicate doesn't parse (the expression check reports that separately). */
-function uniqueClauseRefs(clause: UniqueClause): string[] | undefined {
+function uniqueClauseRefs(clause: UniqueClause, languageVersion: number): string[] | undefined {
   try {
     const refs = new Set<string>();
     // Split first so a FUZZY modifier is lifted off each component — it isn't an
     // expression token, so the stripped remainder is what parses.
     for (const part of splitUniquenessConjuncts(clause.predicate.raw)) {
-      for (const ref of collectExpressionNames(parseMovementExpression(part.raw)).refs) {
+      for (const ref of collectExpressionNames(parseMovementExpression(part.raw, languageVersion)).refs) {
         refs.add(ref);
       }
     }
@@ -9844,7 +9844,7 @@ class Checker {
             // An update leaves an unset field as it was; a create must fill the
             // fields the target requires.
             mayLeaveUnset: write.target.kind === 'position' || root?.requiredFields?.includes(field.name) !== true,
-            identifies: write.uniqueBy.some(clause => uniqueClauseRefs(clause)?.includes(field.name) === true),
+            identifies: write.uniqueBy.some(clause => uniqueClauseRefs(clause, this.languageVersion)?.includes(field.name) === true),
           });
         }
       }
@@ -10012,7 +10012,7 @@ class Checker {
       for (const part of splitUniquenessConjuncts(clause.predicate.raw)) {
         let parsed: Expression;
         try {
-          parsed = parseMovementExpression(part.raw);
+          parsed = parseMovementExpression(part.raw, this.languageVersion);
         } catch (e) {
           if (!(e instanceof BridgeError)) throw e;
           this.report(
@@ -10175,7 +10175,7 @@ class Checker {
     const { field, valueType, scope } = input;
     if (!this.upgradeCrosses(2)) return;
     if (valueType === undefined || stripAbsent(valueType) !== 'text') return;
-    if (!input.uniqueBy.some(clause => uniqueClauseRefs(clause)?.includes(field.name) === true)) return;
+    if (!input.uniqueBy.some(clause => uniqueClauseRefs(clause, this.languageVersion)?.includes(field.name) === true)) return;
     let value: Expression;
     try {
       value = expressionOfSlot(field.value);
@@ -10439,7 +10439,7 @@ class Checker {
     const describeRule = (group: string[]): string => group.map(f => `\`${f}\``).join(' + ');
 
     for (const clause of uniqueBy) {
-      const refs = uniqueClauseRefs(clause);
+      const refs = uniqueClauseRefs(clause, this.languageVersion);
       if (refs === undefined) continue; // unparseable — the expr check reports it
       const fieldComponents = refs.filter(r => root !== undefined && r in root.fields);
       if (fieldComponents.length !== refs.length) continue; // handle/edge-scoped — not comparable
@@ -11339,7 +11339,7 @@ class Checker {
     const probeText = `${probePathHead(head)}.\`__movement_head_probe__\``;
     let parsed: Expression | undefined;
     try {
-      parsed = parseMovementExpression(probeText);
+      parsed = parseMovementExpression(probeText, this.languageVersion);
     } catch (e) {
       if (!(e instanceof BridgeError)) throw e;
       if (e.code !== undefined) {

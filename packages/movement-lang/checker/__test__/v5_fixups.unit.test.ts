@@ -182,3 +182,9 @@ describe('a message calls a declaration a function from 5', () => {
     expect(unknown(4)).toContain('a call names a movement or function declared or imported here, or a built-in');
   });
 });
+
+describe('a member read off an index from 5 binds the index first, as AT(xs, i) was', () => {
+  it.each(['  r = [{ a: 1 }]\n  n = r[0].a', '  r = [[{ a: 1 }]]\n  n = r[0][0].a'])('%j checks clean', (body) => {
+    expect(errors(`function f() {\n${body}\n  return n\n}`, 5)).toEqual([]);
+  });
+});

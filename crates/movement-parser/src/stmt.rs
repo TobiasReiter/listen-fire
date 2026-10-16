@@ -304,6 +304,46 @@ impl Parser {
         Self { src, pos: 0, line_starts, version, origin, eager, depth: 0, adapters: Vec::new(), plugin_locals: Vec::new(), imports_unseen: false }
     }
 
+    /// From version 5 `xs[i]` is the call `AT(xs, i)` versions 1–4 write, so
+    /// a member read off it (`xs[0].name`) binds it first as it binds
+    /// `AT(xs, 0)`: the text is the index, read here as that call.
+    fn nested_index_call(&mut self, start: usize) -> Option<CallStatement> {
+        if !since(self.version, 5) {
+            return None;
+        }
+        let end = self.src.len();
+        let mut close = end;
+        while close > start && self.src.at(close - 1).is_some_and(|u| u == unit(' ') || u == unit('\n') || u == unit('\t') || u == unit('\r')) {
+            close -= 1;
+        }
+        if close <= start || self.src.at(close - 1) != Some(unit(']')) {
+            return None;
+        }
+        let close = close - 1;
+        let mut depth = 0usize;
+        let mut open = None;
+        let mut i = close;
+        while i > start {
+            i -= 1;
+            match self.src.at(i) {
+                Some(u) if u == unit(']') || u == unit(')') || u == unit('}') => depth += 1,
+                Some(u) if u == unit('[') || u == unit('(') || u == unit('{') => {
+                    if depth == 0 {
+                        open = Some(i);
+                        break;
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        }
+        let open = open.filter(|&o| o > start && self.src.at(o) == Some(unit('[')))?;
+        let arg = |p: &Self, a: usize, b: usize| CallArg::Expr { name: None, expr: p.slot(p.text(a, b), p.span_between(a, b)) };
+        let args = vec![arg(self, start, open), arg(self, open + 1, close)];
+        self.pos = close + 1;
+        Some(self.call_node("AT".to_string(), args, start))
+    }
+
     /// `parseNestedCall`'s reading: one call from `start` to the end of the
     /// text — the extraction call, or any other callee's call.
     pub fn parse_nested_call_value(&mut self, start: usize) -> SResult<RValue> {
@@ -314,6 +354,8 @@ impl Parser {
         self.imports_unseen = true;
         let value = if self.at_extract_call() {
             RValue::ExtractCall { extract_call: self.parse_extract_call(start)? }
+        } else if let Some(call) = self.nested_index_call(start) {
+            RValue::Call { call }
         } else {
             let callee = self.read_callee("the name being called")?;
             self.skip_inline_ws();

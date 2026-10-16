@@ -152,3 +152,10 @@ fn a_message_calls_a_declaration_a_function_from_5() {
     let v4 = errors("movement f() {\n  return nope(1)\n}", 4).join("\n");
     assert!(v4.contains("a call names a movement or function declared or imported here, or a built-in"), "{v4}");
 }
+
+#[test]
+fn a_member_read_off_an_index_binds_the_index_first_from_5() {
+    for body in ["  r = [{ a: 1 }]\n  n = r[0].a", "  r = [[{ a: 1 }]]\n  n = r[0][0].a"] {
+        assert_eq!(errors(&format!("function f() {{\n{body}\n  return n\n}}"), 5), Vec::<String>::new(), "{body}");
+    }
+}
