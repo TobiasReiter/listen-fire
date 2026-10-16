@@ -238,8 +238,8 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `ONLY([a,  b]) says there is exactly one, and there are 2.` (before, it re-spelled the
   expression in the old formula grammar).
 - **LOWER and UPPER use Rust's Unicode tables** (Unicode 17; Node's ICU was 16). Letters Unicode 17
-  gave a case now map: `UPPER("ꟓ")` is `"꟒"` (it stayed `"ꟓ"`). A final sigma beside `ʕ` lowers to
-  `σ`, not `ς`.
+  gave a case now map: `UPPER("ꟓ")` is `"꟒"` (it stayed `"ꟓ"`). `ʕ` is no longer a cased letter, so a
+  sigma beside it can lower differently: `LOWER("ΑΣʕ")` is `"αςʕ"` (it was `"ασʕ"`).
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

@@ -1542,9 +1542,8 @@ Neither row 3 nor row 4 can be met any more:
   tables follow Unicode 17 and differed from Node 22's (Unicode 16) on
   characters whose properties changed between the two: U+0295 (ʕ) is cased
   for the final-sigma rule in Node and not in Rust, so `"ΑΣʕ"` lowered to
-  `αςʕ` here and `ασʕ` in TypeScript. The tables are now Node's, pinned to
-  Node 22.20 (ICU 77.1); a Node upgrade that moves ICU regenerates them
-  (tests/oracle/case_mapping.ts), and the oracle says what moved.
+  `αςʕ` here and `ασʕ` in TypeScript. From version 5 the
+  tables are Rust's again (Rust is the reference).
 - **Row 4 (mirrored): mixed keys sort as V8 sorts them.** The sort was
   V8's binary insertion up to 64 items and a stable merge past it, which
   agrees with V8 for every total order; keys mixing numbers with texts are
