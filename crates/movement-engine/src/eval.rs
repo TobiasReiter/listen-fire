@@ -537,8 +537,8 @@ impl<'a> Evaluator<'a> {
             Expression::Traverse { alias_root: None, .. } => {
                 Err(EvalError::unsupported("relative traversal (no alias root)", "E1 expressions read from named bindings only"))
             }
-            Expression::Aggregate { fn_, expression, separator, order_by, order_direction, .. } => {
-                self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction).await
+            Expression::Aggregate { fn_, expression, separator, order_by, order_direction, written, .. } => {
+                self.aggregate(*fn_, expression, separator.as_deref(), order_by.as_deref(), *order_direction, written.as_deref()).await
             }
             // A rootless `EXISTS(-[…]->)`: the landed record a hop's WHERE
             // is scoped at is its subject (the run walks off it); anywhere
@@ -699,6 +699,7 @@ impl<'a> Evaluator<'a> {
         separator: Option<&str>,
         order_by: Option<&Expression>,
         direction: Option<OrderDirection>,
+        written: Option<&str>,
     ) -> Eval {
         let evaluated = self.eval(inner).await?;
         let values: Vec<Js> = match &evaluated.value {
@@ -717,13 +718,11 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Only => {
                 let present: Vec<&Js> = values.iter().filter(|v| !v.is_nullish()).collect();
                 if present.len() > 1 {
-                    let Some(spelled) = crate::formula::spell(inner) else {
-                        return Err(EvalError::Fallback("ONLY's message spells an expression this engine does not".into()));
-                    };
+                    let only = written.map_or_else(|| "ONLY".to_string(), |text| format!("ONLY({text})"));
                     return Err(EvalError::engine(
                         "MOVENG_RUNTIME",
                         format!(
-                            "ONLY({spelled}) says there is exactly one, and there are {}. Narrow it until there is, or fold with something that takes many.",
+                            "{only} says there is exactly one, and there are {}. Narrow it until there is, or fold with something that takes many.",
                             present.len()
                         ),
                     ));
@@ -1321,6 +1320,19 @@ mod tests {
         let mut again = JsObject::new();
         spread_keys(&bare, &mut again).unwrap();
         assert!(matches!(again.get("a"), Some(Js::Number(n)) if *n == 1.0));
+    }
+
+    /// ONLY's failure quotes its argument as the author wrote it (layout
+    /// and all), not a re-spelling of the lowered expression.
+    #[test]
+    fn only_quotes_its_argument_as_written() {
+        let text = "ONLY( [msg.a,  msg.b] )";
+        let tree = movement_parser::expr::parse_expression(text).unwrap();
+        let lowered = movement_parser::lowering::lower_expression(&tree, text).unwrap();
+        let reader = Counting::default();
+        let (result, _) = drive(&in_run(&reader), &lowered);
+        let Err(EvalError::Thrown { message, .. }) = result else { panic!("ONLY of two fails") };
+        assert_eq!(message, "ONLY([msg.a,  msg.b]) says there is exactly one, and there are 2. Narrow it until there is, or fold with something that takes many.");
     }
 
     #[test]

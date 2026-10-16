@@ -4562,7 +4562,7 @@ impl Names<'_> {
             // ONLY's failure spells its expression back; a name is what it spells.
             // A walk read as its records keeps its own readings (a binding's
             // whole right-hand side, `selection`); anywhere else it is refused.
-            AggregationFunction::Only if crate::formula::spell(inner).is_none() || crate::eval::is_records_walk(inner) => refuse("aggregate:only"),
+            AggregationFunction::Only if crate::eval::is_records_walk(inner) => refuse("aggregate:only"),
             // The key is read in each member's own scope (`memberScope`).
             AggregationFunction::Sort => {
                 if let Some(key) = order_by {
@@ -5478,15 +5478,14 @@ mod tests {
         }
     }
 
-    /// `ONLY` of an expression its failure spells back (crate::formula), a
-    /// walk read for a field among them, is admitted, and so is one picking
-    /// the record a walk lands on for a graph's entry (`bindSlotValue`); one
-    /// it does not spell (a resource walk) is refused.
+    /// `ONLY` of any expression (its failure quotes the argument as
+    /// written), a walk read for a field among them, is admitted, and so is
+    /// one picking the record a walk lands on for a graph's entry
+    /// (`bindSlotValue`).
     #[test]
     fn admits_an_only_its_failure_can_spell() {
         assert_eq!(refused("  crm-[c:companies]-> {\n    x = ONLY(c-[:deals]->.`name`)\n  }"), None);
         assert_eq!(refused("  x = ONLY([1, 2])"), None);
-        assert_eq!(refused("  x = ONLY(msg-[:_resources]->.`name`)").as_deref(), Some("aggregate:only"));
         assert_eq!(refused("  g = graph { file: ONLY(msg-[:files]->) }"), None);
         assert_eq!(refused("  g = node { file: ONLY(msg-[:files]->) }").as_deref(), Some("aggregate:only"));
     }

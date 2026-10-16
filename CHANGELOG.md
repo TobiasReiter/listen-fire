@@ -234,6 +234,9 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   refuses, so a combining vowel sign no longer breaks a word (`हिंदी` is one word; it was `ह` and
   `द`). The CHUNKS entities estimate reads capitals with `char::is_uppercase`.
 - **A regex group name is ASCII** (`$`, `_`, letters, digits): `(?<𝒜>.)` is a malformed pattern.
+- **ONLY's failure quotes its argument as you wrote it.** `ONLY( [a,  b] )` fails with
+  `ONLY([a,  b]) says there is exactly one, and there are 2.` (it re-spelled the expression in the
+  formula grammar before, so `x.name` read back as `` `x`.`name` `` style spellings).
 <!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new

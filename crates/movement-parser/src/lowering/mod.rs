@@ -960,7 +960,12 @@ impl Lowering {
             return Ok((self.sort(&values, ctx)?, consumed));
         }
         let lowered = values.iter().map(|v| self.lower(v, ctx)).collect::<Lowered<Vec<_>>>()?;
-        Ok((self.builtin(&upper, lowered)?, consumed))
+        let mut built = self.builtin(&upper, lowered)?;
+        if let (Expression::Aggregate { fn_: AggregationFunction::Only, written, .. }, Some(first)) = (&mut built, values.first()) {
+            let at = first.at();
+            *written = Some(self.slice(at.start, at.end));
+        }
+        Ok((built, consumed))
     }
 
     fn builtin(&self, upper: &str, mut args: Vec<Expression>) -> Lowered<Expression> {
@@ -974,6 +979,7 @@ impl Lowering {
                 prompt: None,
                 order_by: None,
                 order_direction: None,
+                written: None,
             });
         }
         match upper {
@@ -1050,6 +1056,7 @@ impl Lowering {
             prompt: None,
             order_by,
             order_direction: Some(direction.unwrap_or(OrderDirection::Asc)),
+            written: None,
         })
     }
 
