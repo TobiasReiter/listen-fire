@@ -1,0 +1,2951 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`all and race in the Rust engine fails with the earliest arm’s failure once every arm has stopped 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 3,
+        "root": "all",
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "kept",
+    },
+  ],
+  "error": "MovementEngineError: MOVENG_ERROR: second",
+  "events": [],
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 3,
+      "root": "all",
+    },
+  ],
+  "wakes": [],
+}
+`;
+
+exports[`all and race in the Rust engine parks a race all of whose arms wait, as a join of one 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b0.s0",
+        "wakeAt": "2026-01-31T00:00:00.000Z",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-02T00:00:00.000Z",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`all and race in the Rust engine parks an \`all\` whose arms sleep, keeping the finished arm’s slot at the frame 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "all",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.b0",
+        "branchIndex": 0,
+        "exports": {
+          "#return": {
+            "kind": "value",
+            "provenance": {
+              "direct": {
+                "kind": "literal",
+                "span": {
+                  "end": {
+                    "col": 25,
+                    "line": 7,
+                  },
+                  "start": {
+                    "col": 20,
+                    "line": 7,
+                  },
+                },
+              },
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 25,
+                      "line": 7,
+                    },
+                    "start": {
+                      "col": 20,
+                      "line": 7,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": "now",
+          },
+        },
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "all",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`all and race in the Rust engine runs an \`all\`’s arms and binds its receipt, slot by arm 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 3,
+        "root": "all",
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "arm 0",
+    },
+    {
+      "body": "arm 1",
+    },
+    {
+      "payload": {
+        "first": 1,
+        "none": null,
+        "r": [
+          1,
+          2,
+          null,
+        ],
+      },
+    },
+  ],
+  "events": [],
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 3,
+      "root": "all",
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "arm 0",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "arm 1",
+      },
+    },
+    {
+      "externalId": "note-3",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "first": 1,
+          "none": null,
+          "r": [
+            1,
+            2,
+            null,
+          ],
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`all and race in the Rust engine runs named closures as arms 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "all",
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "7 8",
+    },
+  ],
+  "events": [],
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "all",
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "7 8",
+      },
+    },
+  ],
+}
+`;
+
+exports[`all and race in the Rust engine settles a race on every arm that finished, a null slot for the rest 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "first/second",
+    },
+  ],
+  "events": [],
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "first/second",
+      },
+    },
+  ],
+}
+`;
+
+exports[`all and race in the Rust engine stops listening on the arms still parked once one finishes 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "r": [
+          null,
+          2,
+        ],
+      },
+    },
+  ],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b0.s0",
+        "wakeAt": "2026-01-02T00:00:00.000Z",
+      },
+    ],
+    [
+      "cancelSubtrees",
+      {
+        "subtreeAddresses": [
+          "s0.b0",
+        ],
+      },
+    ],
+  ],
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "r": [
+            null,
+            2,
+          ],
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a positions and resumes it 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "graph-[n:note]->",
+      },
+    ],
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s1",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "graph-[n:note]->",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a positions and resumes it 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "n": 2,
+      },
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "n": 2,
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a recordValue and resumes it 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s2",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s2",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a recordValue and resumes it 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "b": "a",
+        "n": 2,
+      },
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "b": "a",
+          "n": 2,
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a shapePosition and resumes it 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "mint",
+      {
+        "address": "s0",
+        "params": [
+          {
+            "name": "note",
+            "type": "text",
+          },
+        ],
+        "singleUse": true,
+      },
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s2",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s2",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a shapePosition and resumes it 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "b": "yes",
+      },
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "b": "yes",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a sourcePosition and resumes it 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s1",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`binding kinds parked and resumed parks a sourcePosition and resumes it 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "b": "a",
+      },
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "b": "a",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed defers a race’s settlement under a batch resume, then settles it once 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b0.s0",
+        "wakeAt": "2026-01-31T00:00:00.000Z",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-02T00:00:00.000Z",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed defers a race’s settlement under a batch resume, then settles it once 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b0.s0",
+        "wakeAt": "2026-01-31T00:00:00.000Z",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-02T00:00:00.000Z",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed defers a race’s settlement under a batch resume, then settles it once 3`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [],
+  "deferredRaceFrames": [
+    "s0",
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.b0",
+        "branchIndex": 0,
+        "exports": {
+          "#return": {
+            "kind": "value",
+            "provenance": {
+              "direct": {
+                "kind": "literal",
+                "span": {
+                  "end": {
+                    "col": 17,
+                    "line": 9,
+                  },
+                  "start": {
+                    "col": 14,
+                    "line": 9,
+                  },
+                },
+              },
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 17,
+                      "line": 9,
+                    },
+                    "start": {
+                      "col": 14,
+                      "line": 9,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": "a",
+          },
+        },
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.b0",
+        "frameAddress": "s0",
+        "leafAddress": "s0.b0.s0",
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed defers a race’s settlement under a batch resume, then settles it once 4`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "r": [
+          "a",
+          null,
+        ],
+      },
+    },
+  ],
+  "events": [
+    [
+      "collectBranchExports",
+      {
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "cancelSubtrees",
+      {
+        "subtreeAddresses": [
+          "s0.b0",
+          "s0.b1",
+        ],
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "r": [
+            "a",
+            null,
+          ],
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed goes on past a landing that has landed, and past one settled empty 1`] = `
+{
+  "appends": [],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [
+    {
+      "Prompt": "q",
+    },
+    {
+      "body": "after",
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "Check",
+      "writtenValues": {
+        "Prompt": "q",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "after",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed goes on past a landing that has landed, and past one settled empty 2`] = `
+{
+  "appends": [],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [
+    {
+      "Prompt": "q",
+    },
+    {
+      "body": "after",
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "Check",
+      "writtenValues": {
+        "Prompt": "q",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "after",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed parks an await on a landing still pending, under the key the adapter names 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [
+    {
+      "Prompt": "q",
+    },
+  ],
+  "events": [
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "kg",
+        "address": "s1",
+        "correlationKey": "ck:note-1",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "Check",
+      "writtenValues": {
+        "Prompt": "q",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed re-enters a parked landing await: landed, it goes on; still pending, it parks again 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [
+    {
+      "Prompt": "q",
+    },
+  ],
+  "events": [
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "kg",
+        "address": "s1",
+        "correlationKey": "ck:note-1",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "Check",
+      "writtenValues": {
+        "Prompt": "q",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed re-enters a parked landing await: landed, it goes on; still pending, it parks again 2`] = `
+{
+  "appends": [],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [
+    {
+      "body": "after",
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "after",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed re-enters a parked landing await: landed, it goes on; still pending, it parks again 3`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [
+    {
+      "Prompt": "q",
+    },
+  ],
+  "events": [
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "kg",
+        "address": "s1",
+        "correlationKey": "ck:note-1",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "Check",
+      "writtenValues": {
+        "Prompt": "q",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed re-enters a parked landing await: landed, it goes on; still pending, it parks again 4`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+    {
+      "edge": "Response",
+      "headData": {},
+      "recordId": "note-1",
+    },
+  ],
+  "bodies": [],
+  "events": [
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "kg",
+        "address": "s1",
+        "correlationKey": "ck:note-1",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed re-enters an await on a callback once it has been called 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "mint",
+      {
+        "address": "s0",
+        "params": [],
+        "singleUse": true,
+      },
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "callback",
+        "address": "s1",
+        "correlationKey": "cb_1",
+      },
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed re-enters an await on a callback once it has been called 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "continued",
+    },
+  ],
+  "events": [
+    [
+      "calls",
+      "cb_1",
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "continued",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed re-enters an until that still does not hold, and parks it again 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s2",
+        "wakeAt": "2026-01-01T02:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s2",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed re-enters an until that still does not hold, and parks it again 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s2",
+        "wakeAt": "2026-01-01T02:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s2",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed resumes a block’s parked iterations, the last closing the join 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "graph-[n:note]->",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.i0.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.i1.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 2,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "graph-[n:note]->",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed resumes a block’s parked iterations, the last closing the join 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "after a",
+    },
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.i0",
+        "branchIndex": 0,
+        "exports": {},
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.i0",
+        "frameAddress": "s0",
+        "leafAddress": "s0.i0.s0",
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "after a",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed resumes a block’s parked iterations, the last closing the join 3`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "after b",
+    },
+    {
+      "body": "done",
+    },
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.i1",
+        "branchIndex": 1,
+        "exports": {},
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.i1",
+        "frameAddress": "s0",
+        "leafAddress": "s0.i1.s0",
+      },
+    ],
+    [
+      "collectBranchExports",
+      {
+        "frameAddress": "s0",
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "after b",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "done",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed resumes a collection op’s parked members, in member order 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.c0.i0.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.c0",
+        "branchIndex": -1,
+        "exports": {
+          "init": {
+            "kind": "value",
+            "provenance": {
+              "origins": [],
+            },
+            "value": null,
+          },
+          "source": {
+            "kind": "value",
+            "provenance": {
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 22,
+                      "line": 6,
+                    },
+                    "start": {
+                      "col": 12,
+                      "line": 6,
+                    },
+                  },
+                },
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 22,
+                      "line": 6,
+                    },
+                    "start": {
+                      "col": 12,
+                      "line": 6,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": [
+              "a",
+              "b",
+            ],
+          },
+        },
+        "frameAddress": "s0.c0",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0.c0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0.c0",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed resumes a collection op’s parked members, in member order 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.c0.i0.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.c0",
+        "branchIndex": -1,
+        "exports": {
+          "init": {
+            "kind": "value",
+            "provenance": {
+              "origins": [],
+            },
+            "value": null,
+          },
+          "source": {
+            "kind": "value",
+            "provenance": {
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 22,
+                      "line": 6,
+                    },
+                    "start": {
+                      "col": 12,
+                      "line": 6,
+                    },
+                  },
+                },
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 22,
+                      "line": 6,
+                    },
+                    "start": {
+                      "col": 12,
+                      "line": 6,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": [
+              "a",
+              "b",
+            ],
+          },
+        },
+        "frameAddress": "s0.c0",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0.c0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0.c0",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed resumes a collection op’s parked members, in member order 3`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "member",
+    },
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.c0.i0",
+        "branchIndex": 0,
+        "exports": {
+          "answer": {
+            "kind": "value",
+            "provenance": {
+              "origins": [],
+            },
+            "value": "A",
+          },
+          "kept": true,
+        },
+        "frameAddress": "s0.c0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.c0.i0",
+        "frameAddress": "s0.c0",
+        "leafAddress": "s0.c0.i0.s0",
+      },
+    ],
+    [
+      "collectBranchExports",
+      {
+        "frameAddress": "s0.c0",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.c0.i1.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.c0",
+        "branchIndex": -1,
+        "exports": {
+          "init": {
+            "kind": "value",
+            "provenance": {
+              "origins": [],
+            },
+            "value": null,
+          },
+          "source": {
+            "kind": "value",
+            "provenance": {
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 22,
+                      "line": 6,
+                    },
+                    "start": {
+                      "col": 12,
+                      "line": 6,
+                    },
+                  },
+                },
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 22,
+                      "line": 6,
+                    },
+                    "start": {
+                      "col": 12,
+                      "line": 6,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": [
+              "a",
+              "b",
+            ],
+          },
+        },
+        "frameAddress": "s0.c0",
+      },
+    ],
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.c0.i0",
+        "branchIndex": 0,
+        "exports": {
+          "answer": {
+            "kind": "value",
+            "provenance": {
+              "origins": [],
+            },
+            "value": "A",
+          },
+          "kept": true,
+        },
+        "frameAddress": "s0.c0",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0.c0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0.c0",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "member",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed resumes a park inside a callee through its call frame 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.c0.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0.c0.s0",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed resumes a park inside a callee through its call frame 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "hi",
+    },
+    {
+      "body": "after",
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "hi",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "after",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed resumes an \`all\`’s parked arm, closing the join with the finished arm’s slot 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "all",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-01T01:00:00.000Z",
+      },
+    ],
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.b0",
+        "branchIndex": 0,
+        "exports": {
+          "#return": {
+            "kind": "value",
+            "provenance": {
+              "direct": {
+                "kind": "literal",
+                "span": {
+                  "end": {
+                    "col": 25,
+                    "line": 7,
+                  },
+                  "start": {
+                    "col": 20,
+                    "line": 7,
+                  },
+                },
+              },
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 25,
+                      "line": 7,
+                    },
+                    "start": {
+                      "col": 20,
+                      "line": 7,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": "now",
+          },
+        },
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "all",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed resumes an \`all\`’s parked arm, closing the join with the finished arm’s slot 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "r": [
+          "now",
+          "later",
+        ],
+      },
+    },
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.b1",
+        "branchIndex": 1,
+        "exports": {
+          "#return": {
+            "kind": "value",
+            "provenance": {
+              "direct": {
+                "kind": "literal",
+                "span": {
+                  "end": {
+                    "col": 21,
+                    "line": 10,
+                  },
+                  "start": {
+                    "col": 14,
+                    "line": 10,
+                  },
+                },
+              },
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 21,
+                      "line": 10,
+                    },
+                    "start": {
+                      "col": 14,
+                      "line": 10,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": "later",
+          },
+        },
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.b1",
+        "frameAddress": "s0",
+        "leafAddress": "s0.b1.s0",
+      },
+    ],
+    [
+      "collectBranchExports",
+      {
+        "frameAddress": "s0",
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "r": [
+            "now",
+            "later",
+          ],
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed runs a fired callback’s body from the state it captured 1`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "mint",
+      {
+        "address": "s1",
+        "params": [
+          {
+            "name": "note",
+            "type": "text",
+          },
+        ],
+        "singleUse": true,
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed runs a fired callback’s body from the state it captured 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "hello: yes",
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "hello: yes",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed settles a race on the arm that woke, cancelling the other 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b0.s0",
+        "wakeAt": "2026-01-31T00:00:00.000Z",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-02T00:00:00.000Z",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed settles a race on the arm that woke, cancelling the other 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "race",
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b0.s0",
+        "wakeAt": "2026-01-31T00:00:00.000Z",
+      },
+    ],
+    [
+      "commitTimerPark",
+      {
+        "address": "s0.b1.s0",
+        "wakeAt": "2026-01-02T00:00:00.000Z",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "race",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed settles a race on the arm that woke, cancelling the other 3`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "r": [
+          "a",
+          null,
+        ],
+      },
+    },
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.b0",
+        "branchIndex": 0,
+        "exports": {
+          "#return": {
+            "kind": "value",
+            "provenance": {
+              "direct": {
+                "kind": "literal",
+                "span": {
+                  "end": {
+                    "col": 17,
+                    "line": 9,
+                  },
+                  "start": {
+                    "col": 14,
+                    "line": 9,
+                  },
+                },
+              },
+              "origins": [
+                {
+                  "kind": "literal",
+                  "span": {
+                    "end": {
+                      "col": 17,
+                      "line": 9,
+                    },
+                    "start": {
+                      "col": 14,
+                      "line": 9,
+                    },
+                  },
+                },
+              ],
+            },
+            "value": "a",
+          },
+        },
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.b0",
+        "frameAddress": "s0",
+        "leafAddress": "s0.b0.s0",
+      },
+    ],
+    [
+      "collectBranchExports",
+      {
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "cancelSubtrees",
+      {
+        "excludeLeaf": "s0.b0.s0",
+        "subtreeAddresses": [
+          "s0.b0",
+          "s0.b1",
+        ],
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "r": [
+            "a",
+            null,
+          ],
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed suspends inside a block’s iteration, and re-enters it there 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "graph-[n:note]->",
+      },
+    ],
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "a",
+    },
+  ],
+  "events": [
+    [
+      "commitSuspension",
+      {
+        "address": "s0.i1.s0",
+      },
+    ],
+    [
+      "recordJoin",
+      {
+        "frameAddress": "s0",
+        "parkedChildren": 1,
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0",
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 2,
+      "root": "graph-[n:note]->",
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "a",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed suspends inside a block’s iteration, and re-enters it there 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "b",
+    },
+    {
+      "body": "done",
+    },
+  ],
+  "events": [
+    [
+      "persistBranchExport",
+      {
+        "branchAddress": "s0.i1",
+        "branchIndex": 1,
+        "exports": {},
+        "frameAddress": "s0",
+      },
+    ],
+    [
+      "decrementJoin",
+      {
+        "branchAddress": "s0.i1",
+        "frameAddress": "s0",
+        "leafAddress": "s0.i1.s0",
+      },
+    ],
+    [
+      "collectBranchExports",
+      {
+        "frameAddress": "s0",
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "b",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "done",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed suspends inside a callee past its statement’s first call: the call frame keeps that call, and the re-entry replays it 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "a",
+    },
+    {
+      "body": "A",
+    },
+  ],
+  "events": [
+    [
+      "commitSuspension",
+      {
+        "address": "s0.c0.s1",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s0.c0.s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "a",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "A",
+      },
+    },
+  ],
+}
+`;
+
+exports[`parks resumed suspends inside a callee past its statement’s first call: the call frame keeps that call, and the re-entry replays it 2`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "end",
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "end",
+      },
+    },
+  ],
+}
+`;
+
+exports[`until and callbacks in the Rust engine goes on past an until whose condition holds, and parks on one that does not 1`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "payload": {
+        "ok": true,
+      },
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "ok": true,
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`until and callbacks in the Rust engine goes on past an until whose condition holds, and parks on one that does not 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "commitTimerPark",
+      {
+        "address": "s2",
+        "wakeAt": "2026-01-01T02:00:00.000Z",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s2",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`until and callbacks in the Rust engine mints a callback with its captured scope, and reads its id and url 1`] = `
+{
+  "appends": [],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "cb_1",
+      "payload": {
+        "url": "https://api.test/api/cb/cb_2",
+      },
+    },
+  ],
+  "events": [
+    [
+      "mint",
+      {
+        "address": "s1",
+        "params": [
+          {
+            "name": "note",
+            "type": "text",
+          },
+        ],
+        "singleUse": true,
+      },
+    ],
+    [
+      "mint",
+      {
+        "address": "s2",
+        "expiresAt": "2026-01-03T00:00:00.000Z",
+        "params": [],
+        "singleUse": false,
+      },
+    ],
+  ],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "cb_1",
+        "payload": {
+          "url": "https://api.test/api/cb/cb_2",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`until and callbacks in the Rust engine reads the calls so far as a block head, and awaits the next 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "block",
+        "positions": 1,
+        "root": "cb-[c:Called]->",
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [
+    {
+      "body": "yes at 2026-10-05T10:00:00.000Z",
+    },
+    {
+      "body": "yes",
+    },
+  ],
+  "events": [
+    [
+      "mint",
+      {
+        "address": "s0",
+        "params": [
+          {
+            "name": "note",
+            "type": "text",
+          },
+        ],
+        "singleUse": true,
+      },
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+  ],
+  "trace": [
+    {
+      "kind": "block",
+      "positions": 1,
+      "root": "cb-[c:Called]->",
+    },
+  ],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "yes at 2026-10-05T10:00:00.000Z",
+      },
+    },
+    {
+      "externalId": "note-2",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "body": "yes",
+      },
+    },
+  ],
+}
+`;
+
+exports[`until and callbacks in the Rust engine reads the calls so far as a block head, and awaits the next 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [],
+  "bodies": [],
+  "events": [
+    [
+      "mint",
+      {
+        "address": "s0",
+        "params": [],
+        "singleUse": true,
+      },
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "callback",
+        "address": "s1",
+        "correlationKey": "cb_1",
+      },
+    ],
+    [
+      "calls",
+      "cb_1",
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;

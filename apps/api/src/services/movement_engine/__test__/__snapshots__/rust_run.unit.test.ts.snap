@@ -1,0 +1,2698 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`IS <Decl> of a record a system describes takes the arm the declaration’s fit decides: the event, a second name of it 1`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_RUNTIME: can't tell what kind of record 'msg' is — the event arrived without a discriminated kind, so the trigger never said which one it was. An 'IS' test needs a record whose kind is known, so this run stopped rather than pick a branch that might be wrong",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;
+
+exports[`IS <Decl> of a record a system describes takes the arm the declaration’s fit decides: the event, a second name of it 2`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_RUNTIME: can't tell what kind of record 'm3' is — the event arrived without a discriminated kind, so the trigger never said which one it was. An 'IS' test needs a record whose kind is known, so this run stopped rather than pick a branch that might be wrong",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;
+
+exports[`IS <Decl> of a record a system describes takes the arm the declaration’s fit decides: the event, a second name of it 3`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_RUNTIME: can't tell what kind of record 'msg' is — the event arrived without a discriminated kind, so the trigger never said which one it was. An 'IS' test needs a record whose kind is known, so this run stopped rather than pick a branch that might be wrong",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;
+
+exports[`a helper the entry calls runs a reached helper the entry calls 1`] = `
+{
+  "appends": [],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine awaits a read inside a function argument before the function 1`] = `
+{
+  "appends": [
+    [
+      {
+        "available": [
+          "subject",
+          "text",
+        ],
+        "binding": "inbox",
+        "field": "missing",
+        "kind": "field_miss",
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "  Big Deal ",
+              "text": "hi",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "missing",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "  Big Deal ",
+              "text": "hi",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "  Big Deal ",
+              "text": "hi",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "  Big Deal ",
+              "text": "hi",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "  Big Deal ",
+              "text": "hi",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "available": [
+          "subject",
+          "text",
+        ],
+        "binding": "inbox",
+        "field": "missing",
+        "kind": "field_miss",
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "available": [
+        "subject",
+        "text",
+      ],
+      "binding": "inbox",
+      "field": "missing",
+      "kind": "field_miss",
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine fails before the body, in it, and at the check 1`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_NOT_FOUND: no movement named 'nope' in this program",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine fails before the body, in it, and at the check 2`] = `
+{
+  "appends": [],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "x",
+              "text": "y",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "x",
+              "text": "y",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "causeClass": "AdapterCallFailed",
+  "error": "FakeAdapterError: no text today",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine fails before the body, in it, and at the check 3`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:
+  MOV_UNKNOWN_PROPERTY (line 6): inbox.message has no field 'nope' — it has: subject, text, missing, meta, a, b, c, d, e, f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19 — did you mean 'e'?",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine fails before the body, in it, and at the check 4`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_PARSE: '?...msg' fills only the fields that are still empty, and a graph literal starts empty — write '...msg' (line 6, col 15)",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine names a discriminated root by the adapter entry points, and reads it stamped 1`] = `
+{
+  "appends": [],
+  "calls": [
+    {
+      "method": "listEntryPoints",
+    },
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Hi",
+            },
+            "kind": "stable",
+            "recordId": "m-1",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine pins an offset-less firing instant as UTC, in any process zone 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "calls": [],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine pins an offset-less firing instant as UTC, in any process zone 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "calls": [],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads a date text with no offset as UTC, asking no host, in any process zone 1`] = `
+{
+  "appends": [],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "text": "2026-03-08T02:30",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "text": "2026-03-08T02:30",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "text": "2026-03-08T02:30",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_ERROR: 2026-03-08T02:30:00.000Z | true | 2026-03-08",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine reads a field of an object held in a value binding, null for an absent one 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "meta",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "meta": {
+                "label": "Follow up",
+                "n": 2,
+              },
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads only the arm a conditional takes, at any depth 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "a",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "b",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "c",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "a",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "b",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "c",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads only the arm a conditional takes, at any depth 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "a",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "b",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "d",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "a",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "b",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "e",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "d",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "A",
+              "b": "x",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads only the arm a conditional takes, at any depth 3`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "a",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "z",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "e",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "z",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "a",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "z",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "e",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "z",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "d",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "a": "z",
+              "b": "B",
+              "c": "C",
+              "d": "D",
+              "e": "E",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads the clock it was pinned to, in the zone it names 1`] = `
+{
+  "appends": [],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "text": "https://BÜCHER.de/x",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_ERROR: 2026-03-29 | 2026-03-28T06:00:00.000Z | 2026-03-29T05:00:00.000Z | xn--bcher-kva.de",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;
+
+exports[`a whole run in the Rust engine reads the event, binds, interpolates and branches 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "a big deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "a big deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "a big deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads the event, binds, interpolates and branches 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "available": [
+          "subject",
+          "text",
+        ],
+        "binding": "inbox",
+        "field": "missing",
+        "kind": "field_miss",
+      },
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "  quiet  ",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "  quiet  ",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "  quiet  ",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "missing",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "  quiet  ",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+      {
+        "available": [
+          "subject",
+          "text",
+        ],
+        "binding": "inbox",
+        "field": "missing",
+        "kind": "field_miss",
+      },
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+    {
+      "available": [
+        "subject",
+        "text",
+      ],
+      "binding": "inbox",
+      "field": "missing",
+      "kind": "field_miss",
+    },
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine reads twenty event fields in one expression, in order, one walk 1`] = `
+{
+  "appends": [
+    [
+      {
+        "available": [
+          "f0",
+          "f1",
+          "f2",
+          "f3",
+          "f4",
+          "f5",
+          "f6",
+          "f8",
+          "f9",
+          "f10",
+          "f11",
+          "f12",
+          "f13",
+          "f14",
+          "f15",
+          "f16",
+          "f17",
+          "f18",
+          "f19",
+        ],
+        "binding": "inbox",
+        "field": "f7",
+        "kind": "field_miss",
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "f0",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f1",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f2",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f3",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f4",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f5",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f6",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f7",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f8",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f9",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f10",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f11",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f12",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f13",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f14",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f15",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f16",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f17",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f18",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "f19",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "f0": "F0",
+              "f1": "F1",
+              "f10": "F10",
+              "f11": "F11",
+              "f12": "F12",
+              "f13": "F13",
+              "f14": "F14",
+              "f15": "F15",
+              "f16": "F16",
+              "f17": "F17",
+              "f18": "F18",
+              "f19": "F19",
+              "f2": "F2",
+              "f3": "F3",
+              "f4": "F4",
+              "f5": "F5",
+              "f6": "F6",
+              "f8": "F8",
+              "f9": "F9",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "available": [
+          "f0",
+          "f1",
+          "f2",
+          "f3",
+          "f4",
+          "f5",
+          "f6",
+          "f8",
+          "f9",
+          "f10",
+          "f11",
+          "f12",
+          "f13",
+          "f14",
+          "f15",
+          "f16",
+          "f17",
+          "f18",
+          "f19",
+        ],
+        "binding": "inbox",
+        "field": "f7",
+        "kind": "field_miss",
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "available": [
+        "f0",
+        "f1",
+        "f2",
+        "f3",
+        "f4",
+        "f5",
+        "f6",
+        "f8",
+        "f9",
+        "f10",
+        "f11",
+        "f12",
+        "f13",
+        "f14",
+        "f15",
+        "f16",
+        "f17",
+        "f18",
+        "f19",
+      ],
+      "binding": "inbox",
+      "field": "f7",
+      "kind": "field_miss",
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine stops at the cancel gate, keeping what it traced 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "cancelled": true,
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine stops at the cancel gate, keeping what it traced 2`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+              "text": "deal",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "cancelled": true,
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": true,
+    },
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+}
+`;
+
+exports[`a whole run in the Rust engine traces a field the payload does not carry, once per field 1`] = `
+{
+  "appends": [
+    [
+      {
+        "available": [
+          "10",
+          "zeta",
+          "text",
+          "alpha",
+        ],
+        "binding": "inbox",
+        "field": "missing",
+        "kind": "field_miss",
+      },
+    ],
+    [
+      {
+        "available": [
+          "10",
+          "zeta",
+          "text",
+          "alpha",
+        ],
+        "binding": "inbox",
+        "field": "subject",
+        "kind": "field_miss",
+      },
+    ],
+  ],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "missing",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "10": "ten",
+              "alpha": null,
+              "text": "hi",
+              "zeta": 1,
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "missing",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "10": "ten",
+              "alpha": null,
+              "text": "hi",
+              "zeta": 1,
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "text",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "10": "ten",
+              "alpha": null,
+              "text": "hi",
+              "zeta": 1,
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "10": "ten",
+              "alpha": null,
+              "text": "hi",
+              "zeta": 1,
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "available": [
+          "10",
+          "zeta",
+          "text",
+          "alpha",
+        ],
+        "binding": "inbox",
+        "field": "missing",
+        "kind": "field_miss",
+      },
+      {
+        "available": [
+          "10",
+          "zeta",
+          "text",
+          "alpha",
+        ],
+        "binding": "inbox",
+        "field": "subject",
+        "kind": "field_miss",
+      },
+    ],
+    "writes": [],
+  },
+  "trace": [
+    {
+      "available": [
+        "10",
+        "zeta",
+        "text",
+        "alpha",
+      ],
+      "binding": "inbox",
+      "field": "missing",
+      "kind": "field_miss",
+    },
+    {
+      "available": [
+        "10",
+        "zeta",
+        "text",
+        "alpha",
+      ],
+      "binding": "inbox",
+      "field": "subject",
+      "kind": "field_miss",
+    },
+  ],
+}
+`;
+
+exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 1`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_UNSUPPORTED: file-level extract expressions is not supported by the movement engine yet (extraction runs inside a movement body, where the event is in scope)",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 2`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:
+  MOV_IMPORT_UNKNOWN (line 5): Unknown plugin 'fetchUrl' in 'plugins'",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 3`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_UNSUPPORTED: file-level writes is not supported by the movement engine yet (writes run inside a movement body)",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 4`] = `
+{
+  "appends": [],
+  "calls": [
+    {
+      "input": {
+        "fieldId": "subject",
+        "position": {
+          "adapterType": "email",
+          "identity": {
+            "data": {
+              "subject": "Acme",
+            },
+            "kind": "unstable",
+          },
+          "recordType": "message",
+        },
+      },
+      "method": "getFieldValue",
+    },
+  ],
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "trace": [],
+}
+`;
+
+exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 5`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_RUNTIME: 'n' is not in scope — the checker should have caught this",
+  "errorClass": "MovementRunFailed",
+  "partial": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [],
+  },
+  "resolved": [
+    {
+      "adapterType": "email",
+      "credentialsId": "cred-dealflow_inbox",
+      "role": "source",
+      "segmentId": "test-segment-1",
+      "teamId": "00000000-0000-0000-0000-0000000000a1",
+    },
+  ],
+  "trace": [],
+}
+`;

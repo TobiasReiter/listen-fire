@@ -1,12 +1,13 @@
-// Awaits, `parallel` and `race` in the Rust engine, held to the TypeScript
-// engine: each program runs under MOVEMENT_ENGINE=ts and =rust against fakes
-// of its own, and the two must agree on everything a caller can see — the
+// Awaits, `all` and `race` in the Rust engine: each program runs on the Rust
+// engine (version 5) against fakes of its own. What a caller can see — the
 // result or the error, the trace (whole, and as each hand-over carried it),
 // the writes the adapter received, and every call the park sink and the
-// callback store received, in order, each state key for key.
+// callback store received, in order — is recorded as a snapshot (a park's
+// state is shown by its address only; rust_park_identity holds the states),
+// and the assertions beside each case say what it is for.
 
 import { spelledForVersion5 } from './combinator_spelling';
-import { fromCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf, type CallbackCall } from 'engine-contracts';
 
@@ -21,7 +22,7 @@ import type { CallbackSink } from 'movement-engine/services/movement_engine/host
 import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
 import { makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult, type ParkSink } from 'movement-engine/services/movement_engine/run';
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000c4');
@@ -213,9 +214,6 @@ function makeCallbacks(events: Events, ledger: Record<string, CallbackCall[]>, m
 
 interface Case {
   source: string;
-  /** The pin the run is under. Unpinned, a case compares under version 3
-   *  and under the current version (`agree`). */
-  languageVersion?: LanguageVersion;
   /** What the callback store's ledger holds, by callback id. */
   ledger?: Record<string, CallbackCall[]>;
   /** Resume this state rather than run. */
@@ -250,9 +248,7 @@ interface Outcome {
   awaited: unknown[];
 }
 
-async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+async function runOn(c: Case): Promise<Outcome> {
   const kg = makeKgFake(c.landing ?? 'pending');
   const events: Events = [];
   const sink = makeSink(events, c.rows);
@@ -261,14 +257,13 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const appends: MovementTraceEntry[][] = [];
   const wakes: unknown[] = [];
   const input = {
-    // Written once in the spelling versions 1–4 read; a version 5 run reads it as the upgrade tool respells it.
-    source: spelledFor(c.languageVersion ?? 5, c.source, fromCatalogSnapshot(catalog)),
+    // Written in the spelling versions 1–4 read; the run reads it as the upgrade tool respells it.
+    source: spelledFor(5, spelledForVersion5(c.source), fromCatalogSnapshot(catalog)),
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
     movementName: 'recap',
     firedAt: '2026-10-05T09:00:00.000Z',
-    ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
     ...(c.dryRun === true ? { dryRun: true } : {}),
     ...(c.suspendAt !== undefined ? { suspendAt: c.suspendAt } : {}),
     host: makeTestHost({
@@ -302,68 +297,51 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
     return { result, ...world() };
   } catch (error) {
     return { error: String(error), ...world() };
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
   }
 }
 
-/** The case on both engines: they agree, and the Rust run was the Rust
- *  engine's alone, routed whole. Unpinned, under version 3 and then under
- *  the current version, whose run is handed back: version 4 changed what a
- *  match's miss, a write handle's reads and `write h { … }` mean, and both
- *  engines run both. */
-async function agree(c: Case) {
-  if (c.languageVersion === undefined) await agreeUnder({ ...c, languageVersion: 3 });
-  const current = c.languageVersion === undefined || c.languageVersion >= 5;
-  return agreeUnder(current ? { ...c, source: spelledForVersion5(c.source) } : c);
-}
-
-/** A case written as versions before 5 (Dancing Wren) read it — `parallel`,
- *  retired from 5; a race over an untyped empty list, which 5 refuses — compares
- *  under version 3 and under version 4. */
-async function agreeThroughVersion4(c: Case) {
-  await agreeUnder({ ...c, languageVersion: 3 });
-  const four = await agreeUnder({ ...c, languageVersion: 4 });
-  // Arms written down are version 5's `all(…)` / `race(…)`, which both
-  // engines run the same too.
-  const v5 = spelledForVersion5(c.source);
-  if (!/await (parallel|race)\(/.test(v5)) await agreeUnder({ ...c, source: v5, languageVersion: 5 });
-  return four;
-}
-
-async function agreeUnder(c: Case) {
-  const ts = await runOn('ts', c);
-  resetRustEvalStats();
-  resetRustRunStats();
-  const rust = await runOn('rust', c);
-  if (rustRunStats.ranWhole !== 1) expect({ ts: ts.error, rust: rust.error, stats: rustRunStats }).toEqual({});
-  expect({ notAdmitted: rustRunStats.notAdmitted, declined: rustRunStats.declined, ranWhole: rustRunStats.ranWhole }).toEqual({
-    notAdmitted: {},
-    declined: {},
-    ranWhole: 1,
+/** What a snapshot shows of a run: the writes without their provenance, and
+ *  the sink's calls with a park's state left out. */
+function observed(o: Outcome) {
+  const events = o.events.map(([method, input]) => {
+    // A callback store's `calls` is noted as the bare id, not JSON.
+    if (method === 'calls') return [method, input];
+    const { state: _state, ...rest } = JSON.parse(input) as Record<string, unknown>;
+    return [method, rest];
   });
-  expect(rust.error).toBe(ts.error);
-  expect(JSON.stringify(rust.result?.writes)).toBe(JSON.stringify(ts.result?.writes));
-  expect(rust.result?.parkedAddress).toBe(ts.result?.parkedAddress);
-  expect(rust.result?.parked).toBe(ts.result?.parked);
-  expect(rust.result?.deferredRaceFrames).toEqual(ts.result?.deferredRaceFrames);
-  expect(rust.result?.cancelled).toBe(ts.result?.cancelled);
-  expect(rust.trace).toEqual(ts.trace);
-  expect(rust.appends).toEqual(ts.appends);
-  // Key for key, in order.
-  expect(rust.events).toEqual(ts.events);
-  expect(rust.wakes).toEqual(ts.wakes);
-  expect(rust.bodies).toEqual(ts.bodies);
-  expect(rust.awaited).toEqual(ts.awaited);
-  return { ts, rust };
+  return JSON.parse(
+    JSON.stringify({
+      error: o.error,
+      writes: o.result?.writes.map((w) => ({ recordType: w.recordType, outcome: w.outcome, externalId: w.externalId, writtenValues: w.writtenValues })),
+      parkedAddress: o.result?.parkedAddress,
+      parked: o.result?.parked,
+      deferredRaceFrames: o.result?.deferredRaceFrames,
+      cancelled: o.result?.cancelled,
+      trace: o.trace,
+      appends: o.appends,
+      events,
+      wakes: o.wakes,
+      bodies: o.bodies,
+      awaited: o.awaited,
+    }),
+  ) as unknown;
+}
+
+/** The case on the Rust engine: it ran the segment whole, refusing nothing. */
+async function run(c: Case): Promise<Outcome> {
+  resetRustRunStats();
+  const outcome = await runOn(c);
+  if (rustRunStats.segments !== 1) expect({ error: outcome.error, stats: rustRunStats }).toEqual({});
+  expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
+  expect(observed(outcome)).toMatchSnapshot();
+  return outcome;
 }
 
 const bodies = (o: Outcome): unknown[] => o.bodies.map((b) => (b as { body?: unknown }).body);
 
-describe('parallel and race in the Rust engine', () => {
-  it('runs a parallel’s arms and binds its receipt, slot by arm', async () => {
-    const { rust } = await agreeThroughVersion4({
+describe('all and race in the Rust engine', () => {
+  it('runs an `all`’s arms and binds its receipt, slot by arm', async () => {
+    const rust = await run({
       source: program(
         [
           '  r = await parallel([',
@@ -385,7 +363,7 @@ describe('parallel and race in the Rust engine', () => {
   });
 
   it('settles a race on every arm that finished, a null slot for the rest', async () => {
-    await agree({
+    await run({
       source: program(
         [
           '  r = await race([',
@@ -398,34 +376,22 @@ describe('parallel and race in the Rust engine', () => {
     });
   });
 
-  it('binds an empty receipt for a parallel over nothing, and fails a race over nothing', async () => {
-    await agreeThroughVersion4({ source: program('  arms = []\n  r = await parallel(arms)\n  write graph-[:note]-> { payload: { n: COUNT(r) } }') });
-    const { rust } = await agreeThroughVersion4({ source: program('  arms = []\n  r = await race(arms)') });
-    expect(rust.error).toContain('a race over no arms can never settle');
-  });
-
-  it('runs arms built at run time, and named closures as arms', async () => {
-    await agreeThroughVersion4({
+  it('runs named closures as arms', async () => {
+    const rust = await run({
       source: program(
         [
-          '  arms = MAP([1, 2], (n) => {',
-          '    return () => {',
-          '      write graph-[:note]-> { body: "arm ${n}" }',
-          '      return n * 5',
-          '    }',
-          '  })',
-          '  r = await parallel(arms)',
           '  base = 7',
           '  f = () => { return base }',
           '  s = await parallel([f, () => { return base + 1 }])',
-          '  write graph-[:note]-> { body: "${AT(r, 0)} ${AT(r, 1)} ${AT(s, 0)} ${AT(s, 1)}" }',
+          '  write graph-[:note]-> { body: "${AT(s, 0)} ${AT(s, 1)}" }',
         ].join('\n'),
       ),
     });
+    expect(bodies(rust)).toEqual(['7 8']);
   });
 
   it('fails with the earliest arm’s failure once every arm has stopped', async () => {
-    const { rust } = await agreeThroughVersion4({
+    const rust = await run({
       source: program(
         [
           '  r = await parallel([',
@@ -439,8 +405,8 @@ describe('parallel and race in the Rust engine', () => {
     expect(rust.error).toContain('second');
   });
 
-  it('parks a parallel whose arms sleep, keeping the finished arm’s slot at the frame', async () => {
-    const { rust } = await agreeThroughVersion4({
+  it('parks an `all` whose arms sleep, keeping the finished arm’s slot at the frame', async () => {
+    const rust = await run({
       source: program(
         [
           '  r = await parallel([',
@@ -459,7 +425,7 @@ describe('parallel and race in the Rust engine', () => {
   });
 
   it('parks a race all of whose arms wait, as a join of one', async () => {
-    const { rust } = await agree({
+    const rust = await run({
       source: program(
         [
           '  r = await race([',
@@ -476,7 +442,7 @@ describe('parallel and race in the Rust engine', () => {
   });
 
   it('stops listening on the arms still parked once one finishes', async () => {
-    await agree({
+    await run({
       source: program(
         [
           '  r = await race([',
@@ -492,15 +458,15 @@ describe('parallel and race in the Rust engine', () => {
 
 describe('until and callbacks in the Rust engine', () => {
   it('goes on past an until whose condition holds, and parks on one that does not', async () => {
-    await agree({ source: program('  ok = await until(1 == 1)\n  write graph-[:note]-> { payload: { ok: ok } }') });
-    const { rust } = await agree({
+    await run({ source: program('  ok = await until(1 == 1)\n  write graph-[:note]-> { payload: { ok: ok } }') });
+    const rust = await run({
       source: program('  subject = "wait"\n  ready = () => {\n    return subject == "go"\n  }\n  await until(ready, every: 2h)\n  write graph-[:note]-> { body: subject }'),
     });
     expect(rust.result?.parkedAddress).toBe('s2');
   });
 
   it('mints a callback with its captured scope, and reads its id and url', async () => {
-    const { rust } = await agree({
+    const rust = await run({
       source: program(
         [
           '  greeting = "hello"',
@@ -515,7 +481,7 @@ describe('until and callbacks in the Rust engine', () => {
 
   it('reads the calls so far as a block head, and awaits the next', async () => {
     const ledger = { cb_1: [{ at: '2026-10-05T10:00:00.000Z', values: { note: 'yes' } }] };
-    await agree({
+    await run({
       source: program(
         [
           '  cb = callback((note: <text>) => { write graph-[:note]-> { body: note } })',
@@ -528,7 +494,7 @@ describe('until and callbacks in the Rust engine', () => {
       ),
       ledger,
     });
-    const { rust } = await agree({
+    const rust = await run({
       source: program('  cb = callback()\n  c = await FIRST(cb-[:Called]->)\n  write graph-[:note]-> { body: "continued" }'),
     });
     expect(rust.result?.parkedAddress).toBe('s1');
@@ -543,37 +509,20 @@ function parkAt(o: Outcome, address?: string): ParkedScopeState {
   return found.state;
 }
 
-/** A case parked on both engines, which agree (every state key for key,
- *  as the sink received it); then each engine's states resumed on both,
- *  step by step, each step from the sink rows the step before left.
- *  Unpinned, the whole chain runs under version 3 and then under the
- *  current version, whose chain is handed back: a park is resumed under the
- *  pin it was written under, as a run's is (its code rides in it as written). */
+/** A case parked, then each step's case run from the sink rows the step
+ *  before left. A park is resumed under the pin it was written under, as a
+ *  run's is (its code rides in it as written). */
 async function parkThenResume(c: Case, steps: Array<(previous: Outcome) => Case>) {
-  if (c.languageVersion === undefined) {
-    await parkThenResume({ ...c, languageVersion: 3 }, steps);
-    return parkThenResume({ ...c, languageVersion: 5 }, steps);
-  }
-  const pinned = c.languageVersion;
-  return parkThenResumeUnder(c, steps.map((step) => (previous: Outcome) => ({ languageVersion: pinned, ...step(previous) })));
-}
-
-async function parkThenResumeUnder(c: Case, steps: Array<(previous: Outcome) => Case>) {
-  const parked = await agree(c);
-  expect(JSON.stringify([...parked.rust.parks.entries()])).toBe(JSON.stringify([...parked.ts.parks.entries()]));
-  const last: Outcome[] = [];
-  for (const origin of [parked.ts, parked.rust]) {
-    let previous = origin;
-    for (const step of steps) {
-      const next = step(previous);
-      ({ ts: previous } = await agree({ ...next, rows: next.rows ?? previous.rows }));
-    }
-    last.push(previous);
+  const parked = await run(c);
+  let last = parked;
+  for (const step of steps) {
+    const next = step(last);
+    last = await run({ ...next, rows: next.rows ?? last.rows });
   }
   return { parked, last };
 }
 
-describe('parks resumed across the engines', () => {
+describe('parks resumed', () => {
   it('resumes a block’s parked iterations, the last closing the join', async () => {
     const source = program(
       ['  graph-[n:note]-> {', '    await sleep(1h)', '    write graph-[:note]-> { body: "after ${n.`body`}" }', '  }', '  write graph-[:note]-> { body: "done" }'].join('\n'),
@@ -582,34 +531,33 @@ describe('parks resumed across the engines', () => {
       (p) => ({ source, resume: parkAt(p, 's0.i0.s0') }),
       (p) => ({ source, resume: parkAt(p, 's0.i1.s0') }),
     ]);
-    expect(parked.ts.events.map(([method]) => method)).toContain('recordJoin');
-    for (const o of last) expect(bodies(o)).toEqual(['after b', 'done']);
+    expect(parked.events.map(([method]) => method)).toContain('recordJoin');
+    expect(bodies(last)).toEqual(['after b', 'done']);
   });
 
   it('resumes a park inside a callee through its call frame', async () => {
     const callee = 'movement wait(t: <text>) {\n  await sleep(1h)\n  write graph-[:note]-> { body: t }\n}\n';
     const source = program('  wait(t: "hi")\n  write graph-[:note]-> { body: "after" }', callee);
     const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p) })]);
-    for (const o of last) expect(bodies(o)).toEqual(['hi', 'after']);
+    expect(bodies(last)).toEqual(['hi', 'after']);
   });
 
   it('resumes a collection op’s parked members, in member order', async () => {
     const source = program(
       ['  xs = MAP(["a", "b"], (v) => {', '    await sleep(1h)', '    write graph-[:note]-> { body: "member" }', '    return UPPER(v)', '  })', '  write graph-[:note]-> { body: "done" }'].join('\n'),
     );
-    const parked = await agree({ source });
-    const addresses = [...parked.ts.parks.keys()];
+    const parked = await run({ source });
+    const addresses = [...parked.parks.keys()];
     expect(addresses.length).toBeGreaterThan(0);
     await parkThenResume({ source }, addresses.map((address) => (p: Outcome) => ({ source, resume: parkAt(p, address) })));
   });
 
-  it('resumes a parallel’s parked arm, closing the join with the finished arm’s slot', async () => {
+  it('resumes an `all`’s parked arm, closing the join with the finished arm’s slot', async () => {
     const source = program(
       ['  r = await parallel([', '    () => { return "now" },', '    () => {', '      await sleep(1h)', '      return "later"', '    },', '  ])', '  write graph-[:note]-> { payload: { r: r } }'].join('\n'),
     );
-    // `parallel` is retired from version 5: version 4 is the last that has it.
-    const { last } = await parkThenResume({ source, languageVersion: 4 }, [(p) => ({ source, languageVersion: 4, resume: parkAt(p) })]);
-    for (const o of last) expect(o.events.map(([method]) => method)).toContain('collectBranchExports');
+    const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p) })]);
+    expect(last.events.map(([method]) => method)).toContain('collectBranchExports');
   });
 
   const RACE = program(
@@ -617,15 +565,15 @@ describe('parks resumed across the engines', () => {
   );
 
   it('settles a race on the arm that woke, cancelling the other', async () => {
-    const parked = await agree({ source: RACE });
-    const [first] = [...parked.ts.parks.keys()];
+    const parked = await run({ source: RACE });
+    const [first] = [...parked.parks.keys()];
     const { last } = await parkThenResume({ source: RACE }, [(p) => ({ source: RACE, resume: parkAt(p, first) })]);
-    for (const o of last) expect(o.events.map(([method]) => method)).toContain('cancelSubtrees');
+    expect(last.events.map(([method]) => method)).toContain('cancelSubtrees');
   });
 
   it('defers a race’s settlement under a batch resume, then settles it once', async () => {
-    const parked = await agree({ source: RACE });
-    const [first] = [...parked.ts.parks.keys()];
+    const parked = await run({ source: RACE });
+    const [first] = [...parked.parks.keys()];
     const { last } = await parkThenResume({ source: RACE }, [
       (p) => ({ source: RACE, resume: parkAt(p, first), deferRaceSettlement: true }),
       (p) => {
@@ -635,18 +583,9 @@ describe('parks resumed across the engines', () => {
         return { source: RACE, resume: parkAt(p, first), settle: 's0' };
       },
     ]);
-    // The TypeScript engine's settlement is put to the dry run, by its route.
-    resetRustRunStats();
-    // Unpinned is the current version, which spells the race with its arms as arguments.
-    await runOn('ts', { source: spelledForVersion5(RACE), resume: parkAt(parked.ts, first), deferRaceSettlement: true });
-    await runOn('ts', { source: spelledForVersion5(RACE), resume: parkAt(parked.ts, first), settle: 's0' });
-    expect(rustRunStats.dryRun.byRoute.resume.sampled).toBe(1);
-    expect(rustRunStats.dryRun.byRoute.settle.sampled).toBe(1);
     // Settled once: the loser cancelled, the continuation run.
-    for (const o of last) {
-      expect(o.events.filter(([method]) => method === 'cancelSubtrees')).toHaveLength(1);
-      expect(o.result?.deferredRaceFrames).toBeUndefined();
-    }
+    expect(last.events.filter(([method]) => method === 'cancelSubtrees')).toHaveLength(1);
+    expect(last.result?.deferredRaceFrames).toBeUndefined();
   });
 
   it('re-enters an until that still does not hold, and parks it again', async () => {
@@ -658,37 +597,27 @@ describe('parks resumed across the engines', () => {
     const source = program('  cb = callback()\n  c = await FIRST(cb-[:Called]->)\n  write graph-[:note]-> { body: "continued" }');
     const ledger = { cb_1: [{ at: '2026-10-05T10:00:00.000Z', values: {} }] };
     const { last } = await parkThenResume({ source }, [(p) => ({ source, resume: parkAt(p), reenter: true, ledger })]);
-    for (const o of last) expect(bodies(o)).toEqual(['continued']);
+    expect(bodies(last)).toEqual(['continued']);
   });
 
   it('runs a fired callback’s body from the state it captured', async () => {
     const source = program(['  greeting = "hello"', '  cb = callback((note: <text>) => { write graph-[:note]-> { body: "${greeting}: ${note}" } })'].join('\n'));
-    const minted = await agree({ source });
-    expect(JSON.stringify(minted.rust.minted)).toBe(JSON.stringify(minted.ts.minted));
-    for (const origin of [minted.ts, minted.rust]) {
-      const [state] = origin.minted;
-      if (state === undefined) throw new Error('test: nothing minted');
-      const { rust } = await agree({ source, resume: state, fire: { values: { note: 'yes' }, callIndex: 0 } });
-      expect(bodies(rust)).toEqual(['hello: yes']);
-    }
-    // The TypeScript engine's firing is put to the dry run, by its route.
-    const [state] = minted.ts.minted;
+    const minted = await run({ source });
+    const [state] = minted.minted;
     if (state === undefined) throw new Error('test: nothing minted');
-    resetRustRunStats();
-    await runOn('ts', { source, resume: state, fire: { values: { note: 'yes' }, callIndex: 0 } });
-    expect(rustRunStats.dryRun.byRoute.fire).toMatchObject({ sampled: 1, admitted: 1 });
-    expect(rustRunStats.dryRun.byRoute.settle.sampled).toBe(0);
+    const fired = await run({ source, resume: state, fire: { values: { note: 'yes' }, callIndex: 0 } });
+    expect(bodies(fired)).toEqual(['hello: yes']);
   });
 
   it('suspends inside a callee past its statement’s first call: the call frame keeps that call, and the re-entry replays it', async () => {
     const make = 'movement mk(t: <text>) {\n  write graph-[:note]-> { body: t }\n  return UPPER(t)\n}\n';
     const source = program('  x = mk(t: mk(t: "a"))\n  write graph-[:note]-> { body: "end" }', make);
     const { parked, last } = await parkThenResume({ source, suspendAt: ['s0.c0.s1'] }, [(p) => ({ source, resume: parkAt(p), reenter: true })]);
-    const [frame] = parkAt(parked.ts).frames ?? [];
+    const [frame] = parkAt(parked).frames ?? [];
     expect(frame).toMatchObject({ kind: 'call', journal: [{ index: 1 }] });
     // Both callees wrote before the suspension; the re-entry writes nothing again.
-    expect(bodies(parked.ts)).toEqual(['a', 'A']);
-    for (const o of last) expect(bodies(o)).toEqual(['end']);
+    expect(bodies(parked)).toEqual(['a', 'A']);
+    expect(bodies(last)).toEqual(['end']);
   });
 
   it('suspends inside a block’s iteration, and re-enters it there', async () => {
@@ -699,7 +628,7 @@ describe('parks resumed across the engines', () => {
   const LANDING = program(['  a = write graph-[:Check]-> { Prompt: "q" }', '  r = await FIRST(a-[:Response]->)', '  write graph-[:note]-> { body: "after" }'].join('\n'));
 
   it('parks an await on a landing still pending, under the key the adapter names', async () => {
-    const { rust } = await agree({ source: LANDING });
+    const rust = await run({ source: LANDING });
     expect(rust.events.map(([method]) => method)).toEqual(['commitAwaitPark']);
     expect(rust.events[0]?.[1]).toContain('"correlationKey":"ck:');
     expect(rust.result?.parkedAddress).toBe('s1');
@@ -707,7 +636,7 @@ describe('parks resumed across the engines', () => {
 
   it('goes on past a landing that has landed, and past one settled empty', async () => {
     for (const landing of ['landed', 'empty'] as const) {
-      const { rust } = await agree({ source: LANDING, landing });
+      const rust = await run({ source: LANDING, landing });
       expect(rust.events).toEqual([]);
       expect(bodies(rust)).toContain('after');
     }
@@ -715,9 +644,9 @@ describe('parks resumed across the engines', () => {
 
   it('re-enters a parked landing await: landed, it goes on; still pending, it parks again', async () => {
     const landed = await parkThenResume({ source: LANDING }, [(p) => ({ source: LANDING, resume: parkAt(p), reenter: true, landing: 'landed' })]);
-    for (const o of landed.last) expect(bodies(o)).toEqual(['after']);
+    expect(bodies(landed.last)).toEqual(['after']);
     const pending = await parkThenResume({ source: LANDING }, [(p) => ({ source: LANDING, resume: parkAt(p), reenter: true })]);
-    for (const o of pending.last) expect(o.events.map(([method]) => method)).toEqual(['commitAwaitPark']);
+    expect(pending.last.events.map(([method]) => method)).toEqual(['commitAwaitPark']);
   });
 
 });
@@ -725,10 +654,9 @@ describe('parks resumed across the engines', () => {
 /** The one park's state, as the sink stored it. */
 const stateText = (o: Outcome): string => JSON.stringify([...o.parks.values()].map((p) => p.state));
 
-describe('binding kinds parked and resumed across the engines', () => {
+describe('binding kinds parked and resumed', () => {
   // Each binds a name of one kind, parks with it in scope, and reads it
-  // after: both engines write the kind key for key, and each engine's state
-  // resumes on both to the same writes and trace.
+  // after: the state is written with the kind, and resumes to the write.
   const cases: Array<[string, string[], Record<string, CallbackCall[]> | undefined]> = [
     ['sourcePosition', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  await sleep(1h)', '  write graph-[:note]-> { payload: { b: x.`body` } }'], undefined],
     ['positions', ['  xs = graph-[n:note]-> {', '    return n', '  }', '  await sleep(1h)', '  total = COUNT(xs)', '  write graph-[:note]-> { payload: { n: total } }'], undefined],
@@ -744,10 +672,9 @@ describe('binding kinds parked and resumed across the engines', () => {
       const source = program(body.join('\n'));
       const c: Case = { source, ...(ledger !== undefined ? { ledger } : {}) };
       const { parked, last } = await parkThenResume(c, [(p) => ({ ...c, resume: parkAt(p) })]);
-      expect(parked.ts.error).toBeUndefined();
-      expect(stateText(parked.rust)).toBe(stateText(parked.ts));
-      expect(stateText(parked.ts)).toContain(`"kind":"${kind}"`);
-      for (const o of last) expect([o.error, o.bodies.length]).toEqual([undefined, 1]);
+      expect(parked.error).toBeUndefined();
+      expect(stateText(parked)).toContain(`"kind":"${kind}"`);
+      expect([last.error, last.bodies.length]).toEqual([undefined, 1]);
     });
   }
 });
