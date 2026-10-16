@@ -145,3 +145,15 @@ fn the_fixture_programs_get_the_typescripts_answers() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn a_key_the_dict_was_not_written_with_is_refused_once_in_a_write_field() {
+    let source = "import { box } from adapters\nb = connect box\nfunction m() {\n  d = { bucket: \"a\", packed: 3 }\n  write b-[:docs]-> { name: d.buckt }\n  write b-[:docs]-> { name ?: d.buckt }\n}\n";
+    assert_eq!(
+        check_with(source, 5, BOX),
+        [
+            "MOV_DICT_UNKNOWN_KEY 5:29-5:36 this dict has no key \"buckt\" — it was written with: \"bucket\", \"packed\". Did you mean \"bucket\"?",
+            "MOV_DICT_UNKNOWN_KEY 6:31-6:38 this dict has no key \"buckt\" — it was written with: \"bucket\", \"packed\". Did you mean \"bucket\"?",
+        ]
+    );
+}

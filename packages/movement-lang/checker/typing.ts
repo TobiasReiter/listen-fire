@@ -4893,7 +4893,13 @@ export class ExpressionTyping {
    * name it is bound to, so that `AT(t, 0)` off the name reads the slot.
    */
   inferExact(expr: Expression, writeTarget?: WriteTargetRef): FieldType | undefined {
-    if (writeTarget !== undefined && expr.type === 'traverse' && expr.expression.type === 'property' && this.dictMemberRead(expr) === undefined) {
+    if (writeTarget !== undefined && expr.type === 'traverse' && expr.expression.type === 'property') {
+      // Read once: a key the dict was not written with is reported as it is read.
+      const keyRead = this.dictMemberRead(expr);
+      if (keyRead !== undefined) {
+        this.exactTypes.set(expr, keyRead.type);
+        return keyRead.type;
+      }
       const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : undefined;
       const position = this.walkSteps(start, expr.steps);
       this.rememberOrdering(expr, position);
