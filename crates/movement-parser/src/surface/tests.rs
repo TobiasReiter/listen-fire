@@ -81,8 +81,10 @@ fn core_words() {
     same("members(<Thesis>)", "MEMBERS(<Thesis>)");
     same("ai(prompt, { tier: \"careful\" })", "AI(prompt, \"careful\")");
     same("callback(() => `Chase`(company))", "callback(`Chase`(company))");
-    // `fail` is a statement; inside an expression it is not yet read.
-    assert_eq!(findings("coalesce(only(xs), fail(\"no #ops\"))")[0].code, super::NOT_YET_CODE);
+    // Inside an expression `fail` is the call `ERROR(…)`, a value that never
+    // arrives (the checkers type it; versions 1–4 never read it as one).
+    assert!(findings("coalesce(only(xs), fail(\"no #ops\"))").is_empty());
+    assert_eq!(lowered("coalesce(only(xs), fail(\"no #ops\"))", 5), lowered("COALESCE(ONLY(xs), ERROR(\"no #ops\"))", 4));
     // `sort` with no key, by its order alone, or keyed by the member itself.
     same("sort(xs)", "SORT(xs)");
     same("sort(xs, { order: \"desc\" })", "SORT(xs, DESC)");

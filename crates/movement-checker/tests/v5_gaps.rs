@@ -86,8 +86,8 @@ fn fail_is_the_error_statement() {
     assert_eq!(error.fix.as_ref().unwrap()["edits"][0]["text"], "fail");
     // Under 4 `fail` is a name like any other.
     assert!(codes(&v4("  fail(\"x\")"), 4).contains(&"MOV_FUNCTION_UNKNOWN".to_string()));
-    // Inside an expression it is not read yet, and says so.
-    assert!(codes(&v5("  x = coalesce(t, fail(\"no\"))"), 5).contains(&"MOV_V5_NOT_YET".to_string()));
+    // Inside an expression it is a value that never arrives (v5_never_sort).
+    assert!(!codes(&v5("  x = coalesce(t, fail(\"no\"))"), 5).contains(&"MOV_V5_NOT_YET".to_string()));
 }
 
 #[test]

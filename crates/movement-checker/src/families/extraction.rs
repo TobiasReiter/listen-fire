@@ -619,7 +619,7 @@ fn extract_content_problem(ty: &Ty, written: &str) -> Option<String> {
 
 fn extract_content_item_problem(ty: &Ty, which: &str) -> Option<String> {
     match strip_absent(ty) {
-        Ty::Text | Ty::Enum { .. } | Ty::File | Ty::Absent => None,
+        Ty::Text | Ty::Enum { .. } | Ty::File | Ty::Absent | Ty::Never => None,
         Ty::Union(members) => members.iter().find_map(|m| extract_content_item_problem(m, which)),
         Ty::Record(_) => Some(format!(
             "{which} of the content is a record, and 'extract' reads text and files — render the record as text first: `TEXT.SERIALISE(record, 'JSON')`"

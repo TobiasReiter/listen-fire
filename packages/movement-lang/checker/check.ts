@@ -320,6 +320,7 @@ import {
   type ReturnShape,
   PresenceProof,
   presenceProofs,
+  proofsAfter,
   holdsRecords,
   isDictType,
   isEnumType,
@@ -3250,6 +3251,7 @@ function extractContentItemProblem(type: FieldType, which: string): string | und
     case 'text':
     case 'enum':
     case 'file':
+    case 'never':
     case 'absent':
       return undefined;
     case 'union': {
@@ -3514,6 +3516,7 @@ function holdsFile(type: SchemaFieldType): boolean {
     case 'date':
     case 'datetime':
     case 'json':
+    case 'never':
     case 'absent':
     case 'enum':
       return false;
@@ -5793,6 +5796,24 @@ class Checker {
         statement.span,
       );
     }
+    this.narrowAfterValue(statement, scope);
+  }
+
+  /** From version 5, what a bound value proves present below it, its arms
+   *  that only fail never arriving (`proofsAfter`). */
+  private narrowAfterValue(statement: AssignStatement, scope: Scope): void {
+    if (!since(this.languageVersion, 5)) return;
+    const value = statement.value;
+    const slot = value.kind === 'expr' ? value.expr : value.kind === 'call' ? value.call.expression : undefined;
+    if (slot === undefined) return;
+    let expr: Expression;
+    try {
+      expr = expressionOfSlot(slot);
+    } catch {
+      return; // the slot's own check reports why it does not read
+    }
+    const typing = this.silentTyping(scope, slot.span);
+    this.declarePresence(proofsAfter(expr, operand => typing.infer(operand)), scope, scope, { visibleFrom: statement.span.end });
   }
 
   /**

@@ -317,6 +317,7 @@ impl<'c> Checker<'c> {
                 }
                 self.note_shape_alias(&assign.name, &assign.value, scope);
                 self.note_closure_returns(&assign.name, &assign.value, scope);
+                self.narrow_after_value(&assign.value, scope);
             }
             Statement::Type(_) => {}
             Statement::Shape(shape) => {
@@ -611,6 +612,29 @@ impl<'c> Checker<'c> {
         if self.version >= 3 && falls_through.len() == 1 && terminates(&else_arm.body, self.version) {
             self.narrow_condition_holds(&statement.arms[falls_through[0]].condition, scope);
         }
+    }
+
+    /// `narrowAfterValue`: from version 5, what a bound value proves present
+    /// below it, its arms that only fail never arriving (`proofs_after`).
+    fn narrow_after_value(&mut self, value: &RValue, scope: ScopeId) {
+        if !movement_parser::version::since(self.version, 5) {
+            return;
+        }
+        let slot = match value {
+            RValue::Expr { expr } => expr,
+            RValue::Call { call } => match &call.expression {
+                Some(expr) => expr,
+                None => return,
+            },
+            _ => return,
+        };
+        let Ok(expr) = crate::slots::expression_of_slot(slot) else { return };
+        let proofs = {
+            let env = self.typing_env(scope);
+            let mut typing = Typing::new(&env, self.version, slot.span);
+            crate::types::narrowing::proofs_after(&expr, &mut |o| typing.infer(o))
+        };
+        self.declare_presence(&proofs, scope, scope);
     }
 
     /// `narrowConditionNegation`: what a condition's falsity proves present.

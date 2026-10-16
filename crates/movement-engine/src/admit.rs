@@ -4508,7 +4508,8 @@ impl Names<'_> {
             // (checker/nested_calls.ts): its invocation.
             Expression::Function { fn_, .. } if names_plugin(self.plugins, fn_, self.language_version) => refuse("plugin_call"),
             Expression::Function { fn_, args } => {
-                if !FUNCTIONS.contains(&fn_.as_str()) && !self.integration_function(fn_) {
+                let fails = fn_ == "error" && movement_parser::version::since(self.language_version, 5);
+                if !fails && !FUNCTIONS.contains(&fn_.as_str()) && !self.integration_function(fn_) {
                     return refuse(format!("function:{fn_}"));
                 }
                 // A reading handed back carries its arguments to the host.

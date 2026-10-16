@@ -254,6 +254,7 @@ import {
   hopFilterKeeps,
   isCallableBinding,
   isDictValue,
+  failureMessage,
   isFileUnreadable,
   hopMemberGate,
   binding,
@@ -7311,8 +7312,7 @@ class Interpreter {
     env: Environment,
   ): Promise<void> {
     const { value } = await this.evaluateSlot(statement.message, { env });
-    const message = typeof value === 'string' ? value : String(value ?? '');
-    throw new MovementEngineError('MOVENG_ERROR', message);
+    throw new MovementEngineError('MOVENG_ERROR', failureMessage(value));
   }
 
   private async evaluateCondition(slot: ExprSlot, env: Environment): Promise<boolean> {

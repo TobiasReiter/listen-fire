@@ -43,4 +43,5 @@ const PRIMITIVES: Record<Extract<FieldType, string>, string> = {
   file: "a file",
   json: "structured data",
   absent: "nothing",
+  never: "nothing (it fails)",
 };

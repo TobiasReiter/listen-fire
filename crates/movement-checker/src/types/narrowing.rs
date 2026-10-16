@@ -239,3 +239,33 @@ pub fn negative_presence_proofs(expr: &Expression, type_of: &mut dyn FnMut(&Expr
         _ => Vec::new(),
     }
 }
+
+/// `fail("…")` written as a value (language version 5): its canonical call.
+pub fn is_fail(expr: &Expression) -> bool {
+    matches!(expr, Expression::Function { fn_, .. } if fn_ == "error")
+}
+
+/// `proofsAfter`: what an expression proves present once its value has
+/// arrived (language version 5) — an arm that only fails never arrives, so
+/// the code after `x != null ? x : fail("…")` knows `x` present, as the code
+/// after `if (x == null) { fail("…") }` does; and `coalesce(x, fail("…"))`
+/// arrives only with `x` present.
+pub fn proofs_after(expr: &Expression, type_of: &mut dyn FnMut(&Expression) -> Option<Ty>) -> Vec<PresenceProof> {
+    match expr {
+        Expression::Conditional { condition, then, else_ } if is_fail(then) => {
+            let mut proofs = negative_presence_proofs(condition, type_of);
+            proofs.extend(proofs_after(else_, type_of));
+            proofs
+        }
+        Expression::Conditional { condition, then, else_ } if is_fail(else_) => {
+            let mut proofs = presence_proofs(condition, type_of);
+            proofs.extend(proofs_after(then, type_of));
+            proofs
+        }
+        Expression::Function { fn_, args } if fn_ == "coalesce" => match args.as_slice() {
+            [subject, last] if is_fail(last) => presence_subject(subject).into_iter().collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}

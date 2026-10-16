@@ -1389,12 +1389,7 @@ impl Run<'_> {
             // `ERROR(message)`: the run fails with the author's words.
             Statement::Error(statement) => {
                 let message = self.evaluate_slot(&statement.message, scope).await?.value;
-                let message = match message {
-                    Js::String(text) => text.into_string(),
-                    other if other.is_nullish() => String::new(),
-                    other => other.to_js_string(),
-                };
-                Err(Stop::Thrown(Failure::engine("MOVENG_ERROR", message)))
+                Err(Stop::Thrown(Failure::engine("MOVENG_ERROR", failure_message(&message))))
             }
             // A collection op run for its function's effects.
             Statement::Collection(statement) => {
@@ -3488,5 +3483,15 @@ mod tests {
             narrowing: vec![("table".into(), "tblDeals".into()), ("base".into(), "app1".into())],
         };
         assert_eq!(event_address_key(&pinned), r#"["Record Change",[["base","app1"],["table","tblDeals"]]]"#);
+    }
+}
+
+/// `fail(message)`'s words, as the run fails with them: a text as written,
+/// nothing as nothing, anything else as JavaScript writes it.
+pub(crate) fn failure_message(message: &Js) -> String {
+    match message {
+        Js::String(text) => text.clone().into_string(),
+        other if other.is_nullish() => String::new(),
+        other => other.to_js_string(),
     }
 }

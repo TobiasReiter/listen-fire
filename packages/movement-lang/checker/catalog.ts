@@ -461,6 +461,12 @@ export type FieldType =
    */
   | 'absent'
   /**
+   * The type of a value that never arrives — `fail("…")` written inside an
+   * expression (language version 5) — TypeScript's `never`. It fits every
+   * type, and a union with it is the union's other members.
+   */
+  | 'never'
+  /**
    * A collection of values. `unordered` is the ORDER discipline's value-plane
    * half: the list's members are there, but the sequence they are in means
    * nothing, so an order-sensitive fold over it is refused. A list is a
@@ -648,6 +654,7 @@ const SCALAR_VARIANTS: { [K in Extract<FieldType, string>]: { kind: K } } = {
   file: { kind: 'file' },
   json: { kind: 'json' },
   absent: { kind: 'absent' },
+  never: { kind: 'never' },
 };
 
 /**
@@ -760,6 +767,7 @@ export function describeFieldType(type: FieldType): string {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
       return variant.kind;
     case 'maybeAbsent':
       return `${describeMember(variant.of)} (or absent)`;

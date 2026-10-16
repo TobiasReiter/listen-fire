@@ -98,6 +98,7 @@ function typeName(t: FieldType): string {
     // A structured value, opaque to everything but another json field.
     case "json":
     case "absent":
+    case "never":
       return v.kind;
     case "list":
       return `${typeMember(v.of)}[]`;
@@ -140,6 +141,7 @@ function enumOptions(t: FieldType): string[] {
     case "file":
     case "json":
     case "absent":
+    case "never":
     case "tuple":
     case "record":
       return [];

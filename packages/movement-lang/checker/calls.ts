@@ -37,7 +37,7 @@ import type { MExpr } from '../parser/expression/tree';
 import { scanName } from '../parser/scan';
 import type { CallNode } from './nested_calls';
 import { since, type LanguageVersion } from '../language_version';
-import { describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
+import { builtinUnder, describeBuiltin, type Builtin } from './standard_library';
 
 /** What a call site can see, asked by whoever has the scope (the checker's
  *  `Scope`, the engine's environment). */
@@ -76,7 +76,7 @@ export function resolveCallee(
   if (spelled !== undefined) return { kind: 'declared', name: spelled };
   // A dotted member (`DATE.TODAY`) is never a bare callee: the expression
   // grammar reads it as a member of its family.
-  const builtin = lookupBuiltin(written);
+  const builtin = builtinUnder(written, languageVersion);
   return builtin !== undefined && !builtin.name.includes('.') ? { kind: 'builtin', builtin } : { kind: 'unknown' };
 }
 

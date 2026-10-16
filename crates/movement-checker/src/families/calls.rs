@@ -524,7 +524,7 @@ impl Checker<'_> {
         if let Some(id) = self.scopes.resolve_function(scope, written).filter(|_| !since(self.version, 5)) {
             return Callee::Declared(self.scopes.symbol(id).name.clone());
         }
-        match lookup_builtin(written) {
+        match crate::types::stdlib::builtin_under(written, self.version) {
             Some(builtin) if !builtin.name.contains('.') => Callee::Builtin(builtin),
             _ => Callee::Unknown,
         }

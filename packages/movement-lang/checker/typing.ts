@@ -47,7 +47,7 @@ import {
   type BuiltinParamType,
   type StdlibFunctionSpec,
 } from '../expression/stdlib';
-import { builtinParamAt, describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
+import { builtinParamAt, builtinUnder, describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
 import { extractCallNestedMessage } from './calls';
 import { neverAsAny } from '../never';
 import { before, changedBetween, describeLanguageVersion, since, type LanguageVersion } from '../language_version';
@@ -1299,6 +1299,7 @@ function paramAccepts(param: BuiltinParamType, type: FieldType): boolean {
   switch (variant.kind) {
     case 'maybeAbsent':
       return paramAccepts(param, variant.of);
+    case 'never':
     case 'absent':
       return true;
     case 'union':
@@ -1405,6 +1406,9 @@ export function maybeAbsent(type: FieldType | undefined): FieldType | undefined 
     case 'record':
     case 'union':
       return { kind: 'maybeAbsent', of: type };
+    // `never | null` is `null`.
+    case 'never':
+      return 'absent';
     default:
       return neverAsAny(variant);
   }
@@ -1426,6 +1430,7 @@ export function stripAbsent(type: FieldType): FieldType {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -1454,6 +1459,7 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -1491,6 +1497,17 @@ export function isMaybeAbsent(type: FieldType | undefined): boolean {
  * (unknown stays unknown, as in TS).
  */
 function coalesceType(args: Array<FieldType | undefined>): FieldType | undefined {
+  // An argument that never arrives ends the search: `coalesce(x, fail("…"))`
+  // is `x` present, or the run has failed there, and nothing after it is
+  // reached.
+  const cut = args.indexOf('never');
+  if (cut === 0) return 'never';
+  if (cut > 0) {
+    const reached = coalesceType(args.slice(0, cut));
+    if (reached === undefined) return undefined;
+    if (reached === 'absent') return 'never';
+    return stripAbsent(reached);
+  }
   if (args.some(type => type === undefined)) return undefined;
   const typed = args as FieldType[];
   const valued = typed.filter(type => type !== 'absent');
@@ -1563,6 +1580,7 @@ function unwrapList(type: FieldType): FieldType {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'dict':
     case 'enum':
@@ -1682,12 +1700,14 @@ export function valueUnion(types: readonly FieldType[]): FieldType | undefined {
       absent = true;
       return;
     }
+    // A member that never arrives adds nothing (TypeScript's `never`).
+    if (present === 'never') return;
     if (isUnionType(present)) present.of.forEach(add);
     else flat.push(present);
   };
   types.forEach(add);
   const withAbsence = (one: FieldType): FieldType => (absent ? maybeAbsent(one)! : one);
-  if (flat.length === 0) return 'absent';
+  if (flat.length === 0) return !absent && types.every(type => type === 'never') ? 'never' : 'absent';
   const records = flat.filter(member => isRecordType(member));
   if (records.length > 0) {
     if (records.length !== flat.length) return undefined;
@@ -1795,6 +1815,7 @@ function holdsOneValue(type: FieldType): boolean {
     case 'date':
     case 'datetime':
     case 'file':
+    case 'never':
     case 'absent':
     case 'dict':
     case 'enum':
@@ -1849,6 +1870,7 @@ function isKeyedValue(type: FieldType): boolean {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -1877,6 +1899,7 @@ function isPlainValue(type: FieldType): boolean {
       return variant.of.every(isPlainValue);
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -1980,6 +2003,7 @@ export function collectionElementOf(type: FieldType): FieldType | undefined {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'dict':
     case 'enum':
@@ -2016,6 +2040,7 @@ function valueOrdering(type: FieldType | undefined): CollectionOrder {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'dict':
     case 'enum':
@@ -2133,6 +2158,9 @@ function memberBaseKind(type: FieldType): BaseKind {
     case 'json':
     case 'absent':
       return variant.kind;
+    // Never written: it fits wherever absence does.
+    case 'never':
+      return 'absent';
     // `unwrapList` strips absence, so this cannot arrive; text is the answer
     // the catch-all gave it.
     case 'maybeAbsent':
@@ -2216,6 +2244,7 @@ export function comparisonCategory(type: FieldType): ComparisonCategory {
       return 'structural';
     case 'json':
       return 'opaque';
+    case 'never':
     case 'absent':
       return 'absent';
     // A union's members in one category are that category; members in more
@@ -2255,6 +2284,7 @@ export function isEnumType(type: FieldType | undefined): type is EnumType {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -2282,6 +2312,7 @@ function isTupleType(type: FieldType): type is Extract<FieldType, { kind: 'tuple
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'dict':
@@ -2309,6 +2340,7 @@ export function isListType(type: FieldType | undefined): type is Extract<FieldTy
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'tuple':
     case 'dict':
@@ -2335,6 +2367,7 @@ export function isDictType(type: FieldType): type is Extract<FieldType, { kind: 
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -2711,6 +2744,7 @@ export function recordIn(type: FieldType | undefined): Extract<FieldType, { kind
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     // A DICT is deliberately not one, per the note above, and an enum is a
     // value.
@@ -2814,6 +2848,7 @@ export function isRecordType(type: FieldType | undefined): boolean {
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'list':
     case 'tuple':
@@ -3059,6 +3094,7 @@ function handleWithinPart(type: FieldType | undefined, walk: HeldWalk): HeldHand
     case 'date':
     case 'datetime':
     case 'json':
+    case 'never':
     case 'absent':
     case 'enum':
     case 'maybeAbsent':
@@ -3106,6 +3142,7 @@ export function handleAmongMembers(
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
     case 'enum':
     case 'maybeAbsent':
@@ -3148,6 +3185,7 @@ export function handleSpreadOf(type: FieldType | undefined, walk: HeldWalk): Hel
     case 'date':
     case 'datetime':
     case 'json':
+    case 'never':
     case 'absent':
     case 'enum':
     case 'maybeAbsent':
@@ -3246,6 +3284,7 @@ function typesCompared(a: FieldType, b: FieldType, compared: ComparedPairs): boo
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
       return right.kind === left.kind;
     case 'list':
@@ -3373,6 +3412,7 @@ function structureOf(
     case 'datetime':
     case 'file':
     case 'json':
+    case 'never':
     case 'absent':
       return variant.kind;
     case 'list':
@@ -3428,6 +3468,7 @@ function targetConstrainsExtraction(target: FieldType): boolean {
     case 'date':
     case 'datetime':
     case 'file':
+    case 'never':
     case 'absent':
       return true;
     // Every other object spelling answered `false` before this switch
@@ -3454,7 +3495,8 @@ function targetConstrainsExtraction(target: FieldType): boolean {
 export function fieldAssignable(source: FieldType, target: FieldType): boolean {
   source = stripAbsent(source);
   target = stripAbsent(target);
-  if (fieldTypeEquals(source, target)) return true;
+  // A value that never arrives fits wherever it is written (TypeScript's `never`).
+  if (source === 'never' || fieldTypeEquals(source, target)) return true;
   // A closure reads as a closure type when its parameters take what the
   // type's do and it returns what the type's does — TypeScript's function
   // assignability (language version 5).
@@ -4092,6 +4134,35 @@ export function negativePresenceProofs(
     if (proof !== undefined) proofs.push(proof);
   }
   return proofs;
+}
+
+/** `fail("…")` written as a value (language version 5): its canonical call. */
+export function isFail(expr: Expression): boolean {
+  return expr.type === 'function' && expr.fn === 'error';
+}
+
+/**
+ * What an expression proves present once its value has arrived (language
+ * version 5) — an arm that only fails never arrives, so the code after
+ * `x != null ? x : fail("…")` knows `x` present, as the code after
+ * `if (x == null) { fail("…") }` does; and `coalesce(x, fail("…"))` arrives
+ * only with `x` present.
+ */
+export function proofsAfter(
+  expr: Expression,
+  typeOf: (operand: Expression) => FieldType | undefined,
+): PresenceProof[] {
+  if (expr.type === 'conditional' && isFail(expr.then)) {
+    return [...negativePresenceProofs(expr.condition, typeOf), ...proofsAfter(expr.else, typeOf)];
+  }
+  if (expr.type === 'conditional' && isFail(expr.else)) {
+    return [...presenceProofs(expr.condition, typeOf), ...proofsAfter(expr.then, typeOf)];
+  }
+  if (expr.type === 'function' && expr.fn === 'coalesce' && expr.args.length === 2 && isFail(expr.args[1]!)) {
+    const proof = presenceSubject(expr.args[0]!);
+    return proof !== undefined ? [proof] : [];
+  }
+  return [];
 }
 
 /**
@@ -5171,13 +5242,20 @@ export class ExpressionTyping {
         // the value-level guard clause, and TS narrows inside a ternary too.
         const proofs = presenceProofs(expr.condition, o => this.inferAt(o, position));
         const thenType = this.withPresence(proofs, position, narrowed => this.inferAt(expr.then, narrowed));
-        const elseType = this.inferAt(expr.else, position);
+        // From version 5 the `else` arm knows the condition false, as
+        // TypeScript's does (`x == null ? fail("…") : x.name`).
+        const elseType = since(this.options.languageVersion, 5)
+          ? this.withPresence(negativePresenceProofs(expr.condition, o => this.inferAt(o, position)), position, narrowed => this.inferAt(expr.else, narrowed))
+          : this.inferAt(expr.else, position);
         // A closure is not data (language version 5): IF chooses between
         // values, and a closure is kept in a variable or passed as an
         // argument, never chosen by a value expression.
         if (this.refuseClosureOperands([[expr.then, thenType], [expr.else, elseType]], expr, `chosen by ${spellWord('IF … THEN … ELSE … END', this.options.languageVersion)}`)) {
           return undefined;
         }
+        // An arm that never arrives leaves the other's type.
+        if (thenType === 'never') return elseType;
+        if (elseType === 'never') return thenType;
         if (thenType !== undefined && elseType !== undefined && fieldTypeEquals(thenType, elseType)) {
           return thenType;
         }
@@ -5244,6 +5322,7 @@ export class ExpressionTyping {
           case 'datetime':
           case 'file':
           case 'json':
+          case 'never':
           case 'absent':
           case 'dict':
           case 'enum':
@@ -5355,7 +5434,7 @@ export class ExpressionTyping {
         const builtin =
           expr.fn === EXTRACT_ONE_FUNCTION_ID && before(this.options.languageVersion, 3)
             ? undefined
-            : lookupBuiltin(expr.fn);
+            : builtinUnder(expr.fn.toUpperCase(), this.options.languageVersion);
         if (builtin !== undefined) {
           this.absorbBuiltinEffects(builtin);
           if (this.refuseClosureOperands(
@@ -5789,6 +5868,7 @@ export class ExpressionTyping {
       case 'datetime':
       case 'file':
       case 'json':
+      case 'never':
       case 'absent':
       case 'dict':
       case 'enum':
@@ -5841,6 +5921,7 @@ export class ExpressionTyping {
       case 'datetime':
       case 'file':
       case 'json':
+      case 'never':
       case 'absent':
       case 'list':
       case 'tuple':

@@ -825,6 +825,15 @@ impl<'a> Evaluator<'a> {
     }
 
     async fn function(&self, id: &str, args: &[Expression]) -> Eval {
+        // `fail("…")` inside an expression (version 5): the run fails with
+        // the author's words, as the statement `fail("…")` does (run.rs).
+        if id == "error" && movement_parser::version::since(self.language_version, 5) {
+            let message = match args.first() {
+                Some(message) => self.eval(message).await?.value,
+                None => Js::Null,
+            };
+            return Err(EvalError::engine("MOVENG_ERROR", crate::run::failure_message(&message)));
+        }
         if stdlib::NAMESPACED.contains(&id) {
             let mut values = Vec::new();
             let mut provs = Vec::new();

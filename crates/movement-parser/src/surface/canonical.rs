@@ -510,12 +510,6 @@ impl<'s> Canon<'s> {
         let MExpr::Call { callee, args, at } = e else { return };
         let at = *at;
         let callee_at = callee.at();
-        // `fail(…)` is a statement (`ERROR(…)`); no version has a value that
-        // never returns, which the design's `coalesce(x, fail("…"))` needs.
-        if row.canonical == "ERROR" {
-            self.not_yet(at, "for now `fail(…)` is a statement of its own: `if (x == null) { fail(\"…\") }`".into());
-            return;
-        }
         match row.shape {
             Shape::Contains => {
                 if args.len() != 2 {

@@ -134,6 +134,13 @@ for byte; on text already in the version 5 spelling it changes nothing.
 
 ### Language version 5, Dancing Wren: new
 
+- **`fail("…")` inside an expression**: `coalesce(x, fail("no x"))`, `c ? a : fail("…")`. It
+  never returns, so its type is TypeScript's `never`: a choice between it and a value is that
+  value (`coalesce(m, fail("…"))` is `m` present), and it fits any type. An `else` arm knows its
+  condition false, and the code after a binding whose arm only fails knows what that arm ruled
+  out (`y = m != null ? m : fail("…")` proves `m` present below). The run fails with the message
+  exactly as the statement `fail("…")` does. Under 4, `ERROR` inside an expression stays
+  `MOV_FUNCTION_UNKNOWN`.
 - **A closure is not data** (`MOV_CLOSURE_NOT_DATA`). A closure lives in a variable (`g = label`,
   a call that answers one), in a parameter, or is passed as an argument to a parameter that takes
   one (`MAP(xs, (x) => …)`, `race(a, b)`, `all(a, b)`, a closure-typed parameter). It is never an

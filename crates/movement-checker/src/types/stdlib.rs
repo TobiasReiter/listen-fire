@@ -50,6 +50,8 @@ pub enum Returns {
     ListOfText,
     MaybeAbsentText,
     MaybeAbsentDate,
+    /// Never returns: the run fails there (`fail("…")`).
+    Never,
     Derived,
 }
 
@@ -65,6 +67,7 @@ impl Returns {
             Returns::ListOfText => Ty::list(Ty::Text),
             Returns::MaybeAbsentText => maybe_absent(Ty::Text),
             Returns::MaybeAbsentDate => maybe_absent(Ty::Date),
+            Returns::Never => Ty::Never,
             Returns::Derived => return None,
         })
     }
@@ -188,6 +191,21 @@ pub static STANDARD_LIBRARY: &[Builtin] = &[
     b!("NUMBER.FORMAT", [p("number", T::Number), p("style", T::Text)], R::MaybeAbsentText, family),
 ];
 
+/// `fail("…")` inside an expression, from language version 5: its canonical
+/// call is `ERROR(…)`, the statement's word, which versions 1–4 never read
+/// as a value — so it is no member of the library they read
+/// (`builtin_under`).
+pub static FAIL: Builtin = b!("ERROR", [p("message", T::Scalar)], R::Never);
+
+/// The built-in `name` calls under `version`: the library's, and from 5 the
+/// `fail` of an expression.
+pub fn builtin_under(name: &str, version: u32) -> Option<&'static Builtin> {
+    if movement_parser::version::since(version, 5) && name == FAIL.name {
+        return Some(&FAIL);
+    }
+    lookup_builtin(name)
+}
+
 /// `lookupBuiltin`: by name, in any letter case.
 pub fn lookup_builtin(name: &str) -> Option<&'static Builtin> {
     STANDARD_LIBRARY.iter().find(|b| b.name.eq_ignore_ascii_case(name))
@@ -207,7 +225,7 @@ pub fn reads_as_value(param: ParamType) -> bool {
 pub fn param_accepts(param: ParamType, ty: &Ty) -> bool {
     match ty {
         Ty::MaybeAbsent(of) => param_accepts(param, of),
-        Ty::Absent => true,
+        Ty::Absent | Ty::Never => true,
         Ty::Union(members) => members.iter().all(|m| param_accepts(param, m)),
         Ty::Text | Ty::Enum { .. } => matches!(param, T::Scalar | T::Text | T::Temporal | T::TextOrList),
         Ty::Number => matches!(param, T::Scalar | T::Number),

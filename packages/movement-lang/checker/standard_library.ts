@@ -29,6 +29,7 @@ import {
 } from '../expression/stdlib';
 import type { FieldType } from './catalog';
 import type { DeclaredEffectRow } from './effects';
+import { since, type LanguageVersion } from '../language_version';
 
 /**
  * What a call gives back: a type the signature states, or `derived` — the
@@ -186,6 +187,18 @@ const BY_FOLDED_NAME: ReadonlyMap<string, Builtin> = new Map(ALL.map((entry) => 
  *  `currency.format_figure`. Undefined when the standard library has none. */
 export function lookupBuiltin(name: string): Builtin | undefined {
   return BY_FOLDED_NAME.get(name.toLowerCase());
+}
+
+/** `fail("…")` inside an expression, from language version 5: its canonical
+ *  call is `ERROR(…)`, the statement's word, which versions 1–4 never read as
+ *  a value — so it is no member of the library they read (`builtinUnder`). */
+export const FAIL: Builtin = builtin('ERROR', [p('message', 'scalar')], 'never', 'fails the run with the message; never returns');
+
+/** The built-in `name` calls under `languageVersion`: the library's, and from
+ *  5 the `fail` of an expression. */
+export function builtinUnder(name: string, languageVersion: LanguageVersion): Builtin | undefined {
+  if (since(languageVersion, 5) && name === FAIL.name) return FAIL;
+  return lookupBuiltin(name);
 }
 
 /** Every built-in, in the order above — for listings and did-you-mean. */
