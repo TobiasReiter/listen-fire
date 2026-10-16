@@ -3,11 +3,17 @@
 
 import type { ColumnType, Selectable, Insertable, Updateable } from 'kysely';
 
+/** Identifier type for automations.park_library_source */
+export type ParkLibrarySourceTeamId = string & { __brand: 'automations.park_library_source' };
+
+/** Identifier type for automations.park_library_source */
+export type ParkLibrarySourceHash = string & { __brand: 'automations.park_library_source' };
+
 /** Represents the table automations.park_library_source */
 export default interface ParkLibrarySourceTable {
-  team_id: ColumnType<string, string, string>;
+  team_id: ColumnType<ParkLibrarySourceTeamId, ParkLibrarySourceTeamId, ParkLibrarySourceTeamId>;
 
-  hash: ColumnType<string, string, string>;
+  hash: ColumnType<ParkLibrarySourceHash, ParkLibrarySourceHash, ParkLibrarySourceHash>;
 
   source: ColumnType<string, string, string>;
 

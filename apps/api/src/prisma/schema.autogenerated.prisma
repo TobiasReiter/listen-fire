@@ -373,6 +373,17 @@ model OutboundEmail {
   @@schema("automations")
 }
 
+model ParkLibrarySource {
+  teamId    String   @map("team_id") @db.Uuid
+  hash      String
+  source    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([teamId, hash])
+  @@map("park_library_source")
+  @@schema("automations")
+}
+
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model ParkedRun {
   id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

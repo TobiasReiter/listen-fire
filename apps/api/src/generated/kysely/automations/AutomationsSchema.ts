@@ -25,8 +25,8 @@ import type { default as AuditLogTable } from './AuditLog';
 import type { default as TriggerEventTable } from './TriggerEvent';
 import type { default as RecordBindingTable } from './RecordBinding';
 import type { default as ParkedRunTable } from './ParkedRun';
-import type { default as ParkLibrarySourceTable } from './ParkLibrarySource';
 import type { default as PlatformOwnedTokenTable } from './PlatformOwnedToken';
+import type { default as ParkLibrarySourceTable } from './ParkLibrarySource';
 import type { default as ConnectTokenTable } from './ConnectToken';
 import type { default as DeployCheckTable } from './DeployCheck';
 import type { default as GoogleGrantedItemTable } from './GoogleGrantedItem';
@@ -83,9 +83,9 @@ export default interface AutomationsSchema {
 
   parked_run: ParkedRunTable;
 
-  park_library_source: ParkLibrarySourceTable;
-
   platform_owned_token: PlatformOwnedTokenTable;
+
+  park_library_source: ParkLibrarySourceTable;
 
   connect_token: ConnectTokenTable;
 
