@@ -56,7 +56,6 @@ import {
   memberPathBindingName,
   pathRootName,
   probePathHead,
-  spellName,
   spellPathHead,
   spellPathRoot,
 } from '../parser/ast';
