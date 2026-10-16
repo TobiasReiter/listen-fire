@@ -64,16 +64,16 @@ const LIST_ENTRIES = 'list_entries';
  *  WHERE is an `edge_property`, so the same text written outside one keys
  *  differently. */
 function keyFor(where: string): string {
-  const steps = parseTraversalPath(`-[:${LIST_ENTRIES} WHERE ${where}]->`);
+  const steps = parseTraversalPath(`-[le:${LIST_ENTRIES} WHERE ${where}]->`, 5);
   const filter = steps?.[0]?.type === 'edge' ? steps[0].expressionFilter : undefined;
   if (!filter) throw new Error(`test setup: no filter parsed out of \`${where}\``);
   return refinementKey({ type: LIST_ENTRY, filter });
 }
 
-const NARROWED = '`listName` == "Portfolio" AND `Added On` >= "2026-01-01"';
+const NARROWED = 'le.`listName` == "Portfolio" && le.`Added On` >= "2026-01-01"';
 /** The same selection with the conjuncts the other way round — the checker
  *  narrows it identically, so the runtime must drop identically. */
-const REVERSED = '`Added On` >= "2026-01-01" AND `listName` == "Portfolio"';
+const REVERSED = 'le.`Added On` >= "2026-01-01" && le.`listName` == "Portfolio"';
 /** The host names a refined position after the member's ADDRESSING name. */
 const REFINED_POSITION = `${LIST_ENTRY} "${MASTER_LIST}"`;
 
@@ -222,9 +222,9 @@ function manualEvent(): TriggerEvent {
 function sourceFor(body: string): string {
   return `import { manual, kg } from adapters
 import { kg_cred } from credentials
-runs = manual()
-graph = kg(credentials: kg_cred)
-movement sweep(go: <runs-[:Invocation]->>) {
+runs = connect manual
+graph = connect kg using kg_cred
+function sweep(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire sweep
@@ -269,7 +269,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema: crmSchema,
       fake,
       body: `  graph-[o:organization]-> {
-    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY \`Added On\`]-> {
+    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY le.\`Added On\`]-> {
       write graph-[:note]-> { text: le.\`Added On\` }
     }
   }`,
@@ -289,7 +289,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema: crmSchema,
       fake,
       body: `  graph-[o:organization]-> {
-    write graph-[:note]-> { text: "\${JOIN(o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY \`Added On\`]->.\`Added On\`, ", ")}" }
+    write graph-[:note]-> { text: "\${Text.join(o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY le.\`Added On\`]->.\`Added On\`, ", ")}" }
   }`,
     });
 
@@ -304,7 +304,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema: crmSchema,
       fake,
       body: `  graph-[o:organization]-> {
-    if EXISTS(o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY \`Added On\`]->) {
+    if (exists(o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY le.\`Added On\`]->)) {
       write graph-[:note]-> { text: "found" }
     }
   }`,
@@ -319,7 +319,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
     const fake = makeCrmFake();
     // The selected member's own records lack `Closed On`; that IS drift and
     // must stay loud. Same hop, same narrowing, one more conjunct.
-    const where = `${NARROWED} AND \`Closed On\` == "x"`;
+    const where = `${NARROWED} && le.\`Closed On\` == "x"`;
     const schema: InstanceSchema = {
       ...crmSchema,
       positions: {
@@ -359,7 +359,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema,
       fake,
       body: `  graph-[o:organization]-> {
-    o-[le:${LIST_ENTRIES} WHERE ${REVERSED} ORDER BY \`Added On\`]-> {
+    o-[le:${LIST_ENTRIES} WHERE ${REVERSED} ORDER BY le.\`Added On\`]-> {
       write graph-[:note]-> { text: le.\`Added On\` }
     }
   }`,
@@ -388,7 +388,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema: { ...crmSchema, selectedMembers: { [keyFor(NARROWED)]: MASTER_LIST } },
       fake,
       body: `  graph-[o:organization]-> {
-    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY \`Added On\`]-> {
+    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY le.\`Added On\`]-> {
       write graph-[:note]-> { text: le.\`Added On\` }
     }
   }`,
@@ -445,7 +445,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       },
       chains: scanInstanceChains(
         sourceFor(`  graph-[o:organization]-> {
-    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY \`Added On\`]-> {
+    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY le.\`Added On\`]-> {
       write graph-[:note]-> { text: le.\`Added On\` }
     }
   }`),
@@ -475,7 +475,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema: crmSchema,
       fake,
       body: `  graph-[o:organization]-> {
-    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY \`Added On\`]-> {
+    o-[le:${LIST_ENTRIES} WHERE ${NARROWED} ORDER BY le.\`Added On\`]-> {
       write graph-[:note]-> { text: le.\`Added On\` }
     }
   }`,
@@ -497,7 +497,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
   // Resolved here by the REAL scan and the REAL host pass, not hand-authored.
   it('an instance-rooted EXISTS is narrowed by the host and drops the other member', async () => {
     const body = (cutoff: string) =>
-      `  if EXISTS(graph-[o:organization]->-[le:${LIST_ENTRIES} WHERE \`listName\` == "Portfolio" AND \`Added On\` >= "${cutoff}"]->) {
+      `  if (exists(graph-[o:organization]->-[le:${LIST_ENTRIES} WHERE le.\`listName\` == "Portfolio" && le.\`Added On\` >= "${cutoff}"]->)) {
     write graph-[:note]-> { text: "on the list since ${cutoff}" }
   }`;
     // Nothing resolved yet: no refinement, no selection, no refined position.
@@ -570,7 +570,7 @@ describe('a narrowed polymorphic hop drops the members it did not select', () =>
       schema,
       fake,
       body: `  graph-[o:organization]-> {
-    o-[le:${LIST_ENTRIES} WHERE ${REVERSED} ORDER BY \`Added On\`]-> {
+    o-[le:${LIST_ENTRIES} WHERE ${REVERSED} ORDER BY le.\`Added On\`]-> {
       write graph-[:note]-> { text: le.\`Added On\` }
     }
   }`,
@@ -660,7 +660,7 @@ describe('the pure predicate path short-circuits an AND', () => {
     const { run, writes } = await runWith({
       schema: contactSchema,
       fake: makeContactFake(),
-      body: `  write graph-[:note]-> { text: "\${JOIN(graph-[c:${CONTACT} WHERE \`stage\` == "Seed" AND \`score\` >= 1 ORDER BY \`stage\`]->.\`stage\`, ", ")}" }`,
+      body: `  write graph-[:note]-> { text: "\${Text.join(graph-[c:${CONTACT} WHERE c.\`stage\` == "Seed" && c.\`score\` >= 1 ORDER BY c.\`stage\`]->.\`stage\`, ", ")}" }`,
     });
 
     await run;
@@ -671,7 +671,7 @@ describe('the pure predicate path short-circuits an AND', () => {
     const { run } = await runWith({
       schema: contactSchema,
       fake: makeContactFake(),
-      body: `  write graph-[:note]-> { text: "\${JOIN(graph-[c:${CONTACT} WHERE \`stage\` == "Late" AND \`score\` >= 1 ORDER BY \`stage\`]->.\`stage\`, ", ")}" }`,
+      body: `  write graph-[:note]-> { text: "\${Text.join(graph-[c:${CONTACT} WHERE c.\`stage\` == "Late" && c.\`score\` >= 1 ORDER BY c.\`stage\`]->.\`stage\`, ", ")}" }`,
     });
 
     await expect(run).rejects.toThrow(/drift/);

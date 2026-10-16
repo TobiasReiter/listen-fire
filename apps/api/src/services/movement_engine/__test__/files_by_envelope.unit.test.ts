@@ -68,9 +68,9 @@ const catalog = mockCatalogSnapshot({
 const PRELUDE = [
   'import { email, graph, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
-  'inbox = email(credentials: dealflow_inbox)',
-  'kg = graph()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'kg = connect graph',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -133,7 +133,7 @@ const SOURCES: Source[] = [
 
 function program(source: Source, body: string[]): string {
   return [
-    PRELUDE + 'movement m(msg: <inbox-[:message]->>) {',
+    PRELUDE + 'function m(msg: <inbox-[:message]->>) {',
     ...source.open,
     ...body.map((line) => `  ${line}`),
     ...source.close,
@@ -234,7 +234,7 @@ async function both(source: string, { endsAtCheck = false }: { endsAtCheck?: boo
 
 describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   it('there, TEXT.SERIALISE prints its keys, not a file', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: TEXT.SERIALISE(r.`meta`, "JSON") }']));
+    const ran = await both(program(source, ['write crm-[:notes]-> { title: Json.stringify(r.`meta`) }']));
     expect(ran.error).toBeUndefined();
     expect(JSON.parse(String(ran.titles[0]))).toEqual(SPELLED);
     expect(ran.read).toEqual([]);
@@ -250,14 +250,14 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   });
 
   it('there, READ of it is refused as no file (by the checker), and nothing is read', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: COALESCE(READ(r.`meta`), "unread") }']), { endsAtCheck: true });
+    const ran = await both(program(source, ['write crm-[:notes]-> { title: coalesce(File.read(r.`meta`), "unread") }']), { endsAtCheck: true });
     expect(ran.read).toEqual([]);
     expect(ran.titles).toEqual([]);
     expect(String(ran.error)).toContain('MOV_READ_NOT_FILE');
   });
 
   it('at a field the catalog declares a file, TEXT.SERIALISE prints a file', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: TEXT.SERIALISE(r.`deck`, "JSON") }']));
+    const ran = await both(program(source, ['write crm-[:notes]-> { title: Json.stringify(r.`deck`) }']));
     expect(ran.error).toBeUndefined();
     expect(JSON.parse(String(ran.titles[0]))).toEqual({ contentType: null, kind: 'file', name: 'secrets.pdf', size: null });
     expect(ran.read).toEqual([]);
@@ -267,10 +267,10 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
     const ran = await both(
       program(source, [
         'd = r.`deck`',
-        'write crm-[:notes]-> { title: COALESCE(d.name, "-") }',
-        'write crm-[:notes]-> { title: COALESCE(d.handle, "-") }',
-        'write crm-[:notes]-> { title: COALESCE(d.source, "-") }',
-        'write crm-[:notes]-> { title: COALESCE(d.url, "-") }',
+        'write crm-[:notes]-> { title: coalesce(d.name, "-") }',
+        'write crm-[:notes]-> { title: coalesce(d.handle, "-") }',
+        'write crm-[:notes]-> { title: coalesce(d.source, "-") }',
+        'write crm-[:notes]-> { title: coalesce(d.url, "-") }',
       ]),
     );
     expect(ran.error).toBeUndefined();
@@ -279,7 +279,7 @@ describe.each(SOURCES)('a descriptor-shaped dict from $what', (source) => {
   });
 
   it('at a field the catalog declares a file is a file: READ reads it, once', async () => {
-    const ran = await both(program(source, ['write crm-[:notes]-> { title: COALESCE(READ(r.`deck`), "unread") }']));
+    const ran = await both(program(source, ['write crm-[:notes]-> { title: coalesce(File.read(r.`deck`), "unread") }']));
     expect(ran.error).toBeUndefined();
     expect(ran.titles).toEqual(['the deck']);
     // The host is handed the descriptor as plain data.
@@ -291,7 +291,7 @@ describe('a written file crosses the host boundary as its descriptor', () => {
   const DOC = { __brand: 'FileRef', name: 'deck.pdf', contentType: 'application/pdf', source: { store: 'document', objectUri: 's3://bucket/movement-files/t/deck.pdf' } };
 
   it("to the adapter, and in the run result's writtenValues — on both engines — while the program reads its view", async () => {
-    const write = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  d = msg.`deck`', '  write crm-[:notes]-> { title: COALESCE(d.name, "-"), deck: d }', '}'].join('\n');
+    const write = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  d = msg.`deck`', '  write crm-[:notes]-> { title: coalesce(d.name, "-"), deck: d }', '}'].join('\n');
     for (const engine of ['ts', 'rust'] as const) {
       writtenFiles.length = 0;
       resetRustRunStats();
@@ -310,7 +310,7 @@ describe('a written file crosses the host boundary as its descriptor', () => {
 });
 
 describe('a parked file', () => {
-  const source = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  f = msg.`deck`', '  await sleep(1h)', '  write crm-[:notes]-> { title: COALESCE(READ(f), "unread") }', '}'].join('\n');
+  const source = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  f = msg.`deck`', '  await sleep(1h)', '  write crm-[:notes]-> { title: coalesce(File.read(f), "unread") }', '}'].join('\n');
 
   async function parkOn(engine: 'ts' | 'rust'): Promise<string> {
     return onEngine(engine, async () => {
@@ -375,7 +375,7 @@ describe('a parked file is found by the park\'s structure, never by a name', () 
   const NAMES = ['fields', 'body', 'head', 'position', 'op', 'mapping', 'closure', 'params', 'origin', 'handle'];
 
   function bodyFor(name: string): string {
-    return PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', `  ${name} = msg.\`deck\``, '  await sleep(1h)', `  write crm-[:notes]-> { title: COALESCE(READ(${name}), "unread") }`, '}'].join('\n');
+    return PRELUDE + ['function m(msg: <inbox-[:message]->>) {', `  ${name} = msg.\`deck\``, '  await sleep(1h)', `  write crm-[:notes]-> { title: coalesce(File.read(${name}), "unread") }`, '}'].join('\n');
   }
 
   async function parkOn(engine: 'ts' | 'rust', source: string, event: TriggerEvent = EVENT): Promise<string> {
@@ -420,7 +420,7 @@ describe('a parked file is found by the park\'s structure, never by a name', () 
 
   /** A file's value descriptor, as data would spell it. */
   const LOOKALIKE = { kind: 'file', file: SPELLED };
-  const serialised = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  OPEN', '  d = r.`meta`', '  await sleep(1h)', '  write crm-[:notes]-> { title: TEXT.SERIALISE(d, "JSON") }', '  CLOSE', '}'].join('\n');
+  const serialised = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  OPEN', '  d = r.`meta`', '  await sleep(1h)', '  write crm-[:notes]-> { title: Json.stringify(d) }', '  CLOSE', '}'].join('\n');
 
   it.each([
     ['a webhook field holding its JSON text, read as a json field', SOURCES[0]!, JSON.stringify(LOOKALIKE)],
@@ -508,7 +508,7 @@ describe("a file-kind field's descriptor is read only as the run's team's", () =
   // The production reader: the team's byte read (`streamFileRef`), then text.
   const store = installMemoryDocumentStore();
   const reader = makeFileTextResolver(inMemoryRawTextStore(), { teamId: teamOfTenant(TEAM_ID) });
-  const read = PRELUDE + ['movement m(msg: <inbox-[:message]->>) {', '  write crm-[:notes]-> { title: COALESCE(READ(msg.`deck`), "unread") }', '}'].join('\n');
+  const read = PRELUDE + ['function m(msg: <inbox-[:message]->>) {', '  write crm-[:notes]-> { title: coalesce(File.read(msg.`deck`), "unread") }', '}'].join('\n');
 
   async function runWith(engine: 'ts' | 'rust', deck: FileRef): Promise<Ran> {
     const ran: Ran = { read: [], titles: [], prompts: [] };

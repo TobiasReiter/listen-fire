@@ -17,7 +17,8 @@
 //     however many a file declares.
 
 import { spelledForVersion5 } from './combinator_spelling';
-import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
+import { fromCatalogSnapshot, mockCatalogSnapshot, resolveFileFromSnapshot, type CatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
@@ -192,11 +193,16 @@ async function runOn(engine: Engine, c: Case) {
   const calls: unknown[] = [];
   const store = makeStore();
   if (c.store !== undefined) store.restore(c.store.snapshot());
-  const snapshot = c.files !== undefined ? { ...catalog, files: c.files } : catalog;
+  const version = c.languageVersion ?? 5;
+  // Written once in the spelling versions 1–4 read; a version 5 run reads it as the upgrade tool respells it.
+  const withFiles = c.files !== undefined ? { ...catalog, files: c.files } : catalog;
+  const spell = (text: string) => spelledFor(version, text, fromCatalogSnapshot(withFiles), { resolveFile: resolveFileFromSnapshot(withFiles) });
+  const files = c.files === undefined ? undefined : Object.fromEntries(Object.entries(c.files).map(([name, file]) => [name, { source: spell(file.source) }]));
+  const snapshot = files !== undefined ? { ...catalog, files } : catalog;
   const attio = fakeAttio(calls);
   const email = fakeEmail();
   const input: RunMovementInput = {
-    source: PRELUDE + c.source,
+    source: spell(PRELUDE + c.source),
     event: { pipelineInputId: 'pi-park-identity', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'Acme raised.' } },
     teamId: TEAM_ID,
     catalog: snapshot,

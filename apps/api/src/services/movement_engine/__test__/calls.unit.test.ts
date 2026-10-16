@@ -91,6 +91,8 @@ import { runFailureCause, runMovement } from 'movement-engine/services/movement_
 
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/expression';
+import { fromCatalogSnapshot } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   RESOURCES_REFERENCE_FIELD_ID,
@@ -341,7 +343,7 @@ describe('§G under Dancing Wren (5) — `_resources` off an adapter record is n
     });
     const dropbox = makeFakeAdapter('dropbox');
     const run = runMovement({
-      source: INTAKE_G,
+      source: spelledFor(5, INTAKE_G, fromCatalogSnapshot(catalog)),
       languageVersion: 5,
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'Acme deck' }),
@@ -366,27 +368,27 @@ describe('pass-through arguments and nested calls', () => {
     'import { email, attio } from adapters',
     'import { acme_main } from credentials',
     '',
-    'inbox = email()',
+    'inbox = connect email',
     '',
     'node Lead {',
     '  name: <text>',
     '}',
     '',
-    'movement persist(c: <Lead>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function persist(c: <Lead>) {',
+    '  crm = connect attio using acme_main',
     '  write crm-[:companies]-> {',
     '    unique by (`name`)',
     '    name: c.`name`',
     '  }',
     '}',
     '',
-    'movement relay(c: <Lead>) {',
-    '  persist(c: c)',
+    'function relay(c: <Lead>) {',
+    '  persist(c)',
     '}',
     '',
-    'movement intake(msg: <inbox-[:message]->>) {',
+    'function intake(msg: <inbox-[:message]->>) {',
     '  lead = node { name: msg.`subject` }',
-    '  relay(c: lead)',
+    '  relay(lead)',
     '}',
   ].join('\n');
 
@@ -437,7 +439,7 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
     'import { email, attio } from adapters',
     'import { acme_main } from credentials',
     '',
-    'inbox = email()',
+    'inbox = connect email',
     '',
     'node Lead {',
     '  name: <text>',
@@ -447,8 +449,8 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
     '  text: <text>',
     '}',
     '',
-    'movement persist_pair(c: <Lead>, n: <Note>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function persist_pair(c: <Lead>, n: <Note>) {',
+    '  crm = connect attio using acme_main',
     '  write crm-[:companies]-> {',
     '    unique by (`name`)',
     '    name:    c.`name`',
@@ -456,15 +458,23 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
     '  }',
     '}',
     '',
-    'movement intake(msg: <inbox-[:message]->>) {',
-    '  persist_pair(c: node { name: msg.`subject` }, n: node { text: msg.`text` })',
+    'function intake(msg: <inbox-[:message]->>) {',
+    '  persist_pair(node { name: msg.`subject` }, node { text: msg.`text` })',
     '}',
   ].join('\n');
 
-  // Same call as PAIRED but with the arguments SWAPPED in source order —
-  // named arguments carry no positional meaning, so the binding must go
-  // by name (n → n, c → c), not by index.
-  const PAIRED_OUT_OF_ORDER = PAIRED.replace(
+  // Version 5 passes arguments by position only; before it a call names them.
+  // The same program as versions 1–4 read it, in order and then with the
+  // arguments SWAPPED in source order — named arguments carry no positional
+  // meaning, so the binding must go by name (n → n, c → c), not by index.
+  const PAIRED_NAMED = PAIRED.replace('inbox = connect email', 'inbox = email()')
+    .replace('crm = connect attio using acme_main', 'crm = attio(credentials: acme_main)')
+    .replaceAll('function ', 'movement ')
+    .replace(
+      'persist_pair(node { name: msg.`subject` }, node { text: msg.`text` })',
+      'persist_pair(c: node { name: msg.`subject` }, n: node { text: msg.`text` })',
+    );
+  const PAIRED_OUT_OF_ORDER = PAIRED_NAMED.replace(
     'persist_pair(c: node { name: msg.`subject` }, n: node { text: msg.`text` })',
     'persist_pair(n: node { text: msg.`text` }, c: node { name: msg.`subject` })',
   );
@@ -493,12 +503,13 @@ describe('multi-parameter callees — any arity by call (entries stay arity-1)',
   });
 
   it('an out-of-order call binds by argument name, not by position', async () => {
-    expect(PAIRED_OUT_OF_ORDER).not.toBe(PAIRED); // the swap took
+    expect(PAIRED_OUT_OF_ORDER).not.toBe(PAIRED_NAMED); // the swap took
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
 
     await runMovement({
       source: PAIRED_OUT_OF_ORDER,
+      languageVersion: 4,
       movementName: 'intake',
       event: webhookEvent('email', { subject: 'Acme Corp', text: 'warm intro' }),
       teamId: TEAM_ID,
@@ -546,23 +557,23 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
       'import { email, attio } from adapters',
       'import { acme_main } from credentials',
       '',
-      'inbox = email()',
-      'crm   = attio(credentials: acme_main)',
+      'inbox = connect email',
+      'crm   = connect attio using acme_main',
       '',
       'node Lead {',
       '  name: <text>',
       '}',
       '',
-      'movement persist(c: <Lead>) {',
+      'function persist(c: <Lead>) {',
       '  write crm-[:companies]-> {',
       '    unique by (`name`)',
       '    name: caller_local',
       '  }',
       '}',
       '',
-      'movement intake(msg: <inbox-[:message]->>) {',
+      'function intake(msg: <inbox-[:message]->>) {',
       '  caller_local = msg.`subject`',
-      '  persist(c: node { name: msg.`subject` })',
+      '  persist(node { name: msg.`subject` })',
       '}',
     ].join('\n'),
       promise = runMovement({
@@ -590,15 +601,15 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
       'import { email, attio } from adapters',
       'import { acme_main } from credentials',
       '',
-      'inbox = email()',
-      'crm   = attio(credentials: acme_main)',
+      'inbox = connect email',
+      'crm   = connect attio using acme_main',
       'team_tag = "sourced-by-listen-fire"',
       '',
       'node Lead {',
       '  name: <text>',
       '}',
       '',
-      'movement persist(c: <Lead>) {',
+      'function persist(c: <Lead>) {',
       '  write crm-[:companies]-> {',
       '    unique by (`name`)',
       '    name: c.`name`',
@@ -606,8 +617,8 @@ describe('lexical scoping — the callee sees file scope, not the caller', () =>
       '  }',
       '}',
       '',
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  persist(c: node { name: msg.`subject` })',
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  persist(node { name: msg.`subject` })',
       '}',
     ].join('\n');
     const attio = makeFakeAdapter('attio');
@@ -640,8 +651,8 @@ describe('guards', () => {
     'import { email, attio } from adapters',
     'import { acme_main } from credentials',
     '',
-    'inbox = email()',
-    'crm   = attio(credentials: acme_main)',
+    'inbox = connect email',
+    'crm   = connect attio using acme_main',
     '',
     'node Lead {',
     '  name: <text>',
@@ -676,8 +687,8 @@ describe('guards', () => {
       [
         GUARD_PRELUDE,
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  intake(msg: msg)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  intake(msg)',
         '}',
       ].join('\n'),
       /MOVENG_CALL_DEPTH: call depth limit reached: 'intake → intake → intake → intake → … 24 more … → intake/,
@@ -691,7 +702,7 @@ describe('guards', () => {
       [
         GUARD_PRELUDE,
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  lead = write Lead-[:company]-> {',
         '    unique by (`name`)',
         '    name: msg.`subject`',
@@ -709,14 +720,14 @@ describe('guards', () => {
       [
         GUARD_PRELUDE,
         '',
-        'movement persist(c: <Lead>) {',
+        'function persist(c: <Lead>) {',
         '  write crm-[:companies]-> {',
         '    unique by (`name`)',
         '    name: c.`name`',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  v = msg.`subject`',
         '  persist(c: v)',
         '}',
@@ -736,7 +747,7 @@ describe('positional calls and value parameters', () => {
     'import { email, attio } from adapters',
     'import { acme_main } from credentials',
     '',
-    'inbox = email()',
+    'inbox = connect email',
     '',
     'node Lead {',
     '  name: <text>',
@@ -769,8 +780,8 @@ describe('positional calls and value parameters', () => {
     const creates = await run(
       [
         PRELUDE,
-        'movement persist_pair(c: <Lead>, n: <Note>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist_pair(c: <Lead>, n: <Note>) {',
+        '  crm = connect attio using acme_main',
         '  write crm-[:companies]-> {',
         '    unique by (`name`)',
         '    name:    c.`name`',
@@ -778,7 +789,7 @@ describe('positional calls and value parameters', () => {
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  persist_pair(node { name: msg.`subject` }, node { text: msg.`text` })',
         '}',
       ].join('\n'),
@@ -792,16 +803,16 @@ describe('positional calls and value parameters', () => {
     const creates = await run(
       [
         PRELUDE,
-        'movement persist(name: <text>, cfg: <{ summary: text, tag?: text }>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(name: <text>, cfg: <{ summary: text, tag?: text }>) {',
+        '  crm = connect attio using acme_main',
         '  write crm-[:companies]-> {',
         '    unique by (`name`)',
         '    name:    name',
-        '    summary: AT(cfg, "summary")',
+        '    summary: cfg.summary',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  persist(msg.`subject`, { summary: "from ${msg.`text`}" })',
         '}',
       ].join('\n'),
@@ -815,17 +826,17 @@ describe('positional calls and value parameters', () => {
     const creates = await run(
       [
         PRELUDE,
-        'movement persist(name: <text>, cfg: <{ summary: text }>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(name: <text>, cfg: <{ summary: text }>) {',
+        '  crm = connect attio using acme_main',
         '  write crm-[:companies]-> {',
         '    unique by (`name`)',
         '    name:    name',
-        '    summary: AT(cfg, "summary")',
+        '    summary: cfg.summary',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  persist(cfg: { summary: "named" }, name: msg.`subject`)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  persist(msg.`subject`, { summary: "named" })',
         '}',
       ].join('\n'),
     );
@@ -846,17 +857,17 @@ describe('per-instance dry_run wraps the adapter regardless of run-wide dryRun',
     'import { email, attio } from adapters',
     'import { acme_main } from credentials',
     '',
-    'inbox = email()',
-    'crm   = attio(credentials: acme_main, dry_run: true)',
+    'inbox = connect email',
+    'crm   = connect attio using acme_main { dryRun: true }',
     '',
-    'movement intake(msg: <inbox-[:message]->>) {',
+    'function intake(msg: <inbox-[:message]->>) {',
     '  write crm-[:companies]-> {',
     '    name: msg.`subject`',
     '  }',
     '}',
   ].join('\n');
 
-  const LIVE_ATTIO = DRY_ATTIO.replace(', dry_run: true', '');
+  const LIVE_ATTIO = DRY_ATTIO.replace(' { dryRun: true }', '');
 
   it('a dry_run instance is rehearsed even when the run is not run-wide dry', async () => {
     const attio = makeFakeAdapter('attio');

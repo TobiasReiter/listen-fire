@@ -153,7 +153,7 @@ jest.mock('../catalog', () => {
     '  name: <text>',
     '}',
     '',
-    'export movement log_lead(l: <Lead>) {',
+    'export function log_lead(l: <Lead>) {',
     '  x = l.`name`',
     '}',
   ].join('\n');
@@ -290,11 +290,11 @@ const TEAM = 'team-1';
 
 const PRELUDE = `import { email } from adapters
 
-inbox = email()
+inbox = connect email
 `;
 
 const SOURCE_V1 = `${PRELUDE}
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   # version one
 }
 
@@ -304,11 +304,11 @@ const SOURCE_V2 = SOURCE_V1.replace('# version one', '# version two');
 const SOURCE_BROKEN = SOURCE_V1.replace('# version one', 'write nowhere-[:thing]-> { x: 1 }');
 
 const MULTI_LISTEN = `${PRELUDE}
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   # intake
 }
 
-movement digest(m: <inbox-[:message]->>) {
+function digest(m: <inbox-[:message]->>) {
   # digest
 }
 
@@ -317,7 +317,7 @@ listen to inbox { key: "intros" } fire digest
 `;
 
 const NO_LISTEN = `${PRELUDE}
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   # library now
 }
 `;
@@ -329,16 +329,16 @@ movement intake(m: <inbox-[:message]->>) {
 // instances of the same credential-less adapter sharing a config key.
 const TWO_INSTANCE_PRELUDE = `import { email } from adapters
 
-inbox_a = email()
-inbox_b = email()
+inbox_a = connect email
+inbox_b = connect email
 `;
 
 const TWO_SHARED = `${TWO_INSTANCE_PRELUDE}
-movement a(m: <inbox_a-[:message]->>) {
+function a(m: <inbox_a-[:message]->>) {
   # a
 }
 
-movement b(m: <inbox_b-[:message]->>) {
+function b(m: <inbox_b-[:message]->>) {
   # b
 }
 
@@ -350,19 +350,19 @@ listen to inbox_b { key: "deals" } fire b
 // AHEAD of the others — declaration and `listen` both first in the file.
 const THREE_SHARED = `import { email } from adapters
 
-inbox_c = email()
-inbox_a = email()
-inbox_b = email()
+inbox_c = connect email
+inbox_a = connect email
+inbox_b = connect email
 
-movement c(m: <inbox_c-[:message]->>) {
+function c(m: <inbox_c-[:message]->>) {
   # c
 }
 
-movement a(m: <inbox_a-[:message]->>) {
+function a(m: <inbox_a-[:message]->>) {
   # a
 }
 
-movement b(m: <inbox_b-[:message]->>) {
+function b(m: <inbox_b-[:message]->>) {
   # b
 }
 
@@ -376,10 +376,10 @@ listen to inbox_b { key: "deals" } fire b
 const WITH_FILE_IMPORT = `import { email } from adapters
 import { log_lead, Lead } from "lib/leads"
 
-inbox = email()
+inbox = connect email
 
-movement intake(m: <inbox-[:message]->>) {
-  log_lead(l: node { name: m.\`subject\` })
+function intake(m: <inbox-[:message]->>) {
+  log_lead(node { name: m.\`subject\` })
 }
 
 listen to inbox { key: "deals" } fire intake
@@ -390,7 +390,7 @@ const WITH_BAD_FILE_IMPORT = WITH_FILE_IMPORT.replace('"lib/leads"', '"lib/nowhe
 // Two aliased lanes firing the same movement — trigger names should equal the
 // lane aliases (not the derived `movement/<file>/<movement>` form).
 const ALIASED_LANES = `${PRELUDE}
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   # intake
 }
 
@@ -725,16 +725,16 @@ describe('saveMovement — listener derivation', () => {
 
   it('a through-staged extraction saves LIVE (the engine runs staging)', async () => {
     const staged = `import { email } from adapters
-import { fetch_pages } from plugins
+import { fetchPages as fetch_pages } from plugins
 
-inbox = email()
+inbox = connect email
 
-movement intake(m: <inbox-[:message]->>) {
+function intake(m: <inbox-[:message]->>) {
   mentions = extract from [m.\`text\`] {
     node company: "each company mentioned" {
       name: "the company's name"
       urls: "URLs for this company"
-    } through [fetch_pages(urls: urls)] {
+    } through [fetch_pages({ urls: urls })] {
       name: "the company's name"
       website: "the company's official website"
     }
@@ -1281,9 +1281,9 @@ const DIRECT_BACKTICK_SOURCE = [
   'import { attio } from adapters',
   'import { `Dev-loop Attio` } from credentials',
   '',
-  'crm = attio(credentials: `Dev-loop Attio`)',
+  'crm = connect attio using `Dev-loop Attio`',
   '',
-  'movement intake(m: <crm-[:company]->>) {',
+  'function intake(m: <crm-[:company]->>) {',
   '  # process',
   '}',
   '',
@@ -1295,9 +1295,9 @@ const ALIASED_SOURCE = [
   'import { attio } from adapters',
   'import { `Dev-loop Attio` as crm_cred } from credentials',
   '',
-  'crm = attio(credentials: crm_cred)',
+  'crm = connect attio using crm_cred',
   '',
-  'movement intake(m: <crm-[:company]->>) {',
+  'function intake(m: <crm-[:company]->>) {',
   '  # process',
   '}',
   '',
@@ -1367,10 +1367,12 @@ describe('the language version pin', () => {
     // A movement saved before the current version existed.
     db.__tables.movement[0].language_version = 1;
 
-    const again = await saveMovement({ teamId: TEAM, id: first.movementId, source: SOURCE_V2 });
+    // The edit is written as version 1 reads it (the old spelling).
+    const sourceV1Spelling = SOURCE_V2.replace('inbox = connect email', 'inbox = email()').replace('function intake', 'movement intake');
+    const again = await saveMovement({ teamId: TEAM, id: first.movementId, source: sourceV1Spelling });
     expect(again.ok).toBe(true);
     const [row] = db.__tables.movement;
-    expect(row.source).toBe(SOURCE_V2);
+    expect(row.source).toBe(sourceV1Spelling);
     expect(row.language_version).toBe(1);
     expect(row.validity_checked_against).toBe(1);
 

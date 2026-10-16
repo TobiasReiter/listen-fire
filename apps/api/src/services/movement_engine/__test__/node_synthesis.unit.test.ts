@@ -233,9 +233,12 @@ const PRELUDE = [
   'import { email, dropbox, attio } from adapters',
   'import { team_drive, acme_main } from credentials',
   '',
-  'inbox = email()',
+  'inbox = connect email',
   '',
 ].join('\n');
+
+/** The same prelude as versions 1–4 read it, for the cases pinned there. */
+const PRELUDE_V4 = PRELUDE.replace('inbox = connect email', 'inbox = email()');
 
 /** A fake callback sink — the cheapest REAL park: minting a callback captures
  *  the enclosing scope through the same serialiser a parked ask writes. */
@@ -268,7 +271,7 @@ interface RunAdapters {
 function run(source: string, payload: Record<string, unknown>, adapters: RunAdapters):
   Promise<Awaited<ReturnType<typeof runMovement>>> {
   return runMovement({
-    source: PRELUDE + source,
+    source: (adapters.languageVersion === 4 ? PRELUDE_V4 : PRELUDE) + source,
     movementName: 'intake',
     event: webhookEvent('email', payload),
     teamId: TEAM_ID,
@@ -339,8 +342,8 @@ describe('a two-field node passed to a library movement and read back', () => {
     '  body: <text>',
     '}',
     '',
-    'movement persist(n: <Note>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function persist(n: <Note>) {',
+    '  crm = connect attio using acme_main',
     '  write crm-[:companies]-> {',
     '    name: n.`title`',
     '    summary: n.`body`',
@@ -356,8 +359,8 @@ describe('a two-field node passed to a library movement and read back', () => {
     const result = await run(
       NOTE +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  persist(n: node { title: msg.`subject`, body: msg.`text` })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  persist(node { title: msg.`subject`, body: msg.`text` })',
           '}',
         ].join('\n'),
       { subject: 'Acme Corp', text: 'a deck' },
@@ -385,13 +388,13 @@ describe('a two-field node passed to a library movement and read back', () => {
     await run(
       NOTE +
         [
-          'movement relay(n: <Note>) {',
-          '  persist(n: n)',
+          'function relay(n: <Note>) {',
+          '  persist(n)',
           '}',
           '',
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           '  d = node { title: msg.`subject`, body: msg.`text` }',
-          '  relay(n: d)',
+          '  relay(d)',
           '}',
         ].join('\n'),
       { subject: 'Acme Corp', text: 'b' },
@@ -418,8 +421,8 @@ describe('a single synthesised edge, traversed by the callee', () => {
         '  }',
         '}',
         '',
-        'movement persist(d: <Deal>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(d: <Deal>) {',
+        '  crm = connect attio using acme_main',
         '  d-[o:company]-> {',
         '    write crm-[:companies]-> {',
         '      name: o.`name`',
@@ -428,8 +431,8 @@ describe('a single synthesised edge, traversed by the callee', () => {
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  persist(d: node {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  persist(node {',
         '    title: msg.`subject`',
         '    company: node { name: msg.`text` }',
         '  })',
@@ -460,8 +463,8 @@ describe('a single synthesised edge, traversed by the callee', () => {
         '  }',
         '}',
         '',
-        'movement persist(d: <Deal>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(d: <Deal>) {',
+        '  crm = connect attio using acme_main',
         '  d-[o:company]-> {',
         '    o-[p:owner]-> {',
         '      write crm-[:people]-> {',
@@ -472,8 +475,8 @@ describe('a single synthesised edge, traversed by the callee', () => {
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  persist(d: node {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  persist(node {',
         '    title: msg.`subject`',
         '    company: node { name: msg.`text`, owner: node { email: "ada@acme.test" } }',
         '  })',
@@ -503,8 +506,8 @@ describe('a plural synthesised edge, fanned out', () => {
         '  }',
         '}',
         '',
-        'movement persist(d: <Deal>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(d: <Deal>) {',
+        '  crm = connect attio using acme_main',
         '  d-[p:people]-> {',
         '    write crm-[:people]-> {',
         '      name: p.`name`',
@@ -513,8 +516,8 @@ describe('a plural synthesised edge, fanned out', () => {
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  persist(d: node {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  persist(node {',
         '    title: msg.`subject`',
         '    people: [node { name: msg.`text` }, node { name: "Grace" }]',
         '  })',
@@ -551,17 +554,17 @@ describe('values ride through untouched', () => {
         '  blob: <file>',
         '}',
         '',
-        'movement store(f: <Doc>) {',
-        '  drive = dropbox(credentials: team_drive)',
+        'function store(f: <Doc>) {',
+        '  drive = connect dropbox using team_drive',
         '  write drive-[:file]-> {',
         '    name: f.`name`',
         '    data: f.`blob`',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  msg-[a:files]-> {',
-        '    store(f: node { name: a.`filename`, blob: a.`data` })',
+        '    store(node { name: a.`filename`, blob: a.`data` })',
         '  }',
         '}',
       ].join('\n'),
@@ -594,14 +597,14 @@ describe('a shape WRITE still RUNS after the author-time retirement', () => {
         '  title: <text>',
         '}',
         '',
-        'movement persist(n: <Note>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(n: <Note>) {',
+        '  crm = connect attio using acme_main',
         '  write crm-[:companies]-> { name: n.`title` }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  persist(n: write Note-[:item]-> { title: msg.`subject` })',
-        '  persist(n: node { title: msg.`text` })',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  persist(write Note-[:item]-> { title: msg.`subject` })',
+        '  persist(node { title: msg.`text` })',
         '}',
       ].join('\n'),
       { subject: 'from a shape write', text: 'from a node' },
@@ -630,8 +633,8 @@ describe('the files-through-a-call gap, closed', () => {
     '  }',
     '}',
     '',
-    'movement store(d: <Doc>) {',
-    '  drive = dropbox(credentials: team_drive)',
+    'function store(d: <Doc>) {',
+    '  drive = connect dropbox using team_drive',
     '  d-[f:files]-> {',
     '    write drive-[:file]-> {',
     '      name: f.`filename`',
@@ -661,8 +664,8 @@ describe('the files-through-a-call gap, closed', () => {
     const result = await run(
       DOC +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  store(d: node { title: msg.`subject`, files: lazy msg-[a:files]-> })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  store(node { title: msg.`subject`, files: lazy msg-[a:files]-> })',
           '}',
         ].join('\n'),
       { subject: 'Series A' },
@@ -690,8 +693,8 @@ describe('the files-through-a-call gap, closed', () => {
     await run(
       DOC +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  store(d: node { title: msg.`subject`, files: msg-[a:files]-> })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  store(node { title: msg.`subject`, files: msg-[a:files]-> })',
           '}',
         ].join('\n'),
       { subject: 'Series A' },
@@ -712,8 +715,8 @@ describe('the files-through-a-call gap, closed', () => {
     await run(
       DOC +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  store(d: node { title: "x", files: lazy msg-[a:files]-> })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  store(node { title: "x", files: lazy msg-[a:files]-> })',
           '}',
         ].join('\n'),
       {},
@@ -744,16 +747,16 @@ describe('hopping ON past a pass-through edge', () => {
         '  }',
         '}',
         '',
-        'movement persist(r: <Roster>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(r: <Roster>) {',
+        '  crm = connect attio using acme_main',
         '  r-[:people]->-[c:company]-> {',
         '    write crm-[:companies]-> { name: c.`name` }',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  persist(r: node { title: "x", people: crm-[p:people]-> })',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  persist(node { title: "x", people: crm-[p:people]-> })',
         '}',
       ].join('\n'),
       {},
@@ -773,8 +776,8 @@ describe('when the walk happens', () => {
     '  }',
     '}',
     '',
-    'movement record_names(d: <Bag>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function record_names(d: <Bag>) {',
+    '  crm = connect attio using acme_main',
     '  d-[f:files]-> {',
     '    write crm-[:companies]-> { name: f.`filename` }',
     '  }',
@@ -800,10 +803,10 @@ describe('when the walk happens', () => {
     await run(
       COUNTER +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           '  d = node { title: "x", files: msg-[a:files]-> }',
-          '  record_names(d: d)',
-          '  record_names(d: d)',
+          '  record_names(d)',
+          '  record_names(d)',
           '}',
         ].join('\n'),
       {},
@@ -822,10 +825,10 @@ describe('when the walk happens', () => {
     await run(
       COUNTER +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           '  d = node { title: "x", files: lazy msg-[a:files]-> }',
-          '  record_names(d: d)',
-          '  record_names(d: d)',
+          '  record_names(d)',
+          '  record_names(d)',
           '}',
         ].join('\n'),
       {},
@@ -847,9 +850,9 @@ describe('when the walk happens', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         '  d = node { title: "x", files: lazy msg-[a:files]-> }',
-        '  crm = attio(credentials: acme_main)',
+        '  crm = connect attio using acme_main',
         '  write crm-[:companies]-> { name: d.title }',
         '}',
       ].join('\n'),
@@ -871,8 +874,8 @@ describe('the hop keeps its own WHERE / ORDER BY / LIMIT', () => {
     '  }',
     '}',
     '',
-    'movement record_names(d: <Bag>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function record_names(d: <Bag>) {',
+    '  crm = connect attio using acme_main',
     '  d-[f:files]-> {',
     '    write crm-[:companies]-> { name: f.`filename` }',
     '  }',
@@ -891,9 +894,9 @@ describe('the hop keeps its own WHERE / ORDER BY / LIMIT', () => {
     const attio = makeFakeAdapter('attio');
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  msg-[a:files WHERE `filename` == "a.pdf"]-> {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  msg-[a:files WHERE a.`filename` == "a.pdf"]-> {',
         '    write crm-[:companies]-> { name: a.`filename` }',
         '  }',
         '}',
@@ -911,8 +914,8 @@ describe('the hop keeps its own WHERE / ORDER BY / LIMIT', () => {
     await run(
       PICK +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  record_names(d: node { title: "x", files: lazy msg-[a:files WHERE `kind` == "deck"]-> })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  record_names(node { title: "x", files: lazy msg-[a:files WHERE a.`kind` == "deck"]-> })',
           '}',
         ].join('\n'),
       {},
@@ -929,8 +932,8 @@ describe('the hop keeps its own WHERE / ORDER BY / LIMIT', () => {
     await run(
       PICK +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  record_names(d: node { title: "x", files: lazy msg-[a:files ORDER BY `filename` LIMIT 2]-> })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  record_names(node { title: "x", files: lazy msg-[a:files ORDER BY a.`filename` LIMIT 2]-> })',
           '}',
         ].join('\n'),
       {},
@@ -950,8 +953,8 @@ describe('`lazy` on an ordinary binding', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  people = lazy crm-[p:people]->',
         '  people-[c:company]-> {',
         '    write crm-[:companies]-> { name: c.`name` }',
@@ -973,10 +976,10 @@ describe('`lazy` on an ordinary binding', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  files = lazy msg-[a:files]->',
-        '  write crm-[:companies]-> { name: JOIN(files.`filename`, ", ") }',
+        '  write crm-[:companies]-> { name: Text.join(files.`filename`, ", ") }',
         '}',
       ].join('\n'),
       {},
@@ -997,8 +1000,8 @@ describe('`lazy` on an ordinary binding', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  files = lazy msg-[a:files]->',
         '  write crm-[:companies]-> { name: files.`filename` }',
         '  write crm-[:companies]-> { name: files.`filename` }',
@@ -1020,8 +1023,8 @@ describe('a park carries the WALK, not what it walked to', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  files = lazy msg-[a:files]->',
         '  cb = callback({ write crm-[:companies]-> { name: files.`filename` } })',
         '}',
@@ -1053,8 +1056,8 @@ describe('a park carries the WALK, not what it walked to', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  d = node { title: "x", files: lazy msg-[a:files]-> }',
         '  cb = callback({ write crm-[:companies]-> { name: d.title } })',
         '}',
@@ -1080,8 +1083,8 @@ describe('a park carries the WALK, not what it walked to', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  d = node { title: "x", files: msg-[a:files]-> }',
         '  cb = callback({ write crm-[:companies]-> { name: d.title } })',
         '}',
@@ -1107,10 +1110,10 @@ describe('emptiness through a deferred walk', () => {
     const attio = makeFakeAdapter('attio');
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  files = lazy msg-[a:files]->',
-        '  if EXISTS(files) {',
+        '  if (files != null) {',
         '    write crm-[:companies]-> { name: "yes" }',
         '  }',
         '}',
@@ -1137,8 +1140,8 @@ describe('the design example, end to end', () => {
     '  }',
     '}',
     '',
-    'movement process_deal(d: <Deal>) {',
-    '  drive = dropbox(credentials: team_drive)',
+    'function process_deal(d: <Deal>) {',
+    '  drive = connect dropbox using team_drive',
     '  d-[f:files]-> {',
     '    write drive-[:file]-> {',
     '      filename: f.`name`',
@@ -1161,12 +1164,12 @@ describe('the design example, end to end', () => {
   }
 
   const INTAKE = [
-    'movement intake(msg: <inbox-[:message]->>) {',
+    'function intake(msg: <inbox-[:message]->>) {',
     '  deal = node {',
     '    title: msg.`subject`',
     '    files: lazy msg-[a:files]-> node { name: a.`filename`, blob: a.`data` }',
     '  }',
-    '  process_deal(d: deal)',
+    '  process_deal(deal)',
     '}',
   ].join('\n');
 
@@ -1219,8 +1222,8 @@ describe('the design example, end to end', () => {
     await run(
       DEAL +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  process_deal(d: node {',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  process_deal(node {',
           '    title: msg.`subject`',
           '    files: msg-[a:files]-> node { name: a.`filename`, blob: a.`data` }',
           '  })',
@@ -1245,8 +1248,8 @@ describe('when a MAPPED walk happens', () => {
     '  }',
     '}',
     '',
-    'movement record_names(d: <Bag>) {',
-    '  crm = attio(credentials: acme_main)',
+    'function record_names(d: <Bag>) {',
+    '  crm = connect attio using acme_main',
     '  d-[f:files]-> {',
     '    write crm-[:companies]-> { name: f.`label` }',
     '  }',
@@ -1274,10 +1277,10 @@ describe('when a MAPPED walk happens', () => {
     await run(
       BAG +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           `  d = node { title: "x", ${MAPPED_ENTRY} }`,
-          '  record_names(d: d)',
-          '  record_names(d: d)',
+          '  record_names(d)',
+          '  record_names(d)',
           '}',
         ].join('\n'),
       {},
@@ -1295,10 +1298,10 @@ describe('when a MAPPED walk happens', () => {
     await run(
       BAG +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
+          'function intake(msg: <inbox-[:message]->>) {',
           '  d = node { title: "x", files: msg-[a:files]-> node { label: a.`filename` } }',
-          '  record_names(d: d)',
-          '  record_names(d: d)',
+          '  record_names(d)',
+          '  record_names(d)',
           '}',
         ].join('\n'),
       {},
@@ -1315,9 +1318,9 @@ describe('when a MAPPED walk happens', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
+        'function intake(msg: <inbox-[:message]->>) {',
         `  d = node { title: "x", ${MAPPED_ENTRY} }`,
-        '  crm = attio(credentials: acme_main)',
+        '  crm = connect attio using acme_main',
         '  write crm-[:companies]-> { name: d.title }',
         '}',
       ].join('\n'),
@@ -1342,8 +1345,8 @@ describe('when a MAPPED walk happens', () => {
     await run(
       BAG +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  record_names(d: node { title: "x", files: lazy msg-[a:files WHERE `kind` == "deck"]-> node { label: a.`filename` } })',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  record_names(node { title: "x", files: lazy msg-[a:files WHERE a.`kind` == "deck"]-> node { label: a.`filename` } })',
           '}',
         ].join('\n'),
       {},
@@ -1373,8 +1376,8 @@ describe('mapped landings are ordinary synthesised nodes', () => {
         '  }',
         '}',
         '',
-        'movement persist(r: <Roster>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(r: <Roster>) {',
+        '  crm = connect attio using acme_main',
         '  r-[p:people]-> {',
         '    p-[c:company]-> {',
         '      write crm-[:companies]-> { name: c.`name`, summary: p.`name` }',
@@ -1382,9 +1385,9 @@ describe('mapped landings are ordinary synthesised nodes', () => {
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  persist(r: node {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  persist(node {',
         '    title: "x"',
         '    people: crm-[p:people]-> node { name: p.`name`, company: p-[e:company]-> node { name: e.`name` } }',
         '  })',
@@ -1407,10 +1410,10 @@ describe('mapped landings are ordinary synthesised nodes', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  files = lazy msg-[a:files]-> node { label: a.`filename` }',
-        '  write crm-[:companies]-> { name: JOIN(files.label, ", ") }',
+        '  write crm-[:companies]-> { name: Text.join(files.label, ", ") }',
         '}',
       ].join('\n'),
       {},
@@ -1443,16 +1446,16 @@ describe('mapped landings are ordinary synthesised nodes', () => {
         '  }',
         '}',
         '',
-        'movement persist(r: <Roster>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function persist(r: <Roster>) {',
+        '  crm = connect attio using acme_main',
         '  r-[:people]->-[c:company]-> {',
         '    write crm-[:companies]-> { name: c.`name` }',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  persist(r: node {',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  persist(node {',
         '    title: "x"',
         '    people: lazy crm-[p:people]-> node { name: p.`name`, company: node { name: "Acme" } }',
         '  })',
@@ -1474,8 +1477,8 @@ describe('a park carries the MAPPING, not what it mapped', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  d = node { title: "x", files: lazy msg-[a:files]-> node { label: a.`filename` } }',
         '  cb = callback({ write crm-[:companies]-> { name: d.title } })',
         '}',
@@ -1507,19 +1510,19 @@ describe('a park carries the MAPPING, not what it mapped', () => {
         '  }',
         '}',
         '',
-        'movement record_names(d: <Bag>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function record_names(d: <Bag>) {',
+        '  crm = connect attio using acme_main',
         '  d-[f:files]-> {',
         '    write crm-[:companies]-> { name: f.`label` }',
         '  }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  d = node { title: "x", files: lazy msg-[a:files]-> node { label: a.`filename` } }',
         '  write crm-[:companies]-> { name: d.title }',
         '  await sleep(30d)',
-        '  record_names(d: d)',
+        '  record_names(d)',
         '}',
       ].join('\n');
 
@@ -1581,8 +1584,8 @@ describe('IS against a declared node — a synthesised subject', () => {
   const intake = (body: string[]): string =>
     DECLS
     + [
-      'movement intake(msg: <inbox-[:message]->>) {',
-      '  crm = attio(credentials: acme_main)',
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  crm = connect attio using acme_main',
       ...body,
       '}',
     ].join('\n');
@@ -1605,17 +1608,17 @@ describe('IS against a declared node — a synthesised subject', () => {
 
   it('a literal carrying every declared entry takes the arm', async () => {
     expect(
-      await names(['  d = node { title: "t", body: "b" }', ...branch('d IS <Note>')]),
+      await names(['  d = node { title: "t", body: "b" }', ...branch('(d is <Note>)')]),
     ).toEqual(['arm']);
   });
 
   it('a literal missing a declared entry takes the else', async () => {
-    expect(await names(['  d = node { title: "t" }', ...branch('d IS <Note>')])).toEqual(['else']);
+    expect(await names(['  d = node { title: "t" }', ...branch('(d is <Note>)')])).toEqual(['else']);
   });
 
   it('EXTRA entries are fine — conformance is structural, not exact', async () => {
     expect(
-      await names(['  d = node { title: "t", body: "b" }', ...branch('d IS <Titled>')]),
+      await names(['  d = node { title: "t", body: "b" }', ...branch('(d is <Titled>)')]),
     ).toEqual(['arm']);
   });
 
@@ -1623,13 +1626,13 @@ describe('IS against a declared node — a synthesised subject', () => {
     expect(
       await names([
         '  d = node { title: "t", file: node { label: "deck.pdf" } }',
-        ...branch('d IS <Filed>'),
+        ...branch('(d is <Filed>)'),
       ]),
     ).toEqual(['arm']);
   });
 
   it('a missing declared edge conforms too — edges are zero-or-more, absence is the empty set', async () => {
-    expect(await names(['  d = node { title: "t" }', ...branch('d IS <Filed>')])).toEqual([
+    expect(await names(['  d = node { title: "t" }', ...branch('(d is <Filed>)')])).toEqual([
       'arm',
     ]);
   });
@@ -1642,13 +1645,13 @@ describe('IS against a declared node — a synthesised subject', () => {
   it('an entry that evaluated to nothing is absent here too — one story about a missing value', async () => {
     expect(
       await names(
-        ['  d = node { title: "t", body: msg.`text` }', ...branch('d IS <Note>')],
+        ['  d = node { title: "t", body: msg.`text` }', ...branch('(d is <Note>)')],
         { subject: 'x', text: 'a deck' },
       ),
     ).toEqual(['arm']);
     expect(
       await names(
-        ['  d = node { title: "t", body: msg.`text` }', ...branch('d IS <Note>')],
+        ['  d = node { title: "t", body: msg.`text` }', ...branch('(d is <Note>)')],
         { subject: 'x' },
       ),
     ).toEqual(['else']);
@@ -1658,14 +1661,14 @@ describe('IS against a declared node — a synthesised subject', () => {
     const source =
       DECLS
       + [
-        'movement make(m: <inbox-[:message]->>) {',
+        'function make(m: <inbox-[:message]->>) {',
         '  return node { title: m.`subject`, body: m.`text` }',
         '}',
         '',
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
-        '  d = make(m: msg)',
-        ...branch('d IS <Note>'),
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
+        '  d = make(msg)',
+        ...branch('(d is <Note>)'),
         '}',
       ].join('\n');
     const email = makeFakeAdapter('email');
@@ -1691,8 +1694,8 @@ describe('a bare-name binding of a node is an ALIAS at run time (2026-08-05 ruli
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  drive = dropbox(credentials: team_drive)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  drive = connect dropbox using team_drive',
         '  x = msg-[a:files]-> {',
         '    doc = a',
         '    return doc',
@@ -1718,8 +1721,8 @@ describe('a bare-name binding of a node is an ALIAS at run time (2026-08-05 ruli
 
     const result = await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  m2 = msg',
         '  write crm-[:companies]-> {',
         '    name: m2.`subject`',
@@ -1754,8 +1757,8 @@ describe("a bound block's returned VALUES read as an array", () => {
     const attio = makeFakeAdapter('attio');
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  x = msg-[a:files]-> {',
         '    return a.`filename`',
         '  }',
@@ -1790,15 +1793,15 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
     const attio = makeFakeAdapter('attio');
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  r = race(',
         '    () => { return "first" },',
         '    () => { return "second" },',
         '  )',
         '  write crm-[:companies]-> {',
         '    name: "done"',
-        '    summary: "${AT(r, 0)}/${AT(r, 1)}"',
+        '    summary: "${r[0]}/${r[1]}"',
         '  }',
         '}',
       ].join('\n'),
@@ -1811,23 +1814,23 @@ describe('the combinators — arms, ties and slots (sync paths)', () => {
   });
 
   it.each([
-    ['parallel (version 4)', '  r = await parallel([', '  ])', 4 as const],
-    ['all, which replaces it (version 5)', '  r = all(', '  )', undefined],
-  ])('an arm that hands nothing back is a null slot: %s', async (_label, open, close, languageVersion) => {
+    ['parallel (version 4)', 'movement', 'crm = attio(credentials: acme_main)', '  r = await parallel([', '  ])', 'COALESCE(AT(r, 1), "empty")', '[AT(r, 0)]', 4 as const],
+    ['all, which replaces it (version 5)', 'function', 'crm = connect attio using acme_main', '  r = all(', '  )', 'coalesce(r[1], "empty")', '[r[0]]', undefined],
+  ])('an arm that hands nothing back is a null slot: %s', async (_label, keyword, crm, open, close, summary, domains, languageVersion) => {
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        `${keyword} intake(msg: <inbox-[:message]->>) {`,
+        `  ${crm}`,
         open,
         '    () => { return "value" },',
         '    () => { done = "acted" },',
         close,
         '  write crm-[:companies]-> {',
         '    name: "done"',
-        '    summary: COALESCE(AT(r, 1), "empty")',
-        '    domains: [AT(r, 0)]',
+        `    summary: ${summary}`,
+        `    domains: ${domains}`,
         '  }',
         '}',
       ].join('\n'),
@@ -1915,8 +1918,8 @@ describe('a declared edge grows by `link`', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  sent = node { posted: <crm-[:companies]->> }',
         '  if (msg.`subject` == "both") {',
         '    one = write crm-[:companies]-> { name: "a" }',
@@ -1951,8 +1954,8 @@ describe('a declared edge grows by `link`', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  sent = node { posted: <crm-[:companies]->> }',
         '  if (msg.`subject` == "both") {',
         '    one = write crm-[:companies]-> { name: "a" }',
@@ -1982,13 +1985,13 @@ describe('a declared edge grows by `link`', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  sent = node { posted: <crm-[:companies]->> }',
         '  sent-[c:posted]-> {',
         '    write c-[:investments]-> { amount: 1 }',
         '  }',
-        '  write crm-[:companies]-> { name: COUNT(sent-[:posted]->) }',
+        '  write crm-[:companies]-> { name: count(sent-[:posted]->) }',
         '}',
       ].join('\n'),
       {},
@@ -2005,8 +2008,8 @@ describe('a declared edge grows by `link`', () => {
 
     await run(
       [
-        'movement intake(msg: <inbox-[:message]->>) {',
-        '  crm = attio(credentials: acme_main)',
+        'function intake(msg: <inbox-[:message]->>) {',
+        '  crm = connect attio using acme_main',
         '  sent = node { posted: <crm-[:companies]->> }',
         '  one = write crm-[:companies]-> { name: "a" }',
         '  link sent -[:posted]-> one',
@@ -2045,8 +2048,8 @@ describe('a declared edge typed by a declared node', () => {
     await run(
       COMPANY +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  crm = attio(credentials: acme_main)',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  crm = connect attio using acme_main',
           '  seen = node { companies: <Company> }',
           '  if (msg.`subject` == "both") {',
           '    one = node { name: "a" }',
@@ -2076,13 +2079,13 @@ describe('a declared edge typed by a declared node', () => {
     await run(
       COMPANY +
         [
-          'movement intake(msg: <inbox-[:message]->>) {',
-          '  crm = attio(credentials: acme_main)',
+          'function intake(msg: <inbox-[:message]->>) {',
+          '  crm = connect attio using acme_main',
           '  seen = node { companies: <Company> }',
           '  seen-[c:companies]-> {',
           '    write crm-[:companies]-> { name: c.`name` }',
           '  }',
-          '  write crm-[:companies]-> { name: COUNT(seen-[:companies]->) }',
+          '  write crm-[:companies]-> { name: count(seen-[:companies]->) }',
           '}',
         ].join('\n'),
       {},

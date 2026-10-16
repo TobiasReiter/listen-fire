@@ -554,17 +554,17 @@ const ADAPTER_FIXTURE = `
 import { email, attio, slack } from adapters
 import { dev_loop_attio, dev_loop_slack } from credentials
 
-inbox = email()
-crm   = attio(credentials: dev_loop_attio)
-chat  = slack(credentials: dev_loop_slack)
+inbox = connect email
+crm   = connect attio using dev_loop_attio
+chat  = connect slack using dev_loop_slack
 
-movement dealflow_intake(m: <inbox-[:Email]->>) {
+function dealflow_intake(m: <inbox-[:Email]->>) {
   co = write crm-[:Companies]-> {
     unique by (\`Name\`)
     Name:        m.\`Subject\`
     Description: "Introduced by \${m.\`From\`}"
   }
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:messages]-> {
       Message: "New company: \${co.externalId}"
     }
@@ -670,10 +670,10 @@ describe('the engine passes natural names; the adapter translates internally', (
 const KG_FIXTURE = `
 import { email, kg } from adapters
 
-inbox = email()
-graph = kg()
+inbox = connect email
+graph = connect kg
 
-movement log_round(m: <inbox-[:Email]->>) {
+function log_round(m: <inbox-[:Email]->>) {
   fr = write graph-[:\`Funding Round\`]-> {
     unique by (\`Name\`)
     \`Name\`:   m.\`Subject\`
@@ -759,10 +759,10 @@ describe('kg targets cross the boundary as natural ontology names', () => {
 const KG_DRIFT_FIXTURE = `
 import { email, kg } from adapters
 
-inbox = email()
-graph = kg()
+inbox = connect email
+graph = connect kg
 
-movement log_round(m: <inbox-[:Email]->>) {
+function log_round(m: <inbox-[:Email]->>) {
   write graph-[:\`Ghost Type\`]-> {
     \`Name\`: m.\`Subject\`
   }

@@ -6,7 +6,8 @@
 // callback store received, in order, each state key for key.
 
 import { spelledForVersion5 } from './combinator_spelling';
-import type { InstanceSchema, LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf, type CallbackCall } from 'engine-contracts';
 
 import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/services/translation_graph/adapter';
@@ -260,7 +261,8 @@ async function runOn(engine: 'ts' | 'rust', c: Case): Promise<Outcome> {
   const appends: MovementTraceEntry[][] = [];
   const wakes: unknown[] = [];
   const input = {
-    source: c.source,
+    // Written once in the spelling versions 1–4 read; a version 5 run reads it as the upgrade tool respells it.
+    source: spelledFor(c.languageVersion ?? 5, c.source, fromCatalogSnapshot(catalog)),
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog,
@@ -717,7 +719,7 @@ describe('binding kinds parked and resumed across the engines', () => {
   // resumes on both to the same writes and trace.
   const cases: Array<[string, string[], Record<string, CallbackCall[]> | undefined]> = [
     ['sourcePosition', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  await sleep(1h)', '  write graph-[:note]-> { payload: { b: x.`body` } }'], undefined],
-    ['positions', ['  xs = graph-[n:note]-> {', '    return n', '  }', '  await sleep(1h)', '  count = COUNT(xs)', '  write graph-[:note]-> { payload: { n: count } }'], undefined],
+    ['positions', ['  xs = graph-[n:note]-> {', '    return n', '  }', '  await sleep(1h)', '  total = COUNT(xs)', '  write graph-[:note]-> { payload: { n: total } }'], undefined],
     ['recordValue', ['  x = FIRST(graph-[n:note ORDER BY `body`]->)', '  l = [x, x]', '  await sleep(1h)', '  y = FIRST(l)', '  write graph-[:note]-> { payload: { b: y.`body`, n: COUNT(l) } }'], undefined],
     [
       'shapePosition',

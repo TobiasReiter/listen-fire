@@ -4,7 +4,8 @@
 // (`check.program`). A run on the TypeScript engine keeps the TypeScript
 // checker. The engine's requests are read off the artifact's segments.
 
-import { mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, mockCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf } from 'engine-contracts';
 
 import { containerAssociation, type Adapter } from 'movement-engine/services/translation_graph/adapter';
@@ -80,7 +81,8 @@ async function run(setting: 'by-version' | 'rust', languageVersion: LanguageVers
   checkers.typescript = 0;
   try {
     const result = await runMovement({
-      source: `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`,
+      // Written once, in the spelling versions 1–4 read; a version 5 run reads it as the upgrade tool respells it.
+      source: spelledFor(languageVersion, `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`, fromCatalogSnapshot(catalog)),
       event: { pipelineInputId: 'pi-native-check', adapterType: 'email', triggerType: 'webhook', payload: {} },
       teamId: TEAM_ID,
       catalog,

@@ -91,7 +91,8 @@ jest.mock('../../../lib/prompts/execute', () => ({
 
 import { resumeMovement, runMovement, type ParkSink } from 'movement-engine/services/movement_engine/run';
 
-import type { InstanceSchema, LanguageVersion } from 'movement-lang';
+import { fromCatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import {
   containerAssociation,
@@ -278,7 +279,9 @@ function runOn(
   crm: Adapter,
   options: { languageVersion?: LanguageVersion; head?: string[]; park?: ParkSink; resume?: ParkedScopeState } = {},
 ) {
-  const source =
+  // Written once, in the spelling versions 1–4 read; a version 5 run reads it as the upgrade tool respells it.
+  const source = spelledFor(
+    options.languageVersion ?? 5,
     PRELUDE +
     [
       'movement intake(msg: <inbox-[:message]->>) {',
@@ -286,7 +289,9 @@ function runOn(
       ...(options.head ?? []),
       ...body,
       '}',
-    ].join('\n');
+    ].join('\n'),
+    fromCatalogSnapshot(catalog),
+  );
   const input = {
     source,
     movementName: 'intake',
@@ -460,8 +465,8 @@ describe('a chained write updates the handle in place (version 4)', () => {
         '  prev = FIRST(org-[:@old]->)',
         '  if prev != null {',
         note('prev.`domain`').replace('  write', '    write'),
-        '    first = FIRST(prev-[:@old]->)',
-        '    if first != null { ' + note('first.`domain`').trim() + ' }',
+        '    oldest = FIRST(prev-[:@old]->)',
+        '    if oldest != null { ' + note('oldest.`domain`').trim() + ' }',
         '  }',
         note('org.`domain`'),
       ],

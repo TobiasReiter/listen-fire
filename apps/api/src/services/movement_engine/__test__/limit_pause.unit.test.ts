@@ -123,10 +123,10 @@ const catalog = staticCatalogSnapshot({
 const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
-  'import { fetch_url } from plugins',
+  'import { fetchUrl as fetch_url } from plugins',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
 ].join('\n');
 
@@ -305,13 +305,13 @@ const names = (creates: Array<Record<string, unknown>>): unknown[] => creates.ma
 
 describe('the cap met inside a MAP member running three at a time', () => {
   const source = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  pages = MAP(["a", "b", "c", "d", "e"], { concurrency: 3 }, (u) => {',
-    '    page = fetch_url(url: u)',
-    '    write crm-[:companies]-> { name: COALESCE(page, "none") }',
-    '    return COALESCE(page, "none")',
-    '  })',
-    '  write crm-[:companies]-> { name: "done", summary: JOIN(pages, ",") }',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  pages = map(["a", "b", "c", "d", "e"], (u) => {',
+    '    page = fetch_url(u)',
+    '    write crm-[:companies]-> { name: coalesce(page, "none") }',
+    '    return coalesce(page, "none")',
+    '  }, { concurrency: 3 })',
+    '  write crm-[:companies]-> { name: "done", summary: Text.join(pages, ",") }',
     '}',
   ].join('\n');
 
@@ -371,12 +371,12 @@ describe('the cap met inside a MAP called inside an expression', () => {
   // The op is found again on resume by its span among the calls the
   // statement's expression nests, at its place in the slot.
   const source = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  summary = JOIN(MAP(["a", "b", "c", "d", "e"], { concurrency: 3 }, (u) => {',
-    '    page = fetch_url(url: u)',
-    '    write crm-[:companies]-> { name: COALESCE(page, "none") }',
-    '    return COALESCE(page, "none")',
-    '  }), ",")',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  summary = Text.join(map(["a", "b", "c", "d", "e"], (u) => {',
+    '    page = fetch_url(u)',
+    '    write crm-[:companies]-> { name: coalesce(page, "none") }',
+    '    return coalesce(page, "none")',
+    '  }, { concurrency: 3 }), ",")',
     '  write crm-[:companies]-> { name: "done", summary: summary }',
     '}',
   ].join('\n');
@@ -395,16 +395,16 @@ describe('the cap met inside a MAP called inside an expression', () => {
 
 describe('a branch waiting on something ordinary while the run is paused', () => {
   const source = [
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  pages = MAP(["slow", "x"], { concurrency: 2 }, (u) => {',
-    '    if u == "slow" {',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  pages = map(["slow", "x"], (u) => {',
+    '    if (u == "slow") {',
     '      await sleep(1h)',
     '    }',
-    '    page = fetch_url(url: u)',
-    '    write crm-[:companies]-> { name: COALESCE(page, "none") }',
-    '    return COALESCE(page, "none")',
-    '  })',
-    '  write crm-[:companies]-> { name: "done", summary: JOIN(pages, ",") }',
+    '    page = fetch_url(u)',
+    '    write crm-[:companies]-> { name: coalesce(page, "none") }',
+    '    return coalesce(page, "none")',
+    '  }, { concurrency: 2 })',
+    '  write crm-[:companies]-> { name: "done", summary: Text.join(pages, ",") }',
     '}',
   ].join('\n');
 
@@ -444,18 +444,18 @@ describe('a branch waiting on something ordinary while the run is paused', () =>
 
 describe('the cap met in a movement called two deep', () => {
   const source = [
-    'movement inner(u: <text>) {',
-    '  page = fetch_url(url: u)',
-    '  write crm-[:companies]-> { name: COALESCE(page, "none") }',
-    '  return COALESCE(page, "none")',
+    'function inner(u: <text>) {',
+    '  page = fetch_url(u)',
+    '  write crm-[:companies]-> { name: coalesce(page, "none") }',
+    '  return coalesce(page, "none")',
     '}',
-    'movement outer(u: <text>) {',
+    'function outer(u: <text>) {',
     '  write crm-[:companies]-> { name: "outer before" }',
-    '  y = inner(u: u)',
+    '  y = inner(u)',
     '  return y',
     '}',
-    'movement intake(m: <inbox-[:message]->>) {',
-    '  x = outer(u: "a")',
+    'function intake(m: <inbox-[:message]->>) {',
+    '  x = outer("a")',
     '  write crm-[:companies]-> { name: "end", summary: x }',
     '}',
   ].join('\n');
@@ -480,9 +480,9 @@ describe('with nowhere durable to suspend', () => {
   it('the cap still fails the run, as a rehearsal has no park to hold it', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  page = fetch_url(url: "a")',
-        '  write crm-[:companies]-> { name: COALESCE(page, "none") }',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  page = fetch_url("a")',
+        '  write crm-[:companies]-> { name: coalesce(page, "none") }',
         '}',
       ].join('\n'),
       { parkSink: false },

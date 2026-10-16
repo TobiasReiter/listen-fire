@@ -77,8 +77,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { acme_main } from credentials',
   '',
-  'inbox = email()',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email',
+  'crm = connect attio using acme_main',
   '',
   'node Entry {',
   '  name: <text>',
@@ -159,10 +159,10 @@ describe('a return whose value is absent still returns', () => {
   it('from an if arm: nothing below the if runs', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  none = FILTER(["a"], (x) => x == "b")',
-        '  if true {',
-        '    return FIRST(none)',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  none = filter(["a"], (x) => x == "b")',
+        '  if (true) {',
+        '    return first(none)',
         '  }',
         '  write crm-[:companies]-> { name: "after the return" }',
         '}',
@@ -175,7 +175,7 @@ describe('a return whose value is absent still returns', () => {
   it('from a traversal block iteration: the rest of that iteration does not run', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  d = node { entries: <Entry> }',
         '  write d-[:entries]-> { unique by (`name`)',
         '    name: "Acme"',
@@ -183,10 +183,10 @@ describe('a return whose value is absent still returns', () => {
         '  write d-[:entries]-> { unique by (`name`)',
         '    name: "Beta"',
         '  }',
-        '  none = FILTER(["a"], (x) => x == "b")',
+        '  none = filter(["a"], (x) => x == "b")',
         '  d-[e:entries]-> {',
-        '    if e.`name` == "Acme" {',
-        '      return FIRST(none)',
+        '    if (e.`name` == "Acme") {',
+        '      return first(none)',
         '    }',
         '    write crm-[:companies]-> { name: e.`name` }',
         '  }',
@@ -202,7 +202,7 @@ describe('a return woken after a park still returns', () => {
   it('at the top of the body: the line after the return never runs', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  write crm-[:companies]-> { name: "before" }',
         '  return await sleep(1h)',
         '  write crm-[:companies]-> { name: "after the return" }',
@@ -218,8 +218,8 @@ describe('a return woken after a park still returns', () => {
   it('inside an if arm: nothing below the if runs', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
-        '  if true {',
+        'function intake(m: <inbox-[:message]->>) {',
+        '  if (true) {',
         '    return await sleep(1h)',
         '  }',
         '  write crm-[:companies]-> { name: "after the return" }',
@@ -236,13 +236,13 @@ describe('a return woken after a park still returns', () => {
     const h = harness(
       [
         'function wait_then(flag: <boolean>): <boolean> {',
-        '  if flag {',
+        '  if (flag) {',
         '    return await sleep(1h)',
         '  }',
         '  write crm-[:companies]-> { name: "after the return" }',
         '  return false',
         '}',
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  woke = wait_then(true)',
         '  write crm-[:companies]-> { name: "the caller went on" }',
         '}',
@@ -257,7 +257,7 @@ describe('a return woken after a park still returns', () => {
   it('a returned fan-out: once its iterations wake, the body returns', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  d = node { entries: <Entry> }',
         '  write d-[:entries]-> { unique by (`name`)',
         '    name: "Acme"',
@@ -279,7 +279,7 @@ describe('a return woken after a park still returns', () => {
   it('a returned race: once an arm wakes and wins, the body returns', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  return race(() => {',
         '    await sleep(1h)',
         '    return "slept"',
@@ -296,14 +296,14 @@ describe('a return woken after a park still returns', () => {
 });
 
 describe('a woken sleep binds true', () => {
-  const marker = (name: string) => `if ${name} == true { write crm-[:companies]-> { name: "${name} is true" } }`;
+  const marker = (name: string) => `if (${name} == true) { write crm-[:companies]-> { name: "${name} is true" } }`;
 
   it('x = await sleep(…) binds true after a real timer resume', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  x = await sleep(1h)',
-        '  if x == true { write crm-[:companies]-> { name: "x is true" } }',
+        '  if (x == true) { write crm-[:companies]-> { name: "x is true" } }',
         '}',
       ].join('\n'),
     );
@@ -317,12 +317,12 @@ describe('a woken sleep binds true', () => {
     const h = harness(
       [
         'function wait_then(flag: <boolean>): <boolean> {',
-        '  if flag {',
+        '  if (flag) {',
         '    return await sleep(1h)',
         '  }',
         '  return false',
         '}',
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  woke = wait_then(true)',
         `  ${marker('woke')}`,
         '}',
@@ -337,14 +337,14 @@ describe('a woken sleep binds true', () => {
   it('inside a MAP member, each wake binds true', async () => {
     const h = harness(
       [
-        'movement intake(m: <inbox-[:message]->>) {',
+        'function intake(m: <inbox-[:message]->>) {',
         '  d = node { entries: <Entry> }',
         '  write d-[:entries]-> { unique by (`name`)',
         '    name: "Acme"',
         '  }',
         '  d-[e:entries]-> {',
         '    x = await sleep(1h)',
-        '    if x == true { write crm-[:companies]-> { name: e.`name` } }',
+        '    if (x == true) { write crm-[:companies]-> { name: e.`name` } }',
         '  }',
         '}',
       ].join('\n'),

@@ -146,8 +146,8 @@ const PRELUDE = [
   'import { email, attio } from adapters',
   'import { dealflow_inbox, acme_main } from credentials',
   '',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm = attio(credentials: acme_main)',
+  'inbox = connect email using dealflow_inbox',
+  'crm = connect attio using acme_main',
   'node `Recap Entry` {',
   '  name: <text>',
   '  thesis: <text | null>',
@@ -169,7 +169,7 @@ const COLLECTION = '  deduped = node { entries: <`Recap Entry`> order by arrival
  *  real write — the only honest way to see what is on the edge. */
 const READ_BACK = [
   '  deduped-[x:entries]-> {',
-  '    write crm-[:companies]-> { name: "${x.name}|${COALESCE(x.thesis, \'-\')}|${COALESCE(x.website, \'-\')}" }',
+  '    write crm-[:companies]-> { name: "${x.name}|${coalesce(x.thesis, \'-\')}|${coalesce(x.website, \'-\')}" }',
   '  }',
 ];
 
@@ -209,7 +209,7 @@ async function run(body: string[], answers: Record<string, { reply: unknown; del
   const llm = fakeLlm(answers);
   const writes: CapturedWrite[] = [];
   const result = await runMovement({
-    source: [PRELUDE, 'movement m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
+    source: [PRELUDE, 'function m(msg: <inbox-[:message]->>) {', ...body, '}'].join('\n'),
     event: event(),
     teamId: TEAM_ID,
     catalog,
@@ -241,16 +241,16 @@ describe('the production shape: MAP enriches each entry in place', () => {
   const ENRICH = [
     ...SEED,
     '  content = [msg.`text`]',
-    '  MAP(deduped-[:entries]->, { concurrency: 6, onError: "warn" }, (e) => {',
-    "    details = extractOne([...content, TEXT.SERIALISE(e, 'JSON')], Enrichment, { tier: \"quick\" })",
-    '    if details == null { return null }',
+    '  map(deduped-[:entries]->, (e) => {',
+    "    details = extractOne([...content, Json.stringify(e)], Enrichment, { tier: \"quick\" })",
+    '    if (details == null) { return null }',
     '    write e {',
-    '      name: COALESCE(details.name, e.name)',
-    '      thesis: COALESCE(details.thesis, e.thesis)',
+    '      name: coalesce(details.name, e.name)',
+    '      thesis: coalesce(details.thesis, e.thesis)',
     '    }',
     '    new_website = details.website',
-    '    if new_website != null { write e { website: new_website } }',
-    '  })',
+    '    if (new_website != null) { write e { website: new_website } }',
+    '  }, { concurrency: 6, onError: "warn" })',
     ...READ_BACK,
   ];
 
@@ -358,9 +358,9 @@ describe('concurrent members of a MAP', () => {
     const { writes, result } = await run([
       ...SEED,
       '  h = write deduped-[:entries]-> { name: "Gamma" }',
-      '  MAP(["first", "second"], { concurrency: 2 }, (v) => {',
+      '  map(["first", "second"], (v) => {',
       '    write h { thesis ?: v }',
-      '  })',
+      '  }, { concurrency: 2 })',
       ...READ_BACK,
     ]);
     expect(readBack(writes)).toContain('Gamma|first|-');
@@ -370,10 +370,10 @@ describe('concurrent members of a MAP', () => {
   it('members updating DIFFERENT records each update their own', async () => {
     const { writes } = await run([
       ...SEED,
-      '  MAP(deduped-[:entries]->, { concurrency: 6 }, (e) => {',
+      '  map(deduped-[:entries]->, (e) => {',
       '    write e { thesis: "t-${e.name}" }',
       '    write e { website ?: "${e.name}.com" }',
-      '  })',
+      '  }, { concurrency: 6 })',
       ...READ_BACK,
     ]);
     expect(readBack(writes)).toEqual(['Acme|t-Acme|Acme.com', 'Beta|t-Beta|Beta.com']);
