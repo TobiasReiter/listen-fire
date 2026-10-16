@@ -15297,9 +15297,39 @@ class Checker {
     // engine's: a text argument no file and no record, at any depth or in any
     // arm; a file argument a file as the whole value, never one inside a map
     // or a list. Each reached the plugin as the engine's own description.
+    if (stripAbsent(declared) === 'text' && held === undefined) {
+      const is = recordValueIn(valueType);
+      const may = is === undefined ? recordValueIn(mayHold) : undefined;
+      const record = is ?? may;
+      if (record !== undefined) {
+        this.refuseRecordValueForText({ callee, name, record, may: may !== undefined, span });
+        return;
+      }
+    }
     const misplaced = held ?? (stripAbsent(declared) === 'file' ? fileBelowWhole(mayHold ?? valueType) : undefined);
     if (misplaced === undefined) return;
     this.report(DiagnosticCodes.CALL_ARG_TYPE, handleInTypedPluginArgMessage({ callee, name, declared, held: misplaced }), span);
+  }
+
+  /**
+   * A record value (`{ … }`) that is, or may be, handed to a plugin's text
+   * input, as TypeScript refuses an object for a `string`. Refused from
+   * version 5; from 3 the record was passed through as it is (the call ran),
+   * so an older pin is warned, and the warning blocks the move up.
+   */
+  private refuseRecordValueForText(at: { callee: string; name: string; record: FieldType; may: boolean; span: Span }): void {
+    if (before(this.languageVersion, 3)) return;
+    const { callee, name, record, may, span } = at;
+    const message = `'${callee}' takes text for '${name}', and this ${may ? 'may be' : 'is'} ${describeFieldType(record)} — a record, not text, as in TypeScript. Pass the text it should read: one of its fields ('${name}: r.name'), or the text built from them`;
+    if (since(this.languageVersion, 5)) {
+      this.report(DiagnosticCodes.CALL_ARG_MAYBE_RECORD, message, span);
+      return;
+    }
+    this.reportUpgradeWarning(
+      DiagnosticCodes.CALL_ARG_MAYBE_RECORD,
+      `${message}. Before ${describeLanguageVersion(5)} the record is passed through as it is; from it, this is refused`,
+      span,
+    );
   }
 
   /**
@@ -15953,4 +15983,19 @@ class Checker {
       }
     }
   }
+}
+
+/** The record value (`{ … }`) a value is, or one arm of it is. */
+function recordValueIn(type: FieldType | undefined): FieldType | undefined {
+  if (type === undefined) return undefined;
+  const bare = stripAbsent(type);
+  if (typeof bare !== 'object') return undefined;
+  if (bare.kind === 'dict') return bare;
+  if (bare.kind === 'union') {
+    for (const arm of bare.of) {
+      const found = recordValueIn(arm);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }

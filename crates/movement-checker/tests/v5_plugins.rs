@@ -160,3 +160,28 @@ fn a_through_stage_s_named_arguments_under_5_are_rewritten_by_position() {
     assert_eq!(fixes, vec![Some(serde_json::json!("n, { context: s }"))]);
     assert_eq!(check(&apply_fixes(&program, &found), 5), Vec::<Diagnostic>::new());
 }
+
+fn all(source: &str, version: u32) -> Vec<(String, bool, String)> {
+    let catalog = CatalogSnapshot::load(CATALOG).unwrap();
+    let options = CheckOptions { language_version: version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    check_source(source, &catalog, options).unwrap().into_iter().map(|d| (d.code.clone(), d.is_error(), d.message)).collect()
+}
+
+#[test]
+fn a_record_value_handed_to_a_text_input_is_refused_from_5_and_warned_before() {
+    let refused = all(&v5("  r = research({ context: s })"), 5);
+    assert_eq!(
+        refused,
+        vec![(
+            "MOV_CALL_ARG_MAYBE_RECORD".to_string(),
+            true,
+            "'research' takes text for 'name', and this is { context: text } — a record, not text, as in TypeScript. Pass the text it should read: one of its fields ('name: r.name'), or the text built from them".to_string()
+        )]
+    );
+    let may = codes(&v5("  r = research(n, { context: s == \"\" ? { a: 1 } : s })"), 5);
+    assert_eq!(may, vec!["MOV_CALL_ARG_MAYBE_RECORD".to_string()]);
+    let warned = all(&v4("  r = research(name: { context: s })"), 4);
+    assert_eq!(warned.iter().map(|(c, e, _)| (c.as_str(), *e)).collect::<Vec<_>>(), vec![("MOV_CALL_ARG_MAYBE_RECORD", false)]);
+    assert!(warned[0].2.ends_with("; from it, this is refused"), "{}", warned[0].2);
+    assert_eq!(codes(&v5("  r = research(n, { context: s })"), 5), Vec::<String>::new());
+}

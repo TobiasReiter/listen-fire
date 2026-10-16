@@ -304,9 +304,41 @@ impl Checker<'_> {
         // any arm; a file argument a file as the whole value, never one
         // inside a map or a list.
         let declared_ty = Ty::from_schema(declared);
+        if matches!(strip_absent(&declared_ty), Ty::Text)
+            && held.is_none()
+            && let Some((dict, may)) = value.and_then(|v| record_value_in(v).map(|d| (d, false))).or_else(|| may_hold.and_then(record_value_in).map(|d| (d, true)))
+        {
+            self.refuse_record_value_for_text(callee, name, dict, may, span);
+            return;
+        }
         let misplaced = held.or_else(|| if matches!(strip_absent(&declared_ty), Ty::File) { file_below_whole(may_hold.or(value)) } else { None });
         let Some(misplaced) = misplaced else { return };
         self.report(codes::CALL_ARG_TYPE, handle_in_typed_plugin_arg_message(callee, name, &declared_ty, &misplaced), span);
+    }
+
+    /// `refuseRecordValueForText`: a record value (`{ … }`) that is, or may
+    /// be, handed to a plugin's text input, as TypeScript refuses an object
+    /// for a `string`. Refused from version 5; from 3 the record was passed
+    /// through as it is (the call ran), so an older pin is warned, and the
+    /// warning blocks the move up.
+    fn refuse_record_value_for_text(&mut self, callee: &str, name: &str, dict: &Ty, may: bool, span: Span) {
+        if before(self.version, 3) {
+            return;
+        }
+        let message = format!(
+            "'{callee}' takes text for '{name}', and this {} {} — a record, not text, as in TypeScript. Pass the text it should read: one of its fields ('{name}: r.name'), or the text built from them",
+            if may { "may be" } else { "is" },
+            describe_field_type(dict)
+        );
+        if movement_parser::version::since(self.version, 5) {
+            self.report(codes::CALL_ARG_MAYBE_RECORD, message, span);
+            return;
+        }
+        self.report_upgrade_warning(
+            codes::CALL_ARG_MAYBE_RECORD,
+            format!("{message}. Before {} the record is passed through as it is; from it, this is refused", crate::version::describe(5)),
+            span,
+        );
     }
 
     /// `recordAsFieldsProblem`, with this file's declarations as the ones
@@ -487,5 +519,14 @@ fn holds_fields_in_hand_given(position: &Position, is_local: &dyn Fn(crate::scop
         Position::Union(u) => u.instance.declared.is_some_and(is_local),
         Position::MaybeEmpty(of) => holds_fields_in_hand_given(of, is_local),
         _ => crate::types::infer::holds_fields_in_hand(position),
+    }
+}
+
+/// `recordValueIn`: the record value (`{ … }`) a value is, or one arm of it is.
+fn record_value_in(ty: &Ty) -> Option<&Ty> {
+    match strip_absent(ty) {
+        dict @ Ty::Dict { .. } => Some(dict),
+        Ty::Union(arms) => arms.iter().find_map(record_value_in),
+        _ => None,
     }
 }

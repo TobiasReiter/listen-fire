@@ -172,3 +172,26 @@ describe('a through stage under 5', () => {
     expect(check(upgraded.source, 5)).toEqual([]);
   });
 });
+
+describe("a record value handed to a plugin's text input", () => {
+  const all = (source: string, languageVersion: number) =>
+    checkProgram(parseProgram(source, { languageVersion }), catalog, { languageVersion }).map((d) => [d.code, d.severity ?? 'error', d.message]);
+
+  it('is refused from 5', () => {
+    expect(all(v5('  r = research({ context: s })'), 5)).toEqual([
+      [
+        'MOV_CALL_ARG_MAYBE_RECORD',
+        'error',
+        "'research' takes text for 'name', and this is { context: text } — a record, not text, as in TypeScript. Pass the text it should read: one of its fields ('name: r.name'), or the text built from them",
+      ],
+    ]);
+    expect(codes(v5('  r = research(n, { context: s == "" ? { a: 1 } : s })'), 5)).toEqual(['MOV_CALL_ARG_MAYBE_RECORD']);
+    expect(codes(v5('  r = research(n, { context: s })'), 5)).toEqual([]);
+  });
+
+  it('is warned under 4, where it ran', () => {
+    const warned = all(v4('  r = research(name: { context: s })'), 4);
+    expect(warned.map(([code, severity]) => [code, severity])).toEqual([['MOV_CALL_ARG_MAYBE_RECORD', 'warning']]);
+    expect(String(warned[0]![2])).toMatch(/; from it, this is refused$/);
+  });
+});
