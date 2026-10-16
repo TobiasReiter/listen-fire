@@ -41,36 +41,36 @@ const PRELUDE = [
   'type Thesis = <"Consumer" | "Infra" | "Health">',
 ].join('\n');
 
-const diagnostics = (body: string): Diagnostic[] =>
+/** `shapes` are the node declarations the body extracts with. */
+const diagnostics = (body: string, shapes = ''): Diagnostic[] =>
   checkProgram(
-    parseProgram(`${PRELUDE}\nfunction main(msg: <graph-[:message]->>) {\n${body}\n}`),
+    parseProgram(`${PRELUDE}\n${shapes}\nfunction main(msg: <graph-[:message]->>) {\n${body}\n}`),
     catalog,
   ).filter((d) => (d.severity ?? 'error') === 'error');
 
-const codes = (body: string): string[] => diagnostics(body).map((d) => d.code);
+const codes = (body: string, shapes = ''): string[] => diagnostics(body, shapes).map((d) => d.code);
 
-/** An extract whose `thesis` field is annotated with the declared refinement,
- *  followed by whatever the test does with the extracted value. */
-const withExtract = (uses: string[]): string =>
-  [
-    '  found = extract from [msg.`Body`] {',
-    '    node company: "each company mentioned" {',
-    '      name: "the company\'s name"',
-    '      thesis: <Thesis> "which thesis this company fits"',
-    '    }',
-    '  }',
-    '  found-[c:company]-> {',
-    ...uses,
-    '  }',
-  ].join('\n');
+/** A shape whose `thesis` field is annotated with the declared refinement. */
+const COMPANY = [
+  'node Company: "the company mentioned" {',
+  '  name: <text> "the company\'s name"',
+  '  thesis: <Thesis> "which thesis this company fits"',
+  '}',
+].join('\n');
+
+/** The one company extracted, then whatever the test does with it. */
+const withExtract = (uses: string[]): [string, string] => [
+  ['  c = extractOne([msg.`Body`], Company)', '  if (c == null) { fail("no company") }', ...uses].join('\n'),
+  COMPANY,
+];
 
 describe('a declared type constrains an extract field', () => {
   it('a valid value compares clean', () => {
-    expect(codes(withExtract(['    ok = c.`thesis` == "Infra"']))).toEqual([]);
+    expect(codes(...withExtract(['  ok = c.`thesis` == "Infra"']))).toEqual([]);
   });
 
   it('a typo gets MOV_ENUM_UNKNOWN_VALUE with a did-you-mean — the borrowed path, unchanged', () => {
-    const diag = diagnostics(withExtract(['    ok = c.`thesis` == "Infrra"'])).find(
+    const diag = diagnostics(...withExtract(['  ok = c.`thesis` == "Infrra"'])).find(
       (d) => d.code === C.ENUM_UNKNOWN_VALUE,
     );
     expect(diag).toBeDefined();
@@ -80,14 +80,14 @@ describe('a declared type constrains an extract field', () => {
 
   it('the value is TEXT at run time — it interpolates and concatenates', () => {
     expect(
-      codes(withExtract(['    line = "fits ${c.`thesis`}"', '    also = Text.concat(c.`name`, c.`thesis`)'])),
+      codes(...withExtract(['    line = "fits ${c.`thesis`}"', '    also = Text.concat(c.`name`, c.`thesis`)'])),
     ).toEqual([]);
   });
 
   it('the value writes into a text field', () => {
     expect(
       codes(
-        withExtract([
+        ...withExtract([
           '    write graph-[:company]-> { Name ?: c.`name`, Thesis ?: c.`thesis` }',
         ]),
       ),
@@ -98,11 +98,8 @@ describe('a declared type constrains an extract field', () => {
 describe('an annotation that names no type says so', () => {
   it('a typo of a declared type is MOV_UNKNOWN_TYPE_NAME with a did-you-mean', () => {
     const diag = diagnostics(
-      [
-        '  found = extract from [msg.`Body`] {',
-        '    thesis: <Thessis> "which thesis"',
-        '  }',
-      ].join('\n'),
+      '  found = extractOne([msg.`Body`], Found)',
+      'node Found: "the thesis" {\n  thesis: <Thessis> "which thesis"\n}',
     ).find((d) => d.code === C.UNKNOWN_TYPE_NAME);
     expect(diag).toBeDefined();
     expect(diag!.message).toContain("did you mean 'Thesis'?");
@@ -110,7 +107,8 @@ describe('an annotation that names no type says so', () => {
 
   it('a mistyped primitive is caught by the same check', () => {
     const diag = diagnostics(
-      ['  found = extract from [msg.`Body`] {', '    n: <nubmer> "how many"', '  }'].join('\n'),
+      '  found = extractOne([msg.`Body`], Found)',
+      'node Found: "the count" {\n  n: <nubmer> "how many"\n}',
     ).find((d) => d.code === C.UNKNOWN_TYPE_NAME);
     expect(diag).toBeDefined();
     expect(diag!.message).toContain("did you mean 'number'?");
@@ -118,7 +116,7 @@ describe('an annotation that names no type says so', () => {
 
   it('a primitive annotation stays clean', () => {
     expect(
-      codes(['  found = extract from [msg.`Body`] {', '    n: <number> "how many"', '  }'].join('\n')),
+      codes('  found = extractOne([msg.`Body`], Found)', 'node Found: "the count" {\n  n: <number> "how many"\n}'),
     ).toEqual([]);
   });
 });
