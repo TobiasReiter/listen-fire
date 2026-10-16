@@ -1,14 +1,12 @@
-// The forms PLAN-08B Task 2 ported to the Rust engine, each once refused at
-// admission by name (crates/movement-engine/README.md, "The port list"): a
-// match over a tuple of paths, an `IS` test of a graph literal, a graph
-// spread of the event, `refresh`, and a closure called by name inside a
-// library function. Each program runs under MOVEMENT_ENGINE=ts and =rust
-// against fresh fakes, and the two must agree on everything a caller can see
-// — the result or the error, every adapter call in order and key for key, the
-// judge's questions, and the parks — and the Rust run must run whole. Where a
-// form sits beside a park, each engine's parked state resumes on both.
+// The forms PLAN-08B Task 2 ported to the Rust engine: a match over a tuple
+// of paths, an `IS` test of a graph literal, a graph spread of the event,
+// `refresh`, and a closure called by name inside a library function. Each
+// program runs on the Rust engine against fresh fakes, and the assertions
+// say what a caller sees — the result or the error, the adapter calls, the
+// judge's questions, and the parks. Where a form sits beside a park, the
+// parked state resumes.
 
-import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema, type LanguageVersion } from 'movement-lang';
+import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf } from 'engine-contracts';
 
 import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
@@ -17,7 +15,7 @@ import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } 
 import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
 import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
 import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
-import { resetRustEvalStats, resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 jest.setTimeout(60_000);
 
@@ -61,15 +59,6 @@ const PRELUDE = [
   '',
 ].join('\n');
 
-// The spelling versions 1–4 read, for the cases pinned to one of them.
-const PRELUDE_V4 = [
-  'import { email, attio } from adapters',
-  'import { dealflow_inbox, acme_main } from credentials',
-  'inbox = email(credentials: dealflow_inbox)',
-  'crm = attio(credentials: acme_main)',
-  '',
-].join('\n');
-
 interface Row {
   id: string;
   fields: Record<string, unknown>;
@@ -90,11 +79,8 @@ interface Case {
   judge?: number | null;
   /** The CRM answers no `readRecord`. */
   noReadRecord?: boolean;
-  languageVersion?: LanguageVersion;
   resume?: ParkedScopeState;
 }
-
-type Engine = 'ts' | 'rust';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -186,9 +172,7 @@ function fakeEmail(): Adapter {
 
 type Judge = NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>;
 
-async function runOn(engine: Engine, c: Case) {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
+async function runOn(c: Case) {
   const calls: unknown[] = [];
   const asked: unknown[] = [];
   const park = makeFakeParkSink();
@@ -200,17 +184,15 @@ async function runOn(engine: Engine, c: Case) {
     asked.push({ asserted: input.asserted, candidates: input.candidates, recordType: input.recordType });
     return { index: c.judge ?? null, cost: [{ source: 'model:judge', microdollars: 3 }] };
   };
-  const v4 = c.languageVersion !== undefined && c.languageVersion < 5;
-  const source = c.source ?? `${v4 ? 'movement' : 'function'} m(msg: <inbox-[:message]->>) {\n${c.body ?? ''}\n}`;
+  const source = c.source ?? `function m(msg: <inbox-[:message]->>) {\n${c.body ?? ''}\n}`;
   const input: RunMovementInput = {
-    source: (v4 ? PRELUDE_V4 : PRELUDE) + source,
+    source: PRELUDE + source,
     event: { pipelineInputId: 'pi-ported-forms', adapterType: 'email', triggerType: 'webhook', payload: { subject: 'Acme', text: 'EU' } },
     teamId: TEAM_ID,
     catalog: snapshot,
     credentialIds: credentialIdsFor(snapshot, (name: string) => `cred-${name}`),
     firedAt: '2026-05-01T09:00:00.000Z',
     movementName: 'm',
-    ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
     host: makeTestHost({
       adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : email) },
       llm: { arbitrateEntities: judge },
@@ -218,18 +200,14 @@ async function runOn(engine: Engine, c: Case) {
     }),
   };
   resetRustRunStats();
-  resetRustEvalStats();
   let outcome: Record<string, unknown>;
   try {
     const result = c.resume !== undefined ? await resumeMovement({ ...input, state: c.resume }) : await runMovement(input);
     outcome = { result };
   } catch (error) {
     outcome = { error: String(error), cause: String(runFailureCause(error)) };
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
   }
-  const stats = { routed: rustRunStats.routed, ranWhole: rustRunStats.ranWhole, unreproduced: rustRunStats.unreproduced, notAdmitted: { ...rustRunStats.notAdmitted }, declined: { ...rustRunStats.declined } };
+  const stats = { segments: rustRunStats.segments, unsupported: { ...rustRunStats.unsupported }, shimFaults: rustRunStats.shimFaults };
   return { observed: normalised({ ...outcome, calls, asked, kept, parks: park.timerParks }), parks: park.timerParks, stats };
 }
 
@@ -246,35 +224,22 @@ function normalised(value: unknown): string {
   });
 }
 
-/** One segment on both engines: identical, and run whole on Rust. */
-async function both(c: Case) {
-  const ts = await runOn('ts', c);
-  const rust = await runOn('rust', c);
-  expect(rust.observed).toBe(ts.observed);
-  expect(rust.stats).toEqual({ routed: 1, ranWhole: 1, unreproduced: 0, notAdmitted: {}, declined: {} });
-  return { ts, rust };
+/** One segment on the Rust engine: the engine ran it, refusing nothing. */
+async function run(c: Case) {
+  const ran = await runOn(c);
+  expect(ran.stats).toEqual({ segments: 1, unsupported: {}, shimFaults: 0 });
+  return ran;
 }
 
-/** Park on both engines, then resume each engine's state on both: every
- *  resume identical across the engines and the two park writers. */
+/** Park, then resume the parked state: how the resumed segment ended. */
 async function parkAndResume(c: Case): Promise<string> {
-  const parked = await both(c);
-  const resumed: string[] = [];
-  for (const writer of [parked.ts, parked.rust]) {
-    expect(writer.parks).toHaveLength(1);
-    // The bytes themselves: either engine writes the same state.
-    expect(normalised(parked.rust.parks[0]?.state)).toBe(normalised(parked.ts.parks[0]?.state));
-    // As production stores it: parked state is jsonb, so object identity
-    // does not survive the park.
-    const state: unknown = JSON.parse(JSON.stringify(writer.parks[0]?.state));
-    if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
-    const { rust, ts } = await both({ ...c, resume: state });
-    resumed.push(ts.observed, rust.observed);
-  }
-  expect(new Set(resumed).size).toBe(1);
-  const [outcome] = resumed;
-  if (outcome === undefined) throw new Error('nothing resumed');
-  return outcome;
+  const parked = await run(c);
+  expect(parked.parks).toHaveLength(1);
+  // As production stores it: parked state is jsonb, so object identity
+  // does not survive the park.
+  const state: unknown = JSON.parse(JSON.stringify(parked.parks[0]?.state));
+  if (!isParkedScopeState(state)) throw new Error('the park writer left no parked scope state');
+  return (await run({ ...c, resume: state })).observed;
 }
 
 const library = (body: string[]) => ({ 'lib/forms': { source: PRELUDE + body.join('\n') } });
@@ -287,29 +252,24 @@ const PARENTS = ['  co = write crm-[:companies]-> { name: "Acme" }', '  pe = wri
 const TUPLE_MATCH = '  found = match (co-[:notes]->, pe-[:notes]->) { unique by (`body`), body: msg.`subject` }';
 
 describe('a match over a tuple of paths', () => {
-  it('finds the record at the convergence of both paths, under version 3 and version 4', async () => {
-    for (const languageVersion of [3, 4] as const) {
-      const { rust } = await both({
-        body: [...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: "${found.`body`} ${found.`region`}" }'].join('\n'),
-        candidates: { note: [NOTE] },
-        read: { 'note-1': { region: 'EU' } },
-        languageVersion,
-      });
-      expect(rust.observed).toContain('"body":"Acme EU"');
-    }
+  it('finds the record at the convergence of both paths', async () => {
+    const rust = await run({
+      body: [...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: "${found.`body`} ${found.`region`}" }'].join('\n'),
+      candidates: { note: [NOTE] },
+      read: { 'note-1': { region: 'EU' } },
+    });
+    expect(rust.observed).toContain('"body":"Acme EU"');
   });
 
-  it('ends the body quietly on a miss before version 4, and binds absent from version 4', async () => {
-    const body = [...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: IF found == null THEN "absent" ELSE found.`body` END }'].join('\n');
-    const v3 = await both({ body, languageVersion: 3 });
-    expect(v3.rust.observed).not.toContain('"absent"');
-    const v4 = await both({ body, languageVersion: 4 });
-    expect(v4.rust.observed).toContain('"body":"absent"');
+  it('binds absent on a miss', async () => {
+    const body = [...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: found == null ? "absent" : found.`body` }'].join('\n');
+    const rust = await run({ body });
+    expect(rust.observed).toContain('"body":"absent"');
   });
 
   it('asks the judge with every candidate, and binds the one it picks', async () => {
     const other: ExternalRecordRef = { adapterType: 'attio', externalId: 'note-2', data: { body: 'Acme Ltd' } };
-    const { rust } = await both({
+    const rust = await run({
       body: [...PARENTS, '  found = match (co-[:notes]->, pe-[:notes]->) { unique by (FUZZY `body`), body: "Acm" }', '  write crm-[:notes]-> { body: coalesce(found.`body`, "none") }'].join('\n'),
       candidates: { note: [NOTE, other] },
       judge: 1,
@@ -318,7 +278,7 @@ describe('a match over a tuple of paths', () => {
   });
 
   it('matches between two traversed records', async () => {
-    const { rust } = await both({
+    const rust = await run({
       body: ['  crm-[c:companies]-> {', '    crm-[p:people]-> {', '      found = match (c-[:notes]->, p-[:notes]->) { unique by (`body`), body: c.`name` }', '      write crm-[:notes]-> { body: "${found.`body`}/${p.`name`}" }', '    }', '  }'].join('\n'),
       related: { companies: [{ id: 'c-1', fields: { name: 'Acme' } }], people: [{ id: 'p-1', fields: { name: 'Ada' } }] },
       candidates: { note: [NOTE] },
@@ -335,13 +295,13 @@ describe('a match over a tuple of paths', () => {
       '}',
     ]);
     const source = ['import { find } from "lib/forms"', movement(['  b = find(msg.`subject`)', '  write crm-[:notes]-> { body: b }'])].join('\n');
-    const { rust } = await both({ source, files, candidates: { note: [NOTE] } });
+    const rust = await run({ source, files, candidates: { note: [NOTE] } });
     expect(rust.observed).toContain('"body":"Acme"');
   });
 
-  it('matches after a park, on whichever engine resumes it', async () => {
+  it('matches after a park', async () => {
     // Parked before the parents are written: a handle rehydrated from a
-    // park lands in a graph of its own on both engines, so two of them fail
+    // park lands in a graph of its own, so two of them fail
     // a tuple's one-graph rule (reported, not this port's to change).
     const body = ['  await sleep(1h)', ...PARENTS, TUPLE_MATCH, '  write crm-[:notes]-> { body: coalesce(found.`body`, "none") }'].join('\n');
     const resumed = await parkAndResume({ body, candidates: { note: [NOTE] } });
@@ -358,7 +318,7 @@ const VERDICT = ['  if (g is <Lead>) {', '    write crm-[:notes]-> { body: "fits
 describe('IS <Decl> of a graph literal', () => {
   it('compares a written handle its edge holds by the handle’s record type', async () => {
     for (const [declaration, verdict] of [[LEAD, 'fits'], [TYPED_LEAD, 'does not']] as const) {
-      const { rust } = await both({
+      const rust = await run({
         source: [declaration, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", owner: co }', ...VERDICT])].join('\n'),
       });
       expect(rust.observed).toContain(`"body":"${verdict}"`);
@@ -368,20 +328,20 @@ describe('IS <Decl> of a graph literal', () => {
   it('compares a traversed record its edge holds, and fits where the edge holds nothing', async () => {
     const companies = { companies: [{ id: 'c-1', fields: { name: 'Acme' } }] };
     for (const [declaration, verdict] of [[LEAD, 'fits'], [TYPED_LEAD, 'does not']] as const) {
-      const { rust } = await both({
+      const rust = await run({
         source: [declaration, movement(['  crm-[c:companies]-> {', '    g = graph { name: c.`name`, owner: c }', ...VERDICT.map((l) => `  ${l}`), '  }'])].join('\n'),
         related: companies,
       });
       expect(rust.observed).toContain(`"body":"${verdict}"`);
     }
-    const { rust } = await both({ source: [TYPED_LEAD, movement(['  g = graph { name: "a" }', ...VERDICT])].join('\n') });
+    const rust = await run({ source: [TYPED_LEAD, movement(['  g = graph { name: "a" }', ...VERDICT])].join('\n') });
     expect(rust.observed).toContain('"body":"fits"');
   });
 
   it('compares a record nested two nodes down', async () => {
     const deep = (type: string) => ['node Lead {', '  name: <text>', '  node team {', '    node owner {', `      region: <${type}>`, '    }', '  }', '}'].join('\n');
     for (const [type, verdict] of [['text', 'fits'], ['number', 'does not']] as const) {
-      const { rust } = await both({
+      const rust = await run({
         source: [deep(type), movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", team: { owner: co } }', ...VERDICT])].join('\n'),
       });
       expect(rust.observed).toContain(`"body":"${verdict}"`);
@@ -401,11 +361,11 @@ describe('IS <Decl> of a graph literal', () => {
       '}',
     ]);
     const source = ['import { judge } from "lib/forms"', movement(['  v = judge(msg.`subject`)', '  write crm-[:notes]-> { body: coalesce(v, "none") }'])].join('\n');
-    const { rust } = await both({ source, files });
+    const rust = await run({ source, files });
     expect(rust.observed).toContain('"body":"does not"');
   });
 
-  it('compares a handle the graph held across a park, on whichever engine resumes it', async () => {
+  it('compares a handle the graph held across a park', async () => {
     const source = [TYPED_LEAD, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph { name: "a", owner: co }', '  await sleep(1h)', ...VERDICT])].join('\n');
     const resumed = await parkAndResume({ source });
     expect(resumed).toContain('"body":"does not"');
@@ -419,12 +379,12 @@ const META = { companies: [{ id: 'c-1', fields: { name: 'Acme', meta: { a: 'x' }
 
 describe('a graph spread of a record', () => {
   it('copies the event’s fields, as any record’s', async () => {
-    const { rust } = await both({ body: ['  g = graph { ...msg, extra: 1 }', '  write crm-[:notes]-> { body: "${g.`subject`}/${g.`text`}/${g.`extra`}" }'].join('\n') });
+    const rust = await run({ body: ['  g = graph { ...msg, extra: 1 }', '  write crm-[:notes]-> { body: "${g.`subject`}/${g.`text`}/${g.`extra`}" }'].join('\n') });
     expect(rust.observed).toContain('"body":"Acme/EU/1"');
   });
 
   it('copies a map a record’s field holds, and nothing where the field is absent', async () => {
-    const { rust } = await both({
+    const rust = await run({
       source: [S, movement(['  crm-[c:companies]-> {', '    g = graph<S> { ...c.`meta` }', '    write crm-[:notes]-> { body: coalesce(g.`a`, "none") }', '  }'])].join('\n'),
       related: META,
     });
@@ -433,7 +393,7 @@ describe('a graph spread of a record', () => {
   });
 
   it('copies a map a written handle’s field holds', async () => {
-    const { rust } = await both({
+    const rust = await run({
       source: [S, movement(['  co = write crm-[:companies]-> { name: "Acme" }', '  g = graph<S> { ...co.`meta` }', '  write crm-[:notes]-> { body: coalesce(g.`a`, "none") }'])].join('\n'),
     });
     expect(rust.observed).toContain('"body":"none"');
@@ -451,12 +411,12 @@ describe('a graph spread of a record', () => {
       '}',
     ]);
     const source = ['import { first_a } from "lib/forms"', movement(['  first_a(msg.`subject`)'])].join('\n');
-    const { rust } = await both({ source, files, related: META });
+    const rust = await run({ source, files, related: META });
     expect(rust.observed).toContain('"body":"x"');
     expect(rust.observed).toContain('"body":"Acme"');
   });
 
-  it('keeps the event’s copy across a park, on whichever engine resumes it', async () => {
+  it('keeps the event’s copy across a park', async () => {
     const body = ['  g = graph { ...msg }', '  await sleep(1h)', '  write crm-[:notes]-> { body: g.`subject` }'].join('\n');
     const resumed = await parkAndResume({ body });
     expect(resumed).toContain('"body":"Acme"');
@@ -464,7 +424,7 @@ describe('a graph spread of a record', () => {
 });
 
 describe('a parked closure holding a record spread', () => {
-  it('parks the same bytes from either engine, for a handle, a landing and the event', async () => {
+  it('parks and resumes a closure holding a spread of a handle, a landing and the event', async () => {
     for (const spread of ['...co', '...msg']) {
       const body = [
         '  co = write crm-[:companies]-> { name: "Acme" }',
@@ -491,28 +451,28 @@ const NOTE_OF_CO = '  write crm-[:notes]-> { body: "${co.`name`} ${co.`region`}"
 
 describe('refresh', () => {
   it('moves a written handle’s snapshot to the record as it stands, in the run’s result too', async () => {
-    const { rust } = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
+    const rust = await run({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
     expect(rust.observed).toContain('"body":"Acme Inc EU"');
     expect(rust.observed).toContain('"writtenValues":{"name":"Acme Inc"}');
   });
 
   it('fails the run on a record the system deleted, and re-reads each field where the adapter has no readRecord', async () => {
-    const gone = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n') });
-    expect(gone.rust.observed).toContain('no longer exists in');
-    const fallback = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), noReadRecord: true });
-    expect(fallback.rust.observed).toContain('getFieldValue');
+    const gone = await run({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n') });
+    expect(gone.observed).toContain('no longer exists in');
+    const fallback = await run({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), noReadRecord: true });
+    expect(fallback.observed).toContain('getFieldValue');
   });
 
   it('moves a traversed record’s inline data, seen through every name that holds it', async () => {
     const related = { companies: [{ id: 'c-1', fields: { name: 'Stale' } }] };
-    const { rust } = await both({
+    const rust = await run({
       body: ['  crm-[c:companies]-> {', '    held = { k: c }', '    refresh c', '    write crm-[:notes]-> { body: "${c.`name`}/${held.k.`name`}" }', '  }'].join('\n'),
       related,
       read: FRESH,
     });
     expect(rust.observed).toContain('"body":"Fresh/Fresh"');
-    const fallback = await both({ body: ['  crm-[c:companies]-> {', '    refresh c', '    write crm-[:notes]-> { body: c.`name` }', '  }'].join('\n'), related, noReadRecord: true });
-    expect(fallback.rust.observed).toContain('"body":"Stale"');
+    const fallback = await run({ body: ['  crm-[c:companies]-> {', '    refresh c', '    write crm-[:notes]-> { body: c.`name` }', '  }'].join('\n'), related, noReadRecord: true });
+    expect(fallback.observed).toContain('"body":"Stale"');
   });
 
   it('runs inside a library function', async () => {
@@ -524,17 +484,16 @@ describe('refresh', () => {
       '}',
     ]);
     const source = ['import { fresh_name } from "lib/forms"', movement(['  b = fresh_name(msg.`subject`)', '  write crm-[:notes]-> { body: coalesce(b, "none") }'])].join('\n');
-    const { rust } = await both({ source, files, read: FRESH });
+    const rust = await run({ source, files, read: FRESH });
     expect(rust.observed).toContain('"body":"Acme Inc"');
   });
 
   it('leaves an object an adapter kept from a create as it was handed', async () => {
-    const { ts, rust } = await both({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
+    const rust = await run({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
     expect(rust.observed).toContain('"kept":[{"name":"Acme"}');
-    expect(ts.observed).toContain('"kept":[{"name":"Acme"}');
   });
 
-  it('carries a refreshed handle through a park, and refreshes one after it, on whichever engine resumes', async () => {
+  it('carries a refreshed handle through a park, and refreshes one after it', async () => {
     const before = await parkAndResume({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  refresh co', '  await sleep(1h)', NOTE_OF_CO].join('\n'), read: FRESH });
     expect(before).toContain('"body":"Acme Inc EU"');
     const after = await parkAndResume({ body: ['  co = write crm-[:companies]-> { name: "Acme" }', '  await sleep(1h)', '  refresh co', NOTE_OF_CO].join('\n'), read: FRESH });
@@ -551,7 +510,7 @@ describe('a closure called by name inside a library function', () => {
 
   it('runs as the same body runs in the root, by order and by name', async () => {
     for (const call of ['f(n)', 'Text.upper(f(n))']) {
-      const { rust } = await both({ source: root, files: closures(call) });
+      const rust = await run({ source: root, files: closures(call) });
       expect(rust.observed).toContain(call.startsWith('Text.upper') ? '"body":"ACME-L"' : '"body":"Acme-L"');
     }
   });
@@ -569,11 +528,11 @@ describe('a closure called by name inside a library function', () => {
       '}',
       movement(['  r = tag(msg.`subject`)', '  e = tag("")', '  write crm-[:notes]-> { body: "${coalesce(r, "none")}/${coalesce(e, "none")}" }']),
     ].join('\n');
-    const { rust } = await both({ source });
+    const rust = await run({ source });
     expect(rust.observed).toContain('"body":"Acme-R/none"');
   });
 
-  it('resumes a park inside the library’s closure, on whichever engine resumes it', async () => {
+  it('resumes a park inside the library’s closure', async () => {
     const files = library(['export function tag(n: <text>) {', '  f = (x: <text>) => {', '    await sleep(1h)', '    return Text.concat(x, "-L")', '  }', '  return f(n)', '}']);
     const resumed = await parkAndResume({ source: root, files });
     expect(resumed).toContain('"body":"Acme-L"');
