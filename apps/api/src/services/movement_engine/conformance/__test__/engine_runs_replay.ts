@@ -1,4 +1,4 @@
-// The replay of one corpus's recorded runs against the three targets, shared
+// The replay of one corpus's recorded runs against the two targets, shared
 // by engine_runs.v1 and engine_runs.v2 (see either for what it proves).
 //
 // Under UPDATE_ENGINE_RUNS=1 the replay checks the harvest instead of judging
@@ -14,69 +14,21 @@ import path from 'node:path';
 
 import { canonicalJson, hostRecordingSchema, type HostRecording, type ReplayTarget, type ReplayVerdict } from 'engine-contracts/conformance';
 
-import { httpTarget, rustTarget, typescriptTarget } from '../replay';
+import { httpTarget, typescriptTarget } from '../replay';
 import { SUPPORTED_LANGUAGE_VERSIONS, type LanguageVersion } from 'movement-lang';
 
 import { parsePinned } from 'movement-engine/services/movement_engine/program_check';
-import { rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
 
 const FIXTURES = path.resolve(__dirname, '../__fixtures__');
 
-/** The fewest recordings each corpus's fixture holds, and the fewest of them
- *  the Rust engine replays whole. Measured at chunk 5A, Task 3b fix round 1
- *  (2026-10-08): v1 443 recordings, 62 on Rust; v2 542, 68 on Rust. Raised
- *  at 5B Task 6, the Rust engine on 5A's contracts (2026-10-08): 109 and 126
- *  on Rust, less a margin. Raised at chunk 6A Task 2, file-level declarations
- *  and plugin imports admitted (2026-10-09): 111 and 128 on Rust, less a
- *  margin of 2. Raised at chunk 6A Task 3b, the extraction keyword and plugin
- *  calls in Rust (2026-10-09): 195 and 234 on Rust, less a margin of 2.
- *  Raised at chunk 6A Task 4, folds, EXISTS, IS tests and a record named
- *  twice (2026-10-09): 256 and 313 on Rust, less a margin of 2. Raised at
- *  chunk 7A Task 1, admission walking only what the fired movement reaches
- *  (2026-10-09): 257 and 314 on Rust, less a margin of 2. Raised at chunk 7A
- *  Task 2, calls and the graphs a run builds (2026-10-09): 312 and 379 on
- *  Rust, less a margin of 2. Raised at chunk 7A Task 3, records held as
- *  values (2026-10-09): 346 and 429 on Rust, less a margin of 2. Raised at
- *  chunk 7A Task 4, awaits and parallel with parks (2026-10-10): 392 and
- *  475 on Rust, less a margin of 2. Raised at chunk 7A Task 7 (2026-10-11),
- *  the Rust target judging every run it ran to an ending by its verdict (a
- *  mid-run named failure included, once skipped unlabelled) and the runs
- *  that fail their check before a segment opens (once skipped as "not
- *  routed by the shim"): 430 and 519 on Rust, less a margin of 2. PLAN-08A
- *  Task 1 fix round 1 (2026-10-12) drops the margin: floors and ceilings
- *  move together with the measurement; never a margin. The floors are the
- *  measured 430 and 519, raised to the new measurement by the commit that
- *  lifts runs. Never lower one to pass. PLAN-08A Task 2 (a head off a kept
- *  walk runs, 2026-10-12): 431 and 520. */
+/** The fewest recordings each corpus's fixture holds. The corpora are of
+ *  versions 1 and 2, which run only on the TypeScript engine: the Rust
+ *  engine's replays of them retired with its support for versions below 5
+ *  (2026-10-16). */
 const FLOORS = {
-  // Lowered by Henry's ruling of 2026-10-16, the extraction keyword retired
-  // from the Rust engine on every version (`legacy_extraction`): 431 to 345
-  // and 520 to 403, every recording it no longer runs refused by that name
-  // (95 and 135 of them, the skip ceilings below).
-  v1: { recordings: 443, rust: 345 },
-  v2: { recordings: 542, rust: 403 },
+  v1: { recordings: 443 },
+  v2: { recordings: 542 },
 } as const;
-
-/** The most recordings the Rust target may skip (one its engine refused or
- *  declined, so the TypeScript ran it), by corpus and by the skip's reason,
- *  as the teardown's every-reason ceilings are, so one reason cannot swap
- *  for another unseen (PLAN-08A Task 1, 2026-10-12): the skips measured
- *  then, v1 13 of 443 and v2 23 of 542; v1 12 and v2 22 since PLAN-08A Task
- *  2 (`block_head_value_root` retired). A reason not named here may skip
- *  nothing. Each task that closes a refusal lowers them; a ceiling never
- *  rises. At none the Rust target skips nothing (`skipped` is `{}`). */
-const RUST_SKIP_CEILING: Record<keyof typeof FLOORS, Record<string, number>> = {
-  // Since 2026-10-16 the one reason is the extraction keyword, which the Rust
-  // engine refuses by name on every version (Henry's ruling): measured 95 and
-  // 135. The reasons listed before were closed by the tasks since and skip
-  // nothing.
-  v1: {
-    'the Rust engine refused it: legacy_extraction': 95,
-  },
-  v2: {
-    'the Rust engine refused it: legacy_extraction': 135,
-  },
-};
 
 const fixtureOf = (corpus: keyof typeof FLOORS): string => path.join(FIXTURES, `engine-runs.${corpus}.json`);
 
@@ -489,8 +441,8 @@ async function replayAll(target: ReplayTarget, recordings: readonly HostRecordin
     ENCODED_A_FIXED_BUG.filter((entry) => entry.count[corpus] > 0).map((entry) => [entry.reason, entry.count[corpus]]),
   );
   // Exactly the named ones, on every target: each recording that encoded a
-  // fixed bug either diverged where the bug says or was skipped as itself
-  // (the Rust engine refuses v2's Task 4d one, 2026-10-12). Run, it must
+  // fixed bug either diverged where the bug says or was skipped as itself.
+  // Run, it must
   // diverge so: one that reproduces the old bug, or a new divergence, fails
   // until this says why.
   const accounted = Object.fromEntries(
@@ -543,20 +495,5 @@ export function replayCorpus(corpus: keyof typeof FLOORS): void {
   it('replay identically against the HTTP host double', async () => {
     const { diverged } = await replayAll(http, recordings, corpus);
     expect(diverged).toEqual([]);
-  });
-
-  it('replay identically against the Rust engine, every recording it runs whole', async () => {
-    const before = { ...rustRunStats.allReasons };
-    const { same, skipped, diverged } = await replayAll(rustTarget, recordings, corpus);
-    const everyReason = Object.entries(rustRunStats.allReasons)
-      .map(([reason, count]): [string, number] => [reason, count - (before[reason] ?? 0)])
-      .filter(([, count]) => count > 0)
-      .sort(([, a], [, b]) => b - a);
-    console.log(`${corpus}: ${same} of ${recordings.length} recordings replayed on the Rust engine; skipped ${JSON.stringify(skipped)}`);
-    console.log(`${corpus}: recordings the Rust engine refused, by every reason each holds: ${JSON.stringify(Object.fromEntries(everyReason))}`);
-    expect(diverged).toEqual([]);
-    expect(same).toBeGreaterThanOrEqual(FLOORS[corpus].rust);
-    const ceiling = RUST_SKIP_CEILING[corpus];
-    expect(Object.entries(skipped).filter(([reason, count]) => count > (ceiling[reason] ?? 0))).toEqual([]);
   });
 }

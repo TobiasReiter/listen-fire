@@ -37,15 +37,12 @@ export default {
     '<rootDir>/src/test/movement_lang_source.setup.ts',
     // Hands the corpus's version to every evaluation its context omits.
     '<rootDir>/src/test/conformance_pin.setup.ts',
-    // Under MOVEMENT_ENGINE=rust: count the Rust evaluator's answers, and
-    // fail a run in which it answered none.
-    '<rootDir>/src/test/rust_eval_stats.setup.ts',
     // Under UPDATE_ENGINE_RUNS=1: record every entry into the engine as a
     // host recording, folded into movement_engine/conformance/__fixtures__/
     // engine-runs.<version>.json by the teardown. Inert otherwise.
     `<rootDir>/${HARVEST}/record.setup.cjs`,
   ],
-  // The Rust evaluator's counts, and the host-recording harvest, chained.
+  // The host-recording harvest.
   globalSetup: `<rootDir>/${HARVEST}/global_setup.cjs`,
   globalTeardown: `<rootDir>/${HARVEST}/teardown.cjs`,
   // The corpus is typed against its own commit's tree, not today's: transpile only.

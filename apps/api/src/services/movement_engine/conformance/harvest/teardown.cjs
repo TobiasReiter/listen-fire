@@ -1,6 +1,4 @@
-// A conformance corpus's global teardown: the Rust evaluator's counts and
-// routing floors (src/test/rust_eval_stats.teardown.cjs), then, under
-// UPDATE_ENGINE_RUNS=1, the fold of every worker's host recordings into the
+// A conformance corpus's global teardown: under UPDATE_ENGINE_RUNS=1, the fold of every worker's host recordings into the
 // corpus's fixture, ../__fixtures__/engine-runs.v<n>.json — one recording per
 // line, one per distinct conversation (its entry point, canonical input and
 // canonical requests: the same input answered differently is another
@@ -12,7 +10,6 @@
 const { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 
-const rustStats = require('../../../../test/rust_eval_stats.teardown.cjs');
 const { canonical } = require('./canonical.cjs');
 
 const FIXTURES = path.resolve(__dirname, '../__fixtures__');
@@ -56,22 +53,33 @@ function fold(dir, corpus) {
   console.log(`Engine runs (${corpus}): ${harvested} recorded, ${rows.length} distinct, ${Buffer.byteLength(text)} bytes → ${path.relative(process.cwd(), out)}`);
 }
 
+/** Whether jest ran every test file of the corpus, unfiltered. */
+function isWholeCorpus(globalConfig) {
+  if (globalConfig === undefined) return false;
+  return (
+    !globalConfig.testPathPattern
+    && !globalConfig.testNamePattern
+    && !globalConfig.findRelatedTests
+    && !globalConfig.onlyChanged
+    && !globalConfig.onlyFailures
+    && !globalConfig.changedSince
+    && !globalConfig.lastCommit
+    && globalConfig.shard == null
+    && (globalConfig.nonFlagArgs ?? []).length === 0
+  );
+}
+
 module.exports = async function globalTeardown(globalConfig, projectConfig) {
   const dir = process.env.ENGINE_RUNS_HARVEST_DIR;
+  if (process.env.UPDATE_ENGINE_RUNS !== '1' || dir === undefined || !existsSync(dir)) return;
   try {
-    await rustStats(globalConfig, projectConfig);
-  } finally {
-    if (process.env.UPDATE_ENGINE_RUNS === '1' && dir !== undefined && existsSync(dir)) {
-      try {
-        const corpus = corpusOf(projectConfig);
-        if (corpus === undefined) throw new Error('UPDATE_ENGINE_RUNS=1 outside a conformance corpus');
-        if (!rustStats.isWholeCorpus(globalConfig)) {
-          throw new Error(`UPDATE_ENGINE_RUNS=1 rewrites engine-runs.${corpus}.json only from a run of the whole corpus`);
-        }
-        fold(dir, corpus);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
+    const corpus = corpusOf(projectConfig);
+    if (corpus === undefined) throw new Error('UPDATE_ENGINE_RUNS=1 outside a conformance corpus');
+    if (!isWholeCorpus(globalConfig)) {
+      throw new Error(`UPDATE_ENGINE_RUNS=1 rewrites engine-runs.${corpus}.json only from a run of the whole corpus`);
     }
+    fold(dir, corpus);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 };
