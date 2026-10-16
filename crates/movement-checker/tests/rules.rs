@@ -1,7 +1,8 @@
 //! Rules the parity corpus never exercises (most are language version 4 and
 //! 5 rules, which the corpus has not been re-harvested under yet). Each
 //! expectation is the TypeScript checker's own answer on the same program,
-//! read off it on 2026-10-15: every diagnostic, in order, with its span.
+//! read off it on 2026-10-15 and 2026-10-16: every diagnostic, in order, with
+//! its span.
 
 use movement_checker::{CheckOptions, check_source};
 use movement_parser::catalog::types::CatalogSnapshot;

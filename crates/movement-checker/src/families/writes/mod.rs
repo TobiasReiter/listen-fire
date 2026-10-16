@@ -505,10 +505,11 @@ impl Checker<'_> {
                 );
             }
         }
-        let parent = {
+        let (parent, parent_locals) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, span);
-            typing.walk_steps(Some(root_type), &steps[..steps.len() - 1], false)
+            let parent = typing.walk_steps(Some(root_type), &steps[..steps.len() - 1], false);
+            (parent, typing.locals)
         };
         let Some(parent) = parent else { return Landing::default() };
         let TraversalStep::Edge(link_step) = &steps[steps.len() - 1] else { return Landing::default() };
@@ -665,6 +666,24 @@ impl Checker<'_> {
                 ),
                 span,
             );
+        }
+
+        // The final hop's WHERE narrows the identity candidates — each read
+        // as the record it is, so it types like a read hop's WHERE at the
+        // type the target lands on (`typeTargetFilter`).
+        if let Some(filter) = &link_step.expression_filter {
+            let landing = crate::types::position::position_ref_in(&instance, &written);
+            let diagnostics = {
+                let env = self.typing_env(scope);
+                let mut typing = Typing::new(&env, self.version, span);
+                typing.locals = parent_locals;
+                if let Some(alias) = &link_step.alias {
+                    typing.locals.insert(alias.clone(), landing.clone());
+                }
+                typing.infer_at(filter, landing.as_ref());
+                (typing.diagnostics, typing.receipt_reads)
+            };
+            self.push_typed(diagnostics, scope);
         }
 
         let root = instance

@@ -1026,6 +1026,329 @@
      "priced": false
     }
    }
+  },
+  "graphs": {
+   "contractVersion": 1,
+   "adapters": {
+    "email": {
+     "canFire": true,
+     "constructionArgs": [],
+     "schemas": {
+      "": {
+       "positions": {
+        "message": {
+         "properties": {
+          "Subject": "text",
+          "Body": "text",
+          "Count": "number",
+          "Payload": "json"
+         },
+         "edges": {
+          "Attachments": {
+           "target": "attachment",
+           "readable": true
+          }
+         }
+        },
+        "attachment": {
+         "properties": {
+          "Name": {
+           "kind": "maybeAbsent",
+           "of": "text"
+          },
+          "Type": "text",
+          "File": "file",
+          "Pages": "number"
+         },
+         "edges": {
+          "Versions": {
+           "target": "version",
+           "readable": true
+          }
+         }
+        },
+        "version": {
+         "properties": {
+          "Label": "text"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "messages": {
+         "target": "message"
+        }
+       },
+       "writableRoots": {}
+      }
+     }
+    }
+   },
+   "credentials": {},
+   "plugins": {}
+  },
+  "polls": {
+   "adapters": {
+    "polls": {
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "probe": {
+       "positions": {
+        "Poll Result": {
+         "properties": {
+          "Answer": "text"
+         },
+         "edges": {}
+        },
+        "Rating Result": {
+         "properties": {
+          "Answer": "text"
+         },
+         "edges": {}
+        },
+        "Poll Result<Seed | Series A>": {
+         "properties": {
+          "Answer": {
+           "kind": "enum",
+           "options": [
+            "Seed",
+            "Series A"
+           ]
+          }
+         },
+         "edges": {}
+        },
+        "Rating Result<number>": {
+         "properties": {
+          "Answer": "number"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "Poll": {
+         "target": "Poll"
+        },
+        "Rating": {
+         "target": "Rating"
+        }
+       },
+       "writableRoots": {
+        "Poll": {
+         "fields": {
+          "Question": "text",
+          "Choices": {
+           "kind": "list",
+           "of": "text"
+          }
+         },
+         "requiredFields": [
+          "Question"
+         ],
+         "resultShape": {
+          "externalId": "text",
+          "url": "text"
+         },
+         "edges": {
+          "Result": {
+           "target": "Poll Result",
+           "awaitable": true,
+           "watchable": true,
+           "resolvesEmpty": true,
+           "readable": false,
+           "genericOver": {
+            "field": "Choices"
+           }
+          }
+         }
+        },
+        "Rating": {
+         "fields": {
+          "Question": "text",
+          "Scale": {
+           "kind": "enum",
+           "options": [
+            "number",
+            "text"
+           ]
+          }
+         },
+         "requiredFields": [
+          "Question"
+         ],
+         "resultShape": {
+          "externalId": "text",
+          "url": "text"
+         },
+         "edges": {
+          "Result": {
+           "target": "Rating Result",
+           "awaitable": true,
+           "watchable": true,
+           "resolvesEmpty": true,
+           "readable": false,
+           "genericOver": {
+            "field": "Scale",
+            "onNonLiteral": "error"
+           }
+          }
+         }
+        }
+       },
+       "genericLandings": {
+        "[\"generic-landing\",\"Poll Result\",[\"Seed\",\"Series A\"]]": "Poll Result<Seed | Series A>",
+        "[\"generic-landing\",\"Rating Result\",[\"number\"]]": "Rating Result<number>"
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "probe": {
+     "adapters": [
+      "polls"
+     ]
+    }
+   },
+   "plugins": {}
+  },
+  "polls_warn": {
+   "adapters": {
+    "polls": {
+     "constructionArgs": [
+      {
+       "name": "credentials",
+       "kind": "credential",
+       "required": true
+      }
+     ],
+     "schemas": {
+      "probe": {
+       "positions": {
+        "Poll Result": {
+         "properties": {
+          "Answer": "text"
+         },
+         "edges": {}
+        },
+        "Rating Result": {
+         "properties": {
+          "Answer": "text"
+         },
+         "edges": {}
+        },
+        "Poll Result<Seed | Series A>": {
+         "properties": {
+          "Answer": {
+           "kind": "enum",
+           "options": [
+            "Seed",
+            "Series A"
+           ]
+          }
+         },
+         "edges": {}
+        },
+        "Rating Result<number>": {
+         "properties": {
+          "Answer": "number"
+         },
+         "edges": {}
+        }
+       },
+       "collections": {
+        "Poll": {
+         "target": "Poll"
+        },
+        "Rating": {
+         "target": "Rating"
+        }
+       },
+       "writableRoots": {
+        "Poll": {
+         "fields": {
+          "Question": "text",
+          "Choices": {
+           "kind": "list",
+           "of": "text"
+          }
+         },
+         "requiredFields": [
+          "Question"
+         ],
+         "resultShape": {
+          "externalId": "text",
+          "url": "text"
+         },
+         "edges": {
+          "Result": {
+           "target": "Poll Result",
+           "awaitable": true,
+           "watchable": true,
+           "resolvesEmpty": true,
+           "readable": false,
+           "genericOver": {
+            "field": "Choices",
+            "onNonLiteral": "warn"
+           }
+          }
+         }
+        },
+        "Rating": {
+         "fields": {
+          "Question": "text",
+          "Scale": {
+           "kind": "enum",
+           "options": [
+            "number",
+            "text"
+           ]
+          }
+         },
+         "requiredFields": [
+          "Question"
+         ],
+         "resultShape": {
+          "externalId": "text",
+          "url": "text"
+         },
+         "edges": {
+          "Result": {
+           "target": "Rating Result",
+           "awaitable": true,
+           "watchable": true,
+           "resolvesEmpty": true,
+           "readable": false,
+           "genericOver": {
+            "field": "Scale",
+            "onNonLiteral": "error"
+           }
+          }
+         }
+        }
+       },
+       "genericLandings": {
+        "[\"generic-landing\",\"Poll Result\",[\"Seed\",\"Series A\"]]": "Poll Result<Seed | Series A>",
+        "[\"generic-landing\",\"Rating Result\",[\"number\"]]": "Rating Result<number>"
+       }
+      }
+     }
+    }
+   },
+   "credentials": {
+    "probe": {
+     "adapters": [
+      "polls"
+     ]
+    }
+   },
+   "plugins": {}
   }
  },
  "cases": [
@@ -2478,6 +2801,202 @@
    "expected": [
     "MOV_CALL_ARG_OPAQUE_RECORD 16:12-16:13 'use' needs every field of 'e' in hand — its body hands it to 'summarise' as 'data', which takes every field (line 11) — and this argument is src.company, whose fields are read from its system one at a time. Copy the fields it needs into a record the program holds and pass that ('node { name: r.name, … }'), or have 'use' read the fields it uses one by one",
     "MOV_LISTEN_MISSING 14:1-14:1 'run' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to src fire run"
+   ]
+  },
+  {
+   "name": "checked against TS: AWAIT_REQUIRED a bare read of an answer-only edge (v3)",
+   "snapshot": "polls",
+   "version": 3,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  n = COUNT(a-[:Result]->)\n}\n",
+   "expected": [
+    "MOV_AWAIT_REQUIRED 8:7-8:27 '-[:Result]->' on a p write handle resolves only when it is answered — read it with 'await' (`await …-[:Result]->`). A bare traversal reads now and would yield nothing until then."
+   ]
+  },
+  {
+   "name": "checked against TS: AWAIT_IMPURE_WHERE an awaited WHERE using EXISTS (v3)",
+   "snapshot": "polls",
+   "version": 3,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE EXISTS(a-[:Result]->)]->)\n}\n",
+   "expected": [
+    "MOV_AWAIT_IMPURE_WHERE 8:19-8:60 The WHERE on '-[:Result]->' has to run in the app (it uses AI() or EXISTS), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields.",
+    "MOV_AWAIT_REQUIRED 8:19-8:60 '-[:Result]->' on a p write handle resolves only when it is answered — read it with 'await' (`await …-[:Result]->`). A bare traversal reads now and would yield nothing until then."
+   ]
+  },
+  {
+   "name": "checked against TS: AWAIT_IMPURE_WHERE an awaited WHERE using AI (v3)",
+   "snapshot": "polls",
+   "version": 3,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE AI(\"is it good?\")]->)\n}\n",
+   "expected": [
+    "MOV_AWAIT_IMPURE_WHERE 8:19-8:56 The WHERE on '-[:Result]->' has to run in the app (it uses AI() or EXISTS), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields."
+   ]
+  },
+  {
+   "name": "checked against TS: an awaited pure WHERE is clean (v3)",
+   "snapshot": "polls",
+   "version": 3,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE Answer == \"Seed\"]->)\n}\n",
+   "expected": []
+  },
+  {
+   "name": "checked against TS: WRITE_GENERIC_UNTYPED a generic field built at run time (v3)",
+   "snapshot": "polls_warn",
+   "version": 3,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m(q: <text>) {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [q] }\n}\n",
+   "expected": [
+    "MOV_WRITE_GENERIC_UNTYPED 7:56-7:59 'Choices' is built at run time, so what '-[:Result]->' delivers on p.Poll cannot be typed here — it stays one opaque value you cannot read a part out of. Name 'Choices' with a literal to read the answer back by name"
+   ]
+  },
+  {
+   "name": "checked against TS: WRITE_GENERIC_UNTYPED silent for literals (v3)",
+   "snapshot": "polls_warn",
+   "version": 3,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\", \"Series A\"] }\n}\n",
+   "expected": []
+  },
+  {
+   "name": "checked against TS: AWAIT_REQUIRED a bare read of an answer-only edge (v5)",
+   "snapshot": "polls",
+   "version": 5,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  n = COUNT(a-[:Result]->)\n}\n",
+   "expected": [
+    "MOV_AWAIT_REQUIRED 8:7-8:27 '-[:Result]->' on a p write handle resolves only when it is answered — read it with 'await' (`await …-[:Result]->`). A bare traversal reads now and would yield nothing until then."
+   ]
+  },
+  {
+   "name": "checked against TS: AWAIT_IMPURE_WHERE an awaited WHERE using EXISTS (v5)",
+   "snapshot": "polls",
+   "version": 5,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE EXISTS(a-[:Result]->)]->)\n}\n",
+   "expected": [
+    "MOV_AWAIT_IMPURE_WHERE 8:19-8:60 The WHERE on '-[:Result]->' has to run in the app (it uses AI() or EXISTS), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields.",
+    "MOV_AWAIT_REQUIRED 8:19-8:60 '-[:Result]->' on a p write handle resolves only when it is answered — read it with 'await' (`await …-[:Result]->`). A bare traversal reads now and would yield nothing until then."
+   ]
+  },
+  {
+   "name": "checked against TS: AWAIT_IMPURE_WHERE an awaited WHERE using AI (v5)",
+   "snapshot": "polls",
+   "version": 5,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE AI(\"is it good?\")]->)\n}\n",
+   "expected": [
+    "MOV_AWAIT_IMPURE_WHERE 8:19-8:56 The WHERE on '-[:Result]->' has to run in the app (it uses AI() or EXISTS), which an 'await' can't do — its condition is evaluated against each candidate without re-running the movement. Narrow it with a pure predicate over the awaited record's own fields."
+   ]
+  },
+  {
+   "name": "checked against TS: an awaited pure WHERE is clean (v5)",
+   "snapshot": "polls",
+   "version": 5,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\"] }\n  r = await FIRST(a-[:Result WHERE Answer == \"Seed\"]->)\n}\n",
+   "expected": []
+  },
+  {
+   "name": "checked against TS: WRITE_GENERIC_UNTYPED a generic field built at run time (v5)",
+   "snapshot": "polls_warn",
+   "version": 5,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m(q: <text>) {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [q] }\n}\n",
+   "expected": [
+    "MOV_WRITE_GENERIC_UNTYPED 7:56-7:59 'Choices' is built at run time, so what '-[:Result]->' delivers on p.Poll cannot be typed here — it stays one opaque value you cannot read a part out of. Name 'Choices' with a literal to read the answer back by name"
+   ]
+  },
+  {
+   "name": "checked against TS: WRITE_GENERIC_UNTYPED silent for literals (v5)",
+   "snapshot": "polls_warn",
+   "version": 5,
+   "source": "import { polls } from adapters\nimport { probe } from credentials\n\np = polls(credentials: probe)\n\nmovement m() {\n  a = write p-[:Poll]-> { Question: \"Round?\", Choices: [\"Seed\", \"Series A\"] }\n}\n",
+   "expected": []
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE a record copied whose edge records fit (v3)",
+   "snapshot": "graphs",
+   "version": 3,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Archived> { ...e }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE an edge whose records miss a field (v3)",
+   "snapshot": "graphs",
+   "version": 3,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e }\n}\n",
+   "expected": [
+    "MOV_GRAPH_COPY_SHAPE 29:23-29:27 '...e' copies its 'Attachments' records, and <Strict> → Attachments doesn't fit them: it has no `Missing` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE an edge whose records hold another type (v3)",
+   "snapshot": "graphs",
+   "version": 3,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Typed> { ...e }\n}\n",
+   "expected": [
+    "MOV_GRAPH_COPY_SHAPE 29:22-29:26 '...e' copies its 'Attachments' records, and <Typed> → Attachments doesn't fit them: its `Pages` is number, not text — write the text it should be: `TOSTRING(…)` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE an edge written after the spread (v3)",
+   "snapshot": "graphs",
+   "version": 3,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e, Attachments: e-[x:Attachments]-> { Missing: x.Type } }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE a record copied whose edge records fit (v5)",
+   "snapshot": "graphs",
+   "version": 5,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Archived> { ...e }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE an edge whose records miss a field (v5)",
+   "snapshot": "graphs",
+   "version": 5,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e }\n}\n",
+   "expected": [
+    "MOV_GRAPH_COPY_SHAPE 29:23-29:27 '...e' copies its 'Attachments' records, and <Strict> → Attachments doesn't fit them: it has no `Missing` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE an edge whose records hold another type (v5)",
+   "snapshot": "graphs",
+   "version": 5,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Typed> { ...e }\n}\n",
+   "expected": [
+    "MOV_GRAPH_COPY_SHAPE 29:22-29:26 '...e' copies its 'Attachments' records, and <Typed> → Attachments doesn't fit them: its `Pages` is number, not text — write the text it should be: `TOSTRING(…)` — write 'Attachments' after the spread with a body ('Attachments: e-[x:Attachments]-> { field: x.Field }')",
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: GRAPH_COPY_SHAPE an edge written after the spread (v5)",
+   "snapshot": "graphs",
+   "version": 5,
+   "source": "import { email } from adapters\ninbox = email()\n\nnode Archived {\n  Subject: <text>\n  node Attachments {\n    Name: <text | null>\n    File: <file>\n    node Versions {\n      Label: <text>\n    }\n  }\n}\n\nnode Strict {\n  Subject: <text>\n  node Attachments {\n    Missing: <text>\n  }\n}\n\nnode Typed {\n  Subject: <text>\n  node Attachments {\n    Pages: <text>\n  }\n}\nmovement m(e: <inbox-[:message]->>) {\n  g = graph<Strict> { ...e, Attachments: e-[x:Attachments]-> { Missing: x.Type } }\n}\n",
+   "expected": [
+    "MOV_LISTEN_MISSING 28:1-28:1 'm' has no listener, so nothing dispatches it — add a listen statement, e.g. listen to inbox fire m"
+   ]
+  },
+  {
+   "name": "checked against TS: BORROW_MALFORMED a field name holding a dot (v3)",
+   "snapshot": "old_edge",
+   "version": 3,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    node company: \"each company\" {\n      name: \"the name\"\n      stage: <crm-[:companies]->.`Na.me`> \"the stage\"\n    }\n  }\n}\nlisten to inbox fire m\n",
+   "expected": [
+    "MOV_BORROW_MALFORMED 10:7-10:54 'crm.companies.Na.me' is not a borrowable path — a borrowed type names another graph's field: an edge, then the field (e.g. <crm-[:companies]->.`funding_stage`>)"
+   ]
+  },
+  {
+   "name": "checked against TS: BORROW_MALFORMED a field name holding a dot (v5)",
+   "snapshot": "old_edge",
+   "version": 5,
+   "source": "import { email, attio, kg } from adapters\nimport { dealflow_inbox, acme_main, native_knowledge } from credentials\n\ninbox = email(credentials: dealflow_inbox)\ncrm   = attio(credentials: acme_main)\nmovement m(msg: <inbox-[:message]->>) {\n  deals = extract from [msg.`text`] {\n    node company: \"each company\" {\n      name: \"the name\"\n      stage: <crm-[:companies]->.`Na.me`> \"the stage\"\n    }\n  }\n}\nlisten to inbox fire m\n",
+   "expected": [
+    "MOV_BORROW_MALFORMED 10:7-10:54 'crm.companies.Na.me' is not a borrowable path — a borrowed type names another graph's field: an edge, then the field (e.g. <crm-[:companies]->.`funding_stage`>)"
    ]
   }
  ]

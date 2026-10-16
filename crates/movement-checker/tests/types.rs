@@ -142,7 +142,7 @@ fn closure(params: Vec<PlaneType>, returns: Option<PlaneType>) -> Ty {
         Some(plane) => ReturnShape { returns: true, plane, may_hold: None },
         None => ReturnShape::default(),
     };
-    Ty::record(Some(Position::Closure(ClosureType { label: "a closure".to_string(), params, returns })))
+    Ty::record(Some(Position::Closure(ClosureType::new("a closure", params, returns, None))))
 }
 
 fn field(ty: Ty) -> PlaneType {

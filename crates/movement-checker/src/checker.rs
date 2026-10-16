@@ -952,19 +952,19 @@ impl<'c> Checker<'c> {
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
-                return awaited_walk(walk);
+                awaited_walk(walk)
             }
             AwaitSource::First { head, .. } => {
                 self.check_awaited_head(head, None);
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
-                return awaited_walk(walk);
+                awaited_walk(walk)
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));
                 let receipt = self.check_combinator(combinator, scope);
-                return Bound { receipt: Some(receipt), ..Bound::default() };
+                Bound { receipt: Some(receipt), ..Bound::default() }
             }
             AwaitSource::Sleep { duration, .. } => {
                 self.check_sleep_duration(duration);
@@ -973,7 +973,7 @@ impl<'c> Checker<'c> {
                     return Bound { record: true, ..Bound::default() };
                 }
                 let plane = crate::types::position::PlaneType { field: Some(crate::types::Ty::Boolean), pos: None };
-                return Bound { returned: Some(crate::types::position::ReturnShape { returns: true, plane, may_hold: None }), ..Bound::default() };
+                Bound { returned: Some(crate::types::position::ReturnShape { returns: true, plane, may_hold: None }), ..Bound::default() }
             }
             AwaitSource::Until { condition, every, .. } => {
                 if let Some(every) = every {
@@ -983,7 +983,7 @@ impl<'c> Checker<'c> {
                     UntilCondition::Closure { closure } => closure.span,
                     UntilCondition::Expr { expr } => expr.span,
                 };
-                return self.check_until_watching(condition_span, |this| match condition {
+                self.check_until_watching(condition_span, |this| match condition {
                     UntilCondition::Closure { closure } => {
                         this.check_until_params(closure);
                         let impure = this.check_until_purity(&closure.body);
