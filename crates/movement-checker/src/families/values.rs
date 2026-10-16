@@ -629,27 +629,53 @@ enum PresenceAsk {
     Absent,
 }
 
-/// `refuseTextPresenceTest`: an extracted text is never absent. True when it fired.
+/// `refuseTextPresenceTest`: an extracted text is never absent. True when it
+/// fired. The keyword's result is refused from version 2; a record the call
+/// (`extract` / `extractOne`) hands back from version 5, since 3 and 4 let
+/// the test through, and a move up across 5 is warned of instead.
 fn refuse_text_presence_test(typing: &mut Typing, subject: &Expression, asks: PresenceAsk) -> bool {
     if typing.version < 2 {
         return false;
     }
     let Some((root, property)) = direct_field_read(subject) else { return false };
-    let Some(Position::Extract { node, .. }) = typing.root_type(&root) else { return false };
-    let Some(declared) = node.properties.get(&property) else { return false };
-    if !declared.reads_as_present_text {
-        return false;
-    }
+    // The call's record as a walk starts from it: one that may not be there
+    // (`extractOne`'s, unguarded) reads `text | absent`, and testing that for
+    // null says something.
+    let called = match typing.walk_start(&root) {
+        Some(Position::Local(local)) if local.extracted.is_some() => {
+            if !movement_parser::version::since(typing.version, 5) || !matches!(local.reads.get(&property), Some(Some(Ty::Text))) {
+                return false;
+            }
+            true
+        }
+        Some(Position::Extract { node, .. }) => {
+            let Some(declared) = node.properties.get(&property) else { return false };
+            if !declared.reads_as_present_text {
+                return false;
+            }
+            false
+        }
+        _ => return false,
+    };
     let label = format!("{root}.{}", quote_name(&property));
     let (verdict, fix) = match asks {
         PresenceAsk::Present => ("always true", format!("`{label} != \"\"` (or `LENGTH({label}) > 0`)")),
         PresenceAsk::Absent => ("always false", format!("`{label} == \"\"`")),
     };
+    let remedy = format!("Annotate it `<text | null>` to keep the null test, or test whether it is empty instead: {fix}");
+    if called && typing.upgrade_crosses(5) {
+        typing.report_upgrade(
+            codes::PRESENCE_TEST_ON_TEXT,
+            format!(
+                "since {} a null test on '{label}' is refused: it is extracted text, and a text the model did not find is \"\" — never absent — so the test was {verdict}. {remedy}, then upgrade.",
+                crate::version::describe(5)
+            ),
+        );
+        return true;
+    }
     typing.report(
         codes::PRESENCE_TEST_ON_TEXT,
-        format!(
-            "'{label}' is extracted text, and a text the model did not find is \"\" — never absent — so testing it for null is {verdict}. Annotate it `<text | null>` to keep the null test, or test whether it is empty instead: {fix}."
-        ),
+        format!("'{label}' is extracted text, and a text the model did not find is \"\" — never absent — so testing it for null is {verdict}. {remedy}."),
     );
     true
 }

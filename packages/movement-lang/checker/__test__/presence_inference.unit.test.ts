@@ -111,14 +111,11 @@ describe('an extracted text field is present', () => {
     expect(codes(`${EXTRACT}  write chat-[:note]-> { Body: r.title }`)).toEqual([]);
   });
 
-  // KNOWN GAP (every version since the call form, 3): the null test on an
-  // extracted text field is refused only for the extraction keyword's result
-  // (`refuseTextPresenceTest` reads the keyword's root type), though the call's
-  // <text> field reads as present text all the same. From 5 the call is the
-  // only extraction, so the refusal is pinned under 4 below until a ruling.
-  it('KNOWN GAP: a null test on an extracted <text> field is not refused', () => {
-    expect(codes(`${EXTRACT}  if (r.title != null) { write chat-[:note]-> { Body: "y" } }`)).toEqual([]);
-    expect(codes(`${EXTRACT}  r-[i:item]-> { if (i.label == null) { } }`)).toEqual([]);
+  it('a null test on an extracted <text> field is refused, in every spelling', () => {
+    expect(codes(`${EXTRACT}  if (r.title != null) { write chat-[:note]-> { Body: "y" } }`)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
+    expect(codes(`${EXTRACT}  if (r.title == null) { write chat-[:note]-> { Body: "y" } }`)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
+    expect(codes(`${EXTRACT}  r-[i:item]-> { if (i.label == null) { } }`)).toEqual(['MOV_PRESENCE_TEST_ON_TEXT']);
+    expect(messages(`${EXTRACT}  if (r.title != null) { }`)).toContain('testing it for null is always true');
   });
 
   it('a typed field may still be tested — it can be absent', () => {
@@ -236,8 +233,8 @@ function m(c: <chat-[:channel]->>) {
 
 // An unannotated field (`note: "a note"`) is the extraction keyword's
 // shortcut for a text field; the keyword is versions 1–4 only (a declared
-// shape annotates every field), so these are pinned to 4 in its spelling, with
-// the null-test refusal only the keyword's result gets (the KNOWN GAP above).
+// shape annotates every field), so these are pinned to 4 in its spelling,
+// with the keyword's null-test refusal, which it has had since version 2.
 describe('the extraction keyword\'s text fields (version 4)', () => {
   const codesBefore5 = (body: string): Diagnostic[] =>
     checkProgram(

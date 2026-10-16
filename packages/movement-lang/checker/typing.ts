@@ -6841,6 +6841,11 @@ export class ExpressionTyping {
    * Only an extracted field: that "" is a promise the engine keeps. A system's
    * text field is typed the same, but a source may still hand back nothing,
    * so a guard on one stays legal. Returns true when it fired.
+   *
+   * The keyword's result is refused from version 2. A record the call
+   * (`extract` / `extractOne`) hands back keeps the same promise, but versions
+   * 3 and 4 let the test through, so it is refused from version 5, and a move
+   * up across 5 is warned of instead.
    */
   private refuseTextPresenceTest(subject: Expression, asks: 'present' | 'absent'): boolean {
     // Version 1 hands an unfound text over as absent, so there the test is
@@ -6848,19 +6853,36 @@ export class ExpressionTyping {
     if (before(this.options.languageVersion, 2)) return false;
     const field = directFieldRead(subject);
     if (field === undefined) return false;
-    const position = this.rootType(field.root);
-    if (position?.kind !== 'extract') return false;
-    const declared = position.node.properties.get(field.propertyId);
-    if (declared === undefined) return false;
-    if (!readsAsPresentText(declared)) return false;
+    // The call's record as a walk starts from it: one that may not be there
+    // (`extractOne`'s, unguarded) reads `text | absent`, and testing that for
+    // null says something.
+    const position = this.rootType(field.root) ?? this.walkStart(field.root);
+    if (position?.kind === 'local' && position.extracted !== undefined) {
+      if (!since(this.options.languageVersion, 5)) return false;
+      if (position.reads[field.propertyId] !== 'text') return false;
+    } else {
+      if (position?.kind !== 'extract') return false;
+      const declared = position.node.properties.get(field.propertyId);
+      if (declared === undefined) return false;
+      if (!readsAsPresentText(declared)) return false;
+    }
     const label = `${field.root}.${quoteName(field.propertyId)}`;
     const [verdict, fix] =
       asks === 'present'
         ? ['always true', `\`${label} != ""\` (or \`LENGTH(${label}) > 0\`)`]
         : ['always false', `\`${label} == ""\``];
+    const remedy = `Annotate it \`<text | null>\` to keep the null test, or test whether it is empty instead: ${fix}`;
+    if (position.kind === 'local' && this.upgradeCrosses(5)) {
+      this.report(
+        TypedDiagnosticCodes.PRESENCE_TEST_ON_TEXT,
+        `since ${describeLanguageVersion(5)} a null test on '${label}' is refused: it is extracted text, and a text the model did not find is "" — never absent — so the test was ${verdict}. ${remedy}, then upgrade.`,
+        'upgrade',
+      );
+      return true;
+    }
     this.report(
       TypedDiagnosticCodes.PRESENCE_TEST_ON_TEXT,
-      `'${label}' is extracted text, and a text the model did not find is "" — never absent — so testing it for null is ${verdict}. Annotate it \`<text | null>\` to keep the null test, or test whether it is empty instead: ${fix}.`,
+      `'${label}' is extracted text, and a text the model did not find is "" — never absent — so testing it for null is ${verdict}. ${remedy}.`,
     );
     return true;
   }
