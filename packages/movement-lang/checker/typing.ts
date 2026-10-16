@@ -5022,6 +5022,34 @@ export class ExpressionTyping {
     return joinPositions(landings.filter((landing): landing is PositionTypeRef => landing !== undefined));
   }
 
+  /**
+   * From version 5, a walk inside an expression (`COUNT(found-[c:co]->)`,
+   * `EXISTS(found-[:a]->)`, a hop read in a write field) off a name that may
+   * hold no record is refused, as a block's walk is (check.ts
+   * `reportHeadOffMaybeAbsent`): the run fails at the hop when the record is
+   * absent, on every version, and runs when it is there, so versions 1–4 keep
+   * the form and a move up across 5 is warned of. `EXISTS(found)` has no hop
+   * and answers false for an absent record, so it is no walk.
+   */
+  private reportWalkOffMaybeAbsent(expr: Extract<Expression, { type: 'traverse' }>, start: PositionTypeRef | undefined): void {
+    if (expr.aliasRoot === undefined || start?.kind !== 'maybeEmpty' || !since(this.options.languageVersion, 5)) return;
+    const hops = expr.steps.length > 0 || (expr.expression.type === 'exists' && expr.expression.steps.length > 0);
+    if (!hops) return;
+    const name = expr.aliasRoot;
+    if (this.upgradeCrosses(5)) {
+      this.report(
+        TypedDiagnosticCodes.ABSENT_REQUIRED,
+        `since ${describeLanguageVersion(5)} a walk inside an expression off '${name}', which may be absent, is refused: the run fails at the walk when '${name}' is absent. Guard the walk ('if (${name} != null) { … }'), then upgrade.`,
+        'upgrade',
+      );
+      return;
+    }
+    this.report(
+      TypedDiagnosticCodes.ABSENT_REQUIRED,
+      `'${name}' may be absent, and a walk inside an expression off a record that is not there fails the run. Guard the walk: 'if (${name} != null) { … }'.`,
+    );
+  }
+
   /** This walk is for a move up across the change version `n` made. */
   private upgradeCrosses(n: LanguageVersion): boolean {
     const from = this.options.upgradingFrom;
@@ -5430,6 +5458,7 @@ export class ExpressionTyping {
       const scalarRead = this.scalarFieldRead(expr);
       if (scalarRead !== undefined) this.reportScalarFieldRead(scalarRead);
       const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : undefined;
+      this.reportWalkOffMaybeAbsent(expr, start);
       const position = this.walkSteps(start, expr.steps);
       this.rememberOrdering(expr, position);
       this.recordWalked(expr);
@@ -5727,6 +5756,7 @@ export class ExpressionTyping {
         }
         const start = expr.aliasRoot !== undefined ? this.walkStart(expr.aliasRoot) : position;
         if (expr.aliasRoot !== undefined && start === undefined) this.reportUndescribedEvent(expr.aliasRoot);
+        this.reportWalkOffMaybeAbsent(expr, start);
         const destination = this.walkSteps(start, expr.steps);
         this.rememberOrdering(expr, destination);
         this.recordWalked(expr);

@@ -46,7 +46,7 @@ describe('a backticked binding walks like a bare one', () => {
   });
 
   it('as an expression traversal', () => {
-    expect(codes(BOUND + '  t = `The Check`-[:Answer]->.`Text`')).toEqual([]);
+    expect(codes(BOUND + '  if (`The Check` != null) {\n    t = `The Check`-[:Answer]->.`Text`\n  }')).toEqual([]);
   });
 
   it('a bad edge off a backticked root is still the ordinary edge error', () => {

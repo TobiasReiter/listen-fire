@@ -330,6 +330,38 @@ impl<'a> Typing<'a> {
         self.env.upgrading_from().is_some_and(|from| from < n && self.version >= n)
     }
 
+    /// `reportWalkOffMaybeAbsent`: from version 5, a walk inside an expression
+    /// (`COUNT(found-[c:co]->)`, `EXISTS(found-[:a]->)`, a hop read in a write
+    /// field) off a name that may hold no record is refused, as a block's walk
+    /// is: the run fails at the hop when the record is absent, on every
+    /// version, and runs when it is there, so versions 1–4 keep the form and a
+    /// move up across 5 is warned of. `EXISTS(found)` has no hop and answers
+    /// false for an absent record, so it is no walk.
+    fn report_walk_off_maybe_absent(&mut self, alias_root: Option<&str>, steps: &[TraversalStep], expression: &Expression, start: Option<&Position>) {
+        let (Some(name), Some(Position::MaybeEmpty(_))) = (alias_root, start) else { return };
+        if self.version < 5 {
+            return;
+        }
+        let hops = !steps.is_empty() || matches!(expression, Expression::Exists { steps, .. } if !steps.is_empty());
+        if !hops {
+            return;
+        }
+        if self.upgrade_crosses(5) {
+            self.report_upgrade(
+                codes::ABSENT_REQUIRED,
+                format!(
+                    "since {} a walk inside an expression off '{name}', which may be absent, is refused: the run fails at the walk when '{name}' is absent. Guard the walk ('if ({name} != null) {{ … }}'), then upgrade.",
+                    crate::version::describe(5)
+                ),
+            );
+            return;
+        }
+        self.report(
+            codes::ABSENT_REQUIRED,
+            format!("'{name}' may be absent, and a walk inside an expression off a record that is not there fails the run. Guard the walk: 'if ({name} != null) {{ … }}'."),
+        );
+    }
+
     /// The type a node was read as (widened), once typed.
     pub fn read_type_of(&self, expr: &Expression) -> Option<&Option<Ty>> {
         self.read_types.get(&key(expr))
@@ -854,6 +886,7 @@ impl<'a> Typing<'a> {
                 if let (Some(root), None) = (alias_root, &start) {
                     self.report_undescribed_event(root);
                 }
+                self.report_walk_off_maybe_absent(alias_root.as_deref(), steps, expression, start.as_ref());
                 let destination = self.walk_steps(start, steps, false);
                 self.walk_orderings.insert(key(expr), (self.last_ordering, self.last_ordering_edge.clone()));
                 if let Some(destination) = &destination {

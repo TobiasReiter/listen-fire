@@ -3,9 +3,9 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **255 of 255** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 170069 of 170069; 0 extra in Rust.
+- Diagnostics matched: 170246 of 170246; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 44891 of 44891.
-- Rust side: 57.5s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 82.4s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
@@ -39,7 +39,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | nodes | 28 | 28 | 807 | 807 | 0 | 0 | 0 |
 | records | 12 | 12 | 1150 | 1150 | 0 | 0 | 0 |
 | systems | 8 | 8 | 185 | 185 | 0 | 0 | 0 |
-| values | 22 | 22 | 2520 | 2520 | 0 | 0 | 0 |
+| values | 22 | 22 | 2697 | 2697 | 0 | 0 | 0 |
 | versions | 2 | 2 | 13 | 13 | 0 | 0 | 0 |
 | walks | 22 | 22 | 1330 | 1330 | 0 | 0 | 0 |
 | writes | 48 | 48 | 2191 | 2191 | 0 | 0 | 0 |
@@ -48,7 +48,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | code | family | TS | matched | missing in Rust | extra in Rust | message differs | parity |
 |---|---|---|---|---|---|---|---|
-| MOV_ABSENT_REQUIRED | values | 974 | 974 | 0 | 0 | 0 | yes |
+| MOV_ABSENT_REQUIRED | values | 1151 | 1151 | 0 | 0 | 0 | yes |
 | MOV_ADAPTER_NOT_CONSTRUCTED | systems | 42 | 42 | 0 | 0 | 0 | yes |
 | MOV_AI_TIER_LEGACY | systems | 43 | 43 | 0 | 0 | 0 | yes |
 | MOV_AMBIGUOUS_PROPERTY | walks | 8 | 8 | 0 | 0 | 0 | yes |
