@@ -898,6 +898,13 @@ impl<'c> Checker<'c> {
         if let Some(PathRoot::Expression { expr }) = &head.root {
             self.check_expr_slot(expr, scope);
         }
+        // Walking a held tuple reads it as the list of records it widens to.
+        if let Some(id) = root_symbol
+            && self.scopes.symbol(id).types.pos.is_none()
+        {
+            let held = self.scopes.symbol(id).types.field.clone();
+            self.read_held_value(held, head.span);
+        }
         let root = match &head.root {
             None => String::new(),
             Some(PathRoot::Name { name }) => spell_name(name),

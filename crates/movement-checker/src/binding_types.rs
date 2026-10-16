@@ -393,7 +393,7 @@ impl Checker<'_> {
                 if returned.field.is_none() && returned.pos.is_none() {
                     return None;
                 }
-                let label = format!("a closure <{}>", spell_value_type(value));
+                let label = format!("a closure <{}>", crate::families::listens::spell_value_type(value));
                 let closure = ClosureType::new(label, planes, ReturnShape { returns: true, plane: returned, may_hold: None }, None);
                 Some(Ty::record(Some(Position::Closure(closure))))
             }
@@ -442,40 +442,6 @@ fn collected_types(returned: &ReturnShape, ordering: crate::types::field::Collec
         return SymbolTypes { pos: Some((**pos).clone()), plural: Some(ordering), ..SymbolTypes::default() };
     }
     SymbolTypes { may_hold, ..SymbolTypes::default() }
-}
-
-/// `spellValueType`: a written value type as the author wrote it.
-pub fn spell_value_type(value: &ValueType) -> String {
-    match value {
-        ValueType::Name { name, .. } => name.clone(),
-        ValueType::List { of, .. } => format!("list of {}", spell_value_type(of)),
-        ValueType::Record { keys, .. } => {
-            let keys: Vec<String> =
-                keys.iter().map(|k| format!("{}{}: {}", k.name, if k.optional == Some(true) { "?" } else { "" }, spell_value_type(&k.type_))).collect();
-            format!("{{ {} }}", keys.join(", "))
-        }
-        ValueType::Closure { params, returns, .. } => {
-            let params: Vec<String> = params.iter().map(|p| format!("{}: {}", p.name, p.type_.as_ref().map_or("?".to_string(), spell_param_type))).collect();
-            format!("({}) => {}", params.join(", "), spell_param_type(returns))
-        }
-    }
-}
-
-fn spell_param_type(type_: &ParamTypeRef) -> String {
-    match type_ {
-        ParamTypeRef::Value(value) => format!("<{}>", spell_value_type(value)),
-        ParamTypeRef::Name(reference) => {
-            let mut spelled = reference.graph.clone();
-            if let Some(position) = &reference.position {
-                spelled.push('.');
-                spelled.push_str(position);
-            }
-            if let Some(hops) = &reference.hops_raw {
-                spelled.push_str(hops);
-            }
-            format!("<{spelled}>")
-        }
-    }
 }
 
 /// `aggregatedBarePath`: `FIRST`/`LAST`/`ONLY` over a walk read for its landings.

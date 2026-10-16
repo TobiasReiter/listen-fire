@@ -236,8 +236,10 @@ impl Checker<'_> {
                 // The parameter's closure type supplies the types its
                 // parameters leave out (contextual typing).
                 let supplied = fit.field_type().and_then(closure_of_value).map_or(0, |expected| expected.params.len());
-                self.check_closure_as(closure, scope, None, &label, supplied);
-                let value = self.closure_type(closure, scope).map(|c| record_of(Position::Closure(c)));
+                let body = self.check_closure_as(closure, scope, None, &label, supplied);
+                // Held to the parameter's type with what its body hands back.
+                let returns = self.closure_returns(closure, body.value, scope);
+                let value = self.closure_type(closure, scope).map(|c| record_of(Position::Closure(crate::types::position::ClosureType { returns, ..c })));
                 if let Some(param) = fit.field_type() {
                     self.check_value_arg_fit(fit, param, value.as_ref(), ValueArg::at(*span));
                 } else if let Some(param) = fit.pos_type() {
