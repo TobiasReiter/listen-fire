@@ -19,6 +19,16 @@ test('lf check: the example is clean', () => {
   assert.match(out, /1 file\(s\), 0 error\(s\)/);
 });
 
+test('lf check: reports what the Rust checker refuses, by file, line and code', () => {
+  const dir = project();
+  const file = join(dir, 'movements', 'companies.mvt');
+  writeFileSync(file, readFileSync(file, 'utf8').replace('Name: "Welcome ${company.Name}"', 'Nme: "Welcome ${nobody}"'));
+  const { code, out } = lf(dir, 'check');
+  assert.equal(code, 1, out);
+  assert.match(out, /companies\.mvt:8:\d+ .*MOV_NAME_UNRESOLVED/);
+  assert.match(out, /1 file\(s\), [1-9]\d* error\(s\)/);
+});
+
 test('lf run --event writes through the external, parks on sleep, and lf resume finishes it', () => {
   const dir = project();
   const run = lf(dir, 'run', '--event', 'events/company_created.json');

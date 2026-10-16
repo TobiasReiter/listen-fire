@@ -7,12 +7,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
   MovementParseError,
-  checkProgram,
+  checkSourceInRust,
   diagnosticSeverity,
-  fromCatalogSnapshot,
   instanceSchemaKey,
   parseProgram,
-  resolveFileFromSnapshot,
   type CatalogSnapshot,
   type CredentialSpec,
   type InstanceSchema,
@@ -116,27 +114,24 @@ export interface FileDiagnostic {
 }
 
 /**
- * The checker seam: every diagnostic one file has. Answered by the TypeScript
- * checker today; the Rust checker (`check.program`) answers here when it lands.
+ * The checker seam: every diagnostic one file has, by the Rust checker — the
+ * one every `lf` run is held to, since every run is on the Rust engine.
  */
 export function checkFile(input: {
   file: MovementFile;
   catalog: CatalogSnapshot;
   languageVersion: LanguageVersion;
 }): FileDiagnostic[] {
-  let program;
+  // The parse first, for its error's place, which the checker's refusal
+  // words without one.
   try {
-    program = parseProgram(input.file.source, { languageVersion: input.languageVersion });
+    parseProgram(input.file.source, { languageVersion: input.languageVersion });
   } catch (error) {
     if (!(error instanceof MovementParseError)) throw error;
     const at = /line (\d+)(?:, column (\d+))?/.exec(error.message);
     return [{ file: input.file, line: Number(at?.[1] ?? 1), column: Number(at?.[2] ?? 1), code: 'MOV_PARSE', message: error.message, severity: 'error' }];
   }
-  const resolveFile = resolveFileFromSnapshot(input.catalog);
-  return checkProgram(program, fromCatalogSnapshot(input.catalog), {
-    languageVersion: input.languageVersion,
-    ...(resolveFile !== undefined ? { resolveFile } : {}),
-  }).map((d) => ({
+  return checkSourceInRust(input.file.source, input.catalog, { languageVersion: input.languageVersion }).map((d) => ({
     file: input.file,
     line: d.span.start.line,
     column: d.span.start.col,
