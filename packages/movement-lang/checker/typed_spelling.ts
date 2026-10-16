@@ -21,6 +21,9 @@ export interface TypedSpelling {
   at: At;
   message: string;
   text: string;
+  /** The fix keeps the meaning: from 5 `count` counts every item, as `LENGTH`
+   *  of a list did and as `EXISTS` of one asked (any item at all). */
+  safe?: true;
 }
 
 /** Every typed respelling in `tree` (outside walk brackets), `kindOf` giving
@@ -55,7 +58,7 @@ export function typedSpellings(tree: MExpr, raw: string, kindOf: (e: MExpr) => V
         const fix = `count(${text(arg.at)})`;
         return written === 'Text.length'
           ? [{ kind: 'misuse', at: e.at, message: "`Text.length` takes text; a list's length is `count(xs)`", text: fix }]
-          : [{ kind: 'respell', at: e.at, message: `\`${written}\` of a list is written \`count(xs)\` from language version 5`, text: fix }];
+          : [{ kind: 'respell', at: e.at, message: `\`${written}\` of a list is written \`count(xs)\` from language version 5`, text: fix, safe: true }];
       }
       if (canonical === 'EXISTS' && arg.kind !== 'path' && arg.kind !== 'where' && kindOf(arg) === 'list') {
         const fix = `count(${text(arg.at)}) > 0`;
@@ -65,6 +68,7 @@ export function typedSpellings(tree: MExpr, raw: string, kindOf: (e: MExpr) => V
             at: e.at,
             message: `\`${written}\` of a list is written \`count(xs) > 0\` from language version 5`,
             text: whole(raw, e.at) ? fix : `(${fix})`,
+            safe: true,
           },
         ];
       }

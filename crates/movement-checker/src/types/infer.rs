@@ -832,6 +832,16 @@ impl<'a> Typing<'a> {
     fn aggregate_type(&mut self, function: AggregationFunction, inner: Option<&Ty>, operand: &Expression) -> Option<Ty> {
         use AggregationFunction as F;
         let element = inner.map(unwrap_list);
+        if function == F::Count && inner.is_some_and(may_hold_empty_item) && self.upgrade_crosses(5) {
+            self.report_upgrade(
+                crate::codes::COUNT_COUNTS_EMPTY,
+                format!(
+                    "since {} 'count' counts every item of a list, an empty one (null) included, as TypeScript's '.length' does; before, it skipped empty items, and this list may hold one. If the program relied on the old count, count only the items that are there (`{}`), then upgrade.",
+                    crate::version::describe(5),
+                    self.code("count(filter(xs, (x) => x != null))")
+                ),
+            );
+        }
         match function {
             F::Count | F::Sum | F::Avg => Some(Ty::Number),
             F::Join => Some(Ty::Text),
@@ -1254,5 +1264,16 @@ pub fn holds_fields_in_hand(position: &Position) -> bool {
         Position::Extract { .. } | Position::Handle(_) | Position::Local(_) => true,
         Position::MaybeEmpty(of) => holds_fields_in_hand(of),
         Position::Position(_) | Position::Union(_) | Position::Meta { .. } | Position::Closure(_) => false,
+    }
+}
+
+/// `mayHoldEmptyItem`: a list (or tuple) one of whose items may be empty —
+/// what `COUNT` skipped before version 5 and counts from it.
+fn may_hold_empty_item(ty: &Ty) -> bool {
+    let empty = |item: Option<&Ty>| matches!(item, Some(Ty::MaybeAbsent(_) | Ty::Absent));
+    match strip_absent(ty) {
+        Ty::List { of, .. } => empty(Some(of)),
+        Ty::Tuple { of, rest } => of.iter().any(|slot| empty(slot.as_ref())) || rest.as_ref().is_some_and(|r| empty(r.of.as_deref())),
+        _ => false,
     }
 }

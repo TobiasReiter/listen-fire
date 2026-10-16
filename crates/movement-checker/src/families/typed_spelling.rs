@@ -40,6 +40,9 @@ pub struct TypedSpelling {
     pub at: At,
     pub message: String,
     pub text: String,
+    /// The fix keeps the meaning: from 5 `count` counts every item, as
+    /// `LENGTH` of a list did and as `EXISTS` of one asked (any item at all).
+    pub safe: bool,
 }
 
 /// Every typed respelling in `tree` (outside walk brackets), `kind_of`
@@ -101,29 +104,29 @@ fn here(e: &MExpr, src: &Utf16, kind_of: &mut dyn FnMut(&MExpr) -> Option<ValueK
             if canonical == "LENGTH" && kind_of(arg) == Some(ValueKind::List) {
                 let fix = format!("count({})", text(arg.at()));
                 return Some(if written == "Text.length" {
-                    TypedSpelling { found: Found::Misuse, at: *at, message: "`Text.length` takes text; a list's length is `count(xs)`".into(), text: fix }
+                    TypedSpelling { found: Found::Misuse, at: *at, message: "`Text.length` takes text; a list's length is `count(xs)`".into(), text: fix, safe: false }
                 } else {
-                    TypedSpelling { found: Found::Respell, at: *at, message: format!("`{written}` of a list is written `count(xs)` from language version 5"), text: fix }
+                    TypedSpelling { found: Found::Respell, at: *at, message: format!("`{written}` of a list is written `count(xs)` from language version 5"), text: fix, safe: true }
                 });
             }
             if canonical == "EXISTS" && !matches!(arg, MExpr::Path { .. } | MExpr::Where { .. }) && kind_of(arg) == Some(ValueKind::List) {
                 let fix = format!("count({}) > 0", text(arg.at()));
                 let text = if whole(src, *at) { fix } else { format!("({fix})") };
-                return Some(TypedSpelling { found: Found::Respell, at: *at, message: format!("`{written}` of a list is written `count(xs) > 0` from language version 5"), text });
+                return Some(TypedSpelling { found: Found::Respell, at: *at, message: format!("`{written}` of a list is written `count(xs) > 0` from language version 5"), text, safe: true });
             }
             None
         }
         MExpr::Binary { op: BinaryOp::Contains, left, right, at } if kind_of(left) == Some(ValueKind::List) => {
             let fix = format!("List.includes({}, {})", text(left.at()), text(right.at()));
             Some(if text(*at).starts_with("Text.includes") {
-                TypedSpelling { found: Found::Misuse, at: *at, message: "`Text.includes` takes text; a list holds a value by `List.includes(xs, v)`".into(), text: fix }
+                TypedSpelling { found: Found::Misuse, at: *at, message: "`Text.includes` takes text; a list holds a value by `List.includes(xs, v)`".into(), text: fix, safe: false }
             } else {
-                TypedSpelling { found: Found::Respell, at: *at, message: "`CONTAINS` on a list is written `List.includes(xs, v)` from language version 5".into(), text: fix }
+                TypedSpelling { found: Found::Respell, at: *at, message: "`CONTAINS` on a list is written `List.includes(xs, v)` from language version 5".into(), text: fix, safe: false }
             })
         }
         MExpr::Binary { op: BinaryOp::In, left, right, at } if text(*at).starts_with("List.includes") && kind_of(right) == Some(ValueKind::Text) => {
             let fix = format!("Text.includes({}, {})", text(right.at()), text(left.at()));
-            Some(TypedSpelling { found: Found::Misuse, at: *at, message: "`List.includes` takes a list; text holds text by `Text.includes(t, v)`".into(), text: fix })
+            Some(TypedSpelling { found: Found::Misuse, at: *at, message: "`List.includes` takes a list; text holds text by `Text.includes(t, v)`".into(), text: fix, safe: false })
         }
         _ => None,
     }
@@ -165,7 +168,11 @@ impl Checker<'_> {
         };
         for f in found {
             let span = span_of_extent(slot, f.at);
-            let fix = serde_json::json!({ "edits": [{ "span": span, "text": f.text }] });
+            let fix = if f.safe {
+                serde_json::json!({ "edits": [{ "span": span, "text": f.text }], "safe": true })
+            } else {
+                serde_json::json!({ "edits": [{ "span": span, "text": f.text }] })
+            };
             match f.found {
                 Found::Respell => {
                     self.respelled.insert(span_key(&span), (f.message, fix));

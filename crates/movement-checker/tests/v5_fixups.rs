@@ -85,3 +85,34 @@ fn a_move_up_across_5_warns_a_null_test_on_a_blocks_returned_records() {
     assert!(presence_warnings(&v5("found != null"), 5, None).is_empty());
     assert!(presence_warnings(&v4("EXISTS(found)"), 5, Some(4)).is_empty());
 }
+
+#[test]
+fn a_move_up_across_5_warns_a_count_of_a_list_that_may_hold_an_empty_item() {
+    let v4 = |list: &str| format!("movement f(t: <text>) {{\n  xs = {list}\n  return COUNT(xs)\n}}");
+    let warned = |source: &str, version: u32, from: Option<u32>| -> Vec<Diagnostic> {
+        let catalog = CatalogSnapshot::load(CATALOG).unwrap();
+        let options = CheckOptions { language_version: version, upgrading_from: from, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+        check_source(source, &catalog, options).unwrap().into_iter().filter(|d| d.code == "MOV_COUNT_COUNTS_EMPTY").collect()
+    };
+    let found = warned(&v4("[t, NULL]"), 5, Some(4));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].upgrade, Some(true));
+    assert!(found[0].message.contains("count(filter(xs, (x) => x != null))"));
+    assert!(warned(&v4("[t, \"b\"]"), 5, Some(4)).is_empty());
+    assert!(warned(&v4("[t, NULL]"), 4, None).is_empty());
+}
+
+#[test]
+fn length_and_exists_of_a_list_rewrite_to_count_marked_safe() {
+    let source = "movement f(t: <text>) {\n  xs = [t, NULL]\n  n = LENGTH(xs)\n  ok = EXISTS(xs)\n  return n\n}";
+    let fixes: Vec<(String, bool)> = check(source, 5)
+        .into_iter()
+        .filter(|d| d.code == "MOV_V5_SPELLING")
+        .filter_map(|d| d.fix)
+        .filter_map(|fix| {
+            let text: String = fix["edits"].as_array()?.iter().filter_map(|e| e["text"].as_str()).collect();
+            text.starts_with("count(").then(|| (text, fix["safe"].as_bool() == Some(true)))
+        })
+        .collect();
+    assert_eq!(fixes, vec![("count(xs)".to_string(), true), ("count(xs) > 0".to_string(), true)]);
+}

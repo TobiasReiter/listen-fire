@@ -110,3 +110,32 @@ describe("a move up across 5 warns a null test on a block's returned records", (
     expect(warned(v4('EXISTS(found)'), { languageVersion: 5, upgradingFrom: 4 })).toEqual([]);
   });
 });
+
+describe('count from version 5 counts every item', () => {
+  const v4 = (list: string) => `movement f(t: <text>) {\n  xs = ${list}\n  return COUNT(xs)\n}`;
+  const warned = (source: string, options: { languageVersion: 4 | 5; upgradingFrom?: 4 }) =>
+    checkProgram(parseProgram(source, { languageVersion: options.languageVersion }), catalog, options)
+      .filter((d) => d.code === 'MOV_COUNT_COUNTS_EMPTY');
+
+  it('a move up across 5 warns a count of a list that may hold an empty item', () => {
+    const [d] = warned(v4('[t, NULL]'), { languageVersion: 5, upgradingFrom: 4 });
+    expect(d).toMatchObject({ severity: 'warning', upgrade: true });
+    expect(d.message).toContain('count(filter(xs, (x) => x != null))');
+  });
+
+  it('not a list of present items, and not without a move up', () => {
+    expect(warned(v4('[t, "b"]'), { languageVersion: 5, upgradingFrom: 4 })).toEqual([]);
+    expect(warned(v4('[t, NULL]'), { languageVersion: 4 })).toEqual([]);
+  });
+
+  it("LENGTH and EXISTS of a list are rewritten to count, marked safe: count's answer is theirs from 5", () => {
+    const source = 'movement f(t: <text>) {\n  xs = [t, NULL]\n  n = LENGTH(xs)\n  ok = EXISTS(xs)\n  return n\n}';
+    const fixes = checkProgram(parseProgram(source, { languageVersion: 5 }), catalog, { languageVersion: 5 })
+      .filter((d) => d.code === 'MOV_V5_SPELLING' && d.fix?.edits.some((e) => e.text.startsWith('count(')))
+      .map((d) => [d.fix?.edits.map((e) => e.text).join(''), d.fix?.safe]);
+    expect(fixes).toEqual([
+      ['count(xs)', true],
+      ['count(xs) > 0', true],
+    ]);
+  });
+});

@@ -106,6 +106,7 @@ ok = true
 
 - An `if` condition is parenthesised. `rec IS <T>` is `rec is <T>` outside brackets.
 - `exists(…)` takes a walk only. On a value it is refused with the `!= null` rewrite. `x != null` narrows `x` inside the arm, and `if (x == null) { fail(…) }` narrows it after, as before.
+- `count(xs)` counts every item of a list, an empty one (null) included, as TypeScript's `.length` does; under 4 and earlier `COUNT` skipped empty items. A move up across 5 warns a count of a list that may hold an empty item (`MOV_COUNT_COUNTS_EMPTY`). To count only the items that are there: `count(filter(xs, (x) => x != null))`.
 - One answer changes. `found != null` on the records a block returned (`found = c-[m:Messages]-> { return m }`) says whether the block returned any, as `EXISTS(found)` did. Under 4 and earlier those records always counted as present, so `found != NULL` was always true. A move up across 5 warns each such test (`MOV_PRESENCE_OF_RETURNED`): if the program relied on the old answer, change it, then upgrade.
 - Unchanged: `== != < <= > >=`, arithmetic, `"${…}"`, `[a, ...xs]`, `{ k: v }`, durations, `@` fields, and `Owner ?: x` in a write.
 
@@ -398,6 +399,7 @@ r = all(a, () => { … })
 | `MOV_COMBINATOR_ARMS_ARE_ARGUMENTS` | [`all` and `race`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (arms in a list; the fix drops the brackets; since 5) |
 | `MOV_COMBINATOR_NO_AWAIT` | [`all` and `race`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (`await race(…)`, `await all(…)`; the fix drops the `await`; since 5) |
 | `MOV_DELETE_NOT_DECLARED` | [`delete` only where the system declares it](#5-delete-only-where-the-system-declares-it) |
+| `MOV_COUNT_COUNTS_EMPTY` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a count of a list that may hold an empty item) |
 | `MOV_DELETE_NOT_RECORD` | [`delete` only where the system declares it](#5-delete-only-where-the-system-declares-it) |
 | `MOV_EXPR_CLOSURE_POSITION` | [A closure is not data](#12-a-closure-is-not-data) (under 4 and earlier; under 5 a closure written in a list or map is `MOV_CLOSURE_NOT_DATA`) |
 | `MOV_FUNCTION_UNKNOWN` | [No methods](#no-methods) (a dotted call of no built-in, `box.g()` included; version 5) |

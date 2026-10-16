@@ -6483,7 +6483,7 @@ class Checker {
     };
     for (const found of typedSpellings(tree, slot.raw, kindOf)) {
       const span = spanOfExtent(slot, found.at);
-      const fix: DiagnosticFix = { edits: [{ span, text: found.text }] };
+      const fix: DiagnosticFix = { edits: [{ span, text: found.text }], ...(found.safe === true ? { safe: true as const } : {}) };
       if (found.kind === 'respell') this.respelled.set(spanKey(span), { message: found.message, fix });
       else this.reportWithFix({ code: DiagnosticCodes.BUILTIN_ARG_TYPE, message: found.message, span, fix });
     }
