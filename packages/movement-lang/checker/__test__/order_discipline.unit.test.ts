@@ -107,7 +107,7 @@ describe('an order-sensitive fold needs a collection with an order', () => {
 
   it('…and over the other graph\'s document-ordered edge too', () => {
     expect(
-      codes('  f = only(docs-[x:Files ORDER BY x.`Title`]->)\n  t = Text.join(f-[s:Sections]->.`Heading`, ", ")'),
+      codes('  f = only(docs-[x:Files ORDER BY x.`Title`]->)\n  if (f != null) {\n    t = Text.join(f-[s:Sections]->.`Heading`, ", ")\n  }'),
     ).toEqual([]);
   });
 

@@ -179,6 +179,11 @@ listen to runs {} fire probe
   return written.filter((w) => w.recordType === 'note').map((w) => w.fields?.text);
 }
 
+/** A walk off a record that may be absent is refused from version 5 (the run
+ *  fails at it when the record is not there), so the cases guard theirs. */
+const held = (bind: string, name: string, rest: string): string =>
+  `${bind}  if (${name} != null) {\n${rest}\n  }`;
+
 /** The two gates every case asks: one walk, bare and narrowed. */
 function gates(root: string): string {
   return [
@@ -194,20 +199,22 @@ describe('EXISTS() from a record FIRST put on the value plane', () => {
     `  rows = graph-[c:company WHERE c.\`name\` == "${name}" ORDER BY c.\`name\`]->\n  top = first(rows)\n`;
 
   it('answers true, with and without a WHERE, where the record has notes', async () => {
-    expect(await answers(pick('Acme') + gates('top'))).toEqual(['any', 'brief']);
+    expect(await answers(held(pick('Acme'), 'top', gates('top')))).toEqual(['any', 'brief']);
   });
 
   it('answers false where the record has none', async () => {
-    expect(await answers(pick('Globex') + gates('top'))).toEqual(['none']);
+    expect(await answers(held(pick('Globex'), 'top', gates('top')))).toEqual(['none']);
   });
 
   it('COUNT, ONLY and IF read the same walk', async () => {
-    const body =
-      pick('Acme') +
+    const body = held(
+      pick('Acme'),
+      'top',
       '  if (count(top-[:notes]->) == 2) { write graph-[:note]-> { text: "two" } }\n' +
-      '  write graph-[:note]-> { text: coalesce(only(top-[n:notes WHERE n.`text` == "Memo"]->.`text`), "none") }\n' +
-      '  shown = exists(top-[:notes]->) ? "has" : "empty"\n' +
-      '  write graph-[:note]-> { text: shown }';
+        '  write graph-[:note]-> { text: coalesce(only(top-[n:notes WHERE n.`text` == "Memo"]->.`text`), "none") }\n' +
+        '  shown = exists(top-[:notes]->) ? "has" : "empty"\n' +
+        '  write graph-[:note]-> { text: shown }',
+    );
     expect(await answers(body)).toEqual(['two', 'Memo', 'has']);
   });
 });
@@ -217,8 +224,8 @@ describe('EXISTS() from a record FIRST binds directly', () => {
     `  top = first(graph-[c:company WHERE c.\`name\` == "${name}" ORDER BY c.\`name\`]->)\n`;
 
   it('true and false, with and without a WHERE', async () => {
-    expect(await answers(pick('Acme') + gates('top'))).toEqual(['any', 'brief']);
-    expect(await answers(pick('Globex') + gates('top'))).toEqual(['none']);
+    expect(await answers(held(pick('Acme'), 'top', gates('top')))).toEqual(['any', 'brief']);
+    expect(await answers(held(pick('Globex'), 'top', gates('top')))).toEqual(['none']);
   });
 });
 
@@ -231,14 +238,14 @@ describe('EXISTS() from a match result', () => {
   });
 
   it('true, with and without a WHERE, where the matched record has notes', async () => {
-    expect(await answers(MATCH + gates('co'), makeGraph([hit('c-acme', 'Acme')]))).toEqual([
+    expect(await answers(held(MATCH, 'co', gates('co')), makeGraph([hit('c-acme', 'Acme')]))).toEqual([
       'any',
       'brief',
     ]);
   });
 
   it('false where it has none', async () => {
-    expect(await answers(MATCH + gates('co'), makeGraph([hit('c-globex', 'Acme')]))).toEqual([
+    expect(await answers(held(MATCH, 'co', gates('co')), makeGraph([hit('c-globex', 'Acme')]))).toEqual([
       'none',
     ]);
   });
@@ -293,15 +300,15 @@ describe('!EXISTS() runs inverted relative to EXISTS()', () => {
   ].join('\n');
 
   it('a record with notes: EXISTS fires, !EXISTS does not', async () => {
-    expect(await answers(pick('Acme') + both)).toEqual(['has', 'no nope', 'twice']);
+    expect(await answers(held(pick('Acme'), 'top', both))).toEqual(['has', 'no nope', 'twice']);
   });
 
   it('a record with none: !EXISTS fires, EXISTS does not', async () => {
-    expect(await answers(pick('Globex') + both)).toEqual(['none', 'no nope']);
+    expect(await answers(held(pick('Globex'), 'top', both))).toEqual(['none', 'no nope']);
   });
 
   it('as a value, IF !EXISTS(…) takes the other branch', async () => {
-    const body = pick('Acme') + '  shown = !exists(top-[:notes]->) ? "empty" : "has"\n  write graph-[:note]-> { text: shown }';
+    const body = held(pick('Acme'), 'top', '  shown = !exists(top-[:notes]->) ? "empty" : "has"\n  write graph-[:note]-> { text: shown }');
     expect(await answers(body)).toEqual(['has']);
   });
 });

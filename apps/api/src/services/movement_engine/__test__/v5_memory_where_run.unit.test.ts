@@ -177,11 +177,13 @@ describe("an extracted node's children: a hop's alias read is the child's field"
     expect(
       await notesOnRust(
         ...EXTRACT,
-        '  if (exists(deals-[c:company WHERE c.name == "Acme"]->)) {',
-        '    write inbox-[:note]-> { body: "acme" }',
-        '  }',
-        '  if (exists(deals-[c:company WHERE c.name == "Hooli"]->)) {',
-        '    write inbox-[:note]-> { body: "hooli" }',
+        '  if (deals != null) {',
+        '    if (exists(deals-[c:company WHERE c.name == "Acme"]->)) {',
+        '      write inbox-[:note]-> { body: "acme" }',
+        '    }',
+        '    if (exists(deals-[c:company WHERE c.name == "Hooli"]->)) {',
+        '      write inbox-[:note]-> { body: "hooli" }',
+        '    }',
         '  }',
       ),
     ).toEqual(['acme']);
@@ -205,7 +207,9 @@ describe("an extracted node's children: a hop's alias read is the child's field"
       await notesOnRust(
         ...EXTRACT,
         '  name = msg.`subject`',
-        '  write inbox-[:note]-> { body: Text.join(deals-[c:company WHERE c.name != name ORDER BY c.name DESC]->.name, ",") }',
+        '  if (deals != null) {',
+        '    write inbox-[:note]-> { body: Text.join(deals-[c:company WHERE c.name != name ORDER BY c.name DESC]->.name, ",") }',
+        '  }',
       ),
     ).toEqual(['Initech,Acme']);
   });

@@ -1086,6 +1086,17 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
 
+### shrink-absent
+
+- **A walk inside an expression off a record that may be absent is refused too** (`MOV_ABSENT_REQUIRED`,
+  from version 5): `count(found-[c:company]->)`, `exists(found-[c:company]->)`, a hop read in a write
+  field (`found-[c:company]->.name`), a hop in an interpolation or a condition, where `found` is an
+  `extractOne(…)` answer, a `match` that may find nothing, an unguarded pick. Why: the run fails at the
+  hop when the record is absent, as it does for a block, and the checker said nothing. `exists(found)`
+  has no hop and answers false for an absent record, so it is allowed. Guard the walk:
+  `if (found != null) { … }`. Under 1–4 nothing changes; a move up across 5 is an upgrade warning,
+  which holds the pin.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
