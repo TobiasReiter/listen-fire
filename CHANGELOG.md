@@ -291,6 +291,10 @@ guide](docs/language/dancing-wren-migration.md).
 
 ### Fixed
 
+- `write v { … }`, where `v` is an `IF` or a `COALESCE` of two records with no one type, no longer
+  reports the checker's own internal error (`MOV_INTERNAL_UNTYPED_BINDING`) on any language version.
+  `v` is read as what it may hold, as `delete` and a graph entry read it: records alone are one
+  record; one that may be absent, or a value among them, is `MOV_WRITE_POSITION_NOT_RECORD`.
 - A run that names a credential for a remote adapter (`x(credentials: X)`) now fails when it is not
   the credential the adapter was installed with, saying the remote install serves only its own. It
   used to be ignored: two accounts on one remote adapter silently reached the install's account, so

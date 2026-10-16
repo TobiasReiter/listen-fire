@@ -3594,6 +3594,38 @@ function withoutValueType<T extends ValueTypeFacts>(shape: T): T {
   return rest;
 }
 
+/**
+ * The record a value that may be one of several things is, for a rule that
+ * needs one record (`recordOfName`): a name bound to an `IF` or a `COALESCE`
+ * whose arms have no one type. Records alone are one record, as `A | B` of two
+ * `Org`s is an `Org` — its type the members' when they agree, and unnamed (so
+ * nothing is refused) when they do not; one that may be absent may be empty.
+ * A member that is not a record makes it a value.
+ */
+function recordOfMayHold(
+  mayHold: FieldType,
+): { kind: 'record'; type: PositionTypeRef } | { kind: 'value'; what: string } | { kind: 'undescribed' } {
+  const positions: Array<PositionTypeRef | undefined> = [];
+  let mayBeAbsent = false;
+  const visit = (member: FieldType): boolean => {
+    if (member === 'absent' || isMaybeAbsent(member)) mayBeAbsent = true;
+    if (member === 'absent') return true;
+    const variant = variantOf(stripAbsent(member));
+    if (variant.kind === 'union') return variant.of.every(visit);
+    if (variant.kind !== 'record') return false;
+    positions.push(variant.position);
+    return true;
+  };
+  if (!visit(mayHold) || positions.length === 0) {
+    return { kind: 'value', what: 'a value that may hold something other than one record' };
+  }
+  const first = positions[0];
+  if (first === undefined || !positions.every(position => position !== undefined && sameStartingPoint(position, first))) {
+    return { kind: 'undescribed' };
+  }
+  return { kind: 'record', type: mayBeAbsent ? { kind: 'maybeEmpty', of: first } : first };
+}
+
 function typeTooLargeMessage(name: string): string {
   return `'${name}' builds a type too large to check (over ${TYPE_PARTS_LIMIT} parts) — split the value into named parts or declare its shape (node <Name> { … })`;
 }
@@ -4107,7 +4139,10 @@ class Checker {
    *   - `value` — it holds a value, not a record (the rule refuses it, by its
    *     own code);
    *   - `undescribed` — a record whose system describes nothing (a schema-less
-   *     graph): unknown, never an error;
+   *     graph), or one of several records of different types: unknown, never
+   *     an error;
+   * A name bound to an `IF` or a `COALESCE` whose arms have no one type is
+   * read by what it may hold (`recordOfMayHold`).
    *   - undefined — the binding carries no type at all, reported here as the
    *     internal error it is.
    */
@@ -4141,6 +4176,7 @@ class Checker {
         ? { kind: 'undescribed' }
         : { kind: 'value', what: describeKind[symbol.kind] };
     }
+    if (symbol.mayHold !== undefined) return recordOfMayHold(symbol.mayHold);
     this.report(
       DiagnosticCodes.UNTYPED_BINDING,
       `internal: '${name}' is bound, but its binding says nothing about what it holds, so this can't be checked — please report this program`,
