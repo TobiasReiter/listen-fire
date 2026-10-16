@@ -166,8 +166,6 @@ const llm: ExtractCallLlmClient = {
     };
   },
 };
-  },
-};
 
 /** Runs the body and answers with the `name` of every CRM create, in order —
  *  where each case writes what TEXT.SERIALISE rendered. */
