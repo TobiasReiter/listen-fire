@@ -157,6 +157,33 @@ pub fn is_record(ty: Option<&Ty>) -> bool {
     matches!(ty.map(strip_absent), Some(Ty::Record(_)))
 }
 
+/// `recordsAlone`: the records a value is, when it is records and nothing
+/// else — a record, a union of them, or a tuple of record slots (an edge list).
+pub fn records_alone(ty: Option<&Ty>) -> Option<Vec<Ty>> {
+    let ty = ty?;
+    let variant = strip_absent(ty);
+    if let Ty::Record(_) = variant {
+        return Some(vec![variant.clone()]);
+    }
+    let (members, tuple): (Vec<Option<&Ty>>, bool) = match variant {
+        Ty::Union(of) => (of.iter().map(Some).collect(), false),
+        Ty::Tuple { of, rest } => {
+            let mut members: Vec<Option<&Ty>> = of.iter().map(Option::as_ref).collect();
+            members.push(rest.as_ref().and_then(|r| r.of.as_deref()));
+            (members, true)
+        }
+        _ => return None,
+    };
+    let mut found = Vec::new();
+    for member in members {
+        if member.is_none() && tuple {
+            continue;
+        }
+        found.extend(records_alone(member)?);
+    }
+    (!found.is_empty()).then_some(found)
+}
+
 /// `isCollectionType`: a list or a tuple, absence aside.
 pub fn is_collection(ty: Option<&Ty>) -> bool {
     matches!(ty.map(strip_absent), Some(Ty::List { .. } | Ty::Tuple { .. }))
@@ -590,8 +617,28 @@ pub struct HeldWalk {
     pub accepts_file: bool,
 }
 
+/// `HandleKind`s a target takes (`ReadonlySet<HandleKind>`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HandleKinds {
+    pub record: bool,
+    pub file: bool,
+}
+
+impl HandleKinds {
+    /// `handleKindsTaken(target)`.
+    pub fn taken_by(target: Option<&Ty>) -> HandleKinds {
+        let (record, file) = target.map(kinds_held_by).unwrap_or((false, false));
+        HandleKinds { record, file }
+    }
+
+    /// `heldWalk(kinds)`.
+    pub fn walk(self) -> HeldWalk {
+        HeldWalk { steps: Vec::new(), accepts_record: self.record, accepts_file: self.file }
+    }
+}
+
 impl HeldWalk {
-    fn into(&self, step: HeldStep) -> HeldWalk {
+    pub fn into(&self, step: HeldStep) -> HeldWalk {
         let mut next = self.clone();
         next.steps.push(step);
         next
@@ -620,6 +667,13 @@ fn kinds_held_by(ty: &Ty) -> (bool, bool) {
         Ty::Union(members) => merge(&mut members.iter()),
         _ => (false, false),
     }
+}
+
+/// `showsMoreHandles`: does `wider` hold a kind of engine object `ty` does not show?
+pub fn shows_more_handles(wider: &Ty, ty: Option<&Ty>) -> bool {
+    let (record, file) = kinds_held_by(wider);
+    let (shown_record, shown_file) = ty.map(kinds_held_by).unwrap_or((false, false));
+    (record && !shown_record) || (file && !shown_file)
 }
 
 /// `handleWithin`: the first record or file inside `ty` the walk does not accept.

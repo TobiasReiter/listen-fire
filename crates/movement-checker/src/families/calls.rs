@@ -24,15 +24,13 @@
 //! - MOV_RECURSIVE_RETURN_TYPE
 //! - MOV_RETURN_NOT_A_VALUE
 //! - MOV_RETURN_OUTSIDE_BODY
-//! - MOV_RETURN_PLANE_MISMATCH
-//! - MOV_RETURN_TYPE
 //! - MOV_STDLIB_ARG_INVALID
 //! - MOV_STDLIB_ARG_NOT_LITERAL
 
 use movement_parser::ast::{RValue, MovementDeclaration, ArmExpression, CallArg, CallStatement, CollectionOp, CollectionOpExpression, ExprSlot, Loc, MembersExpression, Span};
 use movement_parser::lowering::HeldAsData;
 use movement_parser::lowering::expression::{Expression, StaticValue};
-use movement_parser::version::since;
+use movement_parser::version::{before, since};
 
 use movement_parser::tree::{At, MExpr, MapMember, StringPart};
 
@@ -79,7 +77,7 @@ pub enum Callee {
 
 use crate::types::field::Ty;
 use crate::types::infer::Typing;
-use crate::types::position::{ClosureParam, Position, ReturnShape};
+use crate::types::position::{ClosureParam, ClosureType, PlaneType, Position, ReturnShape, describe_position};
 
 /// Called by the type core after the values family's `observe`, for every
 /// node: a built-in call's argument rules (`checkBuiltinArgs`,
@@ -531,14 +529,10 @@ impl Checker<'_> {
             self.scopes.declare(scope, symbol);
             // The name holds what the call hands back, as a binding of it
             // would (`boundCallShape`), typed in the order a binding is.
-            if let Ok(value) = &parsed {
-                self.type_assigned(&name, value, scope);
-            }
-            if let Some(returned) = &bound.returned {
-                self.set_types(scope, &name, crate::families::arg_fit::types_of_return(returned));
-            }
-            if let Some(pos) = bound.pos {
-                self.set_types(scope, &name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
+            if let Ok(value) = &parsed
+                && let Some(types) = self.bound_types(Some(&name), value, &bound, scope)
+            {
+                self.set_types(scope, &name, types);
             }
         }
         Some(rewritten)
@@ -596,6 +590,25 @@ pub fn closure_of_value(ty: &Ty) -> bool {
         Ty::Record(Some(position)) => position.is_closure(),
         Ty::Union(members) => !members.is_empty() && members.iter().all(closure_of_value),
         _ => false,
+    }
+}
+
+/// `closuresOfValue`: the closures a value is — a record of closure type, or
+/// a union of them; `None` when it may be something else.
+pub fn closures_of_value(ty: &Ty) -> Option<Vec<ClosureType>> {
+    match ty {
+        Ty::Record(Some(position)) => match position.as_ref() {
+            Position::Closure(closure) => Some(vec![closure.clone()]),
+            _ => None,
+        },
+        Ty::Union(members) => {
+            let mut found: Vec<ClosureType> = Vec::new();
+            for member in members {
+                found.extend(closures_of_value(member)?);
+            }
+            (!found.is_empty()).then_some(found)
+        }
+        _ => None,
     }
 }
 
@@ -790,7 +803,9 @@ impl Checker<'_> {
             CallReading::Function => {
                 self.check_call(call, scope);
             }
-            CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
+            CallReading::Collection(collection) => {
+                self.check_collection_op(&collection, scope);
+            }
             CallReading::Refused { code, message, span } => self.report(code, message, span),
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
             CallReading::Members(members) => {
@@ -814,7 +829,7 @@ impl Checker<'_> {
                 return Some(returned);
             }
             CallReading::Value(expr) => self.check_expr_slot(&expr, scope),
-            CallReading::Collection(collection) => self.check_collection_op(&collection, scope),
+            CallReading::Collection(collection) => return Some(self.check_collection_op(&collection, scope)),
             CallReading::Members(members) => {
                 self.check_members(&members, scope);
             }
@@ -1284,17 +1299,60 @@ impl Checker<'_> {
         }
         match (&symbol.types.pos, &symbol.types.field) {
             (Some(Position::Closure(c)), _) => Some(c.clone()),
-            (None, Some(Ty::Record(Some(p)))) => match p.as_ref() {
-                Position::Closure(c) => Some(c.clone()),
-                _ => None,
-            },
+            // From version 5 a closure is a value like any other, so a name
+            // whose value is one, or one of several, is called as TypeScript
+            // calls `f: (() => A) | (() => B)`.
+            (None, Some(ty)) => closures_of_value(ty).map(|closures| crate::types::position::one_of_closures(&closures, true)),
             _ => None,
         }
     }
 
+    /// `functionAsValue`: a function declared with a name, read as a value
+    /// (version 5), is a closure like any other, as a TypeScript function
+    /// declaration is — its parameters and what calling it returns. One type
+    /// per declaration once its body is known; while that body is still
+    /// being walked, the type is worked out afresh at each read.
+    pub fn function_as_value(&mut self, id: SymbolId) -> Option<crate::types::position::ClosureType> {
+        if self.scopes.symbol(id).kind != SymbolKind::Movement || before(self.version, 5) {
+            return None;
+        }
+        if let Some(known) = self.function_values.get(&id) {
+            return Some(known.clone());
+        }
+        let params = self.movement_declared_params(id).unwrap_or_default();
+        let returns = self.movement_return(id);
+        let written_at = self.scopes.symbol(id).span;
+        let closure = crate::types::position::ClosureType::new("a closure", params, returns, Some(written_at));
+        if self.inference.inferred.get(&self.declared_id(id)) != Some(&false) {
+            self.function_values.insert(id, closure.clone());
+        }
+        Some(closure)
+    }
+
+    /// Types each function among `names` the typing about to run reads as a value.
+    pub fn type_function_values<'n>(&mut self, names: impl IntoIterator<Item = &'n str>, scope: ScopeId) {
+        if before(self.version, 5) {
+            return;
+        }
+        for name in names {
+            if let Resolution::Found(id) = self.scopes.resolve(scope, name)
+                && self.scopes.symbol(id).kind == SymbolKind::Movement
+            {
+                self.function_as_value(id);
+            }
+        }
+    }
+
+    /// The function a movement's parameter belongs to, for its need cell.
+    pub fn movement_param_of(&self, name: &str, scope: ScopeId) -> crate::binding_types::ParamOf {
+        let id = self.scopes.scope(scope).symbols.get(name).copied();
+        let owner = id.map(|id| crate::binding_types::NeedOwner::Function(self.declared_id(id)));
+        crate::binding_types::ParamOf { owner, function: name.to_string() }
+    }
+
     /// A movement's declaration and the scope it is declared in.
     pub fn movement_declaration(&self, id: SymbolId) -> Option<(Rc<MovementDeclaration>, ScopeId)> {
-        self.inference.declarations.get(&id).map(|(m, scope)| (m.clone(), *scope))
+        self.inference.declarations.get(&self.declared_id(id)).map(|(m, scope)| (m.clone(), *scope))
     }
 
     /// The callee a call resolved to: the parameters its arguments bind, when
@@ -1320,11 +1378,8 @@ impl Checker<'_> {
             let suspends = self.closure_suspends(id);
             self.absorb_suspend(suspends);
             let Some(closure) = self.called_closure(id) else { return (None, ReturnShape::default()) };
-            let arity = closure.params.len();
-            if arity != count {
-                self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {count}", call.callee, plural(arity)), call.span);
-            }
-            return (Some(closure.params), closure.returns);
+            let params = self.closure_call_params(call, &closure);
+            return (Some(params), closure.returns);
         }
         if let Some(message) = self.not_a_closure_message(&callee, &call.callee) {
             self.report(codes::CALL_NOT_MOVEMENT, message, call.span);
@@ -1336,6 +1391,103 @@ impl Checker<'_> {
             );
         }
         (None, ReturnShape::default())
+    }
+
+    /// `closureCallParams`: the parameters a call through a closure value is
+    /// held to, its arity checked. One of several closures is called as
+    /// TypeScript calls a union of function types: every candidate's arity,
+    /// and an argument that fits every candidate's parameter. Before version 5
+    /// the closures a body's returns hand back are called as the first of
+    /// them, so what version 5 holds the call to is an upgrade warning.
+    fn closure_call_params(&mut self, call: &CallStatement, closure: &ClosureType) -> Vec<ClosureParam> {
+        let candidates: Vec<ClosureType> = closure.candidates().into_iter().cloned().collect();
+        let given = call.args.len();
+        let strict = candidates.len() == 1 || since(self.version, 5);
+        let say = |this: &mut Self, code: &str, message: String| {
+            if strict {
+                this.report(code, message, call.span);
+            } else {
+                this.report_upgrade_warning(
+                    code,
+                    format!("{message}. Before {} the call is typed by the first; from it, this is refused", crate::version::describe(5)),
+                    call.span,
+                );
+            }
+        };
+        let mut arities: Vec<usize> = Vec::new();
+        for candidate in &candidates {
+            if !arities.contains(&candidate.params.len()) {
+                arities.push(candidate.params.len());
+            }
+        }
+        if !strict && closure.params.len() != given {
+            let arity = closure.params.len();
+            self.report(codes::CALL_ARITY, format!("'{}' takes {arity} argument{}, got {given}", call.callee, plural(arity)), call.span);
+        } else if arities.iter().any(|&arity| arity != given) {
+            let arity = if let [only] = arities.as_slice() {
+                format!("takes {only} argument{}", plural(*only))
+            } else {
+                format!("may be any of several closures, taking {} arguments", arities.iter().map(usize::to_string).collect::<Vec<_>>().join(" or "))
+            };
+            say(self, codes::CALL_ARITY, format!("'{}' {arity}, got {given}", call.callee));
+        }
+        if candidates.len() == 1 {
+            return closure.params.clone();
+        }
+        if !strict {
+            self.warn_later_closure_returns(call, &candidates);
+        }
+        if arities.len() != 1 {
+            return closure.params.clone();
+        }
+        let mut disagreements = Vec::new();
+        let held = params_of_candidates(&candidates, |index, first, second| disagreements.push((index, first.clone(), second.clone())));
+        for (index, first, second) in disagreements {
+            let describe = |param: Option<&ClosureParam>| match param {
+                Some(ClosureParam { plane: PlaneType { field: Some(field), .. }, .. }) => describe_field_type(field),
+                Some(ClosureParam { plane: PlaneType { pos: Some(pos), .. }, .. }) => describe_position(pos),
+                _ => "anything".to_string(),
+            };
+            let (a, b) = (first.params.get(index), second.params.get(index));
+            let name = |p: Option<&ClosureParam>| p.map_or_else(|| "undefined".to_string(), |p| p.name.clone());
+            say(
+                self,
+                codes::CALL_ARG_TYPE,
+                format!(
+                    "'{}' may be any of several closures, and two disagree about argument {}: {} takes {} for '{}', and {} takes {} for '{}'. No argument fits both, so no call fits every closure it may be, as in TypeScript. Give them parameters one argument fits, or call each where it is known",
+                    call.callee,
+                    index + 1,
+                    describe_position(&Position::Closure(first.clone())),
+                    describe(a),
+                    name(a),
+                    describe_position(&Position::Closure(second.clone())),
+                    describe(b),
+                    name(b),
+                ),
+            );
+        }
+        if strict { held } else { closure.params.clone() }
+    }
+
+    /// Before version 5: a later candidate may hand back a record the first —
+    /// which types the call — does not. From 5 the call is any of their
+    /// returns, so each use of it is checked as one that may be that record.
+    fn warn_later_closure_returns(&mut self, call: &CallStatement, candidates: &[ClosureType]) {
+        let first = &candidates[0].returns;
+        let every = crate::types::position::union_returns(&candidates.iter().map(|c| c.returns.clone()).collect::<Vec<_>>());
+        let shown = first.may_hold.clone().or_else(|| first.plane.field.clone()).or_else(|| crate::types::field::record_value_of(first.plane.pos.as_deref()));
+        let held = every.may_hold.as_ref().or(every.plane.field.as_ref());
+        let Some(hidden) = crate::types::field::handle_within(held, &crate::types::field::HeldWalk::taken_by(shown.as_ref())) else { return };
+        self.report_upgrade_warning(
+            codes::CALL_CLOSURE_RETURNS,
+            format!(
+                "'{}' may be any of several closures, and calling one other than the first may hand back {}. Before {} the call is typed by the first; from it, the call is any of their returns, and a use that takes no record is refused",
+                call.callee,
+                describe_field_type(&hidden.handle),
+                crate::version::describe(5)
+            ),
+            call.span,
+        );
     }
 
     /// `checkArgumentBindings`: named arguments given once, each naming a
@@ -1373,38 +1525,7 @@ impl Checker<'_> {
     }
 }
 
-/// `ReturnCollector`: a body's `return`s, as they are met.
-pub struct ReturnCollector {
-    pub what: String,
-    pub returns: Vec<Span>,
-    /// Why a `return` here is refused, when the body hands nothing back.
-    pub refuses: Option<String>,
-}
-
 impl Checker<'_> {
-    /// `checkBody`: a body's statements, collecting its `return`s.
-    pub fn check_body(&mut self, statements: &[movement_parser::ast::Statement], scope: ScopeId, what: String) -> Vec<Span> {
-        self.return_stack.push(ReturnCollector { what, returns: Vec::new(), refuses: None });
-        self.check_statement_list(statements, scope);
-        self.return_stack.pop().map(|c| c.returns).unwrap_or_default()
-    }
-
-    /// `checkReturn`'s collecting half.
-    pub fn collect_return(&mut self, span: Span) {
-        match self.return_stack.last_mut() {
-            None => self.report(
-                codes::RETURN_OUTSIDE_BODY,
-                "'return' hands a value back from a body — there is none here. A movement, a traversal-headed block and a closure each return; file-level statements do not.",
-                span,
-            ),
-            Some(ReturnCollector { refuses: Some(why), .. }) => {
-                let why = why.clone();
-                self.report(codes::RETURN_OUTSIDE_BODY, why, span);
-            }
-            Some(collector) => collector.returns.push(span),
-        }
-    }
-
     /// A bound block whose body returns nothing.
     pub fn report_block_returns_nothing(&mut self, block: &movement_parser::ast::TraversalBlock, name: Option<&str>) {
         let root = match &block.head.root {
@@ -1521,6 +1642,11 @@ pub struct Inference {
     inferred: HashMap<SymbolId, bool>,
     /// Whether each movement's body may wait, once known.
     suspends: HashMap<SymbolId, bool>,
+    /// What each movement's body hands back, once walked.
+    returned: HashMap<SymbolId, ReturnShape>,
+    /// An imported movement stands for the library's declaration: its
+    /// body is walked once, and every call shares what was learned.
+    adopted: HashMap<SymbolId, SymbolId>,
     walking: HashMap<SymbolId, usize>,
     cycle_of: HashMap<SymbolId, usize>,
     cycles: Vec<CallCycle>,
@@ -1533,10 +1659,28 @@ impl Checker<'_> {
         self.inference.declarations.entry(id).or_insert_with(|| (Rc::new(movement.clone()), scope));
     }
 
+    /// An imported movement's symbol is the library's for inference.
+    pub fn adopt_movement(&mut self, local: SymbolId, library: SymbolId) {
+        if self.inference.declarations.contains_key(&library) {
+            self.inference.adopted.insert(local, library);
+        }
+    }
+
+    /// The symbol a movement's declaration is filed under.
+    pub(crate) fn declared_id(&self, id: SymbolId) -> SymbolId {
+        self.inference.adopted.get(&id).copied().unwrap_or(id)
+    }
+
+    /// What the movement's body was found to hand back, once walked.
+    pub fn movement_inferred_return(&self, id: SymbolId) -> Option<ReturnShape> {
+        self.inference.returned.get(&self.declared_id(id)).cloned()
+    }
+
     /// A call reaches movement `id`: what it returns is inferred from its
     /// body unless declared (from version 5 the declaration is the answer),
     /// and what it does is the caller's.
     pub fn call_movement(&mut self, id: SymbolId) {
+        let id = self.declared_id(id);
         let declared = self.inference.declarations.get(&id).is_some_and(|(m, _)| m.return_type.is_some()) && since(self.version, 3);
         if !(declared && since(self.version, 5)) {
             self.infer_movement(id);
@@ -1547,6 +1691,7 @@ impl Checker<'_> {
 
     /// `movementEffects`, the suspend flag of it.
     pub fn movement_suspends(&mut self, id: SymbolId) -> bool {
+        let id = self.declared_id(id);
         if !self.inference.declarations.contains_key(&id) {
             return false;
         }
@@ -1566,7 +1711,8 @@ impl Checker<'_> {
     }
 
     /// `inferMovement`: walks the body type-only, reporting nothing.
-    fn infer_movement(&mut self, id: SymbolId) {
+    pub fn infer_movement(&mut self, id: SymbolId) {
+        let id = self.declared_id(id);
         match self.inference.inferred.get(&id) {
             Some(true) => return,
             Some(false) => {
@@ -1585,23 +1731,36 @@ impl Checker<'_> {
             let is_closure = matches!(&param.type_, Some(movement_parser::ast::ParamTypeRef::Value(movement_parser::ast::ValueType::Closure { .. })));
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
-                self.type_param(body, &param.name, type_, declared_in);
+                let of = crate::binding_types::ParamOf { owner: Some(crate::binding_types::NeedOwner::Function(id)), function: movement.name.clone() };
+                self.type_param(body, &param.name, type_, declared_in, &of);
             }
         }
         let what = format!("'{}'", movement.name);
-        if since(self.version, 3) {
+        let walked = if since(self.version, 3) {
             self.enter_inference(id);
             self.open_effect_frame();
-            self.check_body(&movement.body, body, what);
+            let walked = self.check_body(&movement.body, body, what);
             let row = self.close_effect_frame();
             self.leave_inference(id, row);
+            walked
         } else {
             self.open_effect_frame();
-            self.check_body(&movement.body, body, what);
+            let walked = self.check_body(&movement.body, body, what);
             let row = self.close_effect_frame();
             self.record_movement_row(id, row);
-        }
+            walked
+        };
         self.type_only -= 1;
+        // A node the body builds is labelled by whose value it is, which is
+        // the useful text at a call site; nothing else about its type changes.
+        let mut returned = walked.value;
+        // A parameter handed back is the caller's record again: what this
+        // body needs of it was said at the call that handed it over.
+        returned.plane.pos = returned.plane.pos.map(|pos| Box::new(crate::types::position::without_parameter(*pos)));
+        if let Some(Position::Local(local)) = returned.plane.pos.as_deref_mut() {
+            local.label = format!("the value of '{}'", movement.name);
+        }
+        self.inference.returned.insert(id, returned);
         self.inference.inferred.insert(id, true);
     }
 
@@ -1712,4 +1871,41 @@ impl Checker<'_> {
         }
         self.inference.cycles[cycle].closed = true;
     }
+}
+
+/// `paramTakesAll`: does every argument `narrow` takes fit `wide` too? An
+/// untyped parameter takes anything; a value and a record parameter share no
+/// argument.
+fn param_takes_all(narrow: &PlaneType, wide: &PlaneType) -> bool {
+    match (narrow, wide) {
+        (_, PlaneType { field: None, pos: None }) => true,
+        (PlaneType { field: Some(n), .. }, PlaneType { field: Some(w), .. }) => crate::types::field::field_assignable(n, w),
+        (PlaneType { pos: Some(n), .. }, PlaneType { pos: Some(w), .. }) => crate::types::position::positions_match(n, w) != Some(false),
+        _ => false,
+    }
+}
+
+/// `paramsOfCandidates`: the parameters a call of one of several closures is
+/// held to — TypeScript's rule for a union of function types. Each place
+/// takes the candidate parameter every other one takes too; where none is
+/// that narrow, `disagree` names two candidates and the place is left untyped.
+fn params_of_candidates(candidates: &[ClosureType], mut disagree: impl FnMut(usize, &ClosureType, &ClosureType)) -> Vec<ClosureParam> {
+    let Some(first) = candidates.first() else { return Vec::new() };
+    let untyped = PlaneType::default();
+    first
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, own)| {
+            let at: Vec<Option<&ClosureParam>> = candidates.iter().map(|c| c.params.get(index)).collect();
+            let narrowest = at.iter().flatten().find(|param| at.iter().all(|other| other.is_none_or(|other| param_takes_all(&param.plane, &other.plane))));
+            if let Some(narrowest) = narrowest {
+                return (*narrowest).clone();
+            }
+            let plane_at = |i: usize| at[i].map_or(&untyped, |p| &p.plane);
+            let first_off = (1..candidates.len()).find(|&i| !param_takes_all(&own.plane, plane_at(i)) && !param_takes_all(plane_at(i), &own.plane));
+            disagree(index, first, &candidates[first_off.unwrap_or(1)]);
+            ClosureParam { name: own.name.clone(), plane: PlaneType::default() }
+        })
+        .collect()
 }

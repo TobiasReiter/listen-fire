@@ -26,6 +26,9 @@ pub struct SymbolTypes {
     /// A value that is many values under one value's type: a walk read for a
     /// field, or a second name for one (`ScopeSymbol.plural`).
     pub many_valued: bool,
+    /// A combinator's answer one of whose arms hands back a record
+    /// (`receiptHoldsRecord`): its slot read null before version 5.
+    pub receipt_holds_record: bool,
 }
 
 pub struct ScopeEnv<'s> {
@@ -33,6 +36,10 @@ pub struct ScopeEnv<'s> {
     pub scope: ScopeId,
     pub zones: &'s dyn crate::host::ZoneLookup,
     pub nodes: &'s crate::families::nodes::NodeState,
+    pub upgrading_from: Option<u32>,
+    /// Each function declared with a name read as a value (version 5,
+    /// `functionAsValue`), typed before the typing that reads it.
+    pub function_values: &'s std::collections::HashMap<crate::scope::SymbolId, super::position::ClosureType>,
 }
 
 impl ScopeEnv<'_> {
@@ -49,12 +56,17 @@ impl TypeEnv for ScopeEnv<'_> {
         instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol))
     }
 
+    fn upgrading_from(&self) -> Option<u32> {
+        self.upgrading_from
+    }
+
     fn is_zone(&self, zone: &str) -> Option<bool> {
         Some(self.zones.is_zone(zone))
     }
 
     fn resolve_root(&self, name: &str) -> Option<Position> {
-        self.types(name)?.pos.clone()
+        let Resolution::Found(id) = self.scopes.resolve(self.scope, name) else { return None };
+        self.scopes.symbol(id).types.pos.clone().or_else(|| self.function_values.get(&id).cloned().map(Position::Closure))
     }
 
     fn resolve_scalar(&self, name: &str) -> Option<Ty> {
@@ -75,6 +87,10 @@ impl TypeEnv for ScopeEnv<'_> {
 
     fn plural_order_of(&self, name: &str) -> Option<CollectionOrder> {
         self.types(name)?.plural
+    }
+
+    fn is_record_receipt(&self, name: &str) -> bool {
+        self.types(name).is_some_and(|t| t.receipt_holds_record)
     }
 
     fn is_many_valued_name(&self, name: &str) -> bool {

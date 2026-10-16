@@ -12,6 +12,7 @@ use movement_parser::ast::{
 use movement_parser::catalog::types::CatalogSnapshot;
 
 use crate::diagnostic::Diagnostic;
+use crate::families::returns::Body;
 use crate::types::field::{Ty, mixed_tuple_message, widen_tuples};
 use crate::types::{TypeEnv, Typing};
 
@@ -50,10 +51,17 @@ pub struct Checker<'c> {
     pub zones: &'c dyn crate::host::ZoneLookup,
     /// Each movement's parameter names, by its symbol (`ScopeSymbol.movement`).
     /// The bodies being walked, innermost last, each collecting its `return`s.
-    pub return_stack: Vec<crate::families::calls::ReturnCollector>,
+    pub return_stack: Vec<crate::families::returns::ReturnCollector>,
     /// Whether each function a call can vouch for hands a value back, by its
     /// symbol: a movement's body, or a closure bound to a name.
     pub function_returns: std::collections::HashMap<crate::scope::SymbolId, bool>,
+    /// Each function's record parameters' need cells (`FieldsNeed`).
+    pub param_needs: std::cell::RefCell<std::collections::HashMap<crate::binding_types::NeedOwner, std::collections::HashMap<String, crate::types::position::NeedRef>>>,
+    /// Functions declared with a name, typed as the closures they are when
+    /// read as values (version 5).
+    pub function_values: std::collections::HashMap<crate::scope::SymbolId, crate::types::position::ClosureType>,
+    /// Receipts already warned about (MOV_RECEIPT_RECORD_SLOT).
+    pub reported_receipts: std::collections::HashSet<crate::scope::SymbolId>,
     /// Closures that call themselves by name without declaring what they return.
     pub selves: crate::families::closures::Selves,
     /// Whether each open body may wait, and what each named function does.
@@ -73,6 +81,10 @@ pub struct SlotOptions<'f> {
     pub write_field: bool,
     /// A `through` stage's argument: the fields it may (and may not yet) read.
     pub fields: Option<&'f crate::families::extraction::ThroughFields>,
+    /// The engine objects (records, files) the slot's target takes
+    /// (`heldTakes`): the first one held inside the value that the walk does
+    /// not accept is found (`SlotTyped::held`). `None`: nobody asks.
+    pub held_takes: Option<crate::types::field::HandleKinds>,
 }
 
 /// What `checkExprSlot` answers: the slot parsed (not for a bare name), its
@@ -83,6 +95,9 @@ pub struct SlotTyped {
     pub expr: Option<movement_parser::lowering::expression::Expression>,
     pub ty: Option<Ty>,
     pub may_hold: Option<Ty>,
+    /// The record or file the value holds that the slot's target does not
+    /// take, where `SlotOptions::held_takes` asked.
+    pub held: Option<crate::types::field::HeldHandle>,
 }
 
 /// What a right-hand side carries onto the name it is bound to.
@@ -101,6 +116,16 @@ pub struct Bound {
     pub closure_suspends: bool,
     /// For a function's call: what it hands back.
     pub returned: Option<crate::types::position::ReturnShape>,
+    /// For a closure: what its body was found to hand back.
+    pub closure_returns: Option<crate::types::position::ReturnShape>,
+    /// For a traversal-headed block: what each walk of its body hands back,
+    /// collected in the order its head walks.
+    pub collected: Option<(crate::types::position::ReturnShape, crate::types::field::CollectionOrder)>,
+    /// Bound on the node plane with a record nobody could type
+    /// (`bindingPlane: 'node'` and no `posType`).
+    pub record: bool,
+    /// For a combinator: its answer, one slot per arm.
+    pub receipt: Option<crate::families::closures::Receipt>,
 }
 
 impl<'c> Checker<'c> {
@@ -119,6 +144,9 @@ impl<'c> Checker<'c> {
             upgrading_from: options.upgrading_from,
             return_stack: Vec::new(),
             function_returns: Default::default(),
+            reported_receipts: Default::default(),
+            function_values: Default::default(),
+            param_needs: Default::default(),
             selves: Default::default(),
             effects: Default::default(),
             inference: Default::default(),
@@ -129,6 +157,24 @@ impl<'c> Checker<'c> {
     pub fn push(&mut self, diagnostic: Diagnostic) {
         if self.type_only == 0 {
             self.diagnostics.push(diagnostic);
+        }
+    }
+
+    /// What a typing reported, surfaced: a receipt's record-slot warning
+    /// once per receipt however many times it is read.
+    pub fn push_typed(&mut self, (diagnostics, receipt_reads): (Vec<Diagnostic>, Vec<String>), scope: ScopeId) {
+        let mut receipts = receipt_reads.into_iter();
+        for diagnostic in diagnostics {
+            if diagnostic.code == crate::codes::RECEIPT_RECORD_SLOT {
+                let receipt = receipts.next().and_then(|name| match self.scopes.resolve(scope, &name) {
+                    Resolution::Found(id) => Some(id),
+                    _ => None,
+                });
+                if self.type_only > 0 || receipt.is_some_and(|id| !self.reported_receipts.insert(id)) {
+                    continue;
+                }
+            }
+            self.push(diagnostic);
         }
     }
 
@@ -222,14 +268,10 @@ impl<'c> Checker<'c> {
                 {
                     self.effects.closures.insert(id, bound.closure_suspends);
                 }
-                self.type_assigned(&assign.name, &assign.value, scope);
-                if let Some(returned) = &bound.returned {
-                    self.set_types(scope, &assign.name, crate::families::arg_fit::types_of_return(returned));
+                if let Some(types) = self.bound_types(Some(&assign.name), &assign.value, &bound, scope) {
+                    self.set_types(scope, &assign.name, types);
                 }
                 self.note_shape_alias(&assign.name, &assign.value, scope);
-                if let Some(pos) = bound.pos {
-                    self.set_types(scope, &assign.name, crate::types::scope_env::SymbolTypes { pos: Some(pos), ..Default::default() });
-                }
                 self.note_closure_returns(&assign.name, &assign.value, scope);
             }
             Statement::Type(_) => {}
@@ -276,16 +318,17 @@ impl<'c> Checker<'c> {
                 }
             }
             Statement::If(statement) => self.check_if(statement, scope),
-            Statement::Await(statement) => self.check_await(&statement.r#await, scope, None),
-            Statement::Return(statement) => {
-                self.check_rvalue(&statement.value, scope, None, statement.span);
-                self.collect_return(statement.span);
+            Statement::Await(statement) => {
+                self.check_await(&statement.r#await, scope, None);
             }
+            Statement::Return(statement) => self.check_return(statement, scope),
             Statement::Combinator(statement) => {
                 self.report_combinator_form(&statement.combinator, None);
                 self.check_combinator(&statement.combinator, scope);
             }
-            Statement::Collection(statement) => self.check_collection_op(&statement.collection, scope),
+            Statement::Collection(statement) => {
+                self.check_collection_op(&statement.collection, scope);
+            }
             Statement::Error(statement) => self.check_expr_slot(&statement.message, scope),
         }
     }
@@ -327,17 +370,23 @@ impl<'c> Checker<'c> {
             RValue::Extract { extract } => self.check_extract(extract, scope),
             RValue::ExtractCall { extract_call } => self.check_extract_call(extract_call, scope),
             RValue::Block { block } => {
-                let returns = self.check_traversal_block(block, scope, name);
-                if !returns {
+                let (returned, ordering) = self.check_traversal_block(block, scope, name);
+                if !returned.returns {
                     self.report_block_returns_nothing(block, name);
+                    return Bound::default();
                 }
+                return Bound { collected: Some((returned, ordering)), ..Bound::default() };
             }
-            RValue::Await { r#await } => self.check_await(r#await, scope, name),
+            RValue::Await { r#await } => return self.check_await(r#await, scope, name),
             RValue::Combinator { combinator } => {
                 self.report_combinator_form(combinator, None);
-                self.check_combinator(combinator, scope);
+                let receipt = self.check_combinator(combinator, scope);
+                return Bound { receipt: Some(receipt), ..Bound::default() };
             }
-            RValue::Collection { collection } => self.check_collection_op(collection, scope),
+            RValue::Collection { collection } => {
+                let returned = self.check_collection_op(collection, scope);
+                return Bound { returned: Some(returned), ..Bound::default() };
+            }
             RValue::Members { members } => {
                 self.check_members(members, scope);
             }
@@ -346,11 +395,15 @@ impl<'c> Checker<'c> {
                 self.check_statement_list(&inline_block.body, block_scope);
                 self.report_inline_block_retired(inline_block);
             }
-            RValue::Callback { callback } => self.check_callback(callback, scope),
+            RValue::Callback { callback } => {
+                let params = self.check_callback(callback, scope);
+                return Bound { pos: Some(crate::families::listens::callback_type(params)), ..Bound::default() };
+            }
             RValue::Closure { closure } => {
                 let label = name.map_or_else(|| "this closure".to_string(), |n| format!("the closure '{n}'"));
-                let (_, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
-                return Bound { is_closure: true, closure_suspends: suspends, ..Bound::default() };
+                let (body, suspends) = self.check_closure_walked(closure, scope, name, &label, 0);
+                let returns = self.closure_returns(closure, body.value, scope);
+                return Bound { is_closure: true, closure_suspends: suspends, closure_returns: Some(returns), ..Bound::default() };
             }
             RValue::Node { node } => {
                 let pos = self.check_node_literal(node, scope);
@@ -408,21 +461,30 @@ impl<'c> Checker<'c> {
     /// its nested calls hoisted out, is parsed, every name it reads resolves,
     /// and it is typed, what the typing reports surfacing here.
     pub fn check_expr_slot_with(&mut self, slot: &ExprSlot, scope: ScopeId, options: SlotOptions) -> SlotTyped {
-        let SlotOptions { holds_value, write_field, fields } = options;
+        let SlotOptions { holds_value, write_field, fields, held_takes } = options;
+        let held_takes = held_takes.map(crate::types::field::HandleKinds::walk);
         let trimmed = slot.raw.trim();
         if is_bare_ident(trimmed) {
             if is_literal_word(trimmed) {
                 let ty = matches!(trimmed.to_uppercase().as_str(), "TRUE" | "FALSE").then_some(Ty::Boolean);
-                return SlotTyped { expr: None, ty, may_hold: None };
+                return SlotTyped { expr: None, ty, may_hold: None, held: None };
             }
             self.resolve_name_with_fields(trimmed, slot.span, scope, fields);
+            self.type_function_values([trimmed], scope);
             let bound = {
                 let env = self.typing_env(scope);
                 Typing::new(&env, self.version, slot.span).bare_name_type(trimmed)
             };
-            let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
             let may_hold = self.typing_env(scope).resolve_may_hold(trimmed);
-            return SlotTyped { expr: None, ty, may_hold };
+            // A name on the record plane with no value type (an instance) is
+            // still the engine object it names.
+            let held = held_takes.as_ref().and_then(|walk| {
+                let named = if bound.is_none() { self.bare_slot_position_type(slot, scope).map(|p| Ty::record(Some(p))) } else { None };
+                let may_hold = may_hold.clone().or(named);
+                crate::types::field::handle_within(bound.as_ref(), walk).or_else(|| crate::types::field::handle_within(may_hold.as_ref(), walk))
+            });
+            let ty = if holds_value { bound } else { self.read_held_value(bound, slot.span) };
+            return SlotTyped { expr: None, ty, may_hold, held };
         }
         if let Some(hoisted) = self.hoist_nested_calls(slot, scope) {
             return self.check_expr_slot_with(&hoisted, scope, options);
@@ -442,17 +504,18 @@ impl<'c> Checker<'c> {
         }
         self.check_slot_expression(slot, scope, write_field);
         self.report_block_read_back(&names, scope, slot.span);
-        let (ty, may_hold, diagnostics) = {
+        self.type_function_values(names.distinct_refs(), scope);
+        let (ty, may_hold, held, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, slot.span);
             let ty = if holds_value { typing.infer_exact(&parsed) } else { typing.infer(&parsed) };
             let may_hold = typing.may_hold_type(&parsed);
-            (ty, may_hold, typing.diagnostics)
+            let held = held_takes.as_ref().and_then(|walk| typing.handle_held_by(&parsed, walk).or_else(|| crate::types::field::handle_within(ty.as_ref(), walk)));
+            (ty, may_hold, held, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
         };
-        for diagnostic in diagnostics {
-            self.push(diagnostic);
-        }
-        SlotTyped { expr: Some(parsed), ty, may_hold }
+        self.effects.note_watchable_reads(&watchable);
+        self.push_typed(diagnostics, scope);
+        SlotTyped { expr: Some(parsed), ty, may_hold, held }
     }
 
     /// `readHeldValue`: a bare name's value read — a tuple as the list it
@@ -573,15 +636,15 @@ impl<'c> Checker<'c> {
                         self.resolve_name(name, slot.span, scope);
                     }
                 }
-                let (ty, diagnostics) = {
+                self.type_function_values(names.distinct_refs(), scope);
+                let (ty, diagnostics, watchable) = {
                     let env = self.typing_env(scope);
                     let mut typing = Typing::new(&env, self.version, slot.span);
                     let ty = typing.infer(expr);
-                    (ty, typing.diagnostics)
+                    (ty, (typing.diagnostics, typing.receipt_reads), typing.watchable_reads)
                 };
-                for diagnostic in diagnostics {
-                    self.push(diagnostic);
-                }
+                self.effects.note_watchable_reads(&watchable);
+                self.push_typed(diagnostics, scope);
                 // Gating on a structured value is always true, never a decision.
                 if let Some(message) = crate::families::values::json_opaque_message(ty.as_ref(), "used as a condition") {
                     self.report(crate::codes::JSON_OPAQUE, message, slot.span);
@@ -613,6 +676,11 @@ impl<'c> Checker<'c> {
                 self.report_param_needs_type(&param.name, param.span, &format!("'{}'", movement.name));
                 continue;
             };
+            if let ParamTypeRef::Value(value) = type_
+                && self.version >= 3
+            {
+                self.report_value_type(value, scope);
+            }
             let graph = self.check_param_type(type_, scope);
             if let (ParamTypeRef::Name(reference), false) = (type_, crate::families::systems::is_value_param_type(self, type_, scope)) {
                 self.check_param_source(reference, graph);
@@ -620,25 +688,28 @@ impl<'c> Checker<'c> {
             }
             self.report_param_position(type_, scope);
             self.declare_param(body, &param.name, param.span, is_closure_type(type_));
-            self.type_param(body, &param.name, type_, scope);
+            let of = self.movement_param_of(&movement.name, scope);
+            self.type_param(body, &param.name, type_, scope, &of);
         }
         self.open_effect_frame();
-        let returns = self.check_body(&movement.body, body, format!("'{}'", movement.name));
+        let what = format!("'{}'", movement.name);
+        let returns = self.check_body(&movement.body, body, what.clone());
         let row = self.close_effect_frame();
-        if let Some(returns) = &movement.return_type {
-            self.check_param_type(returns, scope);
+        if let Some(written) = &movement.return_type {
+            self.check_param_type(written, scope);
+            self.check_declared_return(written, &what, &returns.returns, scope, movement.span);
         }
         if let Some(id) = self.scopes.scope(scope).symbols.get(&movement.name).copied()
             && self.scopes.symbol(id).kind == SymbolKind::Movement
         {
             self.record_movement_row(id, row);
-            self.report_movement_cycle(id, movement, !returns.is_empty());
+            self.report_movement_cycle(id, movement, !returns.returns.is_empty());
         }
     }
 
     /// A parameter's type: a graph's name resolves; a value type names nothing.
     /// What the graph's name resolved to.
-    fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
+    pub(crate) fn check_param_type(&mut self, type_: &ParamTypeRef, scope: ScopeId) -> Option<crate::scope::SymbolId> {
         let ParamTypeRef::Name(reference) = type_ else { return None };
         if reference.position.is_none() && reference.hops_raw.is_none() && self.version >= 3 {
             if SCALAR_TYPE_NAMES.contains(&reference.graph.as_str()) {
@@ -655,20 +726,20 @@ impl<'c> Checker<'c> {
 
     /// A closure whose caller supplies its parameters' types (a call's
     /// argument): none of them needs one written.
-    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) -> Vec<Span> {
+    pub fn check_closure(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>) -> Body {
         self.check_closure_as(closure, scope, self_name, "", usize::MAX)
     }
 
     /// `checkClosure`: `label` says what the closure is, and the caller
     /// supplies the types of its first `supplied` parameters. What its
     /// body returns, where.
-    pub fn check_closure_as(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> Vec<Span> {
+    pub fn check_closure_as(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> Body {
         self.check_closure_walked(closure, scope, self_name, label, supplied).0
     }
 
     /// `checkClosure`, with whether calling the closure may wait: its body
     /// is its own function, so what it does is not the writer's.
-    pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Vec<Span>, bool) {
+    pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Body, bool) {
         self.check_closure_supplied(closure, scope, self_name, label, supplied, &[])
     }
 
@@ -683,17 +754,20 @@ impl<'c> Checker<'c> {
         label: &str,
         supplied: usize,
         types: &[crate::types::position::PlaneType],
-    ) -> (Vec<Span>, bool) {
+    ) -> (Body, bool) {
         let body = self.scopes.open(Some(scope));
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
                 self.report_param_needs_type(&param.name, param.span, label);
             }
+            if let Some(ParamTypeRef::Value(value)) = &param.type_ {
+                self.report_value_type(value, scope);
+            }
             let is_closure = param.type_.as_ref().is_some_and(is_closure_type);
             self.declare_param(body, &param.name, param.span, is_closure);
             if let Some(type_) = &param.type_ {
                 self.report_param_position(type_, scope);
-                self.type_param(body, &param.name, type_, scope);
+                self.type_param(body, &param.name, type_, scope, &crate::binding_types::ParamOf::closure(closure, self_name));
             } else if let Some(given) = types.get(index) {
                 let types = crate::types::scope_env::SymbolTypes { pos: given.pos.as_deref().cloned(), field: given.field.clone(), ..Default::default() };
                 self.set_types(body, &param.name, types);
@@ -703,8 +777,12 @@ impl<'c> Checker<'c> {
         self.open_effect_frame();
         let returns = self.check_body(&closure.body, body, label.to_string());
         let suspends = self.close_effect_frame();
+        // Reported once, where it is written: a type-only walk sees the same body.
+        if let Some(written) = &closure.return_type {
+            self.check_declared_return(written, label, &returns.returns, scope, closure.span);
+        }
         if let Some(own) = own {
-            self.close_closure_self(own, returns.is_empty());
+            self.close_closure_self(own, returns.returns.is_empty());
         }
         (returns, suspends)
     }
@@ -836,14 +914,14 @@ impl<'c> Checker<'c> {
 
     /// `checkTraversalBlock`: the body runs in its own scope holding the hop
     /// aliases, and what it binds is remembered as escaped once it closes.
-    /// Whether the block's body hands a value back.
-    fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) -> bool {
+    /// What the block's body hands back, and the order its head walks in.
+    fn check_traversal_block(&mut self, block: &TraversalBlock, scope: ScopeId, assigned: Option<&str>) -> (crate::types::position::ReturnShape, crate::types::field::CollectionOrder) {
         let aliases = self.check_path_head(&block.head, scope);
         let walk = self.walk_head(&block.head, scope, false);
         let body = self.open_landing(scope, &aliases, block.head.span);
         self.type_hop_aliases(body, &aliases, walk.as_ref());
         let what = assigned.map_or_else(|| "this block".to_string(), |name| format!("the block bound to '{name}'"));
-        let returns = self.check_body(&block.body, body, what);
+        let returned = self.check_body(&block.body, body, what).value;
         let bound: Vec<String> = self
             .scopes
             .scope(body)
@@ -860,10 +938,13 @@ impl<'c> Checker<'c> {
         for (name, block_name) in inner {
             self.scopes.scope_mut(scope).escaped.entry(name).or_insert(block_name);
         }
-        !returns.is_empty()
+        (returned, walk.map_or(crate::types::field::CollectionOrder::Unknown, |w| w.ordering))
     }
 
-    fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) {
+    /// `checkAwait`: what the awaited value binds — the landing of the walk
+    /// it parks on (maybe empty where the edge can settle empty), `true` once
+    /// a sleep wakes.
+    fn check_await(&mut self, awaited: &AwaitExpression, scope: ScopeId, _name: Option<&str>) -> Bound {
         self.flag_suspend();
         match &awaited.source {
             AwaitSource::Traversal { head, span } => {
@@ -871,43 +952,82 @@ impl<'c> Checker<'c> {
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
+                awaited_walk(walk)
             }
             AwaitSource::First { head, .. } => {
                 self.check_awaited_head(head, None);
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
+                awaited_walk(walk)
             }
             AwaitSource::Combinator { combinator, .. } => {
                 self.report_combinator_form(combinator, Some(awaited.span));
-                self.check_combinator(combinator, scope);
+                let receipt = self.check_combinator(combinator, scope);
+                Bound { receipt: Some(receipt), ..Bound::default() }
             }
-            AwaitSource::Sleep { duration, .. } => self.check_sleep_duration(duration),
+            AwaitSource::Sleep { duration, .. } => {
+                self.check_sleep_duration(duration);
+                // A woken sleep binds `true`; before version 3 it was left untyped.
+                if self.version < 3 {
+                    return Bound { record: true, ..Bound::default() };
+                }
+                let plane = crate::types::position::PlaneType { field: Some(crate::types::Ty::Boolean), pos: None };
+                Bound { returned: Some(crate::types::position::ReturnShape { returns: true, plane, may_hold: None }), ..Bound::default() }
+            }
             AwaitSource::Until { condition, every, .. } => {
                 if let Some(every) = every {
                     self.check_until_cadence(every);
                 }
-                match condition {
+                let condition_span = match condition {
+                    UntilCondition::Closure { closure } => closure.span,
+                    UntilCondition::Expr { expr } => expr.span,
+                };
+                self.check_until_watching(condition_span, |this| match condition {
                     UntilCondition::Closure { closure } => {
-                        self.check_until_params(closure);
-                        let impure = self.check_until_purity(&closure.body);
-                        let (_, suspends) = self.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
-                        self.absorb_suspend(suspends);
+                        this.check_until_params(closure);
+                        let impure = this.check_until_purity(&closure.body);
+                        let (body, suspends) = this.check_closure_walked(closure, scope, None, "this 'until' condition", 0);
+                        this.absorb_suspend(suspends);
                         if suspends && !impure {
-                            self.refuse_unresumable_wait("this 'until' condition", closure.span);
+                            this.refuse_unresumable_wait("this 'until' condition", closure.span);
                         }
+                        until_bound(&this.closure_returns(closure, body.value, scope))
                     }
                     UntilCondition::Expr { expr } => {
-                        self.check_expr_slot(expr, scope);
-                        if let Resolution::Found(id) = self.scopes.resolve(scope, expr.raw.trim()) {
-                            let suspends = self.closure_suspends(id);
-                            self.absorb_suspend(suspends);
+                        let typed = this.check_expr_slot_with(expr, scope, SlotOptions::default());
+                        if let Resolution::Found(id) = this.scopes.resolve(scope, expr.raw.trim()) {
+                            let suspends = this.closure_suspends(id);
+                            this.absorb_suspend(suspends);
+                            // A named closure is the condition: what it returns is what the tick tests.
+                            if let Some(Position::Closure(closure)) = &this.scopes.symbol(id).types.pos {
+                                return until_bound(&closure.returns);
+                            }
                         }
+                        let plane = crate::types::position::PlaneType { field: typed.ty, pos: None };
+                        until_bound(&crate::types::position::ReturnShape { returns: true, plane, may_hold: None })
                     }
-                }
+                })
             }
         }
     }
+}
+
+/// An awaited walk binds its landing on the node plane: maybe empty where its
+/// last edge can settle empty, a record nobody can type where it cannot be walked.
+fn awaited_walk(walk: Option<crate::families::walks::HeadWalk>) -> Bound {
+    let Some(landed) = walk.as_ref().and_then(|w| w.landed.clone()) else { return Bound { record: true, ..Bound::default() } };
+    let resolves_empty = walk.and_then(|w| w.last_edge_schema).is_some_and(|e| e.resolves_empty == Some(true));
+    Bound { pos: Some(if resolves_empty { Position::MaybeEmpty(Box::new(landed)) } else { landed }), ..Bound::default() }
+}
+
+/// An `until` binds what its condition returns; a condition nobody can type
+/// binds on the node plane, as an untyped await does.
+fn until_bound(returns: &crate::types::position::ReturnShape) -> Bound {
+    if returns.plane.field.is_none() && returns.plane.pos.is_none() {
+        return Bound { record: true, ..Bound::default() };
+    }
+    Bound { returned: Some(returns.clone()), ..Bound::default() }
 }
 
 /// `terminates` (checker/flow.ts): every path through the list leaves it —

@@ -82,6 +82,18 @@ pub fn collection_config_problems(record: &Expression, spelling: &str, keys: &[&
     problems
 }
 
+/// Whether a settings record reads and its `onError` lets a failed member
+/// through (anything but the default "error").
+pub fn on_error_lets_through(record: &Expression, keys: &[&str]) -> bool {
+    if !collection_config_problems(record, "", keys).is_empty() {
+        return false;
+    }
+    let Expression::Object { entries } = record else { return false };
+    entries.iter().any(|entry| {
+        matches!(entry, ObjectMember::Entry { key, value: Expression::Static { value: StaticValue::String(on_error) } } if key == "onError" && on_error != "error")
+    })
+}
+
 fn read_on_error(value: &Expression, spelling: &str, problems: &mut Vec<String>) {
     let choices = ON_ERROR.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
     let Expression::Static { value: StaticValue::String(written) } = value else {
@@ -152,8 +164,10 @@ impl Checker<'_> {
         let name = if is_bare_ident(trimmed) && !is_literal_word(trimmed) { Some(trimmed) } else { parsed.and_then(crate::types::narrowing::bare_name) }?;
         let Resolution::Found(id) = self.scopes.resolve(scope, name) else { return None };
         let symbol = self.scopes.symbol(id);
-        // TODO(calls): `functionAsValue` — a function named as a value is on the record plane too.
-        let on_record_plane = symbol.types.pos.is_some() || symbol.types.is_record;
+        // A function declared with a name is a closure value from version 5
+        // (`functionAsValue`), on the record plane too.
+        let function_value = symbol.kind == crate::scope::SymbolKind::Movement && movement_parser::version::since(self.version, 5);
+        let on_record_plane = symbol.types.pos.is_some() || symbol.types.is_record || function_value;
         (on_record_plane && symbol.types.plural.is_none()).then(|| symbol.kind.describe())
     }
 

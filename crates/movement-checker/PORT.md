@@ -189,6 +189,7 @@ The family is also the Rust module (`src/families/<family>.rs`).
 | MOV_CALL_ARG_TYPE | check.ts:checkCallArg ×3, check.ts:refuseValueForPosition, check.ts:checkValueArgFit ×2, check.ts:checkRecordArgFit ×6, check.ts:checkCallArgFit ×2, check.ts:checkPluginArgValue ×5, check.ts:refusePluginRecordInPlace | 35 |
 | MOV_CALL_ARG_UNKNOWN | check.ts:checkArgumentBindings | 13 |
 | MOV_CALL_ARITY | check.ts:checkCall ×2 | 11 |
+| MOV_CALL_CLOSURE_RETURNS | check.ts:warnLaterClosureReturns | 0 |
 | MOV_CALL_NESTED | check.ts:checkExpressionTree, check.ts:checkCallInExpression ×2, nested_calls.ts:(top) | 6 |
 | MOV_CALL_NOT_MOVEMENT | check.ts:checkCallInExpression ×2, check.ts:checkCall ×2, check.ts:checkListen | 9 |
 | MOV_CALL_RETURNS_NOTHING | check.ts:reportCallReturnsNothing | 13 |

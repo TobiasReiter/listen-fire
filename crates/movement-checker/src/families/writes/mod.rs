@@ -128,7 +128,7 @@ impl Checker<'_> {
         self.push(diagnostic);
     }
 
-    fn report_upgrade_warning(&mut self, code: &str, message: impl Into<String>, span: Span) {
+    pub(crate) fn report_upgrade_warning(&mut self, code: &str, message: impl Into<String>, span: Span) {
         let mut diagnostic = Diagnostic::error(code, message, span);
         diagnostic.severity = Some(Severity::Warning);
         diagnostic.upgrade = Some(true);
@@ -330,6 +330,7 @@ impl Checker<'_> {
                 field.value.span,
                 FieldFit { relationship, declared: declared_target, held: held.as_ref() },
             );
+            self.check_enum_literal_write(&field.value, target_type.as_ref(), &format!("'{}' on {root_description}", field.name));
         }
         if !fields.is_empty() && omittable == fields.len() {
             self.report_with(
@@ -420,6 +421,7 @@ impl Checker<'_> {
         if let Some(position) = &position
             && let Some(fields) = known_fields_of(position)
         {
+            crate::types::position::note_fields_needed(Some(position), || format!("writes every field of it with '...{}' (line {})", spread.source, spread.span.start.line));
             return Some(fields);
         }
         // A declared extract node's fields are its declaration's (the nodes
@@ -503,10 +505,11 @@ impl Checker<'_> {
                 );
             }
         }
-        let parent = {
+        let (parent, parent_locals) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, span);
-            typing.walk_steps(Some(root_type), &steps[..steps.len() - 1], false)
+            let parent = typing.walk_steps(Some(root_type), &steps[..steps.len() - 1], false);
+            (parent, typing.locals)
         };
         let Some(parent) = parent else { return Landing::default() };
         let TraversalStep::Edge(link_step) = &steps[steps.len() - 1] else { return Landing::default() };
@@ -663,6 +666,24 @@ impl Checker<'_> {
                 ),
                 span,
             );
+        }
+
+        // The final hop's WHERE narrows the identity candidates — each read
+        // as the record it is, so it types like a read hop's WHERE at the
+        // type the target lands on (`typeTargetFilter`).
+        if let Some(filter) = &link_step.expression_filter {
+            let landing = crate::types::position::position_ref_in(&instance, &written);
+            let diagnostics = {
+                let env = self.typing_env(scope);
+                let mut typing = Typing::new(&env, self.version, span);
+                typing.locals = parent_locals;
+                if let Some(alias) = &link_step.alias {
+                    typing.locals.insert(alias.clone(), landing.clone());
+                }
+                typing.infer_at(filter, landing.as_ref());
+                (typing.diagnostics, typing.receipt_reads)
+            };
+            self.push_typed(diagnostics, scope);
         }
 
         let root = instance
@@ -1189,7 +1210,10 @@ impl Checker<'_> {
     /// A field's value type, and the first record or file in it the target
     /// does not take (`checkExprSlot`'s `valueType` and `held`).
     fn write_field_value(&mut self, slot: &movement_parser::ast::ExprSlot, scope: ScopeId, target: Option<&Ty>, path: Option<String>) -> (Option<Ty>, Option<HeldHandle>) {
-        let Ok(expr) = crate::slots::expression_of_slot(slot) else { return (None, None) };
+        // The slot as it was checked: each call it runs already hoisted to a
+        // name holding what the call hands back.
+        let hoisted = self.nested_call_rewrite(slot, scope).map(|(_, hoisted)| hoisted);
+        let Ok(expr) = crate::slots::expression_of_slot(hoisted.as_ref().unwrap_or(slot)) else { return (None, None) };
         let (ty, may_hold, refused) = {
             let env = self.typing_env(scope);
             let mut typing = crate::types::Typing::new(&env, self.version, slot.span);
@@ -1220,6 +1244,21 @@ impl Checker<'_> {
 
 
     /// `reportFieldValueType`: a value the field's type does not take.
+    /// `checkEnumLiteralWrite`: a string literal written into an enum field is
+    /// one of its options. A value that is not a literal is unknown at author
+    /// time, which is a reason for silence only while some value could still
+    /// be right — so an empty domain is refused whatever is written.
+    fn check_enum_literal_write(&mut self, value: &movement_parser::ast::ExprSlot, target: Option<&Ty>, subject: &str) {
+        let Some(target @ Ty::Enum { .. }) = target else { return };
+        let found = crate::families::values::check_enum_domain(target, subject)
+            .or_else(|| static_string_literal_of(value).and_then(|literal| crate::families::values::check_enum_literal(&literal, target)));
+        let Some(found) = found else { return };
+        match found.severity {
+            Some(severity) => self.report_with(found.code, found.message, value.span, severity),
+            None => self.report(found.code, found.message, value.span),
+        }
+    }
+
     fn report_field_value_type(&mut self, field_name: &str, subject: &str, target: Option<&Ty>, value: Option<&Ty>, span: Span, fit: FieldFit) {
         if self.version >= 5 && (may_be_closure(value) || may_be_closure(fit.held.map(|h| &h.handle))) {
             self.report(
@@ -1344,6 +1383,7 @@ impl Checker<'_> {
                 field.value.span,
                 FieldFit { relationship: false, declared: false, held: held.as_ref() },
             );
+            self.check_enum_literal_write(&field.value, target_type.as_ref(), &format!("'{}' on {root_description}", field.name));
         }
         if let Some(binding) = binding
             && self.upgrade_crosses(4)
@@ -1613,7 +1653,7 @@ fn literal_string_values_of(raw: &str) -> Option<Vec<String>> {
 
 /// `genericLandingKey` (generics.ts).
 fn generic_landing_key(target: &str, values: &[String]) -> String {
-    serde_json::to_string(&(target, values)).unwrap_or_default()
+    serde_json::to_string(&("generic-landing", target, values)).unwrap_or_default()
 }
 
 /// `literalExampleFor`.

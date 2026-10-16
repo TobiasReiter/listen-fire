@@ -136,6 +136,113 @@ pub struct ClosureType {
     pub label: String,
     pub params: Vec<ClosureParam>,
     pub returns: ReturnShape,
+    /// Where the closure is written (a closure, or a function declared with
+    /// a name): one closure however often it is read. `None` for one typed by
+    /// an annotation.
+    pub written_at: Option<movement_parser::ast::Span>,
+    /// The closures one of several closures stands for (`closureCandidates`);
+    /// empty for a single closure.
+    pub candidates: Vec<ClosureType>,
+}
+
+impl ClosureType {
+    pub fn new(label: impl Into<String>, params: Vec<ClosureParam>, returns: ReturnShape, written_at: Option<movement_parser::ast::Span>) -> Self {
+        ClosureType { label: label.into(), params, returns, written_at, candidates: Vec::new() }
+    }
+
+    /// `candidatesOf`: the closures a call of this one may run.
+    pub fn candidates(&self) -> Vec<&ClosureType> {
+        if self.candidates.is_empty() { vec![self] } else { self.candidates.iter().collect() }
+    }
+
+    fn same_closure(&self, other: &ClosureType) -> bool {
+        self.written_at.is_some() && self.written_at == other.written_at
+    }
+}
+
+/// `oneOfClosures`: several closures any one of which a value may be — a
+/// list's members, a body whose returns hand back different closures.
+/// Calling it is calling any of them, as TypeScript calls a union of function
+/// types: its value is the union of what they return, and a call is held to
+/// every candidate's parameters (the ones it carries are the first's, as a
+/// placeholder). `typed_by_every` false is the rule before version 5 for a
+/// body's returns: the call is typed by the first closure alone, the others
+/// kept so the call can warn where version 5 holds it to them.
+pub fn one_of_closures(closures: &[ClosureType], typed_by_every: bool) -> ClosureType {
+    let mut flat: Vec<ClosureType> = Vec::new();
+    for closure in closures {
+        for candidate in closure.candidates() {
+            if !flat.iter().any(|seen| seen.same_closure(candidate)) {
+                flat.push(candidate.clone());
+            }
+        }
+    }
+    if flat.len() == 1 {
+        return flat.pop().expect("one closure");
+    }
+    let first = &flat[0];
+    let mut merged = if typed_by_every {
+        let returns: Vec<ReturnShape> = flat.iter().map(|c| c.returns.clone()).collect();
+        ClosureType::new("one of several closures", first.params.clone(), union_returns(&returns), None)
+    } else {
+        ClosureType { candidates: Vec::new(), ..first.clone() }
+    };
+    merged.candidates = flat;
+    merged
+}
+
+/// `unionReturns`: what calling one of several closures hands back —
+/// TypeScript's union of their return types. A type all of them agree on is
+/// the call's type; records alone are their union; anything else has no one
+/// type, and what it may hold travels as `may_hold`.
+pub fn union_returns(shapes: &[ReturnShape]) -> ReturnShape {
+    let returning: Vec<&ReturnShape> = shapes.iter().filter(|shape| shape.returns).collect();
+    let Some(first) = returning.first() else { return ReturnShape::default() };
+    let only_position = |shape: &ReturnShape| shape.plane.field.is_none() && shape.may_hold.is_none() && shape.plane.pos.is_some();
+    if returning.iter().all(|shape| {
+        only_position(shape)
+            && field_type_equals(&Ty::record(shape.plane.pos.as_deref().cloned()), &Ty::record(first.plane.pos.as_deref().cloned()))
+    }) {
+        return ReturnShape { returns: true, plane: PlaneType { pos: first.plane.pos.clone(), field: None }, may_hold: None };
+    }
+    let mut arms: Vec<Ty> = Vec::new();
+    fn add(arm: &Ty, arms: &mut Vec<Ty>) {
+        if let Ty::Union(members) = arm {
+            members.iter().for_each(|m| add(m, arms));
+            return;
+        }
+        if !arms.iter().any(|seen| field_type_equals(seen, arm)) {
+            arms.push(arm.clone());
+        }
+    }
+    let mut unknown = false;
+    for shape in &returning {
+        let arm = shape.may_hold.clone().or_else(|| shape.plane.field.clone()).or_else(|| super::field::record_value_of(shape.plane.pos.as_deref()));
+        match arm {
+            Some(arm) => add(&arm, &mut arms),
+            None => unknown = true,
+        }
+    }
+    let one_arm = arms.len() == 1;
+    let union = match arms.len() {
+        0 => None,
+        1 => arms.pop(),
+        _ => Some(Ty::Union(arms)),
+    };
+    let typed = match &union {
+        Some(union) if !unknown => {
+            if one_arm || super::field::records_alone(Some(union)).is_some() {
+                Some(union.clone())
+            } else if returning.iter().all(|shape| shape.plane.field.as_ref().zip(first.plane.field.as_ref()).is_some_and(|(a, b)| field_type_equals(a, b))) {
+                first.plane.field.clone()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let may_hold = union.filter(|union| super::field::shows_more_handles(union, typed.as_ref()));
+    ReturnShape { returns: true, plane: PlaneType { field: typed, pos: None }, may_hold }
 }
 
 /// One field of an extracted node (`ExtractFieldInfo`, the part typing reads).
@@ -201,6 +308,9 @@ pub struct RecordPosition {
     /// Fields a guard in scope has proven present.
     pub present: BTreeSet<String>,
     pub run_built: bool,
+    /// The record is a function's parameter: what its body needs of it is
+    /// filed here (`FieldsNeed`).
+    pub parameter: Option<NeedRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +322,7 @@ pub struct UnionPosition {
     pub display: Option<String>,
     /// The event address a parameter type named it by (`positionFromAddress`).
     pub address: Option<super::event_address::EventAddress>,
+    pub parameter: Option<NeedRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -247,6 +358,7 @@ impl Position {
             display: None,
             present: BTreeSet::new(),
             run_built: false,
+            parameter: None,
         })
     }
 
@@ -265,6 +377,7 @@ pub fn position_ref_in(instance: &InstanceRef, name: &str) -> Option<Position> {
             narrows_event: None,
             display: None,
             address: None,
+            parameter: None,
         }));
     }
     instance.schema.positions.contains_key(name).then(|| Position::record(instance.clone(), name))
@@ -704,5 +817,153 @@ pub fn edge_landing(from: &Position, edge: &str, version: u32) -> EdgeLanding {
             None => EdgeLanding::Unknown { available: local.edges.as_ref().map(|e| e.keys().cloned().collect()).unwrap_or_default() },
         },
         Position::MaybeEmpty(of) => edge_landing(of, edge, version),
+    }
+}
+
+// ── What a function's body needs of a record parameter ──
+
+/// A parameter's need cell, shared by every walk of the body that declares it.
+pub type NeedRef = Rc<std::cell::RefCell<FieldsNeed>>;
+
+/// `FieldsNeed`: what a function's body needs of a record parameter — its
+/// fields in hand (a consumer that reads every field, as TEXT.SERIALISE or a
+/// spread does). One cell per parameter, carried on the parameter's position
+/// type, so a name bound to the parameter, a list holding it or a closure over
+/// it records here too. A parameter passed on to another function's
+/// parameter takes on that one's requirement (`passed_to`), read when a call
+/// site asks — so a cycle of calls needs no fixpoint.
+#[derive(Default)]
+pub struct FieldsNeed {
+    pub function: String,
+    pub param: String,
+    /// The first consumer in the body that needs the fields in hand.
+    pub consumer: Option<String>,
+    pub passed_to: Vec<(NeedRef, String)>,
+    /// The cell for the records reached THROUGH the parameter's edges, at
+    /// any depth.
+    pub reached: Option<NeedRef>,
+    /// This cell is a parameter's `reached` cell.
+    pub through_edges: bool,
+}
+
+impl std::fmt::Debug for FieldsNeed {
+    // Cells refer to one another in cycles: name the parameter only.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FieldsNeed({}.{})", self.function, self.param)
+    }
+}
+
+/// `FieldsReach`: what a requirement is asked of — the record handed over
+/// itself, or the records reached through its edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldsReach {
+    Record,
+    Reached,
+}
+
+/// `fieldsNeededBy`: why `need`'s parameter needs the fields of its record
+/// (or of what is reached through it) in hand, if it does — directly, or
+/// through the parameters it is passed on to.
+pub fn fields_needed_by(need: &NeedRef, reach: FieldsReach, seen: &mut Vec<(NeedRef, FieldsReach)>) -> Option<String> {
+    let cell = need.borrow();
+    // A reached cell stands for every depth below the parameter.
+    let asked = if cell.through_edges { FieldsReach::Record } else { reach };
+    if seen.iter().any(|(n, r)| Rc::ptr_eq(n, need) && *r == asked) {
+        return None;
+    }
+    seen.push((need.clone(), asked));
+    if asked == FieldsReach::Record
+        && let Some(consumer) = &cell.consumer
+    {
+        return Some(if cell.through_edges { format!("reaches a record through '{}' and {consumer}", cell.param) } else { consumer.clone() });
+    }
+    if asked == FieldsReach::Reached
+        && let Some(reached) = &cell.reached
+        && let Some(why) = fields_needed_by(reached, FieldsReach::Record, seen)
+    {
+        return Some(why);
+    }
+    let onward_reaches: &[FieldsReach] = if cell.through_edges { &[FieldsReach::Record, FieldsReach::Reached] } else { std::slice::from_ref(&asked) };
+    for (onward, at) in &cell.passed_to {
+        for onward_reach in onward_reaches {
+            if let Some(why) = fields_needed_by(onward, *onward_reach, seen) {
+                return Some(format!("{at}, and '{}' {why}", onward.borrow().function));
+            }
+        }
+    }
+    None
+}
+
+/// `parameterNeedOf`: the parameter cell a position carries, through a gate.
+pub fn parameter_need_of(position: Option<&Position>) -> Option<NeedRef> {
+    match position? {
+        Position::MaybeEmpty(of) => parameter_need_of(Some(of)),
+        Position::Position(record) => record.parameter.clone(),
+        Position::Union(union) => union.parameter.clone(),
+        _ => None,
+    }
+}
+
+/// `noteFieldsNeeded`: files that `position`'s record — when it is a
+/// function's parameter — has its fields read by `consumer`.
+pub fn note_fields_needed(position: Option<&Position>, consumer: impl FnOnce() -> String) {
+    if let Some(need) = parameter_need_of(position) {
+        let mut cell = need.borrow_mut();
+        if cell.consumer.is_none() {
+            cell.consumer = Some(consumer());
+        }
+    }
+}
+
+/// `reachedThrough`: the cell for what is reached through `need`'s
+/// parameter — made on first ask; a reached cell is its own.
+fn reached_through(need: &NeedRef) -> NeedRef {
+    if need.borrow().through_edges {
+        return need.clone();
+    }
+    let mut cell = need.borrow_mut();
+    let (function, param) = (cell.function.clone(), cell.param.clone());
+    cell.reached
+        .get_or_insert_with(|| Rc::new(std::cell::RefCell::new(FieldsNeed { function, param, through_edges: true, ..FieldsNeed::default() })))
+        .clone()
+}
+
+/// `withParameterOf`: `landing`, walked from `from`, carrying the cell for
+/// what is reached through `from`'s parameter.
+pub fn with_parameter_of(from: Option<&Position>, landing: Option<Position>) -> Option<Position> {
+    let Some(need) = parameter_need_of(from) else { return landing };
+    Some(match landing? {
+        Position::MaybeEmpty(of) => Position::MaybeEmpty(Box::new(with_parameter_of(from, Some(*of.clone())).unwrap_or(*of))),
+        Position::Position(record) => Position::Position(RecordPosition { parameter: Some(reached_through(&need)), ..record }),
+        Position::Union(union) => Position::Union(UnionPosition { parameter: Some(reached_through(&need)), ..union }),
+        other => other,
+    })
+}
+
+/// `asParameter`: `position` as the type of parameter `param` of `function`,
+/// carrying the parameter's cell (made on first ask, kept in `cells`). Only a
+/// position or a union names a record a caller hands over.
+pub fn as_parameter(position: Position, cells: &mut std::collections::HashMap<String, NeedRef>, function: &str, param: &str) -> Position {
+    if !matches!(position, Position::Position(_) | Position::Union(_)) {
+        return position;
+    }
+    let need = cells
+        .entry(param.to_string())
+        .or_insert_with(|| Rc::new(std::cell::RefCell::new(FieldsNeed { function: function.to_string(), param: param.to_string(), ..FieldsNeed::default() })))
+        .clone();
+    match position {
+        Position::Position(record) => Position::Position(RecordPosition { parameter: Some(need), ..record }),
+        Position::Union(union) => Position::Union(UnionPosition { parameter: Some(need), ..union }),
+        other => other,
+    }
+}
+
+/// `withoutParameter`: the record once it has left the body.
+pub fn without_parameter(position: Position) -> Position {
+    match position {
+        Position::MaybeEmpty(of) => Position::MaybeEmpty(Box::new(without_parameter(*of))),
+        Position::Position(record) => Position::Position(RecordPosition { parameter: None, ..record }),
+        Position::Union(union) => Position::Union(UnionPosition { parameter: None, ..union }),
+        other => other,
     }
 }

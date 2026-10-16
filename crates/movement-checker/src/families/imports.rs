@@ -282,6 +282,7 @@ impl Checker<'_> {
     pub fn adopt_library_symbol(&mut self, local: SymbolId, library: SymbolId) {
         self.listens.adopt(local, library);
         self.nodes.adopt(local, library);
+        self.adopt_movement(local, library);
     }
 
     /// `checkLibrary`: one library checked once, in its own file scope, its

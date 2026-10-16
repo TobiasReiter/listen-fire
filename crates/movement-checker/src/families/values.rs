@@ -50,9 +50,14 @@ use crate::types::position::{Position, lookup_property_type};
 /// conditional's condition, then and else).
 pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Position>, operands: &[Option<Ty>], _ty: Option<&Ty>) {
     match expr {
-        Expression::Concat { .. } => {
+        Expression::Concat { parts } => {
             for part in operands {
                 require_transparent(typing, part.as_ref(), "combined into text");
+            }
+            if typing.version >= 5 {
+                for (part, ty) in parts.iter().zip(operands) {
+                    refuse_file_in_text(typing, part, ty.as_ref());
+                }
             }
         }
         Expression::Arithmetic { op, left, right } => {
@@ -89,6 +94,9 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
             }
         }
         Expression::At { expression, .. } => {
+            if at_reads_record(typing, expression, operands[1].as_ref()).is_some() {
+                return;
+            }
             if !operands[0].as_ref().is_some_and(|inner| matches!(strip_absent(inner), Ty::Dict { .. })) {
                 check_fold_order(typing, Fold::At, expression, position);
             }
@@ -129,6 +137,57 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
         }
         _ => {}
     }
+}
+
+/// `AT` off a record by a key (anything but a number): a record is no map, so
+/// the key would reach the engine's own object, never a field. Asked of the
+/// value's structure, so a record in any arm of a choice is one.
+fn at_reads_record(typing: &Typing, operand: &Expression, index_ty: Option<&Ty>) -> Option<crate::types::field::HeldHandle> {
+    let record = typing.handle_held_by(operand, &crate::types::field::HeldWalk::files_only())?;
+    (record.steps.is_empty() && !matches!(strip_absent(index_ty.unwrap_or(&Ty::Absent)), Ty::Number)).then_some(record)
+}
+
+/// The type core's `at` case asks this first: true when it refused the read
+/// (`AT_RECORD_KEY`), which then has no type.
+pub fn refuse_record_key(typing: &mut Typing, operand: &Expression, index: &Expression, index_ty: Option<&Ty>) -> bool {
+    let Some(record) = at_reads_record(typing, operand, index_ty) else { return false };
+    let name = typing.bare_name_of(operand).unwrap_or("r").to_string();
+    let key = match index {
+        Expression::Static { value: StaticValue::String(key) } => Some(key.clone()),
+        _ => None,
+    };
+    let read = format!("{}.{}", quote_name(&name), key.as_deref().map_or_else(|| "`Name`".to_string(), quote_name));
+    let said = match &key {
+        Some(key) => format!("'{key}' is not a key it holds"),
+        None => "its fields are not keys to look up".to_string(),
+    };
+    typing.report(
+        codes::AT_RECORD_KEY,
+        format!(
+            "AT looks up a list's slot or a map's key, and this {} a record — {said}. Read a field with a dot ({read}), or build a map of the fields you need ({{ name: {}.`Name`, … }}) and look the key up in that",
+            if record.may { "may be" } else { "is" },
+            quote_name(&name)
+        ),
+    );
+    true
+}
+
+/// `refuseFileInText` (language version 5): a file, or one arm that may be
+/// one, has no text form but the one READ gives.
+fn refuse_file_in_text(typing: &mut Typing, part: &Expression, ty: Option<&Ty>) {
+    let may = typing.may_hold_type(part);
+    let holds_file = |t: Option<&Ty>| t.is_some_and(|t| crate::types::field::base_kinds(t).contains(&crate::types::field::BaseKind::File));
+    if !holds_file(ty) && !holds_file(may.as_ref()) {
+        return;
+    }
+    let definite = ty.is_some_and(|t| matches!(strip_absent(t), Ty::File));
+    typing.report(
+        codes::FILE_IN_TEXT,
+        format!(
+            "this {} a file, and a file is not text, so it can't be combined into text — its text is READ(f) ('${{COALESCE(READ(f), \"\")}}'), or write the file into a field that holds files",
+            if definite { "is" } else { "may be" }
+        ),
+    );
 }
 
 /// A closure among a value expression's operands (language version 5): the

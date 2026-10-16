@@ -18,9 +18,10 @@ use crate::scope::{Resolution, ScopeId, SymbolId};
 use crate::slots::is_bare_ident;
 use crate::types::scope_env::SymbolTypes;
 use crate::types::field::{
-    Ty, describe_field_type, field_assignable, holds_records, is_maybe_absent, mixes_record_with_value, strip_absent,
+    HeldWalk, Ty, describe_field_type, field_assignable, handle_within, holds_records, is_maybe_absent, mixes_record_with_value, spell_held_steps, strip_absent,
     values_beside_record,
 };
+use crate::types::field::shows_more_handles;
 use crate::types::position::{ClosureParam, Position, ReturnShape, describe_position, positions_match, system_difference};
 
 /// `ArgFit`: whose argument this is, the parameter it binds, and its place.
@@ -31,6 +32,19 @@ pub struct ArgFit<'a> {
     pub positional: bool,
     /// A plugin's call: its arguments are held to what it declares.
     pub plugin: Option<&'a PluginArgTypes<'a>>,
+    /// Who makes the call and what it hands, where no author wrote a call:
+    /// a collection op hands each member to its function.
+    pub caller: Option<ArgCaller>,
+}
+
+pub struct ArgCaller {
+    pub callee: String,
+    pub argument: String,
+}
+
+/// `calleeWords`: the callee as a diagnostic names it.
+fn callee_words(fit: &ArgFit) -> String {
+    fit.caller.as_ref().map_or_else(|| format!("'{}'", fit.callee), |caller| caller.callee.clone())
 }
 
 impl ArgFit<'_> {
@@ -43,8 +57,15 @@ impl ArgFit<'_> {
     }
 }
 
+/// What a record falls short of a parameter's need by (`fieldsInHandShortfall`).
+pub struct Shortfall {
+    pub what: String,
+    pub why: String,
+    pub whose: &'static str,
+}
+
 /// `describeArgPlace`: a positional argument is named for the author.
-fn describe_arg_place(fit: &ArgFit) -> String {
+pub(crate) fn describe_arg_place(fit: &ArgFit) -> String {
     if !fit.positional {
         return String::new();
     }
@@ -123,24 +144,43 @@ impl Checker<'_> {
     /// An imported movement carries the library's declaration.
     pub fn movement_declared_params(&self, id: SymbolId) -> Option<Vec<ClosureParam>> {
         let info = self.listens.movement_info(id)?;
+        let function = self.movement_declaration(id).map_or_else(|| self.scopes.symbol(id).name.clone(), |(movement, _)| movement.name.clone());
+        let of = crate::binding_types::ParamOf { owner: Some(crate::binding_types::NeedOwner::Function(self.declared_id(id))), function };
         Some(
             info.params
                 .iter()
-                .map(|param| ClosureParam { name: param.name.clone(), plane: param.type_.as_ref().map(|t| self.plane_type_of(t, info.decl_scope)).unwrap_or_default() })
+                .map(|param| ClosureParam {
+                    name: param.name.clone(),
+                    plane: param.type_.as_ref().map(|t| self.parameter_plane(&of, &param.name, self.plane_type_of(t, info.decl_scope))).unwrap_or_default(),
+                })
                 .collect(),
         )
     }
 
-    /// `movementReturnType`, where the checker can say: what a movement
-    /// declares it returns (version 3). Its body is not inferred for it here.
-    // TODO(calls): `inferMovement`'s return shape, and a linked file import's.
-    pub fn movement_return(&self, id: SymbolId) -> ReturnShape {
-        match self.movement_declaration(id) {
-            Some((movement, declared_in)) if since(self.version, 3) => match &movement.return_type {
-                Some(written) => ReturnShape { returns: true, plane: self.plane_type_of(written, declared_in), may_hold: None },
-                None => ReturnShape::default(),
-            },
-            _ => ReturnShape::default(),
+    /// `movementReturnType`: what a call of a movement hands back — what it
+    /// declares (version 3), else what its body was found to hand back. A
+    /// call reached while that body is still being walked gets the unknown.
+    /// An imported movement answers with its library declaration.
+    pub fn movement_return(&mut self, id: SymbolId) -> ReturnShape {
+        let Some((movement, declared_in)) = self.movement_declaration(id) else { return crate::families::returns::unknown_return() };
+        let written = movement.return_type.as_ref().filter(|_| since(self.version, 3));
+        if !(written.is_some() && since(self.version, 5)) {
+            self.infer_movement(id);
+        }
+        let inferred = self.movement_inferred_return(id);
+        let Some(written) = written else {
+            return inferred.unwrap_or_else(crate::families::returns::unknown_return);
+        };
+        let declared = ReturnShape { returns: true, plane: self.plane_type_of(written, declared_in), may_hold: None };
+        // Before version 5 a declaration that does not take what a return may
+        // hold is not refused where it is written, so the call still carries
+        // what the body may hand back.
+        if since(self.version, 5) {
+            return declared;
+        }
+        match inferred.and_then(|i| i.may_hold).filter(|held| shows_more_handles(held, declared.plane.field.as_ref())) {
+            Some(held) => ReturnShape { may_hold: Some(held), ..declared },
+            None => declared,
         }
     }
 
@@ -152,7 +192,7 @@ impl Checker<'_> {
                 let name = arg.name().or_else(|| params.get(index).map(|p| p.name.as_str()))?;
                 params.iter().find(|p| p.name == name)
             });
-            let fit = ArgFit { callee, param, index, positional: arg.name().is_none(), plugin };
+            let fit = ArgFit { callee, param, index, positional: arg.name().is_none(), plugin, caller: None };
             self.check_call_arg(&fit, arg, scope);
         }
     }
@@ -165,14 +205,20 @@ impl Checker<'_> {
                 let handle = self.check_write(write, scope, None, true);
                 match fit.field_type() {
                     Some(param) => self.check_value_arg_fit(fit, param, handle.map(record_of).as_ref(), ValueArg::at(write.span)),
-                    None => self.check_call_arg_fit(fit, handle.as_ref(), fit.pos_type(), write.span),
+                    None => {
+                        self.check_call_arg_fit(fit, handle.as_ref(), fit.pos_type(), write.span);
+                        self.check_arg_fields_in_hand(fit, handle.as_ref(), write.span);
+                    }
                 }
             }
             CallArg::Node { node, .. } => {
                 let synthesised = self.check_node_literal(node, scope);
                 match fit.field_type() {
                     Some(param) => self.check_value_arg_fit(fit, param, synthesised.map(record_of).as_ref(), ValueArg::at(node.span)),
-                    None => self.check_call_arg_fit(fit, synthesised.as_ref(), fit.pos_type(), node.span),
+                    None => {
+                        self.check_call_arg_fit(fit, synthesised.as_ref(), fit.pos_type(), node.span);
+                        self.check_arg_fields_in_hand(fit, synthesised.as_ref(), node.span);
+                    }
                 }
             }
             CallArg::Closure { closure, span, .. } if since(self.version, 5) => {
@@ -236,6 +282,7 @@ impl Checker<'_> {
                         self.refuse_maybe_record_for_position(fit, &[value.may_hold.as_ref(), value.plane.field.as_ref()], call.span, &format!("{}(…)", call.callee));
                     }
                     self.check_call_arg_fit(fit, pos, fit.pos_type(), call.span);
+                    self.check_arg_fields_in_hand(fit, pos, call.span);
                 }
             },
         }
@@ -243,18 +290,30 @@ impl Checker<'_> {
 
     /// `checkCallArg`'s expression case.
     fn check_expr_arg(&mut self, fit: &ArgFit, name: Option<&str>, expr: &ExprSlot, scope: ScopeId) {
-        let typed = self.check_expr_slot_with(expr, scope, crate::checker::SlotOptions::default());
+        let plugin_declared = fit.plugin.and_then(|plugin| name.and_then(|name| plugin.declared.and_then(|d| d.0.get(name))));
+        let held_takes = fit.plugin.map(|_| crate::families::plugin_calls::plugin_arg_held_takes(plugin_declared));
+        let typed = self.check_expr_slot_with(expr, scope, crate::checker::SlotOptions { held_takes, ..crate::checker::SlotOptions::default() });
         let arg_type = self.bare_slot_position_type(expr, scope);
         // A plugin's named argument: a value against what the plugin takes
         // (a positional one is refused where the call is checked).
-        if let (Some(plugin), Some(name)) = (fit.plugin, name) {
-            let declared = plugin.declared.and_then(|d| d.0.get(name));
+        if let (Some(_), Some(name)) = (fit.plugin, name) {
             let record = arg_type.clone().or_else(|| crate::types::field::record_in(typed.ty.as_ref()).flatten());
-            self.check_plugin_arg_value(fit.callee, declared, name, record.as_ref(), typed.ty.as_ref(), expr.span);
+            self.check_plugin_arg_value(crate::families::plugin_calls::PluginArg {
+                callee: fit.callee,
+                declared: plugin_declared,
+                name,
+                record: record.as_ref(),
+                value: typed.ty.as_ref(),
+                held: typed.held,
+                may_hold: typed.may_hold.as_ref(),
+                span: expr.span,
+            });
             return;
         }
         if let Some(param) = fit.field_type() {
-            // TODO(records): `refuseMaybeRecordForValue` (MOV_CALL_ARG_MAYBE_RECORD for a value parameter).
+            if arg_type.is_none() {
+                self.refuse_maybe_record_for_value(fit, param, typed.ty.as_ref(), typed.may_hold.as_ref(), expr.span, expr.raw.trim());
+            }
             let value = arg_type.clone().map(record_of).or(typed.ty);
             let options = ValueArg { span: expr.span, literal: is_record_literal_slot(expr), parsed: typed.expr.as_ref(), slot: Some(expr) };
             self.check_value_arg_fit(fit, param, value.as_ref(), options);
@@ -265,8 +324,78 @@ impl Checker<'_> {
             self.refuse_maybe_record_for_position(fit, &[typed.may_hold.as_ref(), typed.ty.as_ref()], expr.span, expr.raw.trim());
         }
         self.check_call_arg_fit(fit, arg_type.as_ref(), fit.pos_type(), expr.span);
-        // `checkArgFieldsInHand` (MOV_CALL_ARG_OPAQUE_RECORD) needs the
-        // parameter field-needs cell, which the type core does not carry.
+        let arg = arg_type.or_else(|| crate::types::field::record_in(typed.ty.as_ref()).flatten());
+        self.check_arg_fields_in_hand(fit, arg.as_ref(), expr.span);
+    }
+
+    /// `checkArgFieldsInHand`: a record argument against what the callee's
+    /// body needs of it (`FieldsNeed`) — TypeScript's parameter-versus-
+    /// argument check, on whether the record's fields are in hand. The
+    /// calling function's own parameter, passed on, takes on the callee's
+    /// need instead: its callers answer for it.
+    fn check_arg_fields_in_hand(&mut self, fit: &ArgFit, arg: Option<&Position>, span: Span) {
+        let (Some(need), Some(arg)) = (crate::types::position::parameter_need_of(fit.pos_type()), arg) else { return };
+        let param = need.borrow().param.clone();
+        let Some(shortfall) = self.fields_in_hand_shortfall(&need, arg, &format!("passes it to '{}' as '{param}' (line {})", fit.callee, span.start.line)) else { return };
+        self.report(
+            codes::CALL_ARG_OPAQUE_RECORD,
+            format!(
+                "'{callee}' needs every field of {} in hand — its body {} — and this argument is {}, {}{}. Copy the fields it needs into a record the program holds and pass that ('node {{ name: r.name, … }}'), or have '{callee}' read the fields it uses one by one",
+                shortfall.what,
+                shortfall.why,
+                describe_position(arg),
+                shortfall.whose,
+                describe_arg_place(fit),
+                callee = fit.callee
+            ),
+            span,
+        );
+    }
+
+    /// `fieldsInHandShortfall`: what `record` falls short of `need` by, if
+    /// anything — the fields of the record itself, or of the records reached
+    /// through its edges. A record that is itself a parameter of the function
+    /// being checked, with its fields in hand there, files `need` as its own
+    /// (`passedTo`, said `at`).
+    pub(crate) fn fields_in_hand_shortfall(&self, need: &crate::types::position::NeedRef, record: &Position, at: &str) -> Option<Shortfall> {
+        use crate::types::position::{FieldsReach, fields_needed_by, parameter_need_of};
+        let in_hand = self.holds_fields_in_hand(record);
+        let own = parameter_need_of(Some(record));
+        if in_hand && let Some(own) = own {
+            let already = std::rc::Rc::ptr_eq(&own, need) || own.borrow().passed_to.iter().any(|(onward, _)| std::rc::Rc::ptr_eq(onward, need));
+            if !already {
+                own.borrow_mut().passed_to.push((need.clone(), at.to_string()));
+            }
+            return None;
+        }
+        let param = need.borrow().param.clone();
+        let why = if in_hand { None } else { fields_needed_by(need, FieldsReach::Record, &mut Vec::new()) };
+        if let Some(why) = why {
+            return Some(Shortfall { what: format!("'{param}'"), why, whose: "whose fields are read from its system one at a time" });
+        }
+        if self.holds_reached_fields_in_hand(record) {
+            return None;
+        }
+        let why = fields_needed_by(need, FieldsReach::Reached, &mut Vec::new())?;
+        Some(Shortfall { what: format!("the records '{param}' leads to"), why, whose: "whose linked records are the system's, read one field at a time" })
+    }
+
+    /// `holdsReachedFieldsInHand`: does the checker hold the fields of the
+    /// records reached through this record's edges? A walked child of a
+    /// system's record is the system's record; a record the run built (or
+    /// extracted, or a declared shape's) holds its children, unless it holds
+    /// a system's records by reference.
+    fn holds_reached_fields_in_hand(&self, position: &Position) -> bool {
+        let declared = |instance: &crate::types::position::InstanceRef| instance.declared.is_some_and(|symbol| self.nodes.is_local(symbol));
+        match position {
+            Position::Extract { .. } => true,
+            Position::Local(_) => crate::families::records::live_reference_within(position, &declared, &String::new).is_none(),
+            Position::MaybeEmpty(of) => self.holds_reached_fields_in_hand(of),
+            Position::Handle(handle) => declared(&handle.instance),
+            Position::Position(record) => declared(&record.instance),
+            Position::Union(union) => declared(&union.instance),
+            Position::Meta { .. } | Position::Closure(_) => false,
+        }
     }
 
     /// `bareSlotPositionType`: the record a bare name denotes.
@@ -327,11 +456,65 @@ impl Checker<'_> {
         );
     }
 
+    /// `refuseMaybeRecordForValue`: a value that may be a record (or a file)
+    /// and may be something else, handed to a value parameter that takes
+    /// neither. Its type cannot say so (no union mixes a record with a value);
+    /// what it may hold does. Refused from version 5; from 3 the call ran with
+    /// the record passed through, so an older pin is warned.
+    pub(crate) fn refuse_maybe_record_for_value(&mut self, fit: &ArgFit, param: &Ty, value: Option<&Ty>, may_hold: Option<&Ty>, span: Span, written: &str) {
+        if !since(self.version, 3) || may_hold.is_none() {
+            return;
+        }
+        let walk = HeldWalk::taken_by(Some(param));
+        let Some(hidden) = handle_within(may_hold, &walk) else { return };
+        // The value's own type shows the record: the fit check says it.
+        if handle_within(value, &walk).is_some() {
+            return;
+        }
+        let steps = spell_held_steps(&hidden.steps);
+        let file = matches!(hidden.handle, Ty::File);
+        let held = describe_field_type(&hidden.handle);
+        let where_ = if steps.is_empty() { format!("may be {held}") } else { format!("may hold {held} at '{steps}'") };
+        let repair = if file { "Pass its text ('READ(f)')" } else { "Narrow it to the record with IS and pass a field off it ('r.`Name`')" };
+        let argument = fit.caller.as_ref().map_or_else(|| format!("'{written}'"), |caller| caller.argument.clone());
+        let param_words = describe_field_type(param);
+        let message = format!(
+            "{} expects {param_words}{}, but {argument} {where_} — {}, not a value, and such a union is no {param_words}, as in TypeScript. {repair}, or fill every arm with a value",
+            callee_words(fit),
+            describe_arg_place(fit),
+            if file { "a file" } else { "a record" }
+        );
+        if since(self.version, 5) {
+            self.report(codes::CALL_ARG_MAYBE_RECORD, message, span);
+            return;
+        }
+        self.report_upgrade_warning(
+            codes::CALL_ARG_MAYBE_RECORD,
+            format!(
+                "{message}. Before {} the {} is passed through as it is; from it, this is refused",
+                crate::version::describe(5),
+                if file { "file" } else { "record" }
+            ),
+            span,
+        );
+    }
+
+    /// `checkValueArgFit` for a value no author wrote (a member an op hands its function).
+    pub(crate) fn check_value_arg_fit_at(&mut self, fit: &ArgFit, param_ty: &Ty, arg_ty: Option<&Ty>, span: Span) {
+        self.check_value_arg_fit(fit, param_ty, arg_ty, ValueArg::at(span));
+    }
+
+    /// `checkCallArgFit` for a record no author wrote.
+    pub(crate) fn check_call_arg_fit_at(&mut self, fit: &ArgFit, arg: Option<&Position>, param: &Position, span: Span) {
+        self.check_call_arg_fit(fit, arg, Some(param), span);
+    }
+
     /// `checkValueArgFit`: a value argument against a value parameter.
     fn check_value_arg_fit(&mut self, fit: &ArgFit, param_ty: &Ty, arg_ty: Option<&Ty>, options: ValueArg) {
         let Some(arg_ty) = arg_ty else { return };
         let span = options.span;
-        let expected = format!("'{}' expects {}{}", fit.callee, describe_field_type(param_ty), describe_arg_place(fit));
+        let expected = format!("{} expects {}{}", callee_words(fit), describe_field_type(param_ty), describe_arg_place(fit));
+        let argument = fit.caller.as_ref().map_or("this argument", |caller| caller.argument.as_str());
         if let Some(literal) = string_literal_of(options.parsed)
             && self.report_enum_literal(literal, strip_absent(param_ty), span)
         {
@@ -340,7 +523,7 @@ impl Checker<'_> {
         if is_maybe_absent(Some(arg_ty)) && !is_maybe_absent(Some(param_ty)) {
             self.report(
                 codes::CALL_ARG_TYPE,
-                format!("{expected}, but this argument may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{{ key?: … }}')"),
+                format!("{expected}, but {argument} may be absent — fill it first ('COALESCE(x, …)') or declare the parameter as a record key that may be left out ('{{ key?: … }}')"),
                 span,
             );
             return;
@@ -359,8 +542,8 @@ impl Checker<'_> {
             _ => None,
         };
         let message = match &as_list {
-            Some((_, text)) => format!("{expected}, but this argument is {} — pass it as a list: '{text}'", describe_field_type(arg)),
-            None => format!("{expected}, but this argument is {}", describe_field_type(arg)),
+            Some((_, text)) => format!("{expected}, but {argument} is {} — pass it as a list: '{text}'", describe_field_type(arg)),
+            None => format!("{expected}, but {argument} is {}", describe_field_type(arg)),
         };
         let mut diagnostic = crate::diagnostic::Diagnostic::error(codes::CALL_ARG_TYPE, message, span);
         if let Some((at, text)) = as_list {

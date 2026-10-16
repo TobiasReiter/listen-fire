@@ -26,7 +26,7 @@ use crate::types::{TypeEnv, Typing};
 impl Checker<'_> {
     /// A typing of expressions against `scope`.
     pub fn typing_env(&self, scope: ScopeId) -> ScopeEnv<'_> {
-        ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes }
+        ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes, upgrading_from: self.upgrading_from, function_values: &self.function_values }
     }
 
     /// An expression slot's type in `scope`, and what it may hold where its
@@ -84,10 +84,10 @@ impl Checker<'_> {
     /// (`landedAggregatePosition`), a second name for a record binds that
     /// record (`bareNodeSymbol`), and anything else binds the value as written
     /// (`holdsValue`: a list literal stays the tuple it is).
-    fn type_of_bound_slot(&self, slot: &ExprSlot, scope: ScopeId) -> Option<SymbolTypes> {
+    fn type_of_bound_slot(&self, slot: &ExprSlot, scope: ScopeId, holds_value: bool) -> Option<SymbolTypes> {
         // The slot as it was checked: each call it runs already hoisted to a name.
         if let Some((_, hoisted)) = self.nested_call_rewrite(slot, scope) {
-            return self.type_of_bound_slot(&hoisted, scope);
+            return self.type_of_bound_slot(&hoisted, scope, holds_value);
         }
         let expr = expression_of_slot(slot).ok()?;
         let env = self.typing_env(scope);
@@ -106,7 +106,7 @@ impl Checker<'_> {
         {
             return Some(SymbolTypes { pos: Some(pos), ..SymbolTypes::default() });
         }
-        let ty = typing.infer_exact(&expr);
+        let ty = if holds_value { typing.infer_exact(&expr) } else { typing.infer(&expr) };
         let may_hold = typing.may_hold_type(&expr);
         let may_hold = if ty.is_none() { may_hold } else { None };
         let many_valued = crate::types::narrowing::is_walk_projection(&expr)
@@ -123,8 +123,45 @@ impl Checker<'_> {
 
     /// The types a `name = value` binding carries.
     pub fn type_assigned(&mut self, name: &str, value: &RValue, scope: ScopeId) {
+        if let Some(types) = self.assigned_types(Some(name), value, scope) {
+            self.set_types(scope, name, types);
+        }
+    }
+
+    /// The types a value carries onto the name bound to it, or (no name) as
+    /// the value a `return` hands back: typed in the order a binding is —
+    /// the value as written, then what checking it found (a call's return, a
+    /// closure's inferred return, the record it is).
+    pub fn bound_types(&mut self, name: Option<&str>, value: &RValue, bound: &crate::checker::Bound, scope: ScopeId) -> Option<SymbolTypes> {
+        let mut types = self.assigned_types(name, value, scope);
+        if let (Some(returns), Some(SymbolTypes { pos: Some(Position::Closure(typed)), .. })) = (&bound.closure_returns, types.as_mut()) {
+            typed.returns = returns.clone();
+        }
+        if let Some(returned) = &bound.returned {
+            types = Some(crate::families::arg_fit::types_of_return(returned));
+        }
+        if let Some(pos) = &bound.pos {
+            types = Some(SymbolTypes { pos: Some(pos.clone()), ..SymbolTypes::default() });
+        } else if bound.record {
+            types = Some(SymbolTypes { is_record: true, ..SymbolTypes::default() });
+        }
+        if let Some(receipt) = &bound.receipt {
+            let may_hold = receipt.may_hold.clone().filter(|held| crate::types::field::shows_more_handles(held, receipt.ty.as_ref()));
+            types = Some(SymbolTypes { field: receipt.ty.clone(), may_hold, receipt_holds_record: receipt.holds_record, ..SymbolTypes::default() });
+        }
+        if let Some((returned, ordering)) = &bound.collected {
+            types = Some(collected_types(returned, *ordering));
+        }
+        types
+    }
+
+    /// `bound_types`' first step: the value as written. A name holds it
+    /// as written (a list literal stays the tuple it is); a returned value is
+    /// read, a tuple widening to its list.
+    fn assigned_types(&mut self, name: Option<&str>, value: &RValue, scope: ScopeId) -> Option<SymbolTypes> {
+        let holds_value = name.is_some();
         let types = match value {
-            RValue::Construct { construct } => self.instance_types(name, construct, scope),
+            RValue::Construct { construct } => self.instance_types(name?, construct, scope),
             RValue::Extract { extract } => SymbolTypes {
                 pos: Some(Position::Extract {
                     node: Rc::new(self.extract_graph(crate::types::position::EXTRACT_ROOT_NAME, &extract.stages, scope)),
@@ -135,22 +172,14 @@ impl Checker<'_> {
             RValue::ExtractCall { extract_call } => SymbolTypes { field: self.extract_call_type(extract_call, scope), ..SymbolTypes::default() },
             // From version 3 a positional call is also read as one expression
             // (`n = ONLY(…)`), and `check_call` reads it so.
-            RValue::Call { call } if call.expression.is_some() => {
-                match call.expression.as_ref().and_then(|expr| self.type_of_bound_slot(expr, scope)) {
-                    Some(types) => types,
-                    None => return,
-                }
-            }
-            RValue::Expr { expr } => match self.type_of_bound_slot(expr, scope) {
-                Some(types) => types,
-                None => return,
-            },
+            RValue::Call { call } if call.expression.is_some() => call.expression.as_ref().and_then(|expr| self.type_of_bound_slot(expr, scope, holds_value))?,
+            RValue::Expr { expr } => self.type_of_bound_slot(expr, scope, holds_value)?,
             RValue::Closure { closure } => {
                 SymbolTypes { pos: self.closure_type(closure, scope).map(Position::Closure), ..SymbolTypes::default() }
             }
-            _ => return,
+            _ => return None,
         };
-        self.set_types(scope, name, types);
+        Some(types)
     }
 
     /// An instance: the schema its construction picks.
@@ -236,9 +265,19 @@ impl Checker<'_> {
     }
 
     /// A parameter: the plane its declared type puts it on.
-    pub fn type_param(&mut self, body: ScopeId, name: &str, type_: &ParamTypeRef, declared_in: ScopeId) {
-        let plane = self.plane_type_of(type_, declared_in);
+    pub fn type_param(&mut self, body: ScopeId, name: &str, type_: &ParamTypeRef, declared_in: ScopeId, of: &ParamOf) {
+        let plane = self.parameter_plane(of, name, self.plane_type_of(type_, declared_in));
         self.set_types(body, name, SymbolTypes { pos: plane.pos.map(|p| *p), field: plane.field, ..SymbolTypes::default() });
+    }
+
+    /// `asParameter` on a parameter's plane: a record parameter carries its
+    /// function's cell for it, shared by every walk of the body.
+    pub fn parameter_plane(&self, of: &ParamOf, param: &str, plane: PlaneType) -> PlaneType {
+        let (Some(pos), Some(owner)) = (plane.pos.as_ref(), of.owner) else { return plane };
+        let pos = (**pos).clone();
+        let mut needs = self.param_needs.borrow_mut();
+        let cells = needs.entry(owner).or_default();
+        PlaneType { pos: Some(Box::new(crate::types::position::as_parameter(pos, cells, &of.function, param))), field: plane.field }
     }
 
     /// `planeTypeOf`: a written type, on whichever plane it lives.
@@ -321,7 +360,7 @@ impl Checker<'_> {
                     return None;
                 }
                 let label = format!("a closure <{}>", spell_value_type(value));
-                let closure = ClosureType { label, params: planes, returns: ReturnShape { returns: true, plane: returned, may_hold: None } };
+                let closure = ClosureType::new(label, planes, ReturnShape { returns: true, plane: returned, may_hold: None }, None);
                 Some(Ty::record(Some(Position::Closure(closure))))
             }
         }
@@ -331,16 +370,20 @@ impl Checker<'_> {
     /// returns, where no return type is written, is the closures family's to
     /// infer (`returns` stays untyped).
     pub fn closure_type(&self, closure: &ClosureExpression, scope: ScopeId) -> Option<ClosureType> {
+        let of = ParamOf::closure(closure, None);
         let params = closure
             .params
             .iter()
-            .map(|param| ClosureParam { name: param.name.clone(), plane: param.type_.as_ref().map(|t| self.plane_type_of(t, scope)).unwrap_or_default() })
+            .map(|param| ClosureParam {
+                name: param.name.clone(),
+                plane: param.type_.as_ref().map(|t| self.parameter_plane(&of, &param.name, self.plane_type_of(t, scope))).unwrap_or_default(),
+            })
             .collect();
         let returns = match &closure.return_type {
             Some(written) => ReturnShape { returns: true, plane: self.plane_type_of(written, scope), may_hold: None },
             None => ReturnShape { returns: true, ..ReturnShape::default() },
         };
-        Some(ClosureType { label: "a closure".to_string(), params, returns })
+        Some(ClosureType::new("a closure", params, returns, Some(closure.span)))
     }
 }
 
@@ -350,6 +393,21 @@ pub(crate) fn symbol_position(types: &SymbolTypes) -> Option<Position> {
         Some(Ty::Record(Some(position))) => Some((**position).clone()),
         _ => None,
     })
+}
+
+/// `planeOfReturn` for a traversal-headed block: what each walk of the body
+/// returned, collected — a list of values, or the returned record (records
+/// are many already, so the plurality lives on the name, with its order).
+fn collected_types(returned: &ReturnShape, ordering: crate::types::field::CollectionOrder) -> SymbolTypes {
+    use crate::types::field::list_of;
+    let may_hold = returned.may_hold.clone().map(|held| list_of(held, ordering));
+    if let Some(field) = &returned.plane.field {
+        return SymbolTypes { field: Some(list_of(field.clone(), ordering)), may_hold, ..SymbolTypes::default() };
+    }
+    if let Some(pos) = &returned.plane.pos {
+        return SymbolTypes { pos: Some((**pos).clone()), plural: Some(ordering), ..SymbolTypes::default() };
+    }
+    SymbolTypes { may_hold, ..SymbolTypes::default() }
 }
 
 /// `spellValueType`: a written value type as the author wrote it.
@@ -398,3 +456,29 @@ fn aggregated_bare_path(expr: &Expression) -> Option<(Option<&str>, &[movement_p
 }
 
 
+
+/// Whose parameter a cell is (`FieldsNeed`'s owner): a declared function, or a
+/// closure by where it is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NeedOwner {
+    Function(crate::scope::SymbolId),
+    Closure([usize; 4]),
+}
+
+/// The function a parameter belongs to, for its need cell.
+pub struct ParamOf {
+    /// `None` where the function has no symbol to file under.
+    pub owner: Option<NeedOwner>,
+    /// How a diagnostic names the function.
+    pub function: String,
+}
+
+impl ParamOf {
+    pub fn closure(closure: &ClosureExpression, self_name: Option<&str>) -> ParamOf {
+        let span = closure.span;
+        ParamOf {
+            owner: Some(NeedOwner::Closure([span.start.line, span.start.col, span.end.line, span.end.col])),
+            function: self_name.unwrap_or("the closure").to_string(),
+        }
+    }
+}

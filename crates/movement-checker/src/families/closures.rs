@@ -29,6 +29,8 @@ use crate::checker::Checker;
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::scope::{Resolution, ScopeId, Symbol, SymbolId, SymbolKind};
+use crate::types::field::{CollectionOrder, Ty, collection_order_of, list_of};
+use crate::types::position::{ClosureParam, PlaneType, ReturnShape};
 
 /// Whether a body hands a value back: a `return` at its own level or in an
 /// `if` arm (a block, a closure or a movement inside it returns for itself).
@@ -65,6 +67,59 @@ fn shift(loc: Loc, by: isize) -> Loc {
 
 fn edit(start: Loc, end: Loc, text: &str) -> serde_json::Value {
     json!({ "span": Span { start, end }, "text": text })
+}
+
+/// What a collection op hands its function (`CollectionMembers`): each
+/// member, REDUCE's starting value, and what each may hold beyond its type.
+struct Members {
+    /// REDUCE hands its starting value first.
+    reduce: bool,
+    element: Option<Ty>,
+    element_may_hold: Option<Ty>,
+    carried: Option<Ty>,
+    carried_may_hold: Option<Ty>,
+}
+
+/// A combinator's answer (`checkCombinator`'s value): its type, what its
+/// slots may hold beyond that type (`combinatorMayHold`), and whether an arm
+/// hands back a record (`receiptHoldsRecord`).
+#[derive(Debug, Clone, Default)]
+pub struct Receipt {
+    pub ty: Option<Ty>,
+    pub may_hold: Option<Ty>,
+    pub holds_record: bool,
+}
+
+/// `combinatorMayLeaveSlotsNull`: a race settles on its first arm; an `all`
+/// whose `onError` lets a failed arm through leaves that slot empty.
+fn combinator_may_leave_slots_null(combinator: &CombinatorExpression) -> bool {
+    if combinator.kind == CombinatorKind::Race {
+        return true;
+    }
+    let Some(settings) = &combinator.settings else { return false };
+    let Ok(parsed) = crate::slots::expression_of_slot(settings) else { return false };
+    crate::families::collection_config::on_error_lets_through(&parsed, crate::families::collection_config::ALL_SETTING_KEYS)
+}
+
+/// `receiptMayHold`: each slot as what its arm's returns may hold, or the
+/// record it hands back, which the tuple cannot type.
+fn receipt_may_hold(nullable: bool, slots: &[ReturnShape]) -> Ty {
+    Ty::Tuple {
+        of: slots
+            .iter()
+            .map(|slot| {
+                if !slot.returns {
+                    return Some(Ty::Absent);
+                }
+                let held = slot.may_hold.clone().or_else(|| slot.plane.field.clone()).or_else(|| match slot.plane.pos.as_deref() {
+                    Some(crate::types::position::Position::Closure(_)) | None => None,
+                    Some(position) => Some(Ty::record(Some(position.clone()))),
+                })?;
+                Some(if nullable { crate::types::field::maybe_absent(held) } else { held })
+            })
+            .collect(),
+        rest: None,
+    }
 }
 
 fn arm_span(arm: &ArmExpression) -> Span {
@@ -272,35 +327,77 @@ impl Checker<'_> {
         }
     }
 
-    pub fn check_combinator(&mut self, combinator: &CombinatorExpression, scope: ScopeId) {
+    /// `checkCombinator`: the arms are functions the combinator calls, so it
+    /// parks, and its answer is positional — one slot per arm written down,
+    /// each what that arm returned (`T | null` where a slot may be left
+    /// empty: a race, or an `onError` that lets a failed arm through). Arms
+    /// built at run time give an answer nobody can type.
+    pub fn check_combinator(&mut self, combinator: &CombinatorExpression, scope: ScopeId) -> Receipt {
         let kind = kind_name(combinator.kind);
         // Running arms concurrently is still running them: the combinator
         // waits, so it parks.
         self.flag_suspend();
-        match &combinator.arms {
-            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => {
-                for arm in arms {
-                    self.check_arm(arm, kind, scope, 0);
+        let arms = match &combinator.arms {
+            CombinatorArms::Literal { arms, .. } | CombinatorArms::Arguments { arms, .. } => arms,
+            CombinatorArms::Dynamic { expr, .. } => {
+                self.check_expr_slot(expr, scope);
+                return Receipt::default();
+            }
+        };
+        let nullable = combinator_may_leave_slots_null(combinator);
+        let slots: Vec<ReturnShape> = arms.iter().map(|arm| self.check_arm(arm, kind, scope, 0)).collect();
+        // A closure is not data (version 5): an arm that hands one back would
+        // keep it in the answer.
+        if since(self.version, 5) {
+            for (arm, slot) in arms.iter().zip(&slots) {
+                let closure = matches!(slot.plane.pos.as_deref(), Some(crate::types::position::Position::Closure(_)))
+                    || crate::types::field::may_be_closure(slot.plane.field.as_ref())
+                    || crate::types::field::may_be_closure(slot.may_hold.as_ref());
+                if slot.returns && closure {
+                    self.report(
+                        codes::CLOSURE_NOT_DATA,
+                        crate::types::field::closure_not_data_message(&format!("'{kind}' keeps what each arm returns in its answer, and this arm returns")),
+                        arm_span(arm),
+                    );
                 }
             }
-            CombinatorArms::Dynamic { expr, .. } => self.check_expr_slot(expr, scope),
         }
+        let holds_record = slots.iter().any(|slot| slot.returns && (slot.plane.pos.is_some() || crate::types::field::is_record(slot.plane.field.as_ref())));
+        let may_hold = receipt_may_hold(nullable, &slots);
+        let ty = Ty::Tuple {
+            of: slots
+                .iter()
+                .map(|slot| {
+                    // An arm that hands nothing back is an always-null slot under
+                    // every combinator: a join cannot invent a value the arm never made.
+                    if !slot.returns {
+                        return Some(Ty::Absent);
+                    }
+                    let field = slot.plane.field.clone()?;
+                    Some(if nullable { crate::types::field::maybe_absent(field) } else { field })
+                })
+                .collect(),
+            rest: None,
+        };
+        Receipt { ty: Some(ty), may_hold: Some(may_hold), holds_record }
     }
 
-    /// `checkArm`: a closure written in place, or the name of a function. The
-    /// caller supplies `expected` arguments. Whether it hands a value back,
-    /// when that is known.
-    fn check_arm(&mut self, arm: &ArmExpression, kind: &str, scope: ScopeId, expected: usize) -> Option<bool> {
+    /// `checkArm`: a closure written in place, or the name of a function; the
+    /// combinator calls it with nothing, and what it returns is its slot.
+    fn check_arm(&mut self, arm: &ArmExpression, kind: &str, scope: ScopeId, expected: usize) -> ReturnShape {
         match arm {
             ArmExpression::Closure { closure, span } => {
-                let (returns, suspends) = self.check_closure_walked(closure, scope, None, &format!("an arm of '{kind}'"), 0);
+                let (body, suspends) = self.check_closure_walked(closure, scope, None, &format!("an arm of '{kind}'"), 0);
                 if closure.params.len() != expected {
                     self.report_arm_arity(kind, expected, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
                 self.absorb_suspend(suspends);
-                Some(!returns.is_empty() || closure.return_type.is_some())
+                self.closure_returns(closure, body.value, scope)
             }
-            ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, kind, scope, expected),
+            ArmExpression::Ref { name, span } => {
+                self.check_named_arm(name, *span, kind, scope, expected);
+                self.named_function_return(name, scope)
+            }
         }
     }
 
@@ -361,9 +458,10 @@ impl Checker<'_> {
         self.report(codes::COLLECTION_OP_ARITY, message, span);
     }
 
-    /// `checkCollectionOp`, the parts that need no types: the slots, and the
-    /// function the op is given.
-    pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) {
+    /// `checkCollectionOp`: the slots, the function the op is given, and
+    /// the op's value — what the function hands back, collected as the op
+    /// collects it.
+    pub fn check_collection_op(&mut self, op: &CollectionOpExpression, scope: ScopeId) -> ReturnShape {
         let spelling = op_spelling(op.op);
         let source = self.check_expr_slot_with(&op.source, scope, crate::checker::SlotOptions::default());
         let init = op.init.as_ref().map(|init| self.check_expr_slot_with(init, scope, crate::checker::SlotOptions::default()));
@@ -371,16 +469,33 @@ impl Checker<'_> {
             self.check_collection_config(config, spelling, None);
         }
         let element = self.collection_element(&op.source, source.expr.as_ref(), source.ty.as_ref(), spelling, scope);
+        let ordering = collection_order_of(source.ty.as_ref());
+        // The order-sensitive one, held to the rule every order-sensitive fold is.
+        if op.op == CollectionOp::Reduce && ordering == CollectionOrder::Unordered {
+            self.report(
+                codes::FOLD_NEEDS_ORDER,
+                "'REDUCE' reads the members one after another, so the answer depends on the order they are in — and nothing has given this collection one. Order the traversal it came from ('ORDER BY'), or fold it with something that answers the same over any order ('COUNT', 'SUM', 'MIN', 'MAX', 'ONLY').",
+                op.source.span,
+            );
+        }
+        let members = Members {
+            reduce: op.op == CollectionOp::Reduce,
+            element: element.clone(),
+            element_may_hold: source.may_hold.as_ref().and_then(crate::types::field::collection_element_of),
+            carried: init.as_ref().and_then(|i| i.ty.clone()),
+            carried_may_hold: init.as_ref().and_then(|i| i.may_hold.clone()),
+        };
+        let carried = members.carried.clone();
         let arity = if op.op == CollectionOp::Reduce { 2 } else { 1 };
         // The function is called once per member, so a parameter it leaves
         // untyped takes the member's type (REDUCE's first, the carried value's).
-        let as_value = |ty: Option<crate::types::Ty>| crate::types::position::PlaneType { field: ty, pos: None };
+        let as_value = |ty: Option<Ty>| PlaneType { field: ty, pos: None };
         let supplied = if op.op == CollectionOp::Reduce {
-            vec![as_value(init.and_then(|i| i.ty)), as_value(element)]
+            vec![as_value(carried.clone()), as_value(element.clone())]
         } else {
-            vec![as_value(element)]
+            vec![as_value(element.clone())]
         };
-        let returns = match &op.r#fn {
+        let (returns, shape) = match &op.r#fn {
             ArmExpression::Closure { closure, span } => {
                 if closure.params.len() != arity {
                     self.report_arm_arity(spelling, arity, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
@@ -393,10 +508,32 @@ impl Checker<'_> {
                         *span,
                     );
                 }
+                // A parameter left untyped takes the member's type.
+                let of = crate::binding_types::ParamOf::closure(closure, None);
+                let bound: Vec<(ClosureParam, bool)> = closure
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(index, param)| match &param.type_ {
+                        Some(written) => (ClosureParam { name: param.name.clone(), plane: self.parameter_plane(&of, &param.name, self.plane_type_of(written, scope)) }, true),
+                        None => (ClosureParam { name: param.name.clone(), plane: supplied.get(index).cloned().unwrap_or_default() }, false),
+                    })
+                    .collect();
+                let callee = format!("the function for '{spelling}'");
+                self.check_members_fields_in_hand(spelling, &callee, &bound, &members, *span);
+                self.check_members_fit_params(op, spelling, &callee, &bound, &members);
                 self.absorb_suspend(suspends);
-                Some(!returned.is_empty() || closure.return_type.is_some())
+                let returns = Some(!returned.returns.is_empty() || closure.return_type.is_some());
+                (returns, self.closure_returns(closure, returned.value, scope))
             }
-            ArmExpression::Ref { name, span } => self.check_named_arm(name, *span, spelling, scope, arity),
+            ArmExpression::Ref { name, span } => {
+                let returns = self.check_named_arm(name, *span, spelling, scope, arity);
+                let named: Vec<(ClosureParam, bool)> = self.named_function_params(name, scope).into_iter().map(|param| (param, true)).collect();
+                let callee = format!("'{name}'");
+                self.check_members_fields_in_hand(spelling, &callee, &named, &members, *span);
+                self.check_members_fit_params(op, spelling, &callee, &named, &members);
+                (returns, self.named_function_return(name, scope))
+            }
         };
         if op.op != CollectionOp::Map && returns == Some(false) {
             self.report(
@@ -405,5 +542,153 @@ impl Checker<'_> {
                 arm_span(&op.r#fn),
             );
         }
+        // A MAP function with no `return` leaves each slot absent.
+        let shape = if op.op == CollectionOp::Map && !shape.returns { ReturnShape { returns: true, plane: as_value(Some(Ty::Absent)), may_hold: None } } else { shape };
+        let returned = shape.plane.field.clone().or_else(|| shape.plane.pos.as_deref().map(|p| Ty::record(Some(p.clone()))));
+        if matches!(op.op, CollectionOp::Groupby | CollectionOp::Keyby) {
+            let diagnostics = {
+                let env = self.typing_env(scope);
+                let mut typing = crate::types::Typing::new(&env, self.version, arm_span(&op.r#fn));
+                crate::families::values::require_dict_key(&mut typing, returned.as_ref(), &format!("filed under by '{spelling}'"));
+                typing.diagnostics
+            };
+            for diagnostic in diagnostics {
+                self.push(diagnostic);
+            }
+        }
+        let value = match op.op {
+            CollectionOp::Map => returned.map(|r| list_of(r, ordering)),
+            CollectionOp::Filter => element.map(|e| list_of(e, ordering)),
+            CollectionOp::Reduce => returned.or(carried),
+            CollectionOp::Groupby => element.map(|e| Ty::Dict { of: Box::new(list_of(e, ordering)), shape: None }),
+            CollectionOp::Keyby => element.map(|e| Ty::Dict { of: Box::new(e), shape: None }),
+        };
+        // What the function's returns may hold beyond that type travels with
+        // the op's value, as a call's does: MAP's as members, REDUCE's as itself.
+        let may_hold = match op.op {
+            CollectionOp::Map => shape.may_hold.map(|held| list_of(held, ordering)),
+            CollectionOp::Reduce => shape.may_hold,
+            _ => None,
+        };
+        ReturnShape { returns: true, plane: as_value(value), may_hold }
+    }
+
+    /// The parameters of a function named as an op's function, with the
+    /// types they are written with.
+    fn named_function_params(&mut self, written: &str, scope: ScopeId) -> Vec<ClosureParam> {
+        let callee = self.callee_name(written, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return Vec::new() };
+        // What a function's body needs of each record parameter is learned
+        // on the inference walk, which a declared return type otherwise skips.
+        if self.scopes.symbol(id).kind == SymbolKind::Movement {
+            self.infer_movement(id);
+        }
+        let symbol = self.scopes.symbol(id);
+        match &symbol.types.pos {
+            Some(crate::types::position::Position::Closure(closure)) => closure.params.clone(),
+            _ if symbol.kind == SymbolKind::Movement => self.movement_declared_params(id).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `checkMembersFieldsInHand`: the members a collection op binds to its
+    /// function's parameters, against what the function's body needs of each
+    /// record parameter — the call-site check, where the op makes the call.
+    fn check_members_fields_in_hand(&mut self, spelling: &str, callee: &str, params: &[(ClosureParam, bool)], members: &Members, span: Span) {
+        let supplied = [members.carried.as_ref(), members.element.as_ref()];
+        let supplied: &[Option<&Ty>] = if members.reduce { &supplied } else { &supplied[1..] };
+        for (index, (param, _)) in params.iter().enumerate() {
+            let need = crate::types::position::parameter_need_of(param.plane.pos.as_deref());
+            let member = supplied.get(index).copied().flatten().and_then(|ty| crate::types::field::record_in(Some(ty)).flatten());
+            let (Some(need), Some(member)) = (need, member) else { continue };
+            let at = format!("hands it to {callee} as '{}' (line {})", need.borrow().param, span.start.line);
+            let Some(shortfall) = self.fields_in_hand_shortfall(&need, &member, &at) else { continue };
+            self.report(
+                codes::CALL_ARG_OPAQUE_RECORD,
+                format!(
+                    "{callee} needs every field of {} in hand — its body {} — and '{spelling}' hands it each member of the collection, {}, {}. Copy the fields it needs into records the program holds first ('MAP(…, (r) => {{ return node {{ name: r.name, … }} }})'), or have the function read the fields it uses one by one",
+                    shortfall.what,
+                    shortfall.why,
+                    crate::types::position::describe_position(&member),
+                    shortfall.whose
+                ),
+                span,
+            );
+        }
+    }
+
+    /// `checkMembersFitParams`: the members a collection op binds to its
+    /// function's parameters, against the types those parameters are written
+    /// with — the call-site fit, where the op, not the author, makes the
+    /// call (TypeScript refuses `["a"].map((n: number) => n)`). REDUCE's
+    /// starting value is held to its accumulator, each member to the
+    /// parameter after it. Refused from version 5; from 3 the op ran, handing
+    /// the function the member as it was, so an older pin is warned.
+    fn check_members_fit_params(&mut self, op: &CollectionOpExpression, spelling: &str, callee: &str, params: &[(ClosureParam, bool)], members: &Members) {
+        if before(self.version, 3) {
+            return;
+        }
+        let each = (members.element.as_ref(), members.element_may_hold.as_ref(), "each member", op.source.span);
+        let given = if op.op == CollectionOp::Reduce {
+            vec![(members.carried.as_ref(), members.carried_may_hold.as_ref(), "its starting value", op.init.as_ref().map_or(op.span, |i| i.span)), each]
+        } else {
+            vec![each]
+        };
+        self.as_upgrade_warnings_before_5("the function is handed the member as it is", |this| {
+            for (index, (ty, may_hold, argument, span)) in given.into_iter().enumerate() {
+                let Some((param, written)) = params.get(index) else { continue };
+                let fit = crate::families::arg_fit::ArgFit {
+                    callee,
+                    param: Some(param),
+                    index,
+                    positional: true,
+                    plugin: None,
+                    caller: Some(crate::families::arg_fit::ArgCaller { callee: callee.to_string(), argument: format!("{argument} '{spelling}' hands it") }),
+                };
+                let record = crate::types::field::record_in(ty).flatten();
+                if let Some(param_ty) = &param.plane.field {
+                    if record.is_none() {
+                        this.refuse_maybe_record_for_value(&fit, param_ty, ty, may_hold, span, "");
+                    }
+                    // A parameter that took the member's own type fits it.
+                    if *written {
+                        this.check_value_arg_fit_at(&fit, param_ty, ty, span);
+                    }
+                    continue;
+                }
+                if let Some(param_pos) = param.plane.pos.as_deref().filter(|_| *written) {
+                    this.check_call_arg_fit_at(&fit, record.as_ref(), param_pos, span);
+                }
+            }
+        });
+    }
+
+    /// `asUpgradeWarningsBefore5`: checks whose refusals are new under
+    /// version 5 — before it, each error they report is an upgrade warning
+    /// saying what the older version did (`then`).
+    pub fn as_upgrade_warnings_before_5(&mut self, then: &str, run: impl FnOnce(&mut Self)) {
+        let from = self.diagnostics.len();
+        run(self);
+        if since(self.version, 5) {
+            return;
+        }
+        for diagnostic in &mut self.diagnostics[from..] {
+            if diagnostic.severity.is_some() {
+                continue;
+            }
+            diagnostic.message = format!("{}. Before {} {then}; from it, this is refused", diagnostic.message, crate::version::describe(5));
+            diagnostic.severity = Some(crate::diagnostic::Severity::Warning);
+            diagnostic.upgrade = Some(true);
+        }
+    }
+
+    /// What a function named as an op's function hands back.
+    fn named_function_return(&mut self, written: &str, scope: ScopeId) -> ReturnShape {
+        let callee = self.callee_name(written, scope);
+        let Resolution::Found(id) = self.scopes.resolve(scope, &callee) else { return crate::families::returns::unknown_return() };
+        if self.scopes.symbol(id).kind == SymbolKind::Movement {
+            return self.movement_return(id);
+        }
+        self.called_closure(id).map_or_else(crate::families::returns::unknown_return, |closure| closure.returns)
     }
 }

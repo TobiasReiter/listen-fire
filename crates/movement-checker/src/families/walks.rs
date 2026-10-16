@@ -113,6 +113,10 @@ fn report_step(typing: &mut Typing, from: &Position, edge: &str, filter: Option<
                             describe_position(from)
                         ),
                     );
+                    return;
+                }
+                if edge_schema.watchable == Some(true) {
+                    typing.watchable_reads.push(edge.to_string());
                 }
             }
             // A write-only edge is the writes family's (MOV_WRITE_ONLY_EDGE).
@@ -272,19 +276,36 @@ pub fn observe_read(typing: &mut Typing, position: Option<&Position>, property: 
     }
 }
 
+/// `refuseUnsentFile` (language version 5): a write handle's file field the
+/// write did not send holds the system's description of the file, not the file.
+fn refuse_unsent_file(typing: &mut Typing, handle: &crate::types::position::HandlePosition, property: &str, ty: &Ty) {
+    if typing.version < 5 || !handle.written || handle.set_fields.as_ref().is_some_and(|set| set.contains(property)) {
+        return;
+    }
+    if !crate::types::field::base_kinds(&crate::types::field::unwrap_list(crate::types::field::strip_absent(ty))).contains(&crate::types::field::BaseKind::File) {
+        return;
+    }
+    typing.report(
+        codes::HANDLE_FILE_NOT_SENT,
+        format!("'{property}' is a file this write did not send, so the write's handle holds the system's description of it, not the file — read the record back through its edge to get the file, as a walk read does (`h-[:Files]->`), or send the file in this write"),
+    );
+}
+
 /// `readProperty`, the reporting half. A write-only field is the writes
 /// family's (MOV_WRITE_ONLY_PROPERTY), an extracted node's the extraction
 /// family's, a retired handle field the records family's.
 fn report_read(typing: &mut Typing, position: &Position, property: &str) {
     match position {
         Position::Handle(h) => {
-            if h.result_shape.contains_key(property) {
+            if let Some(declared) = h.result_shape.get(property) {
+                refuse_unsent_file(typing, h, property, declared);
                 return;
             }
             let schema = position_schema_of_ref(position).map(|s| s.into_owned());
             if let Some(schema) = &schema
-                && schema.properties.contains_key(property)
+                && let Some(from_position) = schema.properties.get(property)
             {
+                refuse_unsent_file(typing, h, property, &Ty::from_schema(from_position));
                 report_ambiguous_property(typing, position, schema, property);
                 return;
             }
@@ -816,7 +837,7 @@ impl crate::checker::Checker<'_> {
     pub fn walk_head(&mut self, head: &PathHead, scope: ScopeId, awaited: bool) -> Option<HeadWalk> {
         let steps = Self::head_steps(head)?;
         let start = self.head_root_type(head, scope)?;
-        let (walk, diagnostics) = {
+        let (walk, diagnostics, watchable) = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, head.span);
             let landed = typing.walk_steps(Some(start), &steps, awaited);
@@ -826,8 +847,9 @@ impl crate::checker::Checker<'_> {
                 last_edge_schema: typing.last_edge_schema.clone(),
                 ordering: typing.last_ordering,
             };
-            (walk, std::mem::take(&mut typing.diagnostics))
+            (walk, std::mem::take(&mut typing.diagnostics), std::mem::take(&mut typing.watchable_reads))
         };
+        self.effects.note_watchable_reads(&watchable);
         for diagnostic in diagnostics {
             self.push(diagnostic);
         }
@@ -873,6 +895,7 @@ impl crate::checker::Checker<'_> {
             return;
         }
         if let Some(hops) = &reference.hops_raw {
+            self.report_meta_hops_in_type_ref(hops, reference.span);
             self.check_address_pins(&reference.graph, hops, reference.span, scope);
         }
         let symbol = self.scopes.symbol(id);
@@ -940,6 +963,7 @@ fn residual_union(union: &crate::types::position::UnionPosition, remaining: &[St
         narrows_event: None,
         display: Some(display),
         address: None,
+        parameter: union.parameter.clone(),
     })
 }
 
@@ -1141,13 +1165,14 @@ impl crate::checker::Checker<'_> {
 
 impl crate::checker::Checker<'_> {
     /// `checkWalkKeepsWhatIsWritten`, the hop half: what the lowering would
-    /// drop from a walk written in an expression. Not ported yet: the
-    /// `#transform` hop's message (it names the plugin's call), a retired
-    /// meta hop (version 5), and a walk ending in a resource hop.
+    /// drop from a walk written in an expression. A walk ending in a resource
+    /// hop is the extraction family's.
     pub fn check_walk_keeps_what_is_written(&mut self, hops: &[movement_parser::tree::Hop], span: movement_parser::ast::Span) {
         for hop in hops {
             let label = hop.label.text.as_str();
             if label == "#transform" {
+                let message = self.transform_hop_retired_message(hop);
+                self.report(codes::TRANSFORM_HOP_RETIRED, message, span);
                 continue;
             }
             // `endingHop`: the label up to its first ':' or space.
@@ -1158,6 +1183,7 @@ impl crate::checker::Checker<'_> {
             }
             // `isRetiredMetaHop`: from version 5 its own diagnostic, never the settings one.
             if self.version >= 5 && label.starts_with('#') && label != "#extract" {
+                self.report(codes::META_HOP_RETIRED, meta_hop_retired_message(label), span);
                 continue;
             }
             if hop.config.is_some() {
@@ -1169,4 +1195,101 @@ impl crate::checker::Checker<'_> {
             }
         }
     }
+
+    /// `reportMetaHopsInTypeRef` (language version 5): a type's address walks
+    /// no `#` hop either, refused where the address is written.
+    pub fn report_meta_hops_in_type_ref(&mut self, hops_raw: &str, span: movement_parser::ast::Span) {
+        if self.version < 5 {
+            return;
+        }
+        // `hopsOfAddress`: the address read by the expression grammar; none
+        // when it does not parse (the address's own check says so).
+        let parsed = movement_parser::expr::parse_expression(&format!("__address_probe__{hops_raw}"));
+        let Ok(movement_parser::tree::MExpr::Path { hops, .. }) = &parsed else { return };
+        for hop in hops {
+            if hop.label.text.starts_with('#') && hop.label.text != "#extract" {
+                self.report(codes::META_HOP_RETIRED, meta_hop_retired_message(&hop.label.text), span);
+            }
+        }
+    }
+
+    /// `transformHopRetiredMessage`: the call to write instead, named from
+    /// the hop's `plugin` setting when the catalog knows it.
+    fn transform_hop_retired_message(&self, hop: &movement_parser::tree::Hop) -> String {
+        use crate::families::names::{import_line, spell_name};
+        use movement_parser::tree::{MExpr, MapKey, MapMember, StringPart};
+        let lead = "the '#transform' hop is retired — the movement engine never runs it. Import the plugin and call it with the value it reads";
+        let plugin = hop.config.as_ref().and_then(|config| {
+            config.entries.iter().find_map(|entry| match entry {
+                MapMember::Entry { key, value } if map_key_text(key) == "plugin" => Some(value),
+                _ => None,
+            })
+        });
+        let plugin = match plugin {
+            Some(MExpr::String { parts, .. }) => match parts.as_slice() {
+                [StringPart::Text(text)] => Some(text.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        fn map_key_text(key: &MapKey) -> &str {
+            match key {
+                MapKey::Name(name) => &name.text,
+                MapKey::String(key) => &key.text,
+            }
+        }
+        let Some((plugin, spec)) = plugin.and_then(|p| self.catalog.plugin(p).map(|spec| (p, spec))) else {
+            return format!("{lead}, e.g. '{}', then 'page = fetch_url(url: m.u)'", import_line("fetch_url", "plugins"));
+        };
+        if self.version >= 5 {
+            return transform_hop_as_function(plugin, spec);
+        }
+        let args = spec.required_args.iter().flatten().map(|arg| format!("{arg}: …")).collect::<Vec<_>>().join(", ");
+        format!(
+            "{lead}: '{}', then 'out = {}({})'",
+            import_line(plugin, "plugins"),
+            spell_name(plugin),
+            if args.is_empty() { "…" } else { &args }
+        )
+    }
+}
+
+/// `transformHopAsFunction` (language version 5): a plugin is a function, or
+/// a stage of an extraction when it has no output of its own.
+fn transform_hop_as_function(plugin: &str, spec: &movement_parser::catalog::types::PluginSpec) -> String {
+    use crate::families::names::{import_line, spell_name};
+    let lead = "the '#transform' hop is retired — there are no meta edges, and a plugin is a function";
+    let name = spell_name(plugin);
+    if spec.effects.is_none() || spec.fed_by_extraction == Some(true) || spec.output.is_none() {
+        return format!("{lead}, but '{plugin}' runs only as a stage of an extraction: '{}', then 'extract from [ … ] through [{name}] {{ … }}'", import_line(plugin, "plugins"));
+    }
+    let required: Vec<String> = spec
+        .required_args
+        .iter()
+        .flatten()
+        .cloned()
+        .chain(spec.fed_args.iter().flatten().filter(|fed| fed.required == Some(true)).map(|fed| fed.name.clone()))
+        .map(|arg| format!("{arg}: …"))
+        .collect();
+    let args = required.join(", ");
+    format!(
+        "{lead}: import it and call it, and bind what it hands back like any function's result — '{}', then 'out = {name}({})'",
+        import_line(plugin, "plugins"),
+        if args.is_empty() { "…" } else { &args }
+    )
+}
+
+/// `metaHopRetiredMessage` (language version 5).
+fn meta_hop_retired_message(label: &str) -> String {
+    let lead = format!("'-[:{label}]->' is a '#' hop, and '#' hops are retired — there are no meta edges, only the edges a system declares");
+    if label == "#transform" {
+        return format!("{lead}. A plugin is a function: import it and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(url: …)')");
+    }
+    if label == "#linked" || label.starts_with("#linked ") {
+        return format!("{lead}. Keep the write's handle and read from it ('rec = write crm-[:Companies]-> {{ … }}', then 'rec.<field>')");
+    }
+    if label.split(|c: char| c == ':' || c.is_whitespace()).next() == Some("#resources") {
+        return format!("{lead}. '#resources' is the old spelling of the resource edge: write '-[f:_resources]->' off an extraction's result, or walk the edge a system declares to a record's files");
+    }
+    format!("{lead}. Walk an edge the record has; for what a plugin computes, import the plugin and call it ('import {{ fetch_url }} from plugins', then 'page = fetch_url(url: …)')")
 }
