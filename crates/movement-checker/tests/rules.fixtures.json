@@ -3149,6 +3149,16 @@
     "MOV_EXPR_PARSE 4:37-4:68 a closure cannot be written here — bind it to a name first and pass the name",
     "MOV_EXPR_PARSE 5:45-5:86 a closure cannot be written here — bind it to a name first and pass the name"
    ]
+  },
+  {
+   "name": "before version 3 a call statement naming a built-in is a call of a name nothing binds",
+   "snapshot": "none",
+   "version": 2,
+   "source": "movement m() {\n  UPPER(text: \"a\")\n  LOWER(text: \"b\")\n}\n",
+   "expected": [
+    "MOV_NAME_UNRESOLVED 2:3-2:19 Unknown name 'UPPER' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope",
+    "MOV_NAME_UNRESOLVED 3:3-3:19 Unknown name 'LOWER' — every name must be imported, bound by '=', a movement parameter, or a traversal alias in scope"
+   ]
   }
  ]
 }

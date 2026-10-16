@@ -1393,8 +1393,7 @@ impl Checker<'_> {
         let unknown_member = matches!(resolution, Resolution::Unknown).then(|| self.unknown_package_member(&call.callee)).flatten();
         if let Some(message) = unknown_member {
             self.report(codes::V5_UNKNOWN_MEMBER, message, call.span);
-        // Before version 3 a built-in is not a callee (no standard library).
-        } else if matches!(resolution, Resolution::Found(_)) || !crate::families::names::is_builtin_name(&call.callee) {
+        } else {
             match resolution {
                 Resolution::Found(id) => (params, value) = self.check_callee(call, id, scope),
                 Resolution::Unknown
