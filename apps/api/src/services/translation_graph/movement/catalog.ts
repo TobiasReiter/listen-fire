@@ -533,6 +533,12 @@ export interface TeamMovementCatalog {
   /** What this assembly cost, for the authoring-latency log (./timing.ts).
    *  Absent on a hand-built catalog — only the live assembly pays anything. */
   cost?: CatalogAssemblyCost;
+  /** The snapshot a run of the source would check and run against, from
+   *  this same assembly (`runCatalogSnapshotForTeam`): what a validation
+   *  checks against when the source's version runs on the Rust engine, so
+   *  its verdict is the run's. Absent on a hand-built catalog, which a
+   *  validation then checks with the TypeScript checker. */
+  runSnapshot?: () => CatalogSnapshot;
 }
 
 /**
@@ -740,7 +746,8 @@ export async function movementCatalogForTeam(
   teamId: TeamId,
   options: TeamCatalogOptions = {},
 ): Promise<TeamMovementCatalog> {
-  return (await assembleTeamCatalog(teamId, options)).catalog;
+  const assembled = await assembleTeamCatalog(teamId, options);
+  return { ...assembled.catalog, runSnapshot: () => runSnapshotOf(assembled).snapshot };
 }
 
 interface TeamCatalogOptions {
@@ -1629,10 +1636,10 @@ export async function runCatalogSnapshotForTeam(
   teamId: TeamId,
   options: { source: string; languageVersion?: LanguageVersion },
 ): Promise<RunCatalogSnapshot> {
-  const { catalog: live, manifests, credentialRows, fileSources } = await assembleTeamCatalog(
-    teamId,
-    options,
-  );
+  return runSnapshotOf(await assembleTeamCatalog(teamId, options));
+}
+
+function runSnapshotOf({ catalog: live, manifests, credentialRows, fileSources }: AssembledTeamCatalog): RunCatalogSnapshot {
   const notes = [...live.notes];
   const adapters = skeletonAdapters({ manifests, credentialRows, notes });
   fillCompiledSchemas(adapters, live);

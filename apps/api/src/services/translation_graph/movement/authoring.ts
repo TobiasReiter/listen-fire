@@ -16,13 +16,16 @@ import {
   CURRENT_LANGUAGE_VERSION,
   MovementParseError,
   checkProgram,
+  checkSourceInRust,
   diagnosticSeverity,
   languageVersionDiagnostic,
   parseProgram,
+  since,
 } from 'movement-lang';
 
 import type {
   Catalog,
+  CatalogSnapshot,
   Diagnostic,
   LanguageVersion,
   Program,
@@ -34,6 +37,7 @@ import type { CatalogGap } from './catalog';
 import type { MovementValidityStatus } from './store';
 
 import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
+import { RUST_ENGINE_FROM_VERSION } from 'movement-engine/services/movement_engine/rust_engine';
 import { movementCatalogForTeam } from './catalog';
 import { stepTimer, type StepTimer } from './timing';
 
@@ -146,6 +150,13 @@ export function diagnoseMovementSource(
      *  to `languageVersion` — adds the checker's warnings for constructs whose
      *  meaning changed between the two (`CheckOptions.upgradingFrom`). */
     upgradingFrom?: LanguageVersion;
+    /** The snapshot a run of the source checks and runs against, from the
+     *  same assembly as `catalog`. With it, a version that runs on the Rust
+     *  engine is checked by the Rust checker against it — the check its run
+     *  enforces. Without it (a caller holding only a catalog object, as unit
+     *  tests do) the TypeScript checker answers; `validateMovementForTeam`
+     *  always passes it. */
+    snapshot?: CatalogSnapshot;
   },
 ): MovementValidation {
   const lines = source.split('\n');
@@ -181,12 +192,15 @@ export function diagnoseMovementSource(
     };
   }
 
+  const upgrading = options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {};
   const collected: Diagnostic[] = [
-    ...checkProgram(program, options.catalog, {
-      languageVersion,
-      ...(options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
-      ...(options.resolveFile !== undefined ? { resolveFile: options.resolveFile } : {}),
-    }),
+    ...(options.snapshot !== undefined && since(languageVersion, RUST_ENGINE_FROM_VERSION)
+      ? checkSourceInRust(source, options.snapshot, { languageVersion, ...upgrading })
+      : checkProgram(program, options.catalog, {
+          languageVersion,
+          ...upgrading,
+          ...(options.resolveFile !== undefined ? { resolveFile: options.resolveFile } : {}),
+        })),
   ];
   const firedMovements: string[] = [];
   for (const statement of program.statements) {
@@ -320,6 +334,7 @@ async function runValidate(
       catalog: teamCatalog.catalog,
       resolveCredentialId: teamCatalog.resolveCredentialId,
       resolveFile: teamCatalog.resolveFile,
+      ...(teamCatalog.runSnapshot !== undefined ? { snapshot: teamCatalog.runSnapshot() } : {}),
       ...(input.languageVersion !== undefined ? { languageVersion: input.languageVersion } : {}),
       ...(input.upgradingFrom !== undefined ? { upgradingFrom: input.upgradingFrom } : {}),
     }),
