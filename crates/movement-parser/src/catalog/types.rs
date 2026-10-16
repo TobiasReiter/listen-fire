@@ -34,8 +34,14 @@ pub fn read_catalog<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, String> 
 /// An object keyed by data, in JavaScript's key order: array-index keys
 /// first, ascending, then the rest as written — the order `JSON.parse` gives
 /// the TypeScript and every `Object.keys`/`Object.entries` over it sees.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsMap<V>(pub IndexMap<String, V>);
+
+impl<V> Default for JsMap<V> {
+    fn default() -> Self {
+        JsMap(IndexMap::new())
+    }
+}
 
 impl<V> Deref for JsMap<V> {
     type Target = IndexMap<String, V>;
@@ -425,6 +431,9 @@ pub struct InstanceSchema {
     pub unions: Option<JsMap<Vec<String>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub union_display_names: Option<JsMap<String>>,
+    /// Absent reads as no writable roots, as the TypeScript reads it (schemas
+    /// written by hand for adapters that are only read, such as slack's).
+    #[serde(default)]
     pub writable_roots: JsMap<WritableRootSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create_shapes: Option<JsMap<WritableRootSchema>>,

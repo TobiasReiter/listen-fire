@@ -189,6 +189,13 @@ fn a_schema_field_typed_as_only_the_checker_types_is_refused() {
     assert!(sheets_result(json!({ "": schema })).unwrap_err().contains("Row.r"));
 }
 
+#[test]
+fn a_schema_without_writable_roots_reads_as_having_none() {
+    let schema = json!({ "positions": { "Row": { "properties": {}, "edges": {} } }, "collections": {} });
+    let loaded = sheets_result(json!({ "": schema })).unwrap();
+    assert!(loaded.adapters["a"].schemas[""].writable_roots.is_empty());
+}
+
 fn sheets_result(schemas: Value) -> Result<CatalogSnapshot, String> {
     let snapshot = json!({ "adapters": { "a": { "constructionArgs": [], "schemas": schemas } }, "credentials": {}, "plugins": {} });
     CatalogSnapshot::load(&snapshot.to_string())
