@@ -2509,12 +2509,16 @@ impl Parser {
 
     /// A v5 built-in whose canonical form the call's structure cannot hold
     /// (`sort`'s key function, `ai`'s settings, `Text.includes` as an
-    /// operator): read as an expression, whose slot is rewritten whole.
+    /// operator): read as an expression, whose slot is rewritten whole. So is
+    /// one whose canonical name is a family member (`Date.today` is
+    /// `DATE.TODAY`), because versions 1–4 read `DATE.TODAY(…)` as an
+    /// expression, never as a call, and only that reading knows the families.
     fn rewritten_whole(&self, callee: &str) -> bool {
         use crate::surface::table::{Shape, by_v5};
         since(self.version, 5)
             && by_v5(callee).is_some_and(|row| {
-                matches!(row.shape, Shape::SortKey | Shape::AiTier | Shape::Contains | Shape::ListIncludes | Shape::JsonStringify)
+                row.canonical.contains('.')
+                    || matches!(row.shape, Shape::SortKey | Shape::AiTier | Shape::Contains | Shape::ListIncludes | Shape::JsonStringify)
             })
     }
 

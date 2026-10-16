@@ -751,7 +751,7 @@ export function scanInstanceChains(
  * treat the input as a plain type NAME instead.
  *
  */
-export function parseTraversalPath(path: string): TraversalStep[] | undefined {
+export function parseTraversalPath(path: string, languageVersion?: LanguageVersion): TraversalStep[] | undefined {
   const trimmed = path.trim();
   if (!trimmed.startsWith('-[')) return undefined;
   try {
@@ -759,6 +759,7 @@ export function parseTraversalPath(path: string): TraversalStep[] | undefined {
     // wants an expression, and we only keep the steps.
     const parsed = parseMovementExpression(
       `__movement_path_root__${trimmed}.\`__movement_path_probe__\``,
+      languageVersion,
     );
     return parsed.type === 'traverse' ? parsed.steps : undefined;
   } catch {

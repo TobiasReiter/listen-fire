@@ -49,9 +49,10 @@ export function rustParseNestedCall(
 /** Throws `ExpressionSyntaxError`. A text read here is not a program's slot
  *  (those arrive parsed, under their program's version): it reads as versions
  *  1–4 do (version 0), so a probe's text never takes the v5 surface's
- *  meaning. */
-export function rustParseExpression(source: string): MExpr {
-  const { ok, json } = callParser('parse_expression', source, [0]);
+ *  meaning — unless the reader names the program's version, for a text the
+ *  program wrote (a type's hops), which reads as its slots did. */
+export function rustParseExpression(source: string, languageVersion = 0): MExpr {
+  const { ok, json } = callParser('parse_expression', source, [languageVersion]);
   if (!ok) throw expressionError(json, 'parse_expression');
   if (!isTree(json)) throw malformed('parse_expression', json);
   return json;

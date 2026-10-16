@@ -45,6 +45,7 @@
 
 import type { Expression } from '@listen-fire/shared/expression/types';
 import { isPurePredicate, leafReadKey, pureLeafReads } from '@listen-fire/shared/expression/filter';
+import type { LanguageVersion } from '../language_version';
 import { parseTraversalPath } from '../service/selectors';
 
 /**
@@ -239,8 +240,10 @@ function sideOf(
  * signature, the pre-scan grounding a graft, the engine evaluating a runtime
  * IS), so no two consumers can disagree about what an address says.
  */
-export function eventAddressOfHops(hopsRaw: string): EventAddress | undefined {
-  const steps = parseTraversalPath(hopsRaw);
+export function eventAddressOfHops(hopsRaw: string, languageVersion?: LanguageVersion): EventAddress | undefined {
+  // Read as the program's own slots are: from 5 a WHERE names the event's
+  // fields through the hop's alias (`e.action`), which reads as `action`.
+  const steps = parseTraversalPath(hopsRaw, languageVersion);
   if (steps === undefined || steps.length !== 1) return undefined;
   const [step] = steps;
   if (step.type !== 'edge') return undefined;

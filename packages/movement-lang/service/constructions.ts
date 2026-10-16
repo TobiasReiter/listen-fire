@@ -23,6 +23,7 @@ import { typeNameOf } from '../parser/ast';
 import { MovementParseError, parseProgram } from '../parser/parse';
 import { unwrapCredentialArg } from '../parser/scan';
 import { eventAddressOfHops } from '../checker/event_address';
+import { CURRENT_LANGUAGE_VERSION, type LanguageVersion } from '../language_version';
 
 export interface ConstructionRef {
   /**
@@ -371,7 +372,8 @@ export interface EventAddressRef {
 export function referencedEventAddresses(source: string): EventAddressRef[] {
   let program: Program;
   try {
-    program = parseProgram(source);
+    // The hops below are read under the version the program is parsed under.
+    program = parseProgram(source, { languageVersion: CURRENT_LANGUAGE_VERSION });
   } catch {
     return [];
   }
@@ -404,7 +406,7 @@ export function referencedEventAddresses(source: string): EventAddressRef[] {
             if (type?.hopsRaw === undefined) continue;
             const construction = bindings.get(type.graph);
             if (!construction) break; // not an instance — the checker reports it
-            const address = addressOfHops(type.hopsRaw);
+            const address = addressOfHops(type.hopsRaw, CURRENT_LANGUAGE_VERSION);
             if (address === undefined) continue; // not an address — stays silent
             addresses.push({ construction, ...address, movement: statement.name });
           }
@@ -435,8 +437,9 @@ export function referencedEventAddresses(source: string): EventAddressRef[] {
  */
 function addressOfHops(
   hopsRaw: string,
+  languageVersion: LanguageVersion,
 ): { event: string; narrowing: Record<string, string> } | undefined {
-  return eventAddressOfHops(hopsRaw);
+  return eventAddressOfHops(hopsRaw, languageVersion);
 }
 
 /** A plain single- or double-quoted string literal's VALUE, or null when the

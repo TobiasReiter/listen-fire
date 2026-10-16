@@ -14,6 +14,6 @@ import type { MExpr } from './tree';
 export { ExpressionSyntaxError } from '../../expression/error';
 
 /** Parse one expression slot. Throws `ExpressionSyntaxError`. */
-export function parseExpression(source: string): MExpr {
-  return rustParseExpression(source);
+export function parseExpression(source: string, languageVersion?: number): MExpr {
+  return rustParseExpression(source, languageVersion);
 }
