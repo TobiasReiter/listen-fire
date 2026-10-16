@@ -5514,7 +5514,10 @@ export class ExpressionTyping {
         // the value-level guard clause, and TS narrows inside a ternary too.
         const proofs = presenceProofs(expr.condition, o => this.inferAt(o, position));
         const thenType = this.withPresence(proofs, position, narrowed => this.inferAt(expr.then, narrowed));
-        const elseType = this.inferAt(expr.else, position);
+        // …and its ELSE by what a false condition proves, as TS narrows
+        // `x == null ? a : x.b`: each arm is narrowed before the arms join.
+        const elseProofs = negativePresenceProofs(expr.condition, o => this.inferAt(o, position));
+        const elseType = this.withPresence(elseProofs, position, narrowed => this.inferAt(expr.else, narrowed));
         // A closure is not data (language version 5): IF chooses between
         // values, and a closure is kept in a variable or passed as an
         // argument, never chosen by a value expression.

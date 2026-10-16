@@ -825,7 +825,13 @@ impl<'a> Typing<'a> {
                     presence_proofs(condition, &mut type_of)
                 };
                 let then_ty = self.with_presence(&proofs, position, |t, narrowed| t.infer_at(then, narrowed));
-                let else_ty = self.infer_at(else_, position);
+                // …and its ELSE by what a false condition proves, as TS
+                // narrows `x == null ? a : x.b`: each arm before they join.
+                let else_proofs = {
+                    let mut type_of = |o: &Expression| self.infer_at(o, position);
+                    negative_presence_proofs(condition, &mut type_of)
+                };
+                let else_ty = self.with_presence(&else_proofs, position, |t, narrowed| t.infer_at(else_, narrowed));
                 // A closure is not data (language version 5): IF chooses
                 // between values, never between closures.
                 if self.refuse_closure_operands(&[(then, then_ty.as_ref()), (else_, else_ty.as_ref())], expr, "chosen by IF … THEN … ELSE … END") {
