@@ -103,6 +103,10 @@ impl TypeEnv for ScopeEnv<'_> {
         matches!(self.scopes.resolve(self.scope, name), Resolution::Found(_))
     }
 
+    fn value_names_in_scope(&self) -> Vec<String> {
+        self.scopes.value_names(self.scope)
+    }
+
     fn is_record_name(&self, name: &str) -> bool {
         self.types(name).is_some_and(|t| t.is_record)
     }

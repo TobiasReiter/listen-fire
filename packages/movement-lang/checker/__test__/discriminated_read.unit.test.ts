@@ -65,6 +65,8 @@ const crmSchema: InstanceSchema = {
     [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutoff', LE)]: MASTER,
     [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutof', LE)]: MASTER,
     [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Made Up Field` >= cutoff', LE)]: MASTER,
+    [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Deal Created` >= le.`Stage Ordr`', LE)]: MASTER,
+    [keyFor(ENTRIES, 'le.`listName` == "Deal Pipeline" && le.`Stage Order` >= 1', LE)]: MASTER,
     [keyFor(
       ENTRIES,
       'le.`listName` == "Deal Pipeline" && le.`[Deal Pipeline] Deal Created` >= cutoff',
@@ -214,12 +216,26 @@ describe('a hop narrowed by its discriminant is checked against the variant', ()
   it('a MISSPELLED binding is the same error — the two surfaces are checked together', () => {
     // `cutoff` above is a binding spelled exactly the way a field is, and it
     // stays silent. Drop a letter and it is neither, which is the whole of what
-    // scope presence buys. From version 5 a bare name the scope does not bind
-    // is also the old spelling of a walk's field (refused, its fix the alias
-    // read `le.cutof`), so the one mistake is reported by both rules.
-    expect(
-      codes(onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutof')),
-    ).toEqual(['MOV_V5_SPELLING', 'MOV_UNKNOWN_PROPERTY']);
+    // scope presence buys. From version 5 a bare name inside the brackets is
+    // a variable from outside the walk; the hop's type is known and has no
+    // such field, so this is one unknown name — not also the alias spelling
+    // of a field it does not have.
+    const diagnostics = diagnose(onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutof'));
+    expect(diagnostics.map((d) => d.code)).toEqual(['MOV_NAME_UNRESOLVED']);
+    expect(diagnostics[0].message).toContain("Unknown name 'cutof'");
+    expect(diagnostics[0].message).toContain("did you mean 'cutoff'?");
+  });
+
+  it('a misspelled bare name nearest a field of the hop suggests the field, read through the alias', () => {
+    const diagnostics = diagnose(onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Deal Created` >= `Stage Ordr`'));
+    expect(diagnostics.map((d) => d.code)).toEqual(['MOV_NAME_UNRESOLVED']);
+    expect(diagnostics[0].message).toContain("did you mean the field 'Stage Order', read through the hop's alias?");
+  });
+
+  it('a bare name that IS a field of the hop is the old spelling alone, its fix the alias read', () => {
+    const diagnostics = diagnose(onMasterDeals('le.`listName` == "Deal Pipeline" && `Stage Order` >= 1'));
+    expect(diagnostics.map((d) => d.code)).toEqual(['MOV_V5_SPELLING']);
+    expect(diagnostics[0].fix?.edits.map((e) => e.text)).toEqual(['le.`Stage Order`']);
   });
 });
 
