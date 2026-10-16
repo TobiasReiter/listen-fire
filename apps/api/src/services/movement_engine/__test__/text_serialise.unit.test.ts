@@ -63,11 +63,7 @@ jest.mock('../../knowledge_pipeline/facts', () => ({
 }));
 
 import { runMovement } from 'movement-engine/services/movement_engine/run';
-import type {
-  LlmCallInput,
-  LlmCallResult,
-  LlmClient,
-} from '../../translation_graph/engine/batched_extraction';
+import type { ExtractCallLlmClient } from 'movement-engine/services/movement_engine/extraction_call';
 
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { containerAssociation, type Adapter, type RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
@@ -161,14 +157,15 @@ function webhookEvent(payload: Record<string, unknown>): TriggerEvent {
 
 /** Answers every extraction call with one company, its fields in the REVERSE
  *  of their declared order — so the rendered order can only be the declaration's. */
-const llm: LlmClient = {
-  async call(input: LlmCallInput): Promise<LlmCallResult> {
-    const key = /one key — `([^`]+)`/.exec(input.system)?.[1];
-    if (!key) throw new Error(`test: no answer key in the system prompt:\n${input.system}`);
+const llm: ExtractCallLlmClient = {
+  async call() {
     const wrap = (value: unknown) => ({ evidence: 'q', value });
     return {
-      parsedJson: { [key]: [{ company: [{ stage: wrap('Seed'), name: wrap('Acme') }] }] },
+      parsedJson: { record: { company: [{ stage: wrap('Seed'), name: wrap('Acme') }] } },
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
     };
+  },
+};
   },
 };
 
@@ -200,7 +197,7 @@ async function run(body: string[]): Promise<unknown[]> {
           throw new Error(`test: no fake adapter for '${adapterType}'`);
         },
       },
-      llm: { client: llm },
+      llm: { extractCall: llm },
     }),
   });
   return attio.creates.map((w) => w.fields.name);
@@ -250,12 +247,13 @@ describe('TEXT.SERIALISE over a value the run holds', () => {
   it('an extracted node reached in a block', async () => {
     await expect(
       run([
-        '  x = extract from [msg.`text`] {',
+        '  x = extractOne([msg.`text`], node Found: "the companies named" {',
         '    node company: "each company named" {',
-        '      name: "the company\'s name"',
-        '      stage: "its funding stage"',
+        '      name: <text> "the company\'s name"',
+        '      stage: <text> "its funding stage"',
         '    }',
-        '  }',
+        '  })',
+        '  if (x == null) { fail("nothing extracted") }',
         '  x-[c:company]-> {',
         '    write crm-[:companies]-> { name: Json.stringify(c) }',
         '  }',
