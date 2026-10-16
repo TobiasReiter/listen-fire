@@ -275,6 +275,9 @@ pub struct Parser {
     /// Recursion depth, bounded by `MAX_DEPTH` for the same two stacks the
     /// expression grammar guards.
     depth: usize,
+    /// The local names imported from adapters so far: from version 5 setting
+    /// one up is `connect`, and its old construction is refused.
+    adapters: Vec<String>,
 }
 
 impl Parser {
@@ -286,7 +289,7 @@ impl Parser {
                 line_starts.push(i + 1);
             }
         }
-        Self { src, pos: 0, line_starts, version, origin, eager, depth: 0 }
+        Self { src, pos: 0, line_starts, version, origin, eager, depth: 0, adapters: Vec::new() }
     }
 
     /// `parseNestedCall`'s reading: one call from `start` to the end of the
@@ -314,7 +317,7 @@ impl Parser {
         loop {
             self.skip_all_ws();
             if self.eof() {
-                return Ok(Program { statements });
+                return Ok(Program { statements, spelling: Vec::new() });
             }
             if self.peek() == Some(ELISION) {
                 self.pos += 1;
@@ -382,7 +385,40 @@ impl Parser {
     }
 
     fn slot(&self, raw: String, span: Span) -> ExprSlot {
+        if since(self.version, 5) {
+            for finding in crate::surface::slot_findings(&raw, span.start) {
+                crate::surface::report(finding);
+            }
+        }
         ExprSlot { raw, span, eager: self.eager }
+    }
+
+    /// An old spelling under version 5 at `start..end`, and its rewrite as
+    /// edits (offsets into this parser's text).
+    fn spelling(&self, message: impl Into<String>, start: usize, end: usize, edits: Vec<(usize, usize, String)>) {
+        use crate::surface::{Fix, SPELLING_CODE, SourceEdit, SpellingFinding};
+        let fix = (!edits.is_empty()).then(|| Fix {
+            edits: edits.into_iter().map(|(s, e, text)| SourceEdit { span: self.span_between(s, e), text }).collect(),
+        });
+        crate::surface::report(SpellingFinding { code: SPELLING_CODE.into(), message: message.into(), span: self.span_between(start, end), fix });
+    }
+
+    /// From version 5 an `if` condition is parenthesised, as TypeScript's.
+    fn require_condition_parens(&self, condition: &ExprSlot, start: usize, end: usize) {
+        if !since(self.version, 5) {
+            return;
+        }
+        let whole = |t: &crate::tree::MExpr| t.at().start == 0 && t.at().end == crate::util::form::utf16_len(&condition.raw);
+        match crate::expr::parse_expression_raw(&condition.raw) {
+            Ok(tree @ crate::tree::MExpr::Paren { .. }) if whole(&tree) => {}
+            Ok(_) => self.spelling(
+                "from language version 5 an `if` condition is parenthesised: `if (…) {`",
+                start,
+                end,
+                vec![(start, start, "(".into()), (end, end, ")".into())],
+            ),
+            Err(_) => {}
+        }
     }
 
     fn fail<T>(&self, message: impl Into<String>) -> SResult<T> {
@@ -1161,6 +1197,16 @@ impl Parser {
                 );
             }
             self.pos += ns.len();
+            if ns == "adapters" {
+                if since(self.version, 5) {
+                    for imported in &mut names {
+                        if let Some(adapter) = imported.name.strip_prefix(ADAPTER_PACKAGE_PREFIX) {
+                            imported.name = adapter.to_string();
+                        }
+                    }
+                }
+                self.adapters.extend(names.iter().map(|n| n.alias.clone().unwrap_or_else(|| n.name.clone())));
+            }
             ImportSource::Builtin { namespace: ns }
         };
         self.expect_statement_end()?;
@@ -1290,7 +1336,13 @@ impl Parser {
         if let Some(block) = self.try_parse_traversal_block()? {
             return Ok(RValue::Block { block });
         }
+        if since(self.version, 5) && self.at_word("connect") {
+            return Ok(RValue::Construct { construct: self.parse_connect()? });
+        }
         if let Some(invocation) = self.try_parse_invocation()? {
+            if let RValue::Construct { construct } = &invocation {
+                self.refuse_adapter_construction(construct, start);
+            }
             return Ok(invocation);
         }
         let (slot, _) = self.read_expr_slot(Scan::new("\n}", "for the value after '='").eof_ok())?;
@@ -3458,10 +3510,14 @@ impl Parser {
         let mut arm_start = start;
         loop {
             // The condition runs up to the block's `{` and may wrap lines.
+            self.skip_all_ws();
+            let condition_start = self.pos;
             let (condition, stop) = self.read_expr_slot(Scan::new("{", "for the 'if' condition"))?;
             if stop != Some(unit('{')) {
                 return self.fail("Expected '{' after the 'if' condition");
             }
+            let condition_end = condition_start + crate::util::form::utf16_len(&condition.raw);
+            self.require_condition_parens(&condition, condition_start, condition_end);
             let body = self.parse_block_body("the 'if' branch")?;
             arms.push(IfArm { condition, body, span: self.span_from(arm_start) });
             let save = self.pos;
@@ -3712,6 +3768,9 @@ impl Parser {
     /// declaration, two spellings; `keyword` is echoed by the diagnostics.
     fn parse_movement(&mut self, keyword: &str) -> SResult<MovementDeclaration> {
         let start = self.pos;
+        if since(self.version, 5) && keyword == "movement" {
+            self.spelling("from language version 5 a declaration is a `function`", start, start + keyword.len(), vec![(start, start + keyword.len(), "function".into())]);
+        }
         self.pos += keyword.len();
         self.skip_inline_ws();
         let name = self.read_name(&format!("a name after '{keyword}'"))?;
@@ -4419,7 +4478,115 @@ fn type_ref_from_marker(marker: Marker) -> TypeRef {
 
 /// The whole-file entry: a program, or the one error that stopped the parse.
 pub fn parse_program(source: &str, version: u32, eager: bool) -> SResult<Program> {
-    Parser::new(source, version, Loc { line: 1, col: 1 }, eager).parse_program()
+    let (program, spelling) =
+        crate::surface::collecting(version, || Parser::new(source, version, Loc { line: 1, col: 1 }, eager).parse_program());
+    let mut program = program?;
+    program.spelling = spelling;
+    Ok(program)
+}
+
+/// An adapter package's tag (`` `@lf/attio` ``), until packages are more than
+/// the built-in adapters: the tag names the adapter after the prefix.
+const ADAPTER_PACKAGE_PREFIX: &str = "@lf/";
+
+impl Parser {
+    /// `connect attio using acme { dryRun: true }` (version 5): the
+    /// construction `attio(credentials: acme, dry_run: true)` versions 1–4
+    /// write, so nothing downstream learns a second form.
+    fn parse_connect(&mut self) -> SResult<ConstructionCall> {
+        let start = self.pos;
+        self.pos += "connect".len();
+        self.skip_inline_ws();
+        let callee = self.read_name("the adapter after 'connect'")?;
+        let mut args = Vec::new();
+        self.skip_inline_ws();
+        if self.at_word("using") {
+            self.pos += "using".len();
+            self.skip_inline_ws();
+            let at = self.pos;
+            let credential = self.read_name("the credential after 'using'")?;
+            let span = self.span_between(at, self.pos);
+            args.push(NamedArg { name: "credentials".into(), value: ExprSlot { raw: credential, span, eager: self.eager }, is_type: None });
+            self.skip_inline_ws();
+        }
+        if self.is('{') {
+            let open = self.pos;
+            let (settings, _) = self.read_expr_slot(Scan::new("\n}", "for the connection's settings").eof_ok())?;
+            let tree = crate::expr::parse_expression_raw(&settings.raw).map_err(|e| ParseError {
+                message: format!("the connection's settings must be a record: {}", e.message),
+                loc: self.loc_at(open + e.pos),
+            })?;
+            let crate::tree::MExpr::Map { entries, .. } = &tree else {
+                return self.fail_at("the connection's settings are a record: `{ dryRun: true }`", open);
+            };
+            let src = crate::util::utf16::Utf16::new(&settings.raw);
+            for entry in entries {
+                let crate::tree::MapMember::Entry { key: crate::tree::MapKey::Name(key), value } = entry else {
+                    return self.fail_at("a connection setting is `name: value`", open);
+                };
+                let at = value.at();
+                let raw = src.text(at.start, at.end);
+                let span = Span {
+                    start: crate::surface::loc_in(&src, settings.span.start, at.start),
+                    end: crate::surface::loc_in(&src, settings.span.start, at.end),
+                };
+                args.push(NamedArg { name: snake_case(&key.text), value: self.slot(raw, span), is_type: None });
+            }
+        }
+        Ok(ConstructionCall { callee, args, span: self.span_from(start) })
+    }
+
+    /// From version 5 an adapter is set up with `connect`; its construction
+    /// is refused with the rewrite.
+    fn refuse_adapter_construction(&self, construct: &ConstructionCall, start: usize) {
+        if !since(self.version, 5) || !self.adapters.contains(&construct.callee) {
+            return;
+        }
+        let mut text = format!("connect {}", construct.callee);
+        let mut settings = Vec::new();
+        for arg in &construct.args {
+            if arg.name == "credentials" {
+                text.push_str(&format!(" using {}", arg.value.raw.trim()));
+            } else {
+                settings.push(format!("{}: {}", camel_case(&arg.name), arg.value.raw.trim()));
+            }
+        }
+        if !settings.is_empty() {
+            text.push_str(&format!(" {{ {} }}", settings.join(", ")));
+        }
+        let end = self.pos;
+        let message = format!("from language version 5 an adapter is set up with `{text}`");
+        self.spelling(message, start, end, vec![(start, end, text)]);
+    }
+}
+
+fn snake_case(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('_');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn camel_case(name: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for c in name.chars() {
+        if c == '_' {
+            upper = true;
+        } else if upper {
+            out.push(c.to_ascii_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -4468,7 +4635,8 @@ mod tests {
     #[test]
     fn an_unknown_version_reads_as_the_current_one() {
         let source = "f(x)\ny = MAP(xs, (x) => x)";
-        assert_eq!(crate::parse_program(source, 99), crate::parse_program(source, 3));
+        assert_eq!(crate::parse_program(source, 99), crate::parse_program(source, 5));
+        assert_eq!(crate::parse_program(source, 4), crate::parse_program(source, 3));
         assert!(crate::parse_program(source, 2).is_err(), "positional calls arrived in version 3");
     }
 

@@ -10025,4 +10025,4 @@
 {"source":"y = [MAP(xs, (x) => {\n  # the \"website } isn't `here\n  return x\n})]","version":4,"ast_sha256":"12a4333bb983401b2c6b27f0f66a64b46e107aaebba06da3a568a54225ab61bb"}
 {"source":"y = a-[:b]-> {\n  z = 1\n}","version":4,"ast_sha256":"f7f64f0689a89b4e8b79acaa848221cfdfe0cd76ad9cb962f6618909fca47fb9"}
 {"source":"}{ not movement ((( source","version":4,"error":{"message":"Unexpected '}' — expected a statement (line 1, col 1)","loc":{"line":1,"col":1}}}
-{"source":"movement noop() {\n}\n","version":99,"ast_sha256":"c1330989de9b2cfc594054024ae71c676d52c515e092f385191a0c524732da55"}
+{"source":"function noop() {\n}\n","version":99,"ast_sha256":"c1330989de9b2cfc594054024ae71c676d52c515e092f385191a0c524732da55"}

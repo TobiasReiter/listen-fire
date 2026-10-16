@@ -10,6 +10,7 @@ pub mod lexer;
 pub mod lowering;
 pub mod scan;
 pub mod stmt;
+pub mod surface;
 pub mod tree;
 pub mod util;
 pub mod version;
@@ -36,7 +37,7 @@ pub fn parse_program(source: &str, version: u32) -> Parsed {
 pub fn parse_program_eager(source: &str, version: u32) -> Parsed {
     let program = stmt::parse_program(source, version, true).map_err(|e| to_value(&e))?;
     let mut value = to_value(&program);
-    attach_slot_trees(&mut value);
+    surface::with_version(version, || attach_slot_trees(&mut value));
     Ok(value)
 }
 
@@ -65,9 +66,10 @@ fn attach_slot_trees(value: &mut Value) {
     }
 }
 
-/// The expression grammar reads no version: one grammar serves them all.
-pub fn parse_expression(source: &str, _version: u32) -> Parsed {
-    let tree = expr::parse_expression(source).map_err(|e| to_value(&e))?;
+/// One expression text, read under `version`: from 5 the v5 surface, read
+/// into the canonical tree (crate::surface); 0 reads as versions 1–4 do.
+pub fn parse_expression(source: &str, version: u32) -> Parsed {
+    let tree = surface::with_version(version, || expr::parse_expression(source)).map_err(|e| to_value(&e))?;
     Ok(to_value(&tree))
 }
 
@@ -87,12 +89,14 @@ pub struct NestedCall {
 pub fn parse_nested_call(raw: &str, call: &NestedCall) -> Parsed {
     let head = util::utf16::Utf16::new(raw).text(0, call.at_end as usize);
     let origin = ast::Loc { line: call.origin_line as usize, col: call.origin_col as usize };
-    let value = stmt::Parser::new(&head, call.version, origin, true)
-        .parse_nested_call_value(call.at_start as usize)
-        .map_err(|e| to_value(&e))?;
-    let mut value = to_value(&value);
-    attach_slot_trees(&mut value);
-    Ok(value)
+    surface::with_version(call.version, || {
+        let value = stmt::Parser::new(&head, call.version, origin, true)
+            .parse_nested_call_value(call.at_start as usize)
+            .map_err(|e| to_value(&e))?;
+        let mut value = to_value(&value);
+        attach_slot_trees(&mut value);
+        Ok(value)
+    })
 }
 
 fn to_value<T: Serialize>(value: &T) -> Value {

@@ -76,6 +76,11 @@ pub struct PathHead {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     pub statements: Vec<Statement>,
+    /// Every old spelling a version 5 program is written in, with its
+    /// rewrite (crate::surface). Empty — and absent from the JSON — under
+    /// versions 1–4 and for a program in the v5 surface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spelling: Vec<crate::surface::SpellingFinding>,
 }
 
 /// Read back by its `kind` (a parked state carries code as this tree): the

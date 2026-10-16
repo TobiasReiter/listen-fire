@@ -180,6 +180,9 @@ pub struct Scanner<'a> {
     /// `#` comment from a hop head (`is_directly_in_hop`).
     pub origin: usize,
     pub limit: usize,
+    /// Language version 5's surface: `&&`, `||` and the `? :` conditional
+    /// lex as operators outside the type grammar (crate::surface).
+    pub v5: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -263,6 +266,12 @@ impl<'a> Scanner<'a> {
                 return Ok(token(i, Tok::Keyword(keyword)));
             }
             return Ok(token(i, Tok::Name { text, quoted: false }));
+        }
+        if self.v5 && self.window_starts_with(start, "&&") {
+            return Ok(token(start + 2, Tok::Keyword("AND")));
+        }
+        if self.v5 && self.window_starts_with(start, "||") {
+            return Ok(token(start + 2, Tok::Keyword("OR")));
         }
         for two in ["!=", ">=", "<=", "==", "=>"] {
             if self.window_starts_with(start, two) {
@@ -361,7 +370,7 @@ mod tests {
 
     fn lex_all(text: &str) -> PResult<Vec<Token>> {
         let src = Utf16::new(text);
-        let scanner = Scanner { src: &src, origin: 0, limit: src.len() };
+        let scanner = Scanner { src: &src, origin: 0, limit: src.len(), v5: false };
         let mut pos = 0;
         let mut previous = Previous::Start;
         let mut out = Vec::new();
@@ -476,7 +485,7 @@ mod tests {
         assert_eq!(lex_all("(a # ) b\n)").unwrap().len(), 4);
         // Directly inside a hop's brackets it begins a head.
         let src = Utf16::new("x-[#linked]->");
-        let scanner = Scanner { src: &src, origin: 0, limit: src.len() };
+        let scanner = Scanner { src: &src, origin: 0, limit: src.len(), v5: false };
         assert_eq!(scanner.skip_ws(3), (3, false));
     }
 
@@ -513,9 +522,9 @@ mod tests {
     #[test]
     fn matching_close_skips_literals() {
         let src = Utf16::new("(a, \")\", `)`) => x");
-        let scanner = Scanner { src: &src, origin: 0, limit: src.len() };
+        let scanner = Scanner { src: &src, origin: 0, limit: src.len(), v5: false };
         assert_eq!(scanner.matching_close(0), Some(12));
         let src = Utf16::new("(a]");
-        assert_eq!(Scanner { src: &src, origin: 0, limit: src.len() }.matching_close(0), None);
+        assert_eq!(Scanner { src: &src, origin: 0, limit: src.len(), v5: false }.matching_close(0), None);
     }
 }

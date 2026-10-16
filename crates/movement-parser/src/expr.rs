@@ -40,6 +40,15 @@ use crate::util::utf16::{
 /// built: the loops that read chains build them without recursing, and the
 /// tree's drop does not recurse either.
 pub fn parse_expression(text: &str) -> Result<MExpr, SyntaxError> {
+    let mut tree = parse_expression_raw(text)?;
+    if crate::surface::is_v5() {
+        crate::surface::canonicalize(&mut tree, &Utf16::new(text));
+    }
+    Ok(tree)
+}
+
+/// The tree as written, before a v5 text is read into the canonical one.
+pub fn parse_expression_raw(text: &str) -> Result<MExpr, SyntaxError> {
     let src = Utf16::new(text);
     let tree = ExpressionParser::new(&src, 0, src.len(), 0).parse_whole()?;
     match tree.chain_overrun() {
@@ -83,7 +92,7 @@ fn unit(c: char) -> u16 {
 impl<'a> ExpressionParser<'a> {
     fn new(src: &'a Utf16, start: usize, limit: usize, depth: usize) -> Self {
         Self {
-            sc: Scanner { src, origin: start, limit },
+            sc: Scanner { src, origin: start, limit, v5: crate::surface::is_v5() },
             pos: start,
             previous: Previous::Start,
             stop_at_newline: false,
@@ -276,6 +285,7 @@ impl<'a> ExpressionParser<'a> {
     fn parse_where(&mut self) -> PResult<MExpr> {
         let start = self.peek()?.start;
         let source = self.parse_or()?;
+        let source = self.try_conditional(start, source)?;
         let tok = self.peek()?;
         if tok.is_word("WHERE") && self.can_continue(&tok) {
             self.advance()?;
@@ -283,6 +293,31 @@ impl<'a> ExpressionParser<'a> {
             return Ok(MExpr::Where { source: Box::new(source), predicate: Box::new(predicate), at: self.span(start) });
         }
         Ok(source)
+    }
+
+    /// Version 5's `c ? a : b`, loosest of all: the `IF c THEN a ELSE b END`
+    /// tree, so nothing downstream reads a second conditional.
+    fn try_conditional(&mut self, start: usize, condition: MExpr) -> PResult<MExpr> {
+        if !self.sc.v5 {
+            return Ok(condition);
+        }
+        let tok = self.peek()?;
+        if !tok.is_punct("?") || !self.can_continue(&tok) {
+            return Ok(condition);
+        }
+        self.advance()?;
+        let then = self.nested(|p| {
+            let s = p.peek()?.start;
+            let e = p.parse_or()?;
+            p.try_conditional(s, e)
+        })?;
+        self.expect_punct(":", "in the conditional `c ? a : b`")?;
+        let otherwise = self.nested(|p| {
+            let s = p.peek()?.start;
+            let e = p.parse_or()?;
+            p.try_conditional(s, e)
+        })?;
+        Ok(MExpr::If { condition: Box::new(condition), then: Box::new(then), else_: Some(Box::new(otherwise)), at: self.span(start) })
     }
 
     fn parse_binary_level(
