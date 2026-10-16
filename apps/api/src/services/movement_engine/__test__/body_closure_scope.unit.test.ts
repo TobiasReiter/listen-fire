@@ -1216,6 +1216,39 @@ describe('both engines: a library closure two levels deep is read in the library
   const oneLevel = (innermost: string): Record<string, { source: string }> => lib([`  return (b: <runs-[:Invocation]->>) => ${innermost}`]);
   const twoCalls = main(['  h = mk(2)', '  k = h(go)', '  r = k(1)']);
   const oneCall = main(['  h = mk(2)', '  r = h(go)']);
+  // The test catalog leaves the manual event undescribed, so the checker cannot
+  // name what `go` is and stays silent: the run reaches admission, which
+  // refuses the unchecked record. Where the event is described, as a team's
+  // catalog describes it, the same programs end at the check on both engines:
+  // a record is a place, not a value a json field holds.
+  const described = staticCatalogSnapshot({
+    credentials: { kg_cred: { adapters: ['kg'] } },
+    instanceSchemas: {
+      kg: kgSchema,
+      manual: {
+        positions: { Invocation: { properties: { text: 'text' }, edges: {} } },
+        collections: {},
+        writableRoots: {},
+        eventPosition: 'Invocation',
+        eventPositions: [{ position: 'Invocation' }],
+      },
+    },
+  });
+  for (const version of [3, 5]) {
+    it(`v${version}: with the event described, the chain and its one-level twin end at the check on both engines (MOV_WRITE_FIELD_TYPE)`, async () => {
+      for (const [source, files] of [
+        [twoCalls, chain('b')],
+        [oneCall, oneLevel('b')],
+      ] as const) {
+        for (const engine of ENGINES) {
+          const input = inputOn(source, makeParkSink(), makeKgFake(), { version, files });
+          await expect(onEngine(engine, () => runMovement({ ...input, catalog: { ...described, files: input.catalog?.files } }))).rejects.toThrow(
+            /MOVENG_CHECK[\s\S]*MOV_WRITE_FIELD_TYPE[\s\S]*'payload\.r' is runs\.Invocation/,
+          );
+        }
+      }
+    }, 60_000);
+  }
   for (const version of [3, 5]) {
     it(`v${version}: the chain and its one-level twin are both refused by name when the closure returns the record`, async () => {
       for (const [source, files] of [
