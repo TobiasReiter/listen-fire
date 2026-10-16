@@ -1,0 +1,1937 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`a write whose target carries a WHERE updates the candidate that passes it, and creates when none does 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "runSpentMicrodollars": 3,
+    "spentBySource": {
+      "model:judge": 3,
+    },
+    "spentMicrodollars": 3,
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "co-active",
+        "foundData": {
+          "name": "Example Labs Ltd",
+          "region": "EU",
+          "summary": "active",
+          "url": "https://crm/co-active",
+        },
+        "origin": {
+          "externalId": "co-active",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "update",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+          "summary": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 118,
+                  "line": 6,
+                },
+                "start": {
+                  "col": 112,
+                  "line": 6,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+          "summary": "seen",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [
+      {
+        "asserted": {
+          "name": "Example Labs",
+          "summary": "seen",
+        },
+        "candidates": [
+          {
+            "adapterType": "attio",
+            "data": {
+              "name": "Example Labs Ltd",
+              "summary": "active",
+            },
+            "externalId": "co-active",
+            "url": "https://crm/co-active",
+          },
+        ],
+        "recordType": "company",
+      },
+    ],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs","summary":"seen"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name","fuzzy":true}]}]}}],["readRecord",{"recordType":"company","externalId":"co-quiet"}],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"co-quiet","data":{"name":"Example Labs","summary":"quiet","region":"US"}}},"fieldId":"region"}],["readRecord",{"recordType":"company","externalId":"co-active"}],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"co-active","data":{"url":"https://crm/co-active","name":"Example Labs Ltd","summary":"active","region":"EU"}}},"fieldId":"region"}],["readRecord",{"recordType":"company","externalId":"co-active","fieldIds":["name","summary"]}],["updateRecord",{"recordType":"company","externalId":"co-active","fields":{"name":"Example Labs","summary":"seen"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [
+      [
+        "identity "attio" "company"",
+      ],
+      [
+        "record "attio" "co-active"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`a write whose target carries a WHERE updates the candidate that passes it, and creates when none does 2`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+          "summary": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 120,
+                  "line": 6,
+                },
+                "start": {
+                  "col": 114,
+                  "line": 6,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+          "summary": "seen",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs","summary":"seen"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name","fuzzy":true}]}]}}],["readRecord",{"recordType":"company","externalId":"co-quiet"}],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"co-quiet","data":{"name":"Example Labs","summary":"quiet","region":"US"}}},"fieldId":"region"}],["readRecord",{"recordType":"company","externalId":"co-active"}],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"co-active","data":{"url":"https://crm/co-active","name":"Example Labs Ltd","summary":"active","region":"EU"}}},"fieldId":"region"}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs","summary":"seen"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [
+      [
+        "identity "attio" "company"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`link and unlink in the Rust engine fails a link the adapter cannot make, and an edge the from side does not declare, with the TypeScript engine’s errors 1`] = `
+{
+  "failed": "MovementEngineError: MOVENG_RUNTIME: link p -[:company]-> co: the 'attio' adapter cannot link two existing records (no linkRecords capability) — express the relationship as a linked write (write p-[:company]-> { … }) instead",
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","person"],["resolveEntity",{"record":{"name":"Example Labs","email":"EU"},"recordType":"person","candidates":[],"constraints":{"any":[{"all":[{"field":"email"}]}]}}],["createRecord",{"recordType":"person","fields":{"name":"Example Labs","email":"EU"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [
+      [
+        "identity "attio" "person"",
+      ],
+      [
+        "identity "attio" "company"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`link and unlink in the Rust engine fails a link the adapter cannot make, and an edge the from side does not declare, with the TypeScript engine’s errors 2`] = `
+{
+  "failed": "MovementEngineError: MOVENG_RUNTIME: link co -[:company]-> p: 'company' is not a declared edge of company — the edge resolves against the from-side's type",
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","person"],["resolveEntity",{"record":{"name":"Example Labs","email":"EU"},"recordType":"person","candidates":[],"constraints":{"any":[{"all":[{"field":"email"}]}]}}],["createRecord",{"recordType":"person","fields":{"name":"Example Labs","email":"EU"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [
+      [
+        "identity "attio" "person"",
+      ],
+      [
+        "identity "attio" "company"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`link and unlink in the Rust engine links and unlinks two written records, each with both endpoints’ provenance 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "p",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "email": [
+            {
+              "adapterType": "email",
+              "field": "text",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "person",
+        "resultData": {},
+        "writtenValues": {
+          "email": "EU",
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "bindingName": "co",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-2",
+        "origin": {
+          "externalId": "attio-2",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "kind": "link",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": "attio-2",
+          "toRecordType": "company",
+        },
+        "provenance": {
+          "from": [
+            {
+              "externalId": "attio-1",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+          "to": [
+            {
+              "externalId": "attio-2",
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "person",
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "attio-1",
+        "kind": "unlink",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": "attio-2",
+          "toRecordType": "company",
+        },
+        "provenance": {
+          "from": [
+            {
+              "externalId": "attio-1",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+          "to": [
+            {
+              "externalId": "attio-2",
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "person",
+        "writtenValues": {},
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","person"],["resolveEntity",{"record":{"name":"Example Labs","email":"EU"},"recordType":"person","candidates":[],"constraints":{"any":[{"all":[{"field":"email"}]}]}}],["createRecord",{"recordType":"person","fields":{"name":"Example Labs","email":"EU"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["linkRecords",{"from":{"recordType":"person","externalId":"attio-1"},"edgeName":"company","to":{"recordType":"company","externalId":"attio-2"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}],["unlinkRecords",{"from":{"recordType":"person","externalId":"attio-1"},"edgeName":"company","to":{"recordType":"company","externalId":"attio-2"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}]]",
+    "locks": [
+      [
+        "identity "attio" "person"",
+      ],
+      [
+        "identity "attio" "company"",
+      ],
+      [
+        "edge "attio" "attio-1" "company" "attio-2"",
+      ],
+      [
+        "edge "attio" "attio-1" "company" "attio-2"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`link and unlink in the Rust engine rehearses a link and an unlink 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "p",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-1",
+        "origin": {
+          "externalId": "uuid-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "email": [
+            {
+              "adapterType": "email",
+              "field": "text",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "person",
+        "resultData": {},
+        "writtenValues": {
+          "email": "EU",
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "bindingName": "co",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-2",
+        "origin": {
+          "externalId": "uuid-2",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-1",
+        "kind": "link",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": "uuid-2",
+          "toRecordType": "company",
+        },
+        "provenance": {
+          "from": [
+            {
+              "externalId": "uuid-1",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+          "to": [
+            {
+              "externalId": "uuid-2",
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "person",
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-1",
+        "kind": "unlink",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": "uuid-2",
+          "toRecordType": "company",
+        },
+        "provenance": {
+          "from": [
+            {
+              "externalId": "uuid-1",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+          "to": [
+            {
+              "externalId": "uuid-2",
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "person",
+        "writtenValues": {},
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [
+      {
+        "adapterType": "attio",
+        "fields": {
+          "email": "EU",
+          "name": "Example Labs",
+        },
+        "kind": "create",
+        "recordType": "person",
+      },
+      {
+        "adapterType": "attio",
+        "fields": {
+          "name": "Example Labs",
+        },
+        "kind": "create",
+        "recordType": "company",
+      },
+      {
+        "adapterType": "attio",
+        "externalId": "uuid-1",
+        "kind": "link",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": "uuid-2",
+          "toRecordType": "company",
+        },
+        "recordType": "person",
+      },
+      {
+        "adapterType": "attio",
+        "externalId": "uuid-1",
+        "kind": "unlink",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": "uuid-2",
+          "toRecordType": "company",
+        },
+        "recordType": "person",
+      },
+    ],
+    "crm": "[["describe","person"],["resolveEntity",{"record":{"name":"Example Labs","email":"EU"},"recordType":"person","candidates":[],"constraints":{"any":[{"all":[{"field":"email"}]}]}}],["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}]]",
+    "locks": [
+      [
+        "identity "attio" "person"",
+      ],
+      [
+        "identity "attio" "company"",
+      ],
+      [
+        "edge "attio" "uuid-1" "company" "uuid-2"",
+      ],
+      [
+        "edge "attio" "uuid-1" "company" "uuid-2"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-3",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-3",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`match in the Rust engine binds absent on a miss, and the block carries on 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "body": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 39,
+                  "line": 6,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 6,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "first",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-2",
+        "origin": {
+          "externalId": "attio-2",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "body": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 68,
+                  "line": 8,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 8,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "absent",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","note"],["resolveEntity",{"record":{"body":"first"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"first"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["describe","company"],["resolveEntity",{"record":{"name":"Nowhere"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["describe","note"],["resolveEntity",{"record":{"body":"absent"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"absent"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`match in the Rust engine finds through the judge, reads the record whole, and binds it 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "runSpentMicrodollars": 3,
+    "spentBySource": {
+      "model:judge": 3,
+    },
+    "spentMicrodollars": 3,
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "co",
+        "committed": false,
+        "created": false,
+        "externalId": "co-active",
+        "kind": "match",
+        "origin": {
+          "externalId": "co-active",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "provenance": {},
+        "recordType": "company",
+        "resultData": {
+          "name": "Example Labs Ltd",
+          "region": "EU",
+          "summary": "active",
+          "url": "https://crm/co-active",
+        },
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "body": [
+            {
+              "externalId": "co-active",
+              "field": "summary",
+              "kind": "write",
+              "write": 0,
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 64,
+                  "line": 7,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 7,
+                },
+              },
+            },
+            {
+              "externalId": "co-active",
+              "field": "region",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "active EU",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [
+      {
+        "asserted": {
+          "name": "Example",
+        },
+        "candidates": [
+          {
+            "adapterType": "attio",
+            "data": {
+              "name": "Example Labs",
+              "summary": "quiet",
+            },
+            "externalId": "co-quiet",
+          },
+          {
+            "adapterType": "attio",
+            "data": {
+              "name": "Example Labs Ltd",
+              "summary": "active",
+            },
+            "externalId": "co-active",
+            "url": "https://crm/co-active",
+          },
+        ],
+        "recordType": "company",
+      },
+    ],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name","fuzzy":true}]}]}}],["readRecord",{"recordType":"company","externalId":"co-active"}],["describe","note"],["resolveEntity",{"record":{"body":"active EU"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"active EU"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`match in the Rust engine narrows the shortlist by the target’s WHERE before the judge — an aliased field and a bare one 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "runSpentMicrodollars": 3,
+    "spentBySource": {
+      "model:judge": 3,
+    },
+    "spentMicrodollars": 3,
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "co",
+        "committed": false,
+        "created": false,
+        "externalId": "co-active",
+        "kind": "match",
+        "origin": {
+          "externalId": "co-active",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "provenance": {},
+        "recordType": "company",
+        "resultData": {
+          "name": "Example Labs Ltd",
+          "region": "EU",
+          "summary": "active",
+          "url": "https://crm/co-active",
+        },
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "body": [
+            {
+              "externalId": "co-active",
+              "field": "summary",
+              "kind": "write",
+              "write": 0,
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 64,
+                  "line": 7,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 7,
+                },
+              },
+            },
+            {
+              "externalId": "co-active",
+              "field": "region",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "active EU",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [
+      {
+        "asserted": {
+          "name": "Example Labs",
+        },
+        "candidates": [
+          {
+            "adapterType": "attio",
+            "data": {
+              "name": "Example Labs Ltd",
+              "summary": "active",
+            },
+            "externalId": "co-active",
+            "url": "https://crm/co-active",
+          },
+        ],
+        "recordType": "company",
+      },
+    ],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name","fuzzy":true}]}]}}],["readRecord",{"recordType":"company","externalId":"co-quiet"}],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"co-quiet","data":{"name":"Example Labs","summary":"quiet","region":"US"}}},"fieldId":"region"}],["readRecord",{"recordType":"company","externalId":"co-active"}],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"co-active","data":{"url":"https://crm/co-active","name":"Example Labs Ltd","summary":"active","region":"EU"}}},"fieldId":"region"}],["readRecord",{"recordType":"company","externalId":"co-active"}],["describe","note"],["resolveEntity",{"record":{"body":"active EU"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"active EU"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`match in the Rust engine skips the iteration whose match misses, and runs the next 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "crm-[c:companies]->",
+      },
+    ],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "found",
+        "committed": false,
+        "created": false,
+        "externalId": "fund-7",
+        "kind": "match",
+        "origin": {
+          "externalId": "fund-7",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "provenance": {},
+        "recordType": "fund",
+        "resultData": {
+          "name": "Fund III",
+          "vintage": "2024",
+        },
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "body": [
+            {
+              "adapterType": "attio",
+              "externalId": "n-1",
+              "field": "name",
+              "instance": "crm",
+              "kind": "source_field",
+              "recordType": "company",
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 69,
+                  "line": 8,
+                },
+                "start": {
+                  "col": 34,
+                  "line": 8,
+                },
+              },
+            },
+            {
+              "externalId": "fund-7",
+              "field": "vintage",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "Fund III -> 2024",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "bindingName": "found",
+        "committed": false,
+        "created": false,
+        "externalId": "fund-7",
+        "kind": "match",
+        "origin": {
+          "externalId": "fund-7",
+          "kind": "write",
+          "writeIndex": 2,
+        },
+        "provenance": {},
+        "recordType": "fund",
+        "resultData": {
+          "name": "Fund III",
+          "vintage": "2024",
+        },
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-2",
+        "origin": {
+          "externalId": "attio-2",
+          "kind": "write",
+          "writeIndex": 3,
+        },
+        "outcome": "create",
+        "provenance": {
+          "body": [
+            {
+              "adapterType": "attio",
+              "externalId": "n-2",
+              "field": "name",
+              "instance": "crm",
+              "kind": "source_field",
+              "recordType": "company",
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 69,
+                  "line": 8,
+                },
+                "start": {
+                  "col": 34,
+                  "line": 8,
+                },
+              },
+            },
+            {
+              "externalId": "fund-7",
+              "field": "vintage",
+              "kind": "write",
+              "write": 2,
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "Nowhere -> 2024",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["getRelated",{"position":{"adapterType":"attio","recordType":"meta","identity":{"kind":"unstable"}},"fieldId":"companies","direction":"outgoing"}],["describe","fund"],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"name"}],["resolveEntity",{"record":{"name":"Fund III"},"recordType":"fund","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["readRecord",{"recordType":"fund","externalId":"fund-7"}],["describe","note"],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"name"}],["resolveEntity",{"record":{"body":"Fund III -> 2024"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"Fund III -> 2024"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["describe","fund"],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"name"}],["resolveEntity",{"record":{"name":"Nowhere"},"recordType":"fund","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["readRecord",{"recordType":"fund","externalId":"fund-7"}],["describe","note"],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"name"}],["resolveEntity",{"record":{"body":"Nowhere -> 2024"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"Nowhere -> 2024"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "crm-[c:companies]->",
+      },
+    ],
+  },
+}
+`;
+
+exports[`writes and deletes off a traversed record deletes a written handle, its provenance chaining to the write, and rehearses it 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "stale",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "attio-1",
+        "kind": "delete",
+        "provenance": {
+          "record": [
+            {
+              "externalId": "attio-1",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+        },
+        "recordType": "company",
+        "writtenValues": {},
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["deleteRecord",{"recordType":"company","externalId":"attio-1","mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}]]",
+    "locks": [
+      [
+        "identity "attio" "company"",
+      ],
+      [
+        "record "attio" "attio-1"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`writes and deletes off a traversed record deletes a written handle, its provenance chaining to the write, and rehearses it 2`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "stale",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-1",
+        "origin": {
+          "externalId": "uuid-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": false,
+        "created": false,
+        "externalId": "uuid-1",
+        "kind": "delete",
+        "provenance": {
+          "record": [
+            {
+              "externalId": "uuid-1",
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+        },
+        "recordType": "company",
+        "writtenValues": {},
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [
+      {
+        "adapterType": "attio",
+        "fields": {
+          "name": "Example Labs",
+        },
+        "kind": "create",
+        "recordType": "company",
+      },
+      {
+        "adapterType": "attio",
+        "externalId": "uuid-1",
+        "kind": "delete",
+        "recordType": "company",
+      },
+    ],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}]]",
+    "locks": [
+      [
+        "identity "attio" "company"",
+      ],
+      [
+        "record "attio" "uuid-1"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-2",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-2",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`writes and deletes off a traversed record deletes a written handle, its provenance chaining to the write, and rehearses it 3`] = `
+{
+  "failed": "MovementEngineError: MOVENG_RUNTIME: delete stale: the 'attio' adapter cannot delete records (no deleteRecord capability)",
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [
+      [
+        "identity "attio" "company"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`writes and deletes off a traversed record lock names a delete, a link and an unlink of numeric ids lock by the numbers 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "bindingName": "p",
+        "committed": true,
+        "created": true,
+        "externalId": 101,
+        "origin": {
+          "externalId": 101,
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "email": [
+            {
+              "adapterType": "email",
+              "field": "text",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "person",
+        "resultData": {},
+        "writtenValues": {
+          "email": "EU",
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "bindingName": "co",
+        "committed": true,
+        "created": true,
+        "externalId": 102,
+        "origin": {
+          "externalId": 102,
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "create",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": 101,
+        "kind": "link",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": 102,
+          "toRecordType": "company",
+        },
+        "provenance": {
+          "from": [
+            {
+              "externalId": 101,
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+          "to": [
+            {
+              "externalId": 102,
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "person",
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": 101,
+        "kind": "unlink",
+        "link": {
+          "edgeName": "company",
+          "toExternalId": 102,
+          "toRecordType": "company",
+        },
+        "provenance": {
+          "from": [
+            {
+              "externalId": 101,
+              "kind": "write",
+              "write": 0,
+            },
+          ],
+          "to": [
+            {
+              "externalId": 102,
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "person",
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": 102,
+        "kind": "delete",
+        "provenance": {
+          "record": [
+            {
+              "externalId": 102,
+              "kind": "write",
+              "write": 1,
+            },
+          ],
+        },
+        "recordType": "company",
+        "writtenValues": {},
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","person"],["resolveEntity",{"record":{"name":"Example Labs","email":"EU"},"recordType":"person","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"person","fields":{"name":"Example Labs","email":"EU"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["describe","company"],["resolveEntity",{"record":{"name":"Example Labs"},"recordType":"company","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"company","fields":{"name":"Example Labs"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["linkRecords",{"from":{"recordType":"person","externalId":101},"edgeName":"company","to":{"recordType":"company","externalId":102},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}],["unlinkRecords",{"from":{"recordType":"person","externalId":101},"edgeName":"company","to":{"recordType":"company","externalId":102},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}],["deleteRecord",{"recordType":"company","externalId":102,"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}]]",
+    "locks": [
+      [
+        "edge "attio" 101 "company" 102",
+      ],
+      [
+        "edge "attio" 101 "company" 102",
+      ],
+      [
+        "record "attio" 102",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`writes and deletes off a traversed record lock names an update by a numeric id locks the record by the number 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": 7,
+        "foundData": {
+          "name": "Example Labs",
+        },
+        "origin": {
+          "externalId": 7,
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "update",
+        "provenance": {
+          "name": [
+            {
+              "adapterType": "email",
+              "field": "subject",
+              "instance": "inbox",
+              "kind": "source_field",
+            },
+          ],
+          "summary": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 86,
+                  "line": 6,
+                },
+                "start": {
+                  "col": 80,
+                  "line": 6,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "name": "Example Labs",
+          "summary": "seen",
+        },
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["describe","company"],["resolveEntity",{"record":{"name":"Example Labs","summary":"seen"},"recordType":"company","candidates":[],"constraints":{"any":[{"all":[{"field":"name"}]}]}}],["readRecord",{"recordType":"company","externalId":7,"fieldIds":["name","summary"]}],["updateRecord",{"recordType":"company","externalId":7,"fields":{"name":"Example Labs","summary":"seen"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}]]",
+    "locks": [
+      [
+        "identity "attio" "company"",
+      ],
+      [
+        "record "attio" 7",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`writes and deletes off a traversed record writes off it, updates it in place and deletes it, each through the graph’s target adapter 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "crm-[c:companies]->",
+      },
+    ],
+    "writes": [
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-1",
+        "origin": {
+          "externalId": "attio-1",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "parents": [
+          {
+            "edgeName": "notes",
+            "externalId": "n-1",
+            "recordType": "company",
+          },
+        ],
+        "provenance": {
+          "body": [
+            {
+              "adapterType": "attio",
+              "externalId": "n-1",
+              "field": "name",
+              "instance": "crm",
+              "kind": "source_field",
+              "recordType": "company",
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "Acme",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "n-1",
+        "foundData": {},
+        "origin": {
+          "externalId": "n-1",
+          "kind": "write",
+          "writeIndex": 1,
+        },
+        "outcome": "update",
+        "provenance": {
+          "summary": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 30,
+                  "line": 8,
+                },
+                "start": {
+                  "col": 24,
+                  "line": 8,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "summary": "seen",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "n-1",
+        "kind": "delete",
+        "provenance": {},
+        "recordType": "company",
+        "writtenValues": {},
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": true,
+        "externalId": "attio-2",
+        "origin": {
+          "externalId": "attio-2",
+          "kind": "write",
+          "writeIndex": 3,
+        },
+        "outcome": "create",
+        "parents": [
+          {
+            "edgeName": "notes",
+            "externalId": "n-2",
+            "recordType": "company",
+          },
+        ],
+        "provenance": {
+          "body": [
+            {
+              "adapterType": "attio",
+              "externalId": "n-2",
+              "field": "name",
+              "instance": "crm",
+              "kind": "source_field",
+              "recordType": "company",
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "body": "Globex",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "n-2",
+        "foundData": {},
+        "origin": {
+          "externalId": "n-2",
+          "kind": "write",
+          "writeIndex": 4,
+        },
+        "outcome": "update",
+        "provenance": {
+          "summary": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 30,
+                  "line": 8,
+                },
+                "start": {
+                  "col": 24,
+                  "line": 8,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "company",
+        "resultData": {},
+        "writtenValues": {
+          "summary": "seen",
+        },
+      },
+      {
+        "adapterType": "attio",
+        "committed": true,
+        "created": false,
+        "externalId": "n-2",
+        "kind": "delete",
+        "provenance": {},
+        "recordType": "company",
+        "writtenValues": {},
+      },
+    ],
+  },
+  "world": {
+    "asked": [],
+    "captured": [],
+    "crm": "[["getRelated",{"position":{"adapterType":"attio","recordType":"meta","identity":{"kind":"unstable"}},"fieldId":"companies","direction":"outgoing"}],["describe","note"],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"name"}],["resolveEntity",{"record":{"body":"Acme"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"Acme"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[{"recordType":"company","externalId":"n-1","edgeName":"notes"}]}],["describe","company"],["readRecord",{"recordType":"company","externalId":"n-1","fieldIds":["summary"]}],["updateRecord",{"recordType":"company","externalId":"n-1","fields":{"summary":"seen"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["deleteRecord",{"recordType":"company","externalId":"n-1","mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}],["describe","note"],["getFieldValue",{"position":{"adapterType":"attio","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"name"}],["resolveEntity",{"record":{"body":"Globex"},"recordType":"note","candidates":[],"constraints":{"any":[]}}],["createRecord",{"recordType":"note","fields":{"body":"Globex"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[{"recordType":"company","externalId":"n-2","edgeName":"notes"}]}],["describe","company"],["readRecord",{"recordType":"company","externalId":"n-2","fieldIds":["summary"]}],["updateRecord",{"recordType":"company","externalId":"n-2","fields":{"summary":"seen"},"mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"},"parentLinks":[]}],["deleteRecord",{"recordType":"company","externalId":"n-2","mutationContext":{"source":{"type":"structured_input","adapterType":"email","pipelineInputId":"pi-rust-verbs"},"occurredAt":"2026-05-01T09:00:00.000Z"}}]]",
+    "locks": [
+      [
+        "record "attio" "n-1"",
+      ],
+      [
+        "record "attio" "n-1"",
+      ],
+      [
+        "record "attio" "n-2"",
+      ],
+      [
+        "record "attio" "n-2"",
+      ],
+    ],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "attio",
+        "credentialsId": "cred-acme_main",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [
+      {
+        "kind": "block",
+        "positions": 2,
+        "root": "crm-[c:companies]->",
+      },
+    ],
+  },
+}
+`;

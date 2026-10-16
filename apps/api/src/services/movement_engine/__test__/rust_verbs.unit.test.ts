@@ -11,7 +11,6 @@ import {
   fromCatalogSnapshot,
   mockCatalogSnapshot,
   type InstanceSchema,
-  type LanguageVersion,
 } from 'movement-lang';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
@@ -284,9 +283,6 @@ interface Case {
   crm?: Store;
   judge?: (asked: unknown[]) => Judge;
   dryRun?: boolean;
-  /** The pin the run is under. Unpinned, a case compares under version 3
-   *  and under the current version (`agree`). */
-  languageVersion?: LanguageVersion;
 }
 
 interface Outcome {
@@ -321,7 +317,7 @@ async function runOn(c: Case): Promise<Outcome> {
   try {
     const result = await runMovement({
       source: spelledFor(
-        c.languageVersion ?? CURRENT_LANGUAGE_VERSION,
+        CURRENT_LANGUAGE_VERSION,
         `${PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${c.body}\n}`,
         fromCatalogSnapshot(catalog),
       ),
@@ -335,7 +331,6 @@ async function runOn(c: Case): Promise<Outcome> {
       catalog,
       credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
       firedAt: '2026-05-01T09:00:00.000Z',
-      ...(c.languageVersion !== undefined ? { languageVersion: c.languageVersion } : {}),
       ...(c.dryRun === true ? { dryRun: true } : {}),
       host: makeTestHost({
         locks: recordingWriteLocks(locks),
@@ -372,14 +367,6 @@ function sameIds<T>(value: T): T {
   return JSON.parse(normal) as T;
 }
 
-/** The case on the Rust engine, the version-5 reference. A case pinned below
- *  5 runs on the TypeScript engine and is not this suite's. */
-async function agree(c: Case) {
-  if (c.languageVersion !== undefined && c.languageVersion < 5)
-    throw new Error(`test: a case pinned to ${c.languageVersion} runs on the TypeScript engine`);
-  return onRust(c);
-}
-
 /** One run on the Rust engine: run whole, and what
  *  the hosts saw and what the run handed back (or how it failed) held to the
  *  recorded snapshot, read for correctness when it was recorded. */
@@ -406,7 +393,7 @@ const NOTE_OF = (name: string) =>
 
 describe('match in the Rust engine', () => {
   it('finds through the judge, reads the record whole, and binds it', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       // Neither candidate's name is the asserted one exactly: the rules
       // cannot decide, and the judge is asked.
       body: [
@@ -424,48 +411,28 @@ describe('match in the Rust engine', () => {
     expect(rust.asked).toHaveLength(1);
   });
 
-  it('ends the body quietly on a miss before version 4, keeping what ran before it', async () => {
-    const { rust } = await agree({
-      body: [
-        '  write crm-[:notes]-> { body: "first" }',
-        '  co = match crm-[:companies]-> { unique by (`name`), name: "Nowhere" }',
-        NOTE_OF('co'),
-      ].join('\n'),
-      // Version 4 binds absent on a miss (the case below).
-      languageVersion: 3,
-    });
-    expect(rust.failed).toBe(false);
-    expect(rust.result?.writes).toHaveLength(1);
-  });
-
-  it('binds absent on a miss from version 4, and the block carries on', async () => {
-    const { rust } = await agree({
+  it('binds absent on a miss, and the block carries on', async () => {
+    const { rust } = await onRust({
       body: [
         '  write crm-[:notes]-> { body: "first" }',
         '  co = match crm-[:companies]-> { unique by (`name`), name: "Nowhere" }',
         '  write crm-[:notes]-> { body: IF co == null THEN "absent" ELSE co.`summary` END }',
       ].join('\n'),
-      languageVersion: 4,
     });
     expect(rust.failed).toBe(false);
     expect(rust.result?.writes.map((w) => w.writtenValues.body)).toEqual(['first', 'absent']);
   });
 
   it('narrows the shortlist by the target’s WHERE before the judge — an aliased field and a bare one', async () => {
-    // The bare field is the version 1 to 4 spelling; version 5 reads a bare name in the brackets as a variable from outside.
-    const forms: Array<{ where: string; languageVersion?: LanguageVersion }> = [
-      { where: 'c:companies WHERE c.`region` == msg.`text`' },
-      { where: ':companies WHERE `region` == "EU"', languageVersion: 4 },
-    ];
-    for (const { where, languageVersion } of forms) {
-      const { rust } = await agree({
+    const forms = [{ where: 'c:companies WHERE c.`region` == msg.`text`' }];
+    for (const { where } of forms) {
+      const { rust } = await onRust({
         body: [
           `  co = match crm-[${where}]-> { unique by (FUZZY \`name\`), name: msg.\`subject\` }`,
           NOTE_OF('co'),
         ].join('\n'),
         crm: TWO,
         judge: picks(0),
-        ...(languageVersion !== undefined ? { languageVersion } : {}),
       });
       expect(rust.result?.writes[0]).toMatchObject({ kind: 'match', externalId: 'co-active' });
       // Each candidate was read whole, then through the graph as a source.
@@ -479,7 +446,7 @@ describe('match in the Rust engine', () => {
   });
 
   it('skips the iteration whose match misses, and runs the next', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  crm-[c:companies]-> {',
         '    found = match crm-[:funds]-> { unique by (`name`), name: c.`name` }',
@@ -509,12 +476,12 @@ describe('a write whose target carries a WHERE', () => {
   it('updates the candidate that passes it, and creates when none does', async () => {
     const write = (region: string) =>
       `  write crm-[c:companies WHERE c.\`region\` == "${region}"]-> { unique by (FUZZY \`name\`), name: msg.\`subject\`, summary: "seen" }`;
-    const updated = await agree({ body: write('EU'), crm: TWO, judge: picks(0) });
+    const updated = await onRust({ body: write('EU'), crm: TWO, judge: picks(0) });
     expect(updated.rust.result?.writes[0]).toMatchObject({
       outcome: 'update',
       externalId: 'co-active',
     });
-    const created = await agree({ body: write('APAC'), crm: TWO, judge: picks(0) });
+    const created = await onRust({ body: write('APAC'), crm: TWO, judge: picks(0) });
     expect(created.rust.result?.writes[0]).toMatchObject({ outcome: 'create' });
     expect(created.rust.asked).toEqual([]);
   });
@@ -527,7 +494,7 @@ describe('link and unlink in the Rust engine', () => {
   ];
 
   it('links and unlinks two written records, each with both endpoints’ provenance', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [...TWO_ROOTS, '  link p -[:company]-> co', '  unlink p -[:company]-> co'].join('\n'),
     });
     expect(rust.result?.writes.slice(2).map((w) => [w.kind, w.created])).toEqual([
@@ -537,7 +504,7 @@ describe('link and unlink in the Rust engine', () => {
   });
 
   it('rehearses a link and an unlink', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [...TWO_ROOTS, '  link p -[:company]-> co', '  unlink p -[:company]-> co'].join('\n'),
       dryRun: true,
     });
@@ -545,75 +512,19 @@ describe('link and unlink in the Rust engine', () => {
   });
 
   it('fails a link the adapter cannot make, and an edge the from side does not declare, with the TypeScript engine’s errors', async () => {
-    const missing = await agree({
+    const missing = await onRust({
       body: [...TWO_ROOTS, '  link p -[:company]-> co'].join('\n'),
       crm: { verbs: ['deleteRecord'] },
     });
     expect(String(runFailureCause(missing.rust.error))).toContain(
       'cannot link two existing records (no linkRecords capability)',
     );
-    const undeclared = await agree({
+    const undeclared = await onRust({
       body: [...TWO_ROOTS, '  link co -[:company]-> p'].join('\n'),
     });
     expect(String(runFailureCause(undeclared.rust.error))).toContain(
       "'company' is not a declared edge of company",
     );
-  });
-
-  it('links the record its body matches (from version 2), and binds it', async () => {
-    const { rust } = await agree({
-      body: [
-        '  co = write crm-[:companies]-> { unique by (`name`), name: msg.`subject` }',
-        '  fund = link co -[:portfolio]-> { unique by (`name`), name: "Fund III" }',
-        '  write crm-[:notes]-> { body: fund.`vintage` }',
-      ].join('\n'),
-      crm: {
-        candidates: {
-          fund: [{ adapterType: 'attio', externalId: 'fund-7', data: { name: 'Fund III' } }],
-        },
-      },
-      // Version 4 retires the body form (MOV_LINK_MATCH_BODY_RETIRED).
-      languageVersion: 3,
-    });
-    expect(rust.result?.writes.map((w) => w.kind ?? w.outcome)).toEqual([
-      'create',
-      'match',
-      'link',
-      'create',
-    ]);
-  });
-
-  it('finds and links by criteria under version 1, as one row', async () => {
-    const { rust } = await agree({
-      body: [
-        '  co = write crm-[:companies]-> { unique by (`name`), name: msg.`subject` }',
-        '  fund = link co -[:portfolio]-> { name: "Fund III" }',
-        '  write crm-[:notes]-> { body: "${fund.`vintage`} ${fund.`name`}" }',
-      ].join('\n'),
-      crm: {
-        candidates: {
-          fund: [
-            {
-              adapterType: 'attio',
-              externalId: 'fund-7',
-              url: 'https://crm/funds/7',
-              data: { name: 'Fund III' },
-            },
-          ],
-        },
-      },
-      languageVersion: 1,
-    });
-    expect(rust.result?.writes[1]).toMatchObject({
-      kind: 'link',
-      bindingName: 'fund',
-      link: { foundTarget: true },
-    });
-    // The note reads the found record: its snapshot under readRecord's answer.
-    expect(
-      calls(rust).find(([m, input]) => m === 'createRecord' && input.recordType === 'note')?.[1]
-        .fields,
-    ).toEqual({ body: '2024 Fund III' });
   });
 });
 
@@ -626,7 +537,7 @@ describe('writes and deletes off a traversed record', () => {
   };
 
   it('writes off it, updates it in place and deletes it, each through the graph’s target adapter', async () => {
-    const { rust } = await agree({
+    const { rust } = await onRust({
       body: [
         '  crm-[c:companies]-> {',
         '    write c-[:notes]-> { body: c.`name` }',
@@ -654,13 +565,13 @@ describe('writes and deletes off a traversed record', () => {
       '  stale = write crm-[:companies]-> { unique by (`name`), name: msg.`subject` }',
       '  delete stale',
     ].join('\n');
-    const live = await agree({ body });
+    const live = await onRust({ body });
     expect(live.rust.result?.writes[1]).toMatchObject({
       kind: 'delete',
       provenance: { record: [{ kind: 'write', write: 0 }] },
     });
-    await agree({ body, dryRun: true });
-    const refused = await agree({ body, crm: { verbs: [] } });
+    await onRust({ body, dryRun: true });
+    const refused = await onRust({ body, crm: { verbs: [] } });
     expect(String(runFailureCause(refused.rust.error))).toContain(
       'cannot delete records (no deleteRecord capability)',
     );
@@ -677,7 +588,7 @@ describe('writes and deletes off a traversed record', () => {
         externalId: 7 as unknown as string,
         data: { name: 'Example Labs' },
       };
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: '  write crm-[:companies]-> { unique by (`name`), name: msg.`subject`, summary: "seen" }',
         crm: { candidates: { company: [numeric] } },
       });
@@ -685,7 +596,7 @@ describe('writes and deletes off a traversed record', () => {
     });
 
     it('a delete, a link and an unlink of numeric ids lock by the numbers', async () => {
-      const { rust } = await agree({
+      const { rust } = await onRust({
         body: [
           '  p = write crm-[:people]-> { name: msg.`subject`, email: msg.`text` }',
           '  co = write crm-[:companies]-> { name: msg.`subject` }',
