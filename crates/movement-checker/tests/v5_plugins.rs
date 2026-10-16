@@ -135,3 +135,28 @@ fn the_rewrite_applied_checks_clean() {
     assert!(fixed.contains("fetchUrl(u)") && fixed.contains("research(n, { context: s, questions: t })") && fixed.contains("vcUrlRetrieval(t, { email: u })"), "{fixed}");
     assert_eq!(check(&fixed, 5), Vec::<Diagnostic>::new());
 }
+
+fn stage(through: &str) -> String {
+    format!(
+        "import {{ research, linkedinEnrichment }} from plugins\n\nfunction go(u: <text>, n: <text>, s: <text>) {{\n  found = extract from [u] {{\n    name: \"the name\"\n  }} through [{through}] {{\n    detail: \"more\"\n  }}\n}}\n"
+    )
+}
+
+#[test]
+fn a_through_stage_takes_its_arguments_by_position_too() {
+    assert_eq!(check(&stage("linkedinEnrichment(2)"), 5), Vec::<Diagnostic>::new());
+    assert_eq!(check(&stage("research(n, { context: s })"), 5), Vec::<Diagnostic>::new());
+    assert_eq!(check(&stage("linkedinEnrichment"), 5).iter().map(|d| d.code.as_str()).collect::<Vec<_>>(), vec!["MOV_THROUGH_ARG_MISSING"]);
+    // A stage is never fed by its author: the fed input is no positional parameter.
+    assert_eq!(codes(&stage("linkedinEnrichment(u, 2)"), 5), vec!["MOV_THROUGH_BAD_ARG".to_string()]);
+    assert_eq!(codes(&stage("research(n, { name: s })"), 5), vec!["MOV_THROUGH_BAD_ARG".to_string()]);
+}
+
+#[test]
+fn a_through_stage_s_named_arguments_under_5_are_rewritten_by_position() {
+    let program = stage("research(name: n, context: s)");
+    let found = check(&program, 5);
+    let fixes: Vec<_> = found.iter().filter(|d| d.code == "MOV_V5_SPELLING").map(|d| d.fix.as_ref().map(|f| f["edits"][0]["text"].clone())).collect();
+    assert_eq!(fixes, vec![Some(serde_json::json!("n, { context: s }"))]);
+    assert_eq!(check(&apply_fixes(&program, &found), 5), Vec::<Diagnostic>::new());
+}

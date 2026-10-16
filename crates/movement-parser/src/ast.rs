@@ -1039,5 +1039,10 @@ pub enum ExtractCallShape {
 pub struct PluginCall {
     pub plugin: String,
     pub args: Vec<NamedArg>,
+    /// From version 5: the arguments written by position, the settings
+    /// record among them, bound to the plugin's parameters where its spec is
+    /// known (`PluginSpec::bind_stage_args`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positional: Vec<ExprSlot>,
     pub span: Span,
 }

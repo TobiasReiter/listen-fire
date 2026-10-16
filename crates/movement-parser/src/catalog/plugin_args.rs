@@ -6,7 +6,7 @@
 //! packages/movement-lang/checker/catalog.ts; both checkers and both engines
 //! bind through these two and nothing else.
 
-use crate::ast::{CallArg, ExprSlot, Span};
+use crate::ast::{CallArg, ExprSlot, NamedArg, PluginCall, Span};
 use crate::catalog::types::PluginSpec;
 use crate::tree::{MExpr, MapKey, MapMember};
 use crate::util::utf16::Utf16;
@@ -103,6 +103,28 @@ impl PluginSpec {
             }
         }
         binding
+    }
+}
+
+/// A `through [ … ]` stage's arguments, bound to the plugin's parameters by name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageArgBinding {
+    pub args: Vec<NamedArg>,
+    pub misfits: Vec<PluginArgMisfit>,
+}
+
+impl PluginSpec {
+    /// `bindStageArgs`: a stage's positional arguments bound as a call's are,
+    /// with the stage's positional parameters (never a fed one).
+    pub fn bind_stage_args(&self, stage: &PluginCall) -> StageArgBinding {
+        let args: Vec<CallArg> = stage.positional.iter().map(|slot| CallArg::Expr { name: None, expr: slot.clone() }).collect();
+        let bound = self.bind_args(PluginCallSite::Stage, &args);
+        let named = bound.args.into_iter().filter_map(|arg| match arg {
+            CallArg::Expr { name: Some(name), expr } => Some(NamedArg { name, value: expr, is_type: None }),
+            // Binding names an expression and makes nothing else.
+            _ => None,
+        });
+        StageArgBinding { args: stage.args.iter().cloned().chain(named).collect(), misfits: bound.misfits }
     }
 }
 

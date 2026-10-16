@@ -1655,5 +1655,9 @@ export type ExtractCallShape =
 export interface PluginCall {
   plugin: string;
   args: NamedArg[];
+  /** From version 5: the arguments written by position, the settings record
+   *  among them, bound to the plugin's parameters where its spec is known
+   *  (`bindStageArgs`). */
+  positional?: ExprSlot[];
   span: Span;
 }

@@ -1022,8 +1022,27 @@ impl<'r, 'h> Materializer<'r, 'h> {
     /// extraction-fed arguments, a blank required argument skipping the
     /// entity, then the invocation, timed and traced.
     async fn invoke_plugin(&self, plugin: &ast::PluginCall, context: &JsObject, node: &str, sink: &Sink<'r, 'h>) -> Result<Option<PluginResult>, Stop> {
+        let registered = self.run.registered_plugin(&plugin.plugin, self.scope);
+        let spec = self.run.plugin_spec(&registered);
+        // From version 5 a stage's arguments are by position, bound to the
+        // plugin's parameters as the checker bound them.
+        let bound = match spec {
+            Some(spec) if self.run.version() >= 5 && !plugin.positional.is_empty() => {
+                let bound = spec.bind_stage_args(plugin);
+                if let Some(misfit) = bound.misfits.first() {
+                    let positional = spec.positional_params(movement_parser::catalog::plugin_args::PluginCallSite::Stage);
+                    return Err(Stop::Thrown(Failure::engine(
+                        "MOVENG_RUNTIME",
+                        format!("{} — the checker should have caught this", misfit.message(&plugin.plugin, &positional)),
+                    )));
+                }
+                Some(bound.args)
+            }
+            _ => None,
+        };
+        let args = bound.as_deref().unwrap_or(&plugin.args);
         let mut config = JsObject::new();
-        for arg in &plugin.args {
+        for arg in args {
             let raw = js::trim(&arg.value.raw);
             let value = match context.get(raw) {
                 Some(value) if js::is_identifier(raw) => value.clone(),
@@ -1040,8 +1059,6 @@ impl<'r, 'h> Materializer<'r, 'h> {
             };
             config.set(arg.name.clone(), value);
         }
-        let registered = self.run.registered_plugin(&plugin.plugin, self.scope);
-        let spec = self.run.plugin_spec(&registered);
         for fed in spec.and_then(|s| s.fed_args.as_ref()).into_iter().flatten() {
             config.set(fed.name.clone(), Js::str(self.source_text.borrow().clone()));
         }
@@ -1056,7 +1073,7 @@ impl<'r, 'h> Materializer<'r, 'h> {
             let mut fields = Map::new();
             fields.insert("plugin".into(), json!(plugin.plugin));
             fields.insert("param".into(), json!(param));
-            fields.insert("written".into(), json!(plugin.args.iter().any(|a| a.name == *param)));
+            fields.insert("written".into(), json!(args.iter().any(|a| a.name == *param)));
             self.run.log("info", "[movement:transform] required argument is empty — skipping this entity", fields);
             let mut entry = Members::default();
             entry.set("plugin", Js::str(plugin.plugin.clone()));

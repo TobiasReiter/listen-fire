@@ -23,7 +23,7 @@ import type {
 } from '@listen-fire/shared/expression/types';
 import { neverAsAny } from '../never';
 import { before, type LanguageVersion } from '../language_version';
-import type { CallArg, ExprSlot, Loc, Program, Span, TypeDeclaration } from '../parser/ast';
+import type { CallArg, ExprSlot, Loc, NamedArg, PluginCall, Program, Span, TypeDeclaration } from '../parser/ast';
 import { parseExpression } from '../parser/expression/parse_expression';
 import { isMapSpread, type At, type MapMember, type MExpr } from '../parser/expression/tree';
 import type { DeclaredEffectRow } from './effects';
@@ -482,6 +482,21 @@ export function bindPluginArgs(spec: PluginSpec, site: PluginCallSite, args: rea
     }
   }
   return binding;
+}
+
+/** A `through [ … ]` stage's arguments, bound to the plugin's parameters by name. */
+export interface StageArgBinding {
+  args: NamedArg[];
+  misfits: PluginArgMisfit[];
+}
+
+/** A stage's positional arguments bound as a call's are, with the stage's
+ *  positional parameters (never a fed one). */
+export function bindStageArgs(spec: PluginSpec, stage: PluginCall): StageArgBinding {
+  const bound = bindPluginArgs(spec, 'stage', (stage.positional ?? []).map((expr): CallArg => ({ kind: 'expr', expr })));
+  // Binding names an expression and makes nothing else.
+  const named = bound.args.flatMap((arg): NamedArg[] => (arg.kind === 'expr' && arg.name !== undefined ? [{ name: arg.name, value: arg.expr }] : []));
+  return { args: [...stage.args, ...named], misfits: bound.misfits };
 }
 
 interface RecordLiteral {

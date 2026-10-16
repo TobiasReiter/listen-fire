@@ -201,6 +201,7 @@ import {
   type PluginSpec,
   pluginOutputUnder,
   bindPluginArgs,
+  bindStageArgs,
   callArgSpan,
   pluginArgMisfitMessage,
   pluginPositionalParams,
@@ -14794,9 +14795,10 @@ class Checker {
     // A stage is plain function application — the same call, in the position
     // that feeds the extraction. So it folds the same row.
     this.absorbPluginRow(spec);
-    const supplied = new Set(plugin.args.map(arg => arg.name));
+    const args = this.bindPluginStage(plugin, spec);
+    const supplied = new Set(args.map(arg => arg.name));
     this.reportPluginMissingArgs(plugin.plugin, spec, supplied, plugin.span);
-    for (const arg of plugin.args) {
+    for (const arg of args) {
       this.reportPluginBadArg(plugin.plugin, spec, arg.name, arg.value.span);
       // Held to what the plugin takes exactly as a plain call's argument is:
       // a stage is the same call, and the engine hands it the same value.
@@ -14813,6 +14815,26 @@ class Checker {
         span: arg.value.span,
       });
     }
+  }
+
+  /**
+   * A stage's arguments by position (version 5), as the named ones versions
+   * 1–4 write, each misfit reported. A stage still written with named
+   * arguments leaves the plugin's order for the parser's finding's fix.
+   */
+  private bindPluginStage(plugin: PluginCall, spec: PluginSpec | undefined): NamedArg[] {
+    if (spec === undefined || before(this.languageVersion, 5)) return plugin.args;
+    const first = plugin.args[0];
+    if (first !== undefined) {
+      const at = first.value.span.start;
+      this.namedOrders.set(`${at.line}:${at.col}`, pluginArgOrder(spec, 'stage'));
+    }
+    const bound = bindStageArgs(spec, plugin);
+    const positional = pluginPositionalParams(spec, 'stage');
+    for (const misfit of bound.misfits) {
+      this.report(DiagnosticCodes.THROUGH_BAD_ARG, pluginArgMisfitMessage(misfit, plugin.plugin, positional), misfit.span);
+    }
+    return bound.args;
   }
 
   /**

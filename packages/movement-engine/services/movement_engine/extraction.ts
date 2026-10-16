@@ -44,11 +44,14 @@
 import { z } from 'zod';
 import {
   before,
+  bindStageArgs,
   BridgeError,
   borrowedTypeSegments,
   fileViews,
   isEnumType,
   parseFieldTypeName,
+  pluginArgMisfitMessage,
+  pluginPositionalParams,
   expressionOfSlot,
   variantOf,
 } from 'movement-lang';
@@ -61,6 +64,7 @@ import type {
   ExtractStage,
   FieldType,
   LanguageVersion,
+  NamedArg,
   PluginCall,
   PluginSpec,
   ShapeNode,
@@ -1766,14 +1770,36 @@ class Materializer {
    *  nothing for the plugin to work on, so the honest outcome is no
    *  enrichment rather than a run over a blank, and the entity's remaining
    *  fields are extracted from what it already has. */
+  /** From version 5 a stage's arguments are by position, bound to the
+   *  plugin's parameters as the checker bound them; one that does not fit is
+   *  a checker miss. */
+  private boundStageArgs(plugin: PluginCall, spec: PluginSpec | undefined): NamedArg[] {
+    if (spec === undefined || before(this.languageVersion, 5) || (plugin.positional ?? []).length === 0) return plugin.args;
+    const bound = bindStageArgs(spec, plugin);
+    const [misfit] = bound.misfits;
+    if (misfit !== undefined) {
+      throw new MovementEngineError(
+        'MOVENG_RUNTIME',
+        `${pluginArgMisfitMessage(misfit, plugin.plugin, pluginPositionalParams(spec, 'stage'))} — the checker should have caught this`,
+      );
+    }
+    return bound.args;
+  }
+
   private async invokePlugin(
     plugin: PluginCall,
     context: Record<string, unknown>,
     node: string,
     trace: TraceSink,
   ): Promise<TransformInvocationResult | typeof SKIPPED> {
+    // The plugin is looked up, and invoked, by the name it is registered
+    // under: by the name the stage wrote, an aliased import was found in no
+    // snapshot, so a priced one escaped the run's cost cap.
+    const registered = this.runtime.registeredPlugin?.(plugin.plugin) ?? plugin.plugin;
+    const spec = pluginSpecNamed(this.runtime.plugins, registered);
+    const args = this.boundStageArgs(plugin, spec);
     const config: Record<string, unknown> = {};
-    for (const arg of plugin.args) {
+    for (const arg of args) {
       const raw = arg.value.raw.trim();
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) && raw in context) {
         config[arg.name] = context[raw];
@@ -1789,12 +1815,6 @@ class Materializer {
     // Engine-injected `auto` params (e.g. vc_url_retrieval's `text`): fed
     // from the extract source text, not author-supplied. Done last so the
     // author can't override them.
-    //
-    // The plugin is looked up, and invoked, by the name it is registered
-    // under: by the name the stage wrote, an aliased import was found in no
-    // snapshot, so a priced one escaped the run's cost cap.
-    const registered = this.runtime.registeredPlugin?.(plugin.plugin) ?? plugin.plugin;
-    const spec = pluginSpecNamed(this.runtime.plugins, registered);
     for (const fed of spec?.fedArgs ?? []) config[fed.name] = this.sourceText;
 
     // The URL the invocation was pointed at — the one argument worth naming
@@ -1807,7 +1827,7 @@ class Materializer {
       logger.info('[movement:transform] required argument is empty — skipping this entity', {
         plugin: plugin.plugin,
         param,
-        written: plugin.args.some((a) => a.name === param),
+        written: args.some((a) => a.name === param),
         ...runLogFields(this.runtime.run),
       });
       trace.push({

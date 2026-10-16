@@ -254,6 +254,25 @@ impl Checker<'_> {
         shape
     }
 
+    /// `bindPluginStage` (version 5): a stage's arguments by position, as the
+    /// named ones versions 1–4 write, each misfit reported. A stage still
+    /// written with named arguments leaves the plugin's order for the
+    /// parser's finding's fix.
+    fn bind_plugin_stage(&mut self, plugin: &PluginCall, spec: Option<&movement_parser::catalog::types::PluginSpec>) -> Vec<movement_parser::ast::NamedArg> {
+        let Some(spec) = spec.filter(|_| movement_parser::version::since(self.version, 5)) else { return plugin.args.clone() };
+        use movement_parser::catalog::plugin_args::PluginCallSite;
+        if let Some(first) = plugin.args.first() {
+            let at = first.value.span.start;
+            self.named_orders.insert((at.line, at.col), crate::families::plugin_calls::plugin_arg_order(spec, PluginCallSite::Stage));
+        }
+        let bound = spec.bind_stage_args(plugin);
+        let positional = spec.positional_params(PluginCallSite::Stage);
+        for misfit in &bound.misfits {
+            self.report(codes::THROUGH_BAD_ARG, misfit.message(&plugin.plugin, &positional), misfit.span());
+        }
+        bound.args
+    }
+
     /// `checkPluginCall`: one `through` stage — a plugin, called on what the
     /// extraction feeds it and the arguments written.
     fn check_plugin_stage(&mut self, plugin: &PluginCall, scope: ScopeId, fields: &ThroughFields) {
@@ -284,9 +303,10 @@ impl Checker<'_> {
         if let Some(effects) = spec.as_ref().and_then(|s| s.effects.as_ref()) {
             self.absorb_suspend(effects.suspend == Some(true));
         }
-        let supplied: HashSet<&str> = plugin.args.iter().map(|a| a.name.as_str()).collect();
+        let args = self.bind_plugin_stage(plugin, spec.as_ref());
+        let supplied: HashSet<&str> = args.iter().map(|a| a.name.as_str()).collect();
         self.report_plugin_missing_args(&plugin.plugin, spec.as_ref(), &supplied, plugin.span);
-        for arg in &plugin.args {
+        for arg in &args {
             self.report_plugin_bad_arg(&plugin.plugin, spec.as_ref(), &arg.name, arg.value.span, false);
             // Held to what the plugin takes exactly as a plain call's argument is.
             let declared = spec.as_ref().and_then(|s| s.arg_types.as_ref()).and_then(|t| t.0.get(&arg.name));

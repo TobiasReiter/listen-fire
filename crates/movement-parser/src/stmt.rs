@@ -2590,7 +2590,7 @@ impl Parser {
                     arg_start,
                 );
             }
-            self.refuse_mixed_args(callee, &args, name.as_deref(), arg_start)?;
+            self.refuse_mixed_args(callee, args.first().map(|a| a.name().is_some()), name.as_deref(), arg_start)?;
             // A function written in place and a type: what `MAP` and `MEMBERS`
             // take from version 3, read for every callee.
             if since(self.version, 3) && self.at_closure() {
@@ -2728,9 +2728,10 @@ impl Parser {
     }
 
     /// One call is all positional or all named — never a mix.
-    fn refuse_mixed_args(&self, callee: &str, earlier: &[CallArg], name: Option<&str>, at: usize) -> SResult<()> {
-        let Some(first) = earlier.first() else { return Ok(()) };
-        if first.name().is_none() == name.is_none() {
+    /// `first_named`: whether the call's first argument was named, once there is one.
+    fn refuse_mixed_args(&self, callee: &str, first_named: Option<bool>, name: Option<&str>, at: usize) -> SResult<()> {
+        let Some(first_named) = first_named else { return Ok(()) };
+        if first_named == name.is_some() {
             return Ok(());
         }
         self.fail_at(
@@ -4534,26 +4535,45 @@ impl Parser {
             let plugin_start = self.pos;
             let plugin = self.read_ident("a plugin name in 'through […]'")?;
             let mut args = Vec::new();
+            let mut positional = Vec::new();
             self.skip_inline_ws();
             if self.is('(') {
                 self.pos += 1;
+                // Each argument's start, its name and where its value starts.
+                let mut marks: Vec<(usize, Option<String>, usize)> = Vec::new();
                 loop {
                     self.skip_all_ws();
                     if self.is(')') {
+                        self.named_arguments(&plugin, &marks, self.pos);
                         self.pos += 1;
                         break;
                     }
-                    let arg_name = self.read_ident(&format!("an argument name for the plugin '{plugin}'"))?;
-                    self.skip_inline_ws();
-                    self.expect(":", &format!("after the argument '{arg_name}'"))?;
-                    let (slot, stop) = self.read_expr_slot(Scan::new(",)", format!("for the argument '{arg_name}'")))?;
-                    args.push(NamedArg { name: arg_name, value: slot, is_type: None });
+                    let arg_start = self.pos;
+                    // From version 5 a stage's arguments are by position, as a
+                    // call's are (crate::catalog::plugin_args binds them).
+                    let arg_name = if since(self.version, 5) {
+                        let name = self.read_call_arg_name();
+                        self.refuse_mixed_args(&plugin, marks.first().map(|m| m.1.is_some()), name.as_deref(), arg_start)?;
+                        name
+                    } else {
+                        let name = self.read_ident(&format!("an argument name for the plugin '{plugin}'"))?;
+                        self.skip_inline_ws();
+                        self.expect(":", &format!("after the argument '{name}'"))?;
+                        Some(name)
+                    };
+                    marks.push((arg_start, arg_name.clone(), self.pos));
+                    let what = arg_name.as_ref().map_or_else(|| format!("for an argument to the plugin '{plugin}'"), |n| format!("for the argument '{n}'"));
+                    let (slot, stop) = self.read_expr_slot(Scan::new(",)", what))?;
+                    match arg_name {
+                        Some(name) => args.push(NamedArg { name, value: slot, is_type: None }),
+                        None => positional.push(slot),
+                    }
                     if stop == Some(unit(',')) {
                         self.pos += 1;
                     }
                 }
             }
-            plugins.push(PluginCall { plugin, args, span: self.span_from(plugin_start) });
+            plugins.push(PluginCall { plugin, args, positional, span: self.span_from(plugin_start) });
             self.skip_all_ws();
             if self.is(',') {
                 self.pos += 1;
