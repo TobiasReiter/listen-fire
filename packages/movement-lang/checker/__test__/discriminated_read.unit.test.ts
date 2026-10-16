@@ -146,7 +146,7 @@ const codes = (body: string): string[] => diagnose(body).map((d) => d.code);
 
 /** The acceptance shape: an org, then its entries on one named list. */
 const onMasterDeals = (where: string, inner = '') => `  cutoff = "2026-01-01"
-  sales-[org:Organization WHERE org.org.org.org.org.\`Name\` == "Acme"]-> {
+  sales-[org:Organization WHERE org.\`Name\` == "Acme"]-> {
     org-[le:\`List Entries\` WHERE ${where}]-> {
 ${inner}
     }
@@ -214,10 +214,12 @@ describe('a hop narrowed by its discriminant is checked against the variant', ()
   it('a MISSPELLED binding is the same error — the two surfaces are checked together', () => {
     // `cutoff` above is a binding spelled exactly the way a field is, and it
     // stays silent. Drop a letter and it is neither, which is the whole of what
-    // scope presence buys.
+    // scope presence buys. From version 5 a bare name the scope does not bind
+    // is also the old spelling of a walk's field (refused, its fix the alias
+    // read `le.cutof`), so the one mistake is reported by both rules.
     expect(
       codes(onMasterDeals('le.`listName` == "Deal Pipeline" && le.`Deal Created` >= cutof')),
-    ).toEqual(['MOV_UNKNOWN_PROPERTY']);
+    ).toEqual(['MOV_V5_SPELLING', 'MOV_UNKNOWN_PROPERTY']);
   });
 });
 
