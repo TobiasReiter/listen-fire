@@ -76,7 +76,7 @@ wa   = connect whatsapp
 chat = connect slack using \`Dev Loop Slack\`
 
 function whatsapp_intake(m: <wa-[:\`Message\`]->>) {
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "WhatsApp from \${m.\`From\`}: \${m.\`Body\`}"
     }
