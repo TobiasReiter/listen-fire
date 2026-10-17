@@ -14,6 +14,7 @@ echo "== cargo parser"; cargo test -p movement-parser 2>&1 | grep -E "^test resu
 echo "== movement-lang suite"; (cd packages/movement-lang && pnpm -s test 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL ")
 echo "== movement-lang conformance v1"; (cd packages/movement-lang && pnpm -s test:conformance:v1 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL ")
 echo "== movement-lang conformance v2"; (cd packages/movement-lang && pnpm -s test:conformance:v2 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL ")
+echo "== ME package unit"; (cd packages/movement-engine && pnpm -s test 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL ")
 cd apps/api
 echo "== ME unit"; npx jest -c src/test/jest-unit.config.ts --testPathPattern 'services/movement_engine/__test__' 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL "
 for v in v1 v2; do echo "== conformance $v"; pnpm -s test:conformance:$v 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL "; done
