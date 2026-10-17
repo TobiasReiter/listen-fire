@@ -60,7 +60,7 @@ Branch `ev2-lfengine`, cut from da4342f9. Status: **done**, both slices.
 - **WASM rebuild** (`scripts/build-movement-wasm.sh`): both artifacts are byte-identical. Cargo.lock only adds `movement-engine` and `sha2` to lf-host's dependency list.
 - **apps/cli on the TypeScript lf:** 138 of 138, including the 7 new run parity tests.
 - **Contract suite plus both parity files against lf-host:** 47 of 47 (30 contract, 10 check parity, 7 run parity).
-- **apps/cli spawn tests with `LF_BIN=target/debug/lf-host`:** 19 of 36. Before this slice it was 11.
+- **apps/cli spawn tests with `LF_BIN=target/debug/lf-host`:** 19 of 36 (six files). In the five run-path files it is now 15 of 32; at da4342f9 it was 7 of 32.
   - Every run, park, resume, FILE, dry-run, ceiling, secrets-file, environment-secrets and missing-credential test passes.
   - The 17 that fail need slices G4, G5 and G6:
     - serve and webhooks: 6
