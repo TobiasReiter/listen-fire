@@ -3,9 +3,26 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 import { logger } from 'movement-engine/services/logger';
-import { encryptToken } from '../../lib/credentials';
-import { getAutomationsQb } from '../../lib/kysely';
-import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+import { createSecretsFamily, expiresWithin, oauth2Refresher, type SecretFields } from 'movement-engine/public/secrets';
+import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
+
+const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token';
+const REFRESH_WINDOW_MS = 60_000;
+
+function dropboxSecrets() {
+  return createSecretsFamily({ backend: postgresSecrets({ shape: camelTokenPayloadShape }) });
+}
+
+/** The stored token fields as the Dropbox payload, keeping the caller's
+ *  refresh token if the store somehow holds none. */
+function credsOf(fields: SecretFields, previous: DropboxCreds): DropboxCreds {
+  const expiresAt = fields.expires_at !== undefined ? Date.parse(fields.expires_at) : Number.NaN;
+  return {
+    accessToken: fields.access_token ?? previous.accessToken,
+    refreshToken: fields.refresh_token ?? previous.refreshToken,
+    expiresAt: Number.isNaN(expiresAt) ? previous.expiresAt : expiresAt,
+  };
+}
 
 export const dropboxCredsParser = z.object({
   accessToken: z.string(),
@@ -27,44 +44,39 @@ export class DropboxAuthClient {
     this.callbackUrl = `${redirectBaseUrl}/dropbox/callback`;
   }
 
+  /**
+   * Refresh through the secrets family over the credentials table, so the
+   * refresh runs once at a time across processes and the write-back is a
+   * compare-and-swap: a second caller that found the same stale token takes
+   * the first one's answer instead of spending the refresh token again.
+   */
   async refreshAccessToken(credentialsId: string, creds: DropboxCreds): Promise<DropboxCreds> {
-    const response = await fetch('https://api.dropboxapi.com/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: creds.refreshToken,
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      logger.error(`[DROPBOX] Token refresh failed: ${text}`);
+    const secrets = dropboxSecrets();
+    const stored = await secrets.resolve(credentialsId);
+    if (stored.fields.access_token !== creds.accessToken && !expiresWithin(stored.fields, REFRESH_WINDOW_MS)) {
+      return credsOf(stored.fields, creds);
+    }
+    try {
+      const refreshed = await secrets.refresh(credentialsId, {
+        seenVersion: stored.version,
+        refresher: oauth2Refresher({
+          tokenUrl: DROPBOX_TOKEN_URL,
+          clientAuth: 'body',
+          client: { clientId: this.clientId, clientSecret: this.clientSecret },
+        }),
+      });
+      logger.info('[DROPBOX] CREDENTIALS REFRESHED');
+      return credsOf(refreshed.fields, creds);
+    } catch (error) {
+      // The family's message names the credential and the provider's answer
+      // with every secret value taken out.
+      logger.error(`[DROPBOX] Token refresh failed: ${error instanceof Error ? error.message : String(error)}`);
       throw new Error('Dropbox token refresh failed');
     }
-
-    const data = await response.json();
-    const newCreds: DropboxCreds = {
-      accessToken: data.access_token,
-      refreshToken: creds.refreshToken,
-      expiresAt: Date.now() + data.expires_in * 1000,
-    };
-
-    const encrypted = await encryptToken(JSON.stringify(newCreds), credentialsId);
-    await getAutomationsQb(['external_service_credentials'])
-      .updateTable('external_service_credentials')
-      .set({ credentials: encrypted, updated_at: new Date() })
-      .where('id', '=', credentialsId as ExternalServiceCredentialsId)
-      .execute();
-    logger.info('[DROPBOX] CREDENTIALS REFRESHED');
-
-    return newCreds;
   }
 
   async getValidAccessToken(credentialsId: string, creds: DropboxCreds): Promise<string> {
-    if (creds.expiresAt > Date.now() + 60_000) {
+    if (creds.expiresAt > Date.now() + REFRESH_WINDOW_MS) {
       return creds.accessToken;
     }
     const refreshed = await this.refreshAccessToken(credentialsId, creds);

@@ -24,10 +24,9 @@ import { z } from 'zod';
 
 import type { Credentials } from 'google-auth-library';
 
-import { decryptToken, encryptToken } from '../../lib/credentials';
-import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from 'movement-engine/services/logger';
-import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+import { createSecretsFamily, SecretMissing } from 'movement-engine/public/secrets';
+import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 import {
   GMAIL_OAUTH_CLIENT_LABEL,
   gmailOAuthClientCredentials,
@@ -100,13 +99,14 @@ export function forgetGmailTokenClient(credentialsId: string): void {
 
 /**
  * Rewrite the token half of a stored payload in place. The mailbox address and
- * the granted scopes are read back off the row and written through unchanged: a
- * refresh renews a token, it never re-grants anything, so inventing either here
- * would be inventing a fact Google did not state.
+ * the granted scopes are kept as stored: a refresh renews a token, it never
+ * re-grants anything, so inventing either here would be inventing a fact
+ * Google did not state. The library refreshed by itself, so the write-back
+ * holds no version: it goes under the credential's lock over whatever is
+ * stored now.
  */
 async function persistRotation(input: {
   credentialsId: string;
-  previous: GmailTokens;
   issued: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null };
 }): Promise<void> {
   const { credentialsId, issued } = input;
@@ -114,30 +114,19 @@ async function persistRotation(input: {
     logger.error('[GMAIL] token refresh missing required fields', { credentialsId });
     return;
   }
-  const row = await getAutomationsQb(['external_service_credentials'])
-    .selectFrom('external_service_credentials')
-    .where('id', '=', credentialsId as ExternalServiceCredentialsId)
-    .select(['credentials'])
-    .executeTakeFirst();
-  if (!row) return;
-
-  const stored: unknown = JSON.parse(await decryptToken(row.credentials, credentialsId));
-  const payload = typeof stored === 'object' && stored !== null ? { ...stored } : {};
-  const next = {
-    ...payload,
-    accessToken: issued.access_token,
-    refreshToken: issued.refresh_token ?? input.previous.refreshToken,
-    expiresAt: issued.expiry_date,
+  const changed: Record<string, string> = {
+    access_token: issued.access_token,
+    expires_at: new Date(issued.expiry_date).toISOString(),
   };
-
-  await getAutomationsQb(['external_service_credentials'])
-    .updateTable('external_service_credentials')
-    .set({
-      credentials: await encryptToken(JSON.stringify(next), credentialsId),
-      updated_at: new Date(),
-    })
-    .where('id', '=', credentialsId as ExternalServiceCredentialsId)
-    .execute();
+  // Absent means Google did not rotate it: the stored one is kept.
+  if (issued.refresh_token) changed.refresh_token = issued.refresh_token;
+  try {
+    await createSecretsFamily({ backend: postgresSecrets({ shape: camelTokenPayloadShape }) }).update(credentialsId, changed);
+  } catch (error) {
+    // The row is gone (the mailbox was disconnected): nowhere to save to.
+    if (error instanceof SecretMissing) return;
+    throw error;
+  }
 }
 
 /**
@@ -174,9 +163,8 @@ export function gmailTokenClient(input: {
   if (!client) {
     client = build();
     clientsById.set(credentialsId, client);
-    const tokensAtBind = input.tokens;
     client.on('tokens', (issued) => {
-      void persistRotation({ credentialsId, previous: tokensAtBind, issued }).catch((err) => {
+      void persistRotation({ credentialsId, issued }).catch((err) => {
         logger.error('[GMAIL] failed to save rotated tokens', { credentialsId, err });
       });
     });
