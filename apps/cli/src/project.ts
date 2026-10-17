@@ -8,11 +8,9 @@ import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { parse, stringify } from 'yaml';
 import { CURRENT_LANGUAGE_VERSION, since, type LanguageVersion } from 'movement-lang';
+import { ENGINE_VERSION } from 'movement-engine/public/movement-engine';
 
 export const PROJECT_FILE = 'lf.yaml';
-
-/** The engine version a new project is pinned to: this release's. */
-export const CURRENT_ENGINE_VERSION = '0.11.0';
 
 const ProjectFile = z.object({
   engine: z.string().regex(/^\d+\.\d+\.\d+$/, 'engine: a semver version, e.g. 0.11.0'),
@@ -47,9 +45,9 @@ export interface Project {
  * an engine version newer than this release is refused.
  */
 export function languageVersionOfEngine(engine: string): LanguageVersion {
-  if (compareSemver(engine, CURRENT_ENGINE_VERSION) > 0) {
+  if (compareSemver(engine, ENGINE_VERSION) > 0) {
     throw new Error(
-      `lf.yaml pins engine ${engine}, newer than this lf (${CURRENT_ENGINE_VERSION}); upgrade lf or lower the pin`,
+      `lf.yaml pins engine ${engine}, newer than this lf (${ENGINE_VERSION}); upgrade lf or lower the pin`,
     );
   }
   return CURRENT_LANGUAGE_VERSION;
@@ -118,7 +116,7 @@ export function initProject(dir: string): string[] {
   if (!existsSync(projectFile)) {
     writeFileSync(
       projectFile,
-      stringify({ engine: CURRENT_ENGINE_VERSION, movements: 'movements', externals: 'externals' }) +
+      stringify({ engine: ENGINE_VERSION, movements: 'movements', externals: 'externals' }) +
         '# Who events act as on this machine (@user_name, @user_email). Defaults to the OS user;\n' +
         '# LF_USER and LF_USER_EMAIL override.\n' +
         '# user: { name: Your Name, email: you@example.com }\n' +

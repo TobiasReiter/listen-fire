@@ -11,7 +11,8 @@ use serde::Deserialize;
 
 pub const PROJECT_FILE: &str = "lf.yaml";
 
-/// The engine version this release runs (apps/cli's `CURRENT_ENGINE_VERSION`).
+/// The engine version this release runs (`ENGINE_VERSION` in
+/// packages/movement-engine/public/movement-engine.ts); a test holds the two equal.
 pub const CURRENT_ENGINE_VERSION: &str = "0.11.0";
 
 /// lf runs on the Rust engine alone, which runs version 5 and later;
@@ -145,6 +146,15 @@ mod tests {
         let refused = refuse_below_lf(4, "lf.yaml", "run `lf upgrade`").unwrap_err();
         assert!(refused.contains("which lf does not run (lf runs language version 5 and later)"), "{refused}");
         assert!(refuse_below_lf(5, "lf.yaml", "").is_ok());
+    }
+
+    #[test]
+    fn engine_version_is_the_engine_packages() {
+        let source = include_str!("../../../packages/movement-engine/public/movement-engine.ts");
+        let marker = "export const ENGINE_VERSION = '";
+        let start = source.find(marker).expect("the public entry declares ENGINE_VERSION") + marker.len();
+        let end = start + source[start..].find('\'').expect("ENGINE_VERSION ends");
+        assert_eq!(&source[start..end], CURRENT_ENGINE_VERSION);
     }
 
     #[test]
