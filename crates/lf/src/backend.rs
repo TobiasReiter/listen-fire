@@ -67,7 +67,7 @@ impl StoreSpec {
         match module.name {
             core::POSTGRES_STORE => StoreSpec::parse(core::required(&settings, module, "url")?, &project.root, team),
             _ if team.is_some() => Err("--team names a Postgres store's tenant; a SQLite state file has one tenant".into()),
-            _ => Ok(StoreSpec::Sqlite(core::sqlite_path(project, &settings))),
+            _ => Ok(StoreSpec::Sqlite(core::sqlite_path(project, &settings)?)),
         }
     }
 

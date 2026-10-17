@@ -320,6 +320,12 @@ async fn connect_core(project: &Project, module: &crate::core::CoreModule, promp
     for line in crate::core::set_up(project, module, &settings)? {
         prompter.print(&line);
     }
+    // Nothing to keep (a module with no settings, or every one left at its
+    // default) and no entry to change: the secrets file is not touched.
+    if fields.is_empty() && existing.is_none() {
+        prompter.print(&format!("connected {}: it has no settings to keep", module.name));
+        return Ok(());
+    }
     let install_name = match existing {
         Some(existing) => existing.name.clone(),
         None => core_entry_name(module.name),

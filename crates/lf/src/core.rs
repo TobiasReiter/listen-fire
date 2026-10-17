@@ -194,7 +194,7 @@ pub fn set_up(project: &Project, module: &CoreModule, settings: &BTreeMap<String
             }])
         }
         SQLITE_STORE => {
-            let path = sqlite_path(project, settings);
+            let path = sqlite_path(project, settings)?;
             crate::store::Store::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             Ok(vec![format!("the state file is {}", path.display())])
         }
@@ -202,11 +202,30 @@ pub fn set_up(project: &Project, module: &CoreModule, settings: &BTreeMap<String
     }
 }
 
-pub fn sqlite_path(project: &Project, settings: &BTreeMap<String, String>) -> std::path::PathBuf {
-    match settings.get("path") {
-        Some(path) => project.root.join(path),
-        None => project.lf_dir.join("state.db"),
+/// The SQLite store's state file: its `path` setting from the project
+/// folder, else `.lf/state.db`.
+pub fn sqlite_path(project: &Project, settings: &BTreeMap<String, String>) -> Result<std::path::PathBuf, String> {
+    state_file_at(&project.root, &project.lf_dir, settings.get("path").map(String::as_str))
+}
+
+/// A `path` setting that names no file lf could keep its state in is
+/// refused when it is read, not met later as a SQLite error.
+fn state_file_at(root: &std::path::Path, lf_dir: &std::path::Path, setting: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let Some(setting) = setting else { return Ok(lf_dir.join("state.db")) };
+    let refuse = |why: &str| {
+        Err(format!("{SQLITE_STORE}'s `path` setting \"{setting}\" {why}: run `lf connect {SQLITE_STORE}` to set it again (empty for .lf/state.db)"))
+    };
+    if setting.contains("://") {
+        return refuse("is a URL, not a file (a Postgres database is @lf/postgres-store's)");
     }
+    let path = root.join(setting);
+    if path.is_dir() {
+        return refuse("is a folder; name the state file inside it");
+    }
+    if path.parent().is_some_and(|parent| !parent.as_os_str().is_empty() && !parent.is_dir()) {
+        return refuse("is in a folder that does not exist");
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -221,6 +240,18 @@ mod tests {
     fn every_slot_has_a_built_in_default() {
         let choice = CoreChoice::of(&BTreeMap::new(), "lf.yaml").unwrap();
         assert_eq!([choice.models.name, choice.judge.name, choice.store.name, choice.files.name], [ANTHROPIC, JUDGE, SQLITE_STORE, LOCAL_FILES]);
+    }
+
+    #[test]
+    fn the_sqlite_stores_path_names_a_file_in_a_folder_that_exists() {
+        let root = std::env::temp_dir().join(format!("lf-core-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("state")).unwrap();
+        let lf_dir = root.join(".lf");
+        assert_eq!(state_file_at(&root, &lf_dir, None), Ok(lf_dir.join("state.db")));
+        assert_eq!(state_file_at(&root, &lf_dir, Some("state/run.db")), Ok(root.join("state/run.db")));
+        assert!(state_file_at(&root, &lf_dir, Some("state")).unwrap_err().contains("is a folder"));
+        assert!(state_file_at(&root, &lf_dir, Some("nowhere/run.db")).unwrap_err().contains("a folder that does not exist"));
+        assert!(state_file_at(&root, &lf_dir, Some("postgres://db/lf")).unwrap_err().contains("is a URL"));
     }
 
     #[test]
