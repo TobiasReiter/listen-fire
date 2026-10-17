@@ -259,7 +259,6 @@ pub async fn refresh_grant(current: &Record, token_url: &str, client_auth: Optio
 
 /// What the redirect must bring back to be completed.
 pub struct Attempt {
-    pub state: String,
     pub redirect_uri: String,
     pub code_verifier: Option<String>,
 }
@@ -305,7 +304,7 @@ pub fn begin(oauth2: &OAuth2Declaration, client_id: &str, redirect_uri: &str, st
         set(key, value);
     }
     url.set_query(Some(&form_text(&pairs)));
-    Ok((url.to_string(), Attempt { state: state.to_string(), redirect_uri: redirect_uri.to_string(), code_verifier }))
+    Ok((url.to_string(), Attempt { redirect_uri: redirect_uri.to_string(), code_verifier }))
 }
 
 const EXCHANGE_TRIES: u32 = 3;

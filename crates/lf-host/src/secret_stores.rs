@@ -8,13 +8,13 @@
 //! are created, replaced and deleted under the same lock a refresh takes.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
 use crate::project::Project;
-use crate::secrets::{Credential, Credentials, ENV_PREFIX, SecretsFile, apply_environment, parse_entry, read_secrets_file, secrets_paths};
+use crate::secrets::{Credential, Credentials, SecretsFile, apply_environment, parse_entry, read_secrets_file, secrets_paths};
 use crate::secrets_family::{FileLock, Fields, Record, SecretsBackend, SecretsFamily, WriteBack, redact_secrets};
 
 // ── A secrets file ──────────────────────────────────────────────────────────
@@ -168,11 +168,12 @@ impl CredentialSecrets {
 
     /// The fields now, and the file's own version of its part.
     fn read(&self) -> Result<Option<(Record, Option<String>)>, String> {
-        let from_file = match &self.file {
-            Some(file) => file.resolve(&self.name)?,
-            None => None,
+        let Some(file) = &self.file else {
+            // Nothing to read through to: the fields as loaded or last written.
+            return Ok(Some((Record::of(self.fields.borrow().clone()), None)));
         };
-        if self.file.is_some() && from_file.is_none() && self.env_fields.is_empty() {
+        let from_file = file.resolve(&self.name)?;
+        if from_file.is_none() && self.env_fields.is_empty() {
             return Ok(None);
         }
         let file_version = from_file.as_ref().map(|r| r.version.clone());
@@ -252,10 +253,10 @@ pub fn secrets_of(credential: &Credential) -> Rc<SecretsFamily> {
     })
 }
 
-/// The credential's fields as they stand now: after any refresh or update in
-/// this process, else as loaded.
+/// The credential's fields as they stand now: as this process last read or
+/// wrote them through its secrets family, else as loaded.
 pub fn current_fields(credential: &Credential) -> Fields {
-    secrets_of(credential).resolve(&credential.name).map(|r| r.fields).unwrap_or_else(|_| credential.fields.clone())
+    secrets_of(credential).cached(&credential.name).map(|r| r.fields).unwrap_or_else(|| credential.fields.clone())
 }
 
 // ── Whole entries: what `lf connect` and `lf credential` write ──────────────
@@ -355,11 +356,6 @@ fn json_string(text: &str) -> String {
 fn json_object(entry: &[(String, String)]) -> String {
     let parts: Vec<String> = entry.iter().map(|(k, v)| format!("{}:{}", json_string(k), json_string(v))).collect();
     format!("{{{}}}", parts.join(","))
-}
-
-/// The environment's credential names, for a refusal that says where a field came from.
-pub fn env_prefix_of(name: &str) -> String {
-    format!("{ENV_PREFIX}{}__", name.to_uppercase())
 }
 
 // ── Editing a secrets file in place ─────────────────────────────────────────
@@ -608,11 +604,6 @@ pub fn delete_entry(text: &str, name: &str) -> String {
         }
         None => text.to_string(),
     }
-}
-
-/// The secrets of an entry as a credential would load them: fields only.
-pub fn fields_of(entry: &[(String, String)]) -> BTreeMap<String, String> {
-    entry.iter().filter(|(k, _)| !["external", "module", "credential"].contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
 #[cfg(test)]

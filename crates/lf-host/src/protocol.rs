@@ -108,13 +108,9 @@ fn target_of(base_url: &str) -> Result<Target, String> {
     Ok(Target { host: host.to_string(), port, path: path.to_string() })
 }
 
-/// One protocol call: its `result`, or why it failed.
-pub async fn post_rpc(call: Call<'_>) -> Result<Js, RpcError> {
-    post_rpc_carrying(call, None).await.0
-}
-
-/// One protocol call carrying a module's declared credential (the request's
-/// `credential`): its answer, and the answer's `credentialUpdate` — read on a
+/// One protocol call: its `result`, or why it failed. With a module's
+/// declared credential it carries it (the request's `credential`), and the
+/// answer's `credentialUpdate` comes back beside the result — read on a
 /// failed answer too, since a rotated refresh token must be stored either way.
 pub async fn post_rpc_carrying(call: Call<'_>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
     let mut update = None;

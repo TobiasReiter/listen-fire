@@ -150,6 +150,11 @@ impl SecretsFamily {
         }
     }
 
+    /// The credential as this family last read or wrote it, if it has.
+    pub fn cached(&self, reference: &str) -> Option<Record> {
+        self.cache.borrow().get(reference).cloned()
+    }
+
     /// Store `fields` over the credential at `expected`; a conflict when it has moved on.
     pub async fn write_back(&self, reference: &str, fields: &Fields, expected: &str) -> Result<Record, SecretError> {
         let _held = self.lock(reference).await?;

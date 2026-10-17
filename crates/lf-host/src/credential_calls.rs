@@ -104,7 +104,11 @@ pub async fn send(
 
     // The protocol carries one credential per request: the first declared.
     let Some(declaration) = target.declarations.first() else {
-        let refresher = fields_refresher(credential);
+        let Some(refresher) = fields_refresher(credential) else {
+            let bearer = bearer_for(&Record::of(current_fields(credential)))?;
+            return post(target, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
+        };
+        let refresher = Some(refresher);
         return with_secret(&family, &credential.name, refresher.as_deref(), unauthorized, |record| {
             let sending = &sending;
             async move {
