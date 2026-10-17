@@ -24,12 +24,12 @@ import {
   EventFile,
   fireEvent,
   openSession,
-  receiveWebhook,
   resumeAll,
   resumeRun,
   type RunOutcome,
   type Session,
 } from './runs';
+import { receiveWebhook } from './doors';
 import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';

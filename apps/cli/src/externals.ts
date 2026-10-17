@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parse } from 'yaml';
 import { z } from 'zod';
-import { METHODS, WireListenDeclarations, WireManifestProtocolVersion, type WireCredentialDeclarationShape } from 'engine-contracts';
+import { METHODS, WireListenDeclarations, WireManifestProtocolVersion, type WireCredentialDeclarationShape, type WireInboundDeclarationShape } from 'engine-contracts';
 import { authHeader, parseWireResult, postRpc } from 'movement-engine/services/translation_graph/protocol/client';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import type { RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
@@ -79,6 +79,8 @@ export interface RunningExternal {
   /** The credentials its manifest declares it needs; the first is sent on
    *  each call (remote.ts). */
   credentials: WireCredentialDeclarationShape[];
+  /** How its manifest says its webhooks are signed (doors.ts). */
+  inbound?: WireInboundDeclarationShape;
   stop(): void;
 }
 
@@ -162,6 +164,7 @@ export async function startExternals(input: {
       shell.runtimeCapabilities = manifest.runtimeCapabilities;
       shell.listen = WireListenDeclarations.parse(manifest);
       shell.credentials = manifest.credentials ?? [];
+      if (manifest.inbound !== undefined) shell.inbound = manifest.inbound;
       if (manifest.webhookEventTypeId !== undefined) shell.webhookEventTypeId = manifest.webhookEventTypeId;
     }
   } catch (error) {
