@@ -9,7 +9,7 @@
 // Every method is plain data in and out. A backend is held to one meaning by
 // the contract suite (contract.ts), run against each.
 
-import type { CoreParkReason, ParkReason } from 'engine-contracts';
+import type { CallbackCall, CallbackParamSpec, CoreParkReason, ParkReason } from 'engine-contracts';
 
 /** One parked leaf of a run, as the backend lists it. */
 export interface LeafRow {
@@ -170,4 +170,84 @@ export interface AwaitKeeper {
   /** Withdraw parks that will never be consumed and close the records behind
    *  them: the run's parks at `addresses`, or every one when absent. */
   abandon(input: { runId: string; addresses?: readonly string[] }): Promise<void>;
+}
+
+// ── Callbacks ───────────────────────────────────────────────────────────────
+
+/** `live` is the only state that takes a new call. `fired` is a single-use
+ *  callback that took its one call; a repeatable one stays `live` and
+ *  accumulates calls until its run ends and revokes it. */
+export type CallbackStatus = 'live' | 'fired' | 'revoked';
+
+/** A call as the ledger keeps it: the call itself, and when its body started.
+ *  Until its body has started a call is on the ledger but not LANDED: no
+ *  read of `cb-[:Called]->` sees it, and no await resolves on it, so an
+ *  awaiter never runs ahead of the body its call fired. */
+export interface LedgerCall extends CallbackCall {
+  bodyStartedAt?: string;
+}
+
+/** One `callback(…)` mint: the captured closure its calls resume, the
+ *  signature they are validated against, and its call ledger. */
+export interface CallbackRecord {
+  /** `cb_`-prefixed; the id IS the authorization a caller presents. */
+  id: string;
+  teamId: string;
+  runId: string;
+  /** The callback expression's address in the run's pinned program: where a
+   *  call's body resumes. */
+  address: string;
+  params: CallbackParamSpec[];
+  state: unknown;
+  calls: LedgerCall[];
+  singleUse: boolean;
+  /** When it stops taking calls (ISO 8601); null for never. */
+  expiresAt: string | null;
+  status: CallbackStatus;
+}
+
+export type CallbackClaim =
+  | { kind: 'recorded'; callback: CallbackRecord; callIndex: number }
+  | { kind: 'not_found' }
+  /** Revoked (its run ended) or already fired (single-use). */
+  | { kind: 'closed'; callback: CallbackRecord }
+  | { kind: 'expired'; callback: CallbackRecord };
+
+/**
+ * The callbacks a run mints. Kept beside the run host's families rather than
+ * among them: a callback is not live run state the core tears down, it is a
+ * record the product keeps for the run, revoked when the run ends.
+ */
+export interface CallbackStore {
+  /** Mint a live callback with an empty ledger. Its id is the backend's to
+   *  choose, from `newCallbackId` (callbacks.ts). */
+  mint(input: {
+    teamId: string;
+    runId: string;
+    address: string;
+    params: CallbackParamSpec[];
+    state: unknown;
+    singleUse: boolean;
+    expiresAt?: string;
+  }): Promise<{ id: string }>;
+  /** The callback, or null (an id this backend never minted, or one without
+   *  the `cb_` prefix, which never reaches a query). */
+  get(input: { id: string }): Promise<CallbackRecord | null>;
+  /**
+   * Record one call: an atomic compare-and-set on a live, unexpired
+   * callback (single-use flips to `fired`; repeatable appends), and in the
+   * same transaction the call's body queued as work (`callbackBodyWork`,
+   * due at `bodyDueAt`), so a recorded call's body is never lost. The
+   * backend's own clock judges expiry and stamps the call's `at`. A refusal
+   * records nothing and queues nothing.
+   */
+  record(input: { id: string; values: Record<string, unknown>; bodyDueAt: string }): Promise<CallbackClaim>;
+  /** Mark call `callIndex`'s body started (the call lands). Given `fence`,
+   *  only while the callback's run is leased under it: false when it is not,
+   *  and nothing was marked. */
+  markBodyStarted(input: { id: string; callIndex: number; fence?: string }): Promise<boolean>;
+  /** Those of `ids` with at least one landed call. */
+  landed(input: { ids: readonly string[] }): Promise<string[]>;
+  /** Revoke the run's live callbacks; a fired one stays fired. Idempotent. */
+  revokeRun(input: { runId: string }): Promise<void>;
 }
