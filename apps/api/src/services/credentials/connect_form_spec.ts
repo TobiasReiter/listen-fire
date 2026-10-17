@@ -17,10 +17,10 @@
 import { z } from 'zod';
 
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import { affinityCredsParser } from '@lf/affinity/api_client';
+import { affinityCredsParser } from '@listen-fire/affinity/api_client';
 import { attioCredsParser } from '../../adapters/attio/apiClient';
-import { evertraceCredsParser } from '@lf/evertrace/api_client';
-import { dealroomCredsParser } from '@lf/dealroom/api_client';
+import { evertraceCredsParser } from '@listen-fire/evertrace/api_client';
+import { dealroomCredsParser } from '@listen-fire/dealroom/api_client';
 import {
   connectGmailByRefreshToken,
   gmailDelegatedCredsParser,

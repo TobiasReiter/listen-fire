@@ -29,8 +29,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { noCredential, pluginsInProcess, refusingFiles, refusingKv } from 'module-kit';
-import { webModuleWith } from '@lf/web';
-import { recordingTools, type RecordedInvocation, type ToolCall } from '@lf/web/__test__/replay_tools';
+import { webModuleWith } from '@listen-fire/web';
+import { recordingTools, type RecordedInvocation, type ToolCall } from '@listen-fire/web/__test__/replay_tools';
 import { logger } from 'movement-engine/public/log';
 import { hostedWebTools } from '../hosted_tools';
 

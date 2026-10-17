@@ -27,7 +27,7 @@ import {
   classifyGmailError,
   type GmailProfile,
   type GmailScope,
-} from '@lf/gmail/api_client';
+} from '@listen-fire/gmail/api_client';
 import {
   GMAIL_READONLY_SCOPE,
   delegatedGoogleAuth,
@@ -59,7 +59,7 @@ export {
   type GmailPart,
   type GmailProfile,
   type GmailSentMessage,
-} from '@lf/gmail/api_client';
+} from '@listen-fire/gmail/api_client';
 
 /** The scopes per call: each asks for exactly the ONE it needs, so a
  *  delegation grant that covers reads but not sends fails only the send. */

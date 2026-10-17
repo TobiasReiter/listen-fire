@@ -12,8 +12,8 @@ import {
 
 import type { SourcePosition } from 'movement-engine/public/catalog';
 
-import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
-import { makeAdapter } from '@lf/affinity/__test__/fake_adapter';
+import { AFFINITY_MANIFEST } from '@listen-fire/affinity/manifest';
+import { makeAdapter } from '@listen-fire/affinity/__test__/fake_adapter';
 import { instanceSchemaFromDescriptors, makeMetaPosition, positionLabel } from 'movement-engine/public/catalog';
 import { refineInstanceSchema } from '../../../movement/refinements';
 

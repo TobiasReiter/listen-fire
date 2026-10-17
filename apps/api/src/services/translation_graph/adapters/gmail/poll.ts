@@ -5,7 +5,7 @@
 import type { PollSource } from '../../poll_source';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 
-import { GmailPollSource } from '@lf/gmail';
+import { GmailPollSource } from '@listen-fire/gmail';
 import { legacyGmailClient } from './index';
 
 export function createGmailPollSource(input: { teamId: TeamId; credentialsId?: string }): PollSource {

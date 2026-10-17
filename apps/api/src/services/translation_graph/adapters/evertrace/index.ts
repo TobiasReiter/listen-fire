@@ -7,7 +7,7 @@
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { PollSource } from '../../poll_source';
 
-import { EVERTRACE_POLL_INTERVAL_SECONDS, EvertraceAdapter, pollEvertrace, type EvertraceClientSource } from '@lf/evertrace';
+import { EVERTRACE_POLL_INTERVAL_SECONDS, EvertraceAdapter, pollEvertrace, type EvertraceClientSource } from '@listen-fire/evertrace';
 import { logger } from 'movement-engine/public/log';
 import { resolveEvertraceClient } from './client';
 

@@ -6,7 +6,7 @@
 // URL. googleapis builds the requests; gaxios sends them through `ctx.fetch`.
 
 import { defineModule, readHandedFile, type CredentialFields, type ModuleContext } from 'module-kit';
-import { GOOGLE_DRIVE_FILE_CREDENTIAL } from '@lf/google-sheets/google_oauth';
+import { GOOGLE_DRIVE_FILE_CREDENTIAL } from '@listen-fire/google-sheets/google_oauth';
 
 import { GoogleDriveAdapter, type GoogleDriveClientSource } from './adapter';
 import { GoogleDriveClient } from './drive_client';

@@ -14,10 +14,10 @@
   "main": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@listen-fire/shared": "workspace:@lf/shared@*",
+    "@listen-fire/shared": "workspace:*",
     "esbuild": "0.23.1",
     "lucide-react": "^0.574.0",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "tailwindcss": "3.4.17",

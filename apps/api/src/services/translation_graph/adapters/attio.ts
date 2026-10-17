@@ -9,7 +9,7 @@ import './attio_field_rejection_alerts';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AttioAdapter, attioCredsParser, getAttioClient, type AttioAPIClient } from '@lf/attio';
+import { AttioAdapter, attioCredsParser, getAttioClient, type AttioAPIClient } from '@listen-fire/attio';
 import { logger } from 'movement-engine/public/log';
 import { decryptToken } from '../../../lib/credentials';
 import { getAutomationsQb } from '../../../lib/kysely';
@@ -17,7 +17,7 @@ import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../lib/recording';
 import { platformModuleFiles } from '../engine/files/module_files';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
 
-export * from '@lf/attio/adapter';
+export * from '@listen-fire/attio/adapter';
 
 async function legacyClient(input: { teamId: TeamId; credentialsId: string }): Promise<AttioAPIClient> {
   const row = await getAutomationsQb(['external_service_credentials'])

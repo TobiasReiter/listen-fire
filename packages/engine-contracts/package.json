@@ -1,5 +1,5 @@
 {
-  "name": "@lf/engine-contracts",
+  "name": "@listen-fire/engine-contracts",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "The contracts the movement engine speaks: the tenant id, the host families and entry-point inputs, the parked state, file descriptors and the adapter protocol. While private, its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
@@ -9,7 +9,8 @@
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit && node __embed_smoke__/check.cjs",
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
-    "prepack": "node ../../scripts/build-packages.cjs ."
+    "prepack": "node ../../scripts/build-packages.cjs .",
+    "postpack": "node ../../scripts/build-packages.cjs --restore ."
   },
   "main": "index.ts",
   "types": "index.ts",
@@ -20,12 +21,12 @@
   },
   "type": "commonjs",
   "dependencies": {
-    "@lf/movement-lang": "workspace:^",
+    "@listen-fire/movement-lang": "workspace:^",
     "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/node": "20.16.5",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "typescript": "5.5.4"
   },
   "repository": {

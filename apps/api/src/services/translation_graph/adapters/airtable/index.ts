@@ -8,7 +8,7 @@
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AirtableAdapter, airtableAdapterCredsParser, type AirtableAPIClient } from '@lf/airtable';
+import { AirtableAdapter, airtableAdapterCredsParser, type AirtableAPIClient } from '@listen-fire/airtable';
 import { logger } from 'movement-engine/public/log';
 import { getAirtableClient } from '../../../../adapters/airtable/apiClient';
 import { decryptToken } from '../../../../lib/credentials';
@@ -16,8 +16,8 @@ import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { platformModuleFiles } from '../../engine/files/module_files';
 
-export { AIRTABLE_ADAPTER_TYPE } from '@lf/airtable/types';
-export { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
+export { AIRTABLE_ADAPTER_TYPE } from '@listen-fire/airtable/types';
+export { AIRTABLE_MANIFEST } from '@listen-fire/airtable/manifest';
 
 async function legacyClient(input: { teamId: TeamId; credentialsId: string }): Promise<AirtableAPIClient> {
   const row = await getAutomationsQb(['external_service_credentials'])

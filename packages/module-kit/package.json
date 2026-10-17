@@ -1,5 +1,5 @@
 {
-  "name": "@lf/module-kit",
+  "name": "@listen-fire/module-kit",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "How an integration is built once and loaded everywhere: `defineModule` (an adapter or a set of plugins, its declarations and its methods over a host context), the in-process transport the platform loads a module with, the adapter protocol's server kit, and `serve-module`, which serves any module as a protocol-2 process for lf, the Rust host, the cloud and embedders. A module may not reach the hosted product, a database or the recording layer (scripts/check-module-boundary.cjs). Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
@@ -12,26 +12,27 @@
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit && node ../../scripts/check-module-boundary.cjs",
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
-    "prepack": "node ../../scripts/build-packages.cjs ."
+    "prepack": "node ../../scripts/build-packages.cjs .",
+    "postpack": "node ../../scripts/build-packages.cjs --restore ."
   },
   "main": "index.ts",
   "types": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@lf/engine": "workspace:^",
-    "@lf/engine-contracts": "workspace:^",
-    "@lf/movement-lang": "workspace:^",
-    "@lf/shared": "workspace:^",
+    "@listen-fire/engine": "workspace:^",
+    "@listen-fire/engine-contracts": "workspace:^",
+    "@listen-fire/movement-lang": "workspace:^",
+    "@listen-fire/shared": "workspace:^",
     "tsx": "4.21.0",
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "#shared": "workspace:@lf/shared@*",
+    "#shared": "workspace:@listen-fire/shared@*",
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
-    "engine-contracts": "workspace:@lf/engine-contracts@*",
-    "movement-engine": "workspace:@lf/engine@*",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "engine-contracts": "workspace:@listen-fire/engine-contracts@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "typescript": "5.5.4"
   },
   "repository": {

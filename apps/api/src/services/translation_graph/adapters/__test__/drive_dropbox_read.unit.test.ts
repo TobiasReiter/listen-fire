@@ -24,7 +24,7 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { isStablePosition, makeMetaPosition } from 'movement-engine/services/translation_graph/types';
-import { GoogleDriveAdapter, type GoogleDriveClient } from '@lf/google-drive';
+import { GoogleDriveAdapter, type GoogleDriveClient } from '@listen-fire/google-drive';
 import { refusingFiles } from 'module-kit';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
 

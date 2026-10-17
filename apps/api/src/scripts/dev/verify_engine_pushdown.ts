@@ -23,11 +23,11 @@ import type { TriggerEvent } from 'movement-engine/services/translation_graph/tr
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AffinityAPIClient } from '@lf/affinity/api_client';
+import { AffinityAPIClient } from '@listen-fire/affinity/api_client';
 import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { staticCatalogSnapshot } from '../../services/translation_graph/movement/catalog';
 import { createManualAdapter } from '../../services/translation_graph/adapters/manual';
-import { AffinityAdapter } from '@lf/affinity';
+import { AffinityAdapter } from '@listen-fire/affinity';
 import { hostedModels } from '../../services/translation_graph/adapters/module_host';
 import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
 import { probeEngineHost } from './lib/probe_host';

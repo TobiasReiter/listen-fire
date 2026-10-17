@@ -6,11 +6,11 @@
 import type { PluginManifest, TransformImpl } from './registry';
 
 import { VC_URL_RETRIEVAL_HANDBOOK_SECTION } from './vc_url_retrieval_handbook_section';
-import { vcUrlRetrievalPlugin } from '@lf/web';
+import { vcUrlRetrievalPlugin } from '@listen-fire/web';
 import { importIdentifier } from 'movement-engine/public/catalog';
 import { VC_URL_RETRIEVAL_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';
-export { _extractCandidateUrls, _extractLocalContext } from '@lf/web/vc_url_retrieval';
+export { _extractCandidateUrls, _extractLocalContext } from '@listen-fire/web/vc_url_retrieval';
 
 /**
  * Static manifest — the catalogue-facing declaration, registered alongside

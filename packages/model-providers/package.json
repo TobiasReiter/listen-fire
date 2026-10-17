@@ -1,5 +1,5 @@
 {
-  "name": "@lf/model-providers",
+  "name": "@listen-fire/model-providers",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "The model vendors behind the engine's chat, embedding, image and transcription seams (OpenAI, Gemini, Claude on Vertex, Anthropic). The vendor SDKs are optional peers loaded on first use; the environment and the two host answers (usage recording, token counting) are passed in, never read from the process. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
@@ -9,11 +9,12 @@
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit",
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
-    "prepack": "node ../../scripts/build-packages.cjs ."
+    "prepack": "node ../../scripts/build-packages.cjs .",
+    "postpack": "node ../../scripts/build-packages.cjs --restore ."
   },
   "type": "commonjs",
   "dependencies": {
-    "@lf/engine": "workspace:^",
+    "@listen-fire/engine": "workspace:^",
     "zod": "4.1.12"
   },
   "peerDependencies": {
@@ -42,7 +43,7 @@
     "@google/genai": "^2.24.0",
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
-    "movement-engine": "workspace:@lf/engine@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
     "openai": "5.22.0",
     "typescript": "5.5.4"
   },
@@ -56,13 +57,7 @@
   ],
   "publishConfig": {
     "access": "public",
-    "main": "./dist/index.js",
-    "types": "./dist/index.d.ts",
     "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
-      },
       "./*": {
         "types": "./dist/*.d.ts",
         "default": "./dist/*.js"

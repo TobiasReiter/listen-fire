@@ -7,7 +7,7 @@
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { PollSource } from '../../poll_source';
 
-import { GRANOLA_POLL_INTERVAL_SECONDS, GranolaAdapter, pollGranola, type GranolaClientSource } from '@lf/granola';
+import { GRANOLA_POLL_INTERVAL_SECONDS, GranolaAdapter, pollGranola, type GranolaClientSource } from '@listen-fire/granola';
 import { resolveGranolaClient } from './client';
 
 function legacyClient(input: { teamId: TeamId; credentialsId?: string }): GranolaClientSource {

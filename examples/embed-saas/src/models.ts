@@ -3,9 +3,9 @@
 // can be seen to hold; with ANTHROPIC_API_KEY set, Claude through the
 // engine's own Anthropic client, charged at its real price.
 
-import { anthropicClient, anthropicKeyedChatProvider, models, type ChatModelName } from '@lf/engine/public/anthropic';
-import { makeAnthropicLlmClient } from '@lf/engine/public/models';
-import type { ModelClient } from '@lf/engine/public/embed';
+import { anthropicClient, anthropicKeyedChatProvider, models, type ChatModelName } from '@listen-fire/engine/public/anthropic';
+import { makeAnthropicLlmClient } from '@listen-fire/engine/public/models';
+import type { ModelClient } from '@listen-fire/engine/public/embed';
 
 /** What the fake charges for one call, in microdollars. */
 export const FAKE_CALL_MICRODOLLARS = 2_000;

@@ -9,7 +9,7 @@ import type { Adapter } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { GoogleDriveClient } from '../../../../adapters/google/driveClient';
 
-import { GOOGLE_DRIVE_ADAPTER_TYPE, GoogleDriveAdapter } from '@lf/google-drive';
+import { GOOGLE_DRIVE_ADAPTER_TYPE, GoogleDriveAdapter } from '@listen-fire/google-drive';
 import { readHandedFile } from 'module-kit';
 import { logger } from 'movement-engine/public/log';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
@@ -17,7 +17,7 @@ import { grantedItemsKv } from '../../../credentials/granted_items';
 import { platformModuleFiles } from '../../engine/files/module_files';
 import { resolveGoogleDriveClient } from './client';
 
-export { GOOGLE_DRIVE_ADAPTER_TYPE, GOOGLE_DRIVE_MANIFEST, GoogleDriveAdapter } from '@lf/google-drive';
+export { GOOGLE_DRIVE_ADAPTER_TYPE, GOOGLE_DRIVE_MANIFEST, GoogleDriveAdapter } from '@listen-fire/google-drive';
 
 export function createGoogleDriveAdapter(input: { teamId: TeamId; credentialsId?: string }): Adapter {
   const { credentialsId } = input;

@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { logger } from 'movement-engine/public/log';
 import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector } from 'movement-engine/public/secrets';
-import { attioOAuth2 } from '@lf/attio/oauth';
+import { attioOAuth2 } from '@listen-fire/attio/oauth';
 
 /** How an Attio credential is connected: the declaration Attio's module
  *  manifest makes. */
-export { attioOAuth2 } from '@lf/attio/oauth';
+export { attioOAuth2 } from '@listen-fire/attio/oauth';
 
 const attioTokenResponseSchema = z.object({
   access_token: z.string(),

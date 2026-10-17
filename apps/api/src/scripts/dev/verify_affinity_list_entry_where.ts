@@ -34,11 +34,11 @@ import type { EdgesFromResult } from 'movement-engine/services/translation_graph
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AffinityAPIClient } from '@lf/affinity/api_client';
-import { AffinityAdapter } from '@lf/affinity';
+import { AffinityAPIClient } from '@listen-fire/affinity/api_client';
+import { AffinityAdapter } from '@listen-fire/affinity';
 import { hostedModels } from '../../services/translation_graph/adapters/module_host';
 import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
-import { AFFINITY_MANIFEST } from '@lf/affinity';
+import { AFFINITY_MANIFEST } from '@listen-fire/affinity';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { refineInstanceSchema } from '../../services/translation_graph/movement/refinements';
 import { makeMetaPosition, positionLabel } from 'movement-engine/services/translation_graph/types';

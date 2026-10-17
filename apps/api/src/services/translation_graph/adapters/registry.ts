@@ -10,23 +10,23 @@ import ExternalServiceType from '../../../generated/kysely/automations/ExternalS
 import { WRITE_METHODS } from 'movement-engine/public/adapter';
 import { credentialTypeOf } from './credential_type';
 import { KG_ADAPTER_TYPE, KG_MANIFEST, createKnowledgeGraphAdapter } from './knowledge_graph';
-import { ATTIO_ADAPTER_TYPE } from '@lf/attio/types';
-import { ATTIO_MANIFEST } from '@lf/attio/manifest';
+import { ATTIO_ADAPTER_TYPE } from '@listen-fire/attio/types';
+import { ATTIO_MANIFEST } from '@listen-fire/attio/manifest';
 import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   NATIVE_VALUATIONS_MANIFEST,
   createNativeValuationsAdapter,
 } from './native_valuations';
-import { SLACK_ADAPTER_TYPE } from '@lf/slack/types';
-import { SLACK_MANIFEST } from '@lf/slack/manifest';
-import { TELEGRAM_ADAPTER_TYPE } from '@lf/telegram/types';
-import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
+import { SLACK_ADAPTER_TYPE } from '@listen-fire/slack/types';
+import { SLACK_MANIFEST } from '@listen-fire/slack/manifest';
+import { TELEGRAM_ADAPTER_TYPE } from '@listen-fire/telegram/types';
+import { TELEGRAM_MANIFEST } from '@listen-fire/telegram/manifest';
 import { EMAIL_ADAPTER_TYPE, EMAIL_MANIFEST, createEmailAdapter } from './email';
 import { WHATSAPP_ADAPTER_TYPE, WHATSAPP_MANIFEST, createWhatsappAdapter } from './whatsapp';
-import { AIRTABLE_ADAPTER_TYPE } from '@lf/airtable/types';
-import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
-import { AFFINITY_ADAPTER_TYPE } from '@lf/affinity/types';
-import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
+import { AIRTABLE_ADAPTER_TYPE } from '@listen-fire/airtable/types';
+import { AIRTABLE_MANIFEST } from '@listen-fire/airtable/manifest';
+import { AFFINITY_ADAPTER_TYPE } from '@listen-fire/affinity/types';
+import { AFFINITY_MANIFEST } from '@listen-fire/affinity/manifest';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   GOOGLE_SHEETS_MANIFEST,
@@ -37,16 +37,16 @@ import {
   GOOGLE_DRIVE_MANIFEST,
   createGoogleDriveAdapter,
 } from './google_drive';
-import { DROPBOX_ADAPTER_TYPE } from '@lf/dropbox/types';
-import { DROPBOX_MANIFEST } from '@lf/dropbox/manifest';
+import { DROPBOX_ADAPTER_TYPE } from '@listen-fire/dropbox/types';
+import { DROPBOX_MANIFEST } from '@listen-fire/dropbox/manifest';
 import { CRON_ADAPTER_TYPE, CRON_MANIFEST, createCronAdapter } from './cron';
 import { MANUAL_ADAPTER_TYPE, MANUAL_MANIFEST, createManualAdapter } from './manual';
-import { GRANOLA_ADAPTER_TYPE } from '@lf/granola/types';
-import { GRANOLA_MANIFEST } from '@lf/granola/manifest';
-import { EVERTRACE_ADAPTER_TYPE } from '@lf/evertrace/types';
-import { EVERTRACE_MANIFEST } from '@lf/evertrace/manifest';
-import { DEALROOM_ADAPTER_TYPE } from '@lf/dealroom/types';
-import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { GRANOLA_ADAPTER_TYPE } from '@listen-fire/granola/types';
+import { GRANOLA_MANIFEST } from '@listen-fire/granola/manifest';
+import { EVERTRACE_ADAPTER_TYPE } from '@listen-fire/evertrace/types';
+import { EVERTRACE_MANIFEST } from '@listen-fire/evertrace/manifest';
+import { DEALROOM_ADAPTER_TYPE } from '@listen-fire/dealroom/types';
+import { DEALROOM_MANIFEST } from '@listen-fire/dealroom/manifest';
 import { builtinAdapterFactory, builtinPollSourceFactory } from './builtin_modules';
 import { GMAIL_ADAPTER_TYPE, GMAIL_MANIFEST, createGmailAdapter } from './gmail';
 import { createGmailPollSource } from './gmail/poll';

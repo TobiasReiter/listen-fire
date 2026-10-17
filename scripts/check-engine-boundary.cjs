@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // The engine boundary guard. apps/api production code may reach the engine
-// package only through `movement-engine/public/*`; this lists every import of
+// package only through `movement-engine/public/*` (published: `@listen-fire/engine/public/*`),
+// and so may every other consumer of it (the command line, the model providers,
+// the modules, the example embedder); this lists every import of
 // an internal module (anything else under `movement-engine/`) and compares the
 // count with the baseline in engine-boundary-baseline.json.
 //
@@ -18,11 +20,22 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const repoRoot = path.resolve(__dirname, '..');
-const apiSrc = path.join(repoRoot, 'apps/api/src');
+const modulesDir = path.join(repoRoot, 'modules');
+/** Every tree that consumes the engine, relative to the repo root. */
+const CONSUMER_ROOTS = [
+  'apps/api/src',
+  'apps/cli/src',
+  'packages/model-providers',
+  'packages/module-kit',
+  'packages/file-text',
+  'examples/embed-saas/src',
+  ...fs.readdirSync(modulesDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => `modules/${e.name}`),
+].filter((root) => fs.existsSync(path.join(repoRoot, root)));
 const engineRoot = path.join(repoRoot, 'packages/movement-engine');
 const baselineFile = path.join(__dirname, 'engine-boundary-baseline.json');
 
 const PACKAGE = 'movement-engine';
+const PUBLISHED = '@listen-fire/engine';
 const args = new Set(process.argv.slice(2));
 
 // Not production code: tests, their fixtures and setup, and the dev-loop
@@ -50,8 +63,10 @@ function sourceFiles(dir, found = []) {
 /** The module an import names, as a path inside the engine package, or null
  *  when it does not reach the package. '' is the package root. */
 function enginePathOf(specifier, fromFile) {
-  if (specifier === PACKAGE) return '';
-  if (specifier.startsWith(`${PACKAGE}/`)) return specifier.slice(PACKAGE.length + 1);
+  for (const name of [PACKAGE, PUBLISHED]) {
+    if (specifier === name) return '';
+    if (specifier.startsWith(`${name}/`)) return specifier.slice(name.length + 1);
+  }
   if (specifier.startsWith('.')) {
     const target = path.resolve(path.dirname(fromFile), specifier);
     const inside = path.relative(engineRoot, target);
@@ -87,17 +102,20 @@ function specifiersIn(sourceFile) {
 }
 
 const sites = [];
-for (const file of sourceFiles(apiSrc)) {
-  const relative = path.relative(apiSrc, file).split(path.sep).join('/');
-  if (NOT_PRODUCTION.some((pattern) => pattern.test(relative))) continue;
-  const text = fs.readFileSync(file, 'utf8');
-  if (!text.includes(PACKAGE) && !text.includes('packages/')) continue;
-  const parsed = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
-  for (const { specifier, line } of specifiersIn(parsed)) {
-    const inside = enginePathOf(specifier, file);
-    if (inside === null) continue;
-    if (inside === 'public' || inside.startsWith('public/')) continue;
-    sites.push({ module: inside === '' ? '(package root)' : inside, file: `apps/api/src/${relative}`, line });
+for (const root of CONSUMER_ROOTS) {
+  const rootDir = path.join(repoRoot, root);
+  for (const file of sourceFiles(rootDir)) {
+    const relative = path.relative(rootDir, file).split(path.sep).join('/');
+    if (NOT_PRODUCTION.some((pattern) => pattern.test(relative))) continue;
+    const text = fs.readFileSync(file, 'utf8');
+    if (!text.includes(PACKAGE) && !text.includes(PUBLISHED) && !text.includes('packages/')) continue;
+    const parsed = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
+    for (const { specifier, line } of specifiersIn(parsed)) {
+      const inside = enginePathOf(specifier, file);
+      if (inside === null) continue;
+      if (inside === 'public' || inside.startsWith('public/')) continue;
+      sites.push({ module: inside === '' ? '(package root)' : inside, file: `${root}/${relative}`, line });
+    }
   }
 }
 

@@ -32,6 +32,6 @@ function toUrl(url: string, opts?: ToUrlOpts): URL {
 
 // Shared with the web plugins, which decline a file address for the same
 // reason the scraper does.
-export { looksLikeNonHtmlAddress } from '@lf/web/addresses';
+export { looksLikeNonHtmlAddress } from '@listen-fire/web/addresses';
 
 export { toUrl, safeToUrl };

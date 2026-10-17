@@ -19,7 +19,7 @@ import { PipelineConfigurationId } from '../../generated/kysely/public/PipelineC
 import PipelineOutputType from '../../generated/kysely/public/PipelineOutputType';
 import { decryptToken } from '../credentials';
 import { attioCredsParser, getAttioClient } from '../../adapters/attio/apiClient';
-import { affinityCredsParser, getAffinityClient, valueType as affinityValueType } from '@lf/affinity/api_client';
+import { affinityCredsParser, getAffinityClient, valueType as affinityValueType } from '@listen-fire/affinity/api_client';
 import { slackCredsParser, getSlackClient } from '../../adapters/slack/webApi/apiClient';
 import { SlackWebApiConfigurer } from '../../adapters/slack/webApi/configurer';
 import { airtableCredsParser, getAirtableClient } from '../../adapters/airtable/apiClient';

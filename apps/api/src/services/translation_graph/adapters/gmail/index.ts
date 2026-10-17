@@ -8,9 +8,9 @@
 
 import type { Adapter } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { GmailClientSource } from '@lf/gmail';
+import type { GmailClientSource } from '@listen-fire/gmail';
 
-import { GMAIL_ADAPTER_TYPE, GmailAdapter } from '@lf/gmail';
+import { GMAIL_ADAPTER_TYPE, GmailAdapter } from '@listen-fire/gmail';
 import { readHandedFile } from 'module-kit';
 import { logger } from 'movement-engine/public/log';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
@@ -25,7 +25,7 @@ export {
   GMAIL_MESSAGE_EVENT_TAG,
   GMAIL_MESSAGE_TYPE_ID,
   GmailAdapter,
-} from '@lf/gmail';
+} from '@listen-fire/gmail';
 
 /** The mailbox's client, resolved afresh per call as the legacy adapter
  *  always did: a row edited or a list narrowed between calls is read by the

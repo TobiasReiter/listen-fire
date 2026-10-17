@@ -6,7 +6,7 @@
 import type { PluginManifest, TransformImpl } from './registry';
 
 import { WEB_RESEARCH_HANDBOOK_SECTION } from './web_research_handbook_section';
-import { webResearchPlugin } from '@lf/web';
+import { webResearchPlugin } from '@listen-fire/web';
 import { importIdentifier } from 'movement-engine/public/catalog';
 import { WEB_RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';

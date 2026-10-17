@@ -14,7 +14,7 @@ import { claimPendingCredentials } from '../../../lib/pendingCredentials';
 import { logger } from 'movement-engine/public/log';
 import { bindFlowToUser, extractStateFromUrl } from '../../../lib/oauthFlows';
 import { slackCredsParser } from '../../../adapters/slack/webApi/apiClient';
-import { affinityCredsParser } from '@lf/affinity/api_client';
+import { affinityCredsParser } from '@listen-fire/affinity/api_client';
 import {
   airtableCredsParser,
   clearClientByCredentialsId,
@@ -33,8 +33,8 @@ import { gmailConnectMethod } from '../../../adapters/gmail/connect_method';
 import { dropboxCredsParser } from '../../../adapters/dropbox/authClient';
 import { nativeValuationsCredsParser } from '../../../services/translation_graph/adapters/native_valuations';
 import { granolaCredsParser } from '../../../services/credentials/connect_form_spec';
-import { evertraceCredsParser } from '@lf/evertrace/api_client';
-import { dealroomCredsParser } from '@lf/dealroom/api_client';
+import { evertraceCredsParser } from '@listen-fire/evertrace/api_client';
+import { dealroomCredsParser } from '@listen-fire/dealroom/api_client';
 import { credentialLifecycle } from '../../../services/credentials/credential_lifecycle';
 import { persistCredential } from '../../../services/credentials/persist_credential';
 import { intrinsicProvisionerForType } from '../../../services/credentials/intrinsic_provision';

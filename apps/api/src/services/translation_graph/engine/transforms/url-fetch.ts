@@ -13,7 +13,7 @@
 
 import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
 
-import { isLinkedInUrl, LINKEDIN_PROFILE_REGEX } from '@lf/web';
+import { isLinkedInUrl, LINKEDIN_PROFILE_REGEX } from '@listen-fire/web';
 import { services } from '../../../../adapters/registry';
 import { SECOND } from '../../../../constants';
 import { extractDocumentTextTool } from '../../../../lib/agent/tools/extract_document_text';

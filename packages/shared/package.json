@@ -1,5 +1,5 @@
 {
-  "name": "@lf/shared",
+  "name": "@listen-fire/shared",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "Shared library for Listen-Fire code to be used across client and server",
@@ -10,7 +10,8 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
-    "prepack": "node ../../scripts/build-packages.cjs ."
+    "prepack": "node ../../scripts/build-packages.cjs .",
+    "postpack": "node ../../scripts/build-packages.cjs --restore ."
   },
   "main": "index.ts",
   "type": "commonjs",

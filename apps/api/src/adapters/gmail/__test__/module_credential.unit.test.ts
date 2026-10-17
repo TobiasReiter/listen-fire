@@ -24,7 +24,7 @@ jest.mock('../../../lib/recording', () => ({
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE, gmailClientFromFields } from '@lf/gmail';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE, gmailClientFromFields } from '@listen-fire/gmail';
 import { forgetMintedGmailTokens, gmailModuleCredential } from '../module_credential';
 
 const TEAM = 'team-1' as TeamId;

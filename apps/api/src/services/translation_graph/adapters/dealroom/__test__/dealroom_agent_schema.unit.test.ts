@@ -4,7 +4,7 @@
 
 import { ADAPTER_META_TYPE_ID, instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 
-import { DealroomAdapter } from '@lf/dealroom';
+import { DealroomAdapter } from '@listen-fire/dealroom';
 import { normaliseSchemaForAgent } from '../../../movement/agent_schema';
 
 describe('Dealroom, as the agent reads it', () => {

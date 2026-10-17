@@ -2,7 +2,7 @@
 // Slack alert the client and the extraction pipeline sent before Affinity
 // became a module, with the same text. Installed on import.
 
-import { reportAffinityWriteFailuresTo } from '@lf/affinity/write_failures';
+import { reportAffinityWriteFailuresTo } from '@listen-fire/affinity/write_failures';
 import { currentContext } from '../../../context';
 import { sendSlackNotification } from '../../../../lib/slack';
 

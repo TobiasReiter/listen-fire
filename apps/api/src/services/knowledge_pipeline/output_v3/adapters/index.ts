@@ -4,8 +4,8 @@ import type { V3Adapter } from './types';
 
 import { attioCredsParser, getAttioClient } from '../../../../adapters/attio/apiClient';
 import { AttioOperations } from '../../../../adapters/attio/operations';
-import { affinityCredsParser, getAffinityClient } from '@lf/affinity/api_client';
-import { AffinityOperations } from '@lf/affinity/operations';
+import { affinityCredsParser, getAffinityClient } from '@listen-fire/affinity/api_client';
+import { AffinityOperations } from '@listen-fire/affinity/operations';
 import { hostedModels } from '../../../translation_graph/adapters/module_host';
 import { airtableCredsParser, getAirtableClient } from '../../../../adapters/airtable/apiClient';
 import { getSlackClient, slackCredsParser } from '../../../../adapters/slack/webApi/apiClient';

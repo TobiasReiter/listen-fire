@@ -9,7 +9,7 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
-import type { SlackWriteHost } from '@lf/slack/write';
+import type { SlackWriteHost } from '@listen-fire/slack/write';
 
 import {
   matchMember,
@@ -18,8 +18,8 @@ import {
   normalizeMrkdwn,
   finalizeMessageText,
   type RosterMember,
-} from '@lf/slack/mentions';
-import { createUnifiedMessage } from '@lf/slack/write';
+} from '@listen-fire/slack/mentions';
+import { createUnifiedMessage } from '@listen-fire/slack/write';
 
 
 type SlackClient = ReturnType<typeof getSlackClient>;

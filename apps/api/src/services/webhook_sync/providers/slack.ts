@@ -20,7 +20,7 @@
 
 import crypto from "node:crypto";
 
-import { parseSlackDeliveries, slackEnvelope } from '@lf/slack/inbound';
+import { parseSlackDeliveries, slackEnvelope } from '@listen-fire/slack/inbound';
 
 import type {
   WebhookProvider,

@@ -1,6 +1,10 @@
 # Deploying lf to a scale-from-zero platform
 
-The image (`deploy/lf/Dockerfile`, built from the repository root) holds one binary, `lf`, plus the built-in Dealroom module. Two commands make the whole deployment:
+The image (`deploy/lf/Dockerfile`, built from the repository root) holds one binary, `lf`, plus the built-in Dealroom and web modules.
+
+The image is node-based and large (about 2.3 GB): the built-in modules are TypeScript and run under node (`serve-module` and tsx) from the pnpm workspace, whose install brings its dev tooling too. That is accepted, since size only costs pull time on a cold start.
+
+Two commands make the whole deployment:
 
 - **`lf serve --port $PORT`** is the doors: webhooks at `/hooks/<external>/<install>` and OAuth callbacks. It also drains due work while it is up. Run it as a container behind HTTPS.
 - **`lf drain --until-idle --max-seconds N`** is a worker. It claims due work rows, runs them, and exits when none is due or after N seconds. Run it as a job.

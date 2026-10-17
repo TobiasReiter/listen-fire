@@ -10,7 +10,7 @@ import {
   type OAuth2Declaration,
 } from 'movement-engine/public/secrets';
 
-import { GOOGLE_DRIVE_FILE_OAUTH2, GOOGLE_DRIVE_FILE_SCOPES, GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT } from '@lf/google-sheets/google_oauth';
+import { GOOGLE_DRIVE_FILE_OAUTH2, GOOGLE_DRIVE_FILE_SCOPES, GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT } from '@listen-fire/google-sheets/google_oauth';
 
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 

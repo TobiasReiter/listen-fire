@@ -13,9 +13,9 @@
   },
   "type": "commonjs",
   "dependencies": {
-    "engine-contracts": "workspace:@lf/engine-contracts@*",
-    "module-kit": "workspace:@lf/module-kit@*",
-    "movement-engine": "workspace:@lf/engine@*",
+    "engine-contracts": "workspace:@listen-fire/engine-contracts@*",
+    "module-kit": "workspace:@listen-fire/module-kit@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
     "tsx": "4.21.0",
     "yaml": "2.5.0",
     "zod": "4.1.12"

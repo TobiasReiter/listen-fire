@@ -1,10 +1,10 @@
 import { format } from 'date-fns';
 
-import type { AffinityOperations } from '@lf/affinity/operations';
+import type { AffinityOperations } from '@listen-fire/affinity/operations';
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult, FieldConstraints, ResourceContext } from './types';
 import type { FieldMapping } from 'movement-engine/public/output-v3';
 
-import { valueType, locationFieldValue, AffinityMergedEntityError } from '@lf/affinity/api_client';
+import { valueType, locationFieldValue, AffinityMergedEntityError } from '@listen-fire/affinity/api_client';
 import { services } from '../../../../adapters/registry';
 import { streamToBlob } from '../../../../lib/utils/stream';
 import { logger } from 'movement-engine/public/log';

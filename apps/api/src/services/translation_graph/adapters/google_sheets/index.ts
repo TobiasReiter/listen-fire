@@ -7,12 +7,12 @@
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
 
-import { GoogleSheetsAdapter } from '@lf/google-sheets';
+import { GoogleSheetsAdapter } from '@listen-fire/google-sheets';
 import { logger } from 'movement-engine/public/log';
 import { grantedItemsKv } from '../../../credentials/granted_items';
 import { resolveGoogleSheetsClient } from './client';
 
-export { GOOGLE_SHEETS_ADAPTER_TYPE, GOOGLE_SHEETS_MANIFEST, GoogleSheetsAdapter } from '@lf/google-sheets';
+export { GOOGLE_SHEETS_ADAPTER_TYPE, GOOGLE_SHEETS_MANIFEST, GoogleSheetsAdapter } from '@listen-fire/google-sheets';
 
 export function createGoogleSheetsAdapter(input: {
   teamId: TeamId;

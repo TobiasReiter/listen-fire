@@ -56,12 +56,12 @@ jobs:
         run: rustup target add ${{ matrix.target }}
       - name: Zig (cross-linking musl)
         if: matrix.zig
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
-          version: 0.13.0
+          version: 0.15.2
       - name: cargo-zigbuild
         if: matrix.zig
-        run: cargo install cargo-zigbuild --locked --version 0.19.8
+        run: cargo install cargo-zigbuild --locked --version 0.23.4
       - name: Build lf
         run: |
           if [ "${{ matrix.zig }}" = "true" ]; then

@@ -2,7 +2,7 @@
 // the ops Slack alert it sent before Attio became a module, with the same
 // text. Installed on import.
 
-import { reportAttioFieldRejectionsTo } from '@lf/attio/field_rejections';
+import { reportAttioFieldRejectionsTo } from '@listen-fire/attio/field_rejections';
 import { sendSlackNotification } from '../../../lib/slack';
 
 reportAttioFieldRejectionsTo(async ({ context, fieldKey, attributeId, fieldValue, error }) => {

@@ -22,7 +22,7 @@ import {
   TelegramClient,
   parseTelegramMessage,
   type TelegramSources,
-} from '@lf/telegram';
+} from '@listen-fire/telegram';
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
@@ -39,7 +39,7 @@ export {
   TELEGRAM_MESSAGE_TYPE_ID,
   normalizeMessage,
   type TelegramMessagePayload,
-} from '@lf/telegram';
+} from '@listen-fire/telegram';
 
 /** Stored Telegram credential — just the bot token. */
 const telegramCredsParser = z.object({

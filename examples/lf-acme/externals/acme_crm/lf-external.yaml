@@ -5,7 +5,7 @@ protocol: 2
 # Started by the host with PORT=0 in its environment; it prints "listening <port>".
 command: [node, server.mjs]
 # url: http://127.0.0.1:5557/   # instead of command: reach an adapter already running
-# module: ../../node_modules/@lf/dealroom   # instead of command: a module, served by serve-module
+# module: ../../node_modules/@listen-fire/dealroom   # instead of command: a module, served by serve-module
 auth: { kind: bearer, field: token }   # which secret field the host sends on each call
 webhook:
   # How the host verifies a delivery at /hooks/acme_crm/<install>: HMAC-SHA256

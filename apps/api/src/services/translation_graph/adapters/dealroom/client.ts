@@ -9,7 +9,7 @@ import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { DealroomApiClient, dealroomCredsParser } from '@lf/dealroom';
+import { DealroomApiClient, dealroomCredsParser } from '@listen-fire/dealroom';
 import { logger } from 'movement-engine/public/log';
 
 export type { DealroomApiClient };

@@ -12,7 +12,7 @@ jest.mock('movement-engine/services/logger', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Expression } from '#shared/expression/types';
-import type { GmailApiClient } from '@lf/gmail';
+import type { GmailApiClient } from '@listen-fire/gmail';
 
 import {
   ADAPTER_META_TYPE_ID,
@@ -25,8 +25,8 @@ import {
   type GmailMessage,
   type GmailMessageRef,
   type GmailProfile,
-} from '@lf/gmail';
-import { decodeGmailMessage } from '@lf/gmail';
+} from '@listen-fire/gmail';
+import { decodeGmailMessage } from '@listen-fire/gmail';
 import { GmailAdapter, GMAIL_MANIFEST, createGmailAdapter } from '../index';
 
 /** The module's adapter over a test's client: no files, a silent log. */
@@ -40,8 +40,8 @@ function adapterOver(client: GmailApiClient): GmailAdapter {
     log: { debug: quiet, info: quiet, warn: quiet, error: quiet },
   });
 }
-import { GmailPollSource, listenQuery } from '@lf/gmail';
-import { combineGmailQueries, gmailQueryFromWhere } from '@lf/gmail';
+import { GmailPollSource, listenQuery } from '@listen-fire/gmail';
+import { combineGmailQueries, gmailQueryFromWhere } from '@listen-fire/gmail';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { normaliseSchemaForAgent } from '../../../movement/agent_schema';
 import {
@@ -50,7 +50,7 @@ import {
   GMAIL_MESSAGE_EVENT_TAG,
   GMAIL_MESSAGE_TYPE_ID,
   decodeAttachmentId,
-} from '@lf/gmail';
+} from '@listen-fire/gmail';
 
 import { applyHopOrderLimit, hopPushdown } from '#shared/expression/order_limit';
 

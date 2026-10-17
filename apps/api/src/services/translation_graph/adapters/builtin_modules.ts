@@ -47,18 +47,18 @@ import {
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
 import { logger } from 'movement-engine/public/log';
-import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
-import { GRANOLA_MANIFEST } from '@lf/granola/manifest';
-import { EVERTRACE_MANIFEST } from '@lf/evertrace/manifest';
-import { DROPBOX_MANIFEST } from '@lf/dropbox/manifest';
-import { GOOGLE_SHEETS_MANIFEST } from '@lf/google-sheets/manifest';
-import { GOOGLE_DRIVE_MANIFEST } from '@lf/google-drive/manifest';
-import { GMAIL_MANIFEST } from '@lf/gmail/manifest';
-import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
-import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
-import { ATTIO_MANIFEST } from '@lf/attio/manifest';
-import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
-import { SLACK_MANIFEST } from '@lf/slack/manifest';
+import { DEALROOM_MANIFEST } from '@listen-fire/dealroom/manifest';
+import { GRANOLA_MANIFEST } from '@listen-fire/granola/manifest';
+import { EVERTRACE_MANIFEST } from '@listen-fire/evertrace/manifest';
+import { DROPBOX_MANIFEST } from '@listen-fire/dropbox/manifest';
+import { GOOGLE_SHEETS_MANIFEST } from '@listen-fire/google-sheets/manifest';
+import { GOOGLE_DRIVE_MANIFEST } from '@listen-fire/google-drive/manifest';
+import { GMAIL_MANIFEST } from '@listen-fire/gmail/manifest';
+import { AFFINITY_MANIFEST } from '@listen-fire/affinity/manifest';
+import { AIRTABLE_MANIFEST } from '@listen-fire/airtable/manifest';
+import { ATTIO_MANIFEST } from '@listen-fire/attio/manifest';
+import { TELEGRAM_MANIFEST } from '@listen-fire/telegram/manifest';
+import { SLACK_MANIFEST } from '@listen-fire/slack/manifest';
 import { pluginDeclarationNamed, pluginProgramName } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -139,7 +139,7 @@ const WEB_MODULE_LINE: BuiltinModuleLine = {
   line: 'module',
   load: () => {
     if (webModule === undefined) {
-      const { webModuleWith }: typeof import('@lf/web') = require('@lf/web');
+      const { webModuleWith }: typeof import('@listen-fire/web') = require('@listen-fire/web');
       const { hostedWebTools }: typeof import('../engine/transforms/hosted_tools') = require('../engine/transforms/hosted_tools');
       webModule = webModuleWith(() => hostedWebTools);
     }
@@ -161,7 +161,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: DEALROOM_MANIFEST,
     load: () => {
-      const { dealroomModule }: typeof import('@lf/dealroom') = require('@lf/dealroom');
+      const { dealroomModule }: typeof import('@listen-fire/dealroom') = require('@listen-fire/dealroom');
       return dealroomModule;
     },
   },
@@ -170,7 +170,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: GRANOLA_MANIFEST,
     load: () => {
-      const { granolaModule }: typeof import('@lf/granola') = require('@lf/granola');
+      const { granolaModule }: typeof import('@listen-fire/granola') = require('@listen-fire/granola');
       return granolaModule;
     },
   },
@@ -179,7 +179,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: EVERTRACE_MANIFEST,
     load: () => {
-      const { evertraceModule }: typeof import('@lf/evertrace') = require('@lf/evertrace');
+      const { evertraceModule }: typeof import('@listen-fire/evertrace') = require('@listen-fire/evertrace');
       return evertraceModule;
     },
   },
@@ -189,7 +189,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     manifest: AFFINITY_MANIFEST,
     load: () => {
       require('./affinity/write_failure_alerts');
-      const { affinityModule }: typeof import('@lf/affinity') = require('@lf/affinity');
+      const { affinityModule }: typeof import('@listen-fire/affinity') = require('@listen-fire/affinity');
       return affinityModule;
     },
     files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/affinity' }),
@@ -199,7 +199,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: AIRTABLE_MANIFEST,
     load: () => {
-      const { airtableModule }: typeof import('@lf/airtable') = require('@lf/airtable');
+      const { airtableModule }: typeof import('@listen-fire/airtable') = require('@listen-fire/airtable');
       return airtableModule;
     },
     // The connect flow stores `{ accessToken, refreshToken, accessTokenExpiresAt }`.
@@ -213,7 +213,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     manifest: ATTIO_MANIFEST,
     load: () => {
       require('./attio_field_rejection_alerts');
-      const { attioModule }: typeof import('@lf/attio') = require('@lf/attio');
+      const { attioModule }: typeof import('@listen-fire/attio') = require('@listen-fire/attio');
       return attioModule;
     },
     storedAs: renamedPayloadShape({ accessToken: 'access_token' }),
@@ -225,7 +225,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: GOOGLE_SHEETS_MANIFEST,
     load: () => {
-      const { googleSheetsModule }: typeof import('@lf/google-sheets') = require('@lf/google-sheets');
+      const { googleSheetsModule }: typeof import('@listen-fire/google-sheets') = require('@listen-fire/google-sheets');
       return googleSheetsModule;
     },
     // The connect flow stores `{ accessToken, refreshToken, expiresAt }`.
@@ -242,7 +242,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: GOOGLE_DRIVE_MANIFEST,
     load: () => {
-      const { googleDriveModule }: typeof import('@lf/google-drive') = require('@lf/google-drive');
+      const { googleDriveModule }: typeof import('@listen-fire/google-drive') = require('@listen-fire/google-drive');
       return googleDriveModule;
     },
     // The connect flow stores `{ accessToken, refreshToken, expiresAt }`.
@@ -260,7 +260,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: DROPBOX_MANIFEST,
     load: () => {
-      const { dropboxModule }: typeof import('@lf/dropbox') = require('@lf/dropbox');
+      const { dropboxModule }: typeof import('@listen-fire/dropbox') = require('@listen-fire/dropbox');
       return dropboxModule;
     },
     // The connect flow stores `{ accessToken, refreshToken, expiresAt }`.
@@ -273,7 +273,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: GMAIL_MANIFEST,
     load: () => {
-      const { gmailModule }: typeof import('@lf/gmail') = require('@lf/gmail');
+      const { gmailModule }: typeof import('@listen-fire/gmail') = require('@listen-fire/gmail');
       return gmailModule;
     },
     // Two stored shapes (a sign-in, a delegated mailbox) behind one set of
@@ -287,7 +287,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     line: 'module',
     manifest: TELEGRAM_MANIFEST,
     load: () => {
-      const { telegramModule }: typeof import('@lf/telegram') = require('@lf/telegram');
+      const { telegramModule }: typeof import('@listen-fire/telegram') = require('@listen-fire/telegram');
       return telegramModule;
     },
     // The platform's shared bot, for a team that connected it (an empty
@@ -306,7 +306,7 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     // its redemption of a file any owner holds.
     load: () => {
       if (platformSlackModule === undefined) {
-        const { slackModuleWith }: typeof import('@lf/slack') = require('@lf/slack');
+        const { slackModuleWith }: typeof import('@listen-fire/slack') = require('@listen-fire/slack');
         const { platformSlackChat, platformSlackFile }: typeof import('./slack') = require('./slack');
         platformSlackModule = slackModuleWith({
           chat: platformSlackChat,

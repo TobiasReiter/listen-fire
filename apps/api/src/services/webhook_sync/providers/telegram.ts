@@ -15,7 +15,7 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
-import { TelegramClient } from '@lf/telegram/write';
+import { TelegramClient } from '@listen-fire/telegram/write';
 
 import type { WebhookProvider, WebhookRegistration } from './interface';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';

@@ -14,7 +14,7 @@
 // — reads the method from here rather than re-deriving it.
 
 import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/public/google-cloud';
-import { GMAIL_CONNECT_METHODS, type GmailConnectMethod } from '@lf/gmail/api_client';
+import { GMAIL_CONNECT_METHODS, type GmailConnectMethod } from '@listen-fire/gmail/api_client';
 
 export { GMAIL_CONNECT_METHODS, type GmailConnectMethod };
 

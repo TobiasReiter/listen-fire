@@ -4,9 +4,9 @@
 // store (`CompanyStore`), one tenant's apart from another's; the module only
 // answers the adapter protocol over them.
 
-import type { Adapter, AdapterManifest, DiscriminableEvent } from '@lf/engine/public/adapter';
-import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from '@lf/engine/public/adapter';
-import { defineModule, type AdapterModuleMethods, type ModuleContext } from '@lf/module-kit';
+import type { Adapter, AdapterManifest, DiscriminableEvent } from '@listen-fire/engine/public/adapter';
+import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from '@listen-fire/engine/public/adapter';
+import { defineModule, type AdapterModuleMethods, type ModuleContext } from '@listen-fire/module-kit';
 
 export const COMPANY = 'Company';
 export const COMPANY_CREATED = 'company.created';

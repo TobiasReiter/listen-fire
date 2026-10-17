@@ -8,7 +8,7 @@ export {
   attributeConfigValidator,
   attioAttributeTypeValidator,
   KNOWN_ATTIO_ATTRIBUTE_TYPES,
-} from '@lf/attio/attributes';
+} from '@listen-fire/attio/attributes';
 
 interface AttioConnector {
   handleCallback(request: Request, response: Response): Promise<void>;

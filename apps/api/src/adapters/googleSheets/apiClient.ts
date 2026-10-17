@@ -6,15 +6,15 @@
 // a module, so those callers are unchanged.
 
 import type { z } from 'zod';
-import type { GoogleSheetsClientOptions } from '@lf/google-sheets';
+import type { GoogleSheetsClientOptions } from '@listen-fire/google-sheets';
 
-import { GoogleSheetsApiClient as ModuleSheetsClient } from '@lf/google-sheets';
+import { GoogleSheetsApiClient as ModuleSheetsClient } from '@listen-fire/google-sheets';
 import { logger } from 'movement-engine/public/log';
 
 import { googleCredsParser } from '../google/authClient';
 import { services } from '../registry';
 
-export { sheetsFetchWithRetry, type TableColumnInfo, type TableInfo, type TableRange } from '@lf/google-sheets';
+export { sheetsFetchWithRetry, type TableColumnInfo, type TableInfo, type TableRange } from '@listen-fire/google-sheets';
 
 type StoredGoogleCreds = z.infer<typeof googleCredsParser> & { baseUrl?: string };
 

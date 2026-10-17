@@ -50,11 +50,11 @@ import type { ExternalServiceCredentialsId } from '../../generated/kysely/automa
 
 import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { withSegment } from 'movement-engine/services/translation_graph/segment_scope';
-import { AffinityAPIClient } from '@lf/affinity/api_client';
-import { AffinityAdapter, AFFINITY_MANIFEST } from '@lf/affinity';
+import { AffinityAPIClient } from '@listen-fire/affinity/api_client';
+import { AffinityAdapter, AFFINITY_MANIFEST } from '@listen-fire/affinity';
 import { hostedModels } from '../../services/translation_graph/adapters/module_host';
 import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
-import { makeWebBaseUrlResolver } from '@lf/affinity';
+import { makeWebBaseUrlResolver } from '@listen-fire/affinity';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
 import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';

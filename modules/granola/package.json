@@ -1,5 +1,5 @@
 {
-  "name": "@lf/granola",
+  "name": "@listen-fire/granola",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "Granola (meeting notes) as a module: polled for new and changed notes, readable back-catalogue through Meetings. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
@@ -10,27 +10,28 @@
     "code:type-check": "tsc --pretty --noEmit && node ../../scripts/check-module-boundary.cjs",
     "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
     "bench": "node --require ../../packages/module-kit/node_modules/tsx/dist/cjs/index.cjs bench/hosted_bench.ts",
-    "prepack": "node ../../scripts/build-packages.cjs ."
+    "prepack": "node ../../scripts/build-packages.cjs .",
+    "postpack": "node ../../scripts/build-packages.cjs --restore ."
   },
   "main": "index.ts",
   "types": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@lf/engine": "workspace:^",
-    "@lf/engine-contracts": "workspace:^",
-    "@lf/module-kit": "workspace:^",
-    "@lf/movement-lang": "workspace:^",
-    "@lf/shared": "workspace:^",
+    "@listen-fire/engine": "workspace:^",
+    "@listen-fire/engine-contracts": "workspace:^",
+    "@listen-fire/module-kit": "workspace:^",
+    "@listen-fire/movement-lang": "workspace:^",
+    "@listen-fire/shared": "workspace:^",
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "#shared": "workspace:@lf/shared@*",
+    "#shared": "workspace:@listen-fire/shared@*",
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
-    "engine-contracts": "workspace:@lf/engine-contracts@*",
-    "module-kit": "workspace:@lf/module-kit@*",
-    "movement-engine": "workspace:@lf/engine@*",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "engine-contracts": "workspace:@listen-fire/engine-contracts@*",
+    "module-kit": "workspace:@listen-fire/module-kit@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "typescript": "5.5.4"
   },
   "repository": {
