@@ -17,7 +17,7 @@ import {
   dealroomDateTime,
   type DealroomMustFilters,
   type DealroomSearchRequest,
-} from '../../../../adapters/dealroom/apiClient';
+} from './api_client';
 import {
   DEALROOM_COMPANY_TYPE_ID,
   DEALROOM_FUNDING_ROUND_TYPE_ID,

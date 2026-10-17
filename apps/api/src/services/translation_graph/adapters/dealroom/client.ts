@@ -1,6 +1,7 @@
-// Credentialed Dealroom client resolution — shared by the read Adapter
-// (index.ts) and the PollSource (poll.ts). The wire shape itself lives in
-// `adapters/dealroom/apiClient.ts`; this is only the credential half.
+// The legacy line's credentialed Dealroom client: the row read and decrypted
+// here, the dev-loop redirect applied here, as before Dealroom became a module
+// (@lf/dealroom). Shared by the legacy adapter and poll (index.ts). The wire
+// shape is the module's client.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
@@ -8,11 +9,8 @@ import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import {
-  DealroomApiClient,
-  dealroomCredsParser,
-  getDealroomClient,
-} from '../../../../adapters/dealroom/apiClient';
+import { DealroomApiClient, dealroomCredsParser } from '@lf/dealroom';
+import { logger } from 'movement-engine/public/log';
 
 export type { DealroomApiClient };
 
@@ -49,5 +47,5 @@ export async function resolveDealroomClient(input: {
 
   const parsed = dealroomCredsParser.safeParse(rawPayload);
   if (!parsed.success) return null;
-  return getDealroomClient(parsed.data.apiKey, parsed.data.baseUrl);
+  return new DealroomApiClient({ ...parsed.data, fetch, log: logger });
 }

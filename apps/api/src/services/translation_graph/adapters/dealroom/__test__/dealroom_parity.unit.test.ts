@@ -1,25 +1,44 @@
-// Recorded parity for Dealroom. The fixture is today's legacy adapter driven
-// through `parity/script.ts` against the fake-channels Dealroom: every answer,
-// and every request it made with what came back. Each implementation is then
-// replayed against the recording and must make the same requests (its
-// writes) and give the same answers.
+// Recorded parity for Dealroom. The fixture is the legacy adapter as it was
+// before Dealroom became a module (commit ced5f2a4), driven through
+// `parity/script.ts` against the fake-channels Dealroom: every answer, and
+// every request it made with what came back. Each implementation is replayed
+// against the recording and must make the same requests (its writes) and give
+// the same answers: the legacy line, the module in process as the platform
+// loads it, and the module served as a process (serve-module) and called over
+// adapter protocol 2.
 //
-// Re-record (only when the legacy adapter changes on purpose, reading the
-// diff): DEALROOM_PARITY_RECORD=1 pnpm test:unit --testPathPattern dealroom_parity
+// Re-record (only when the legacy line changes on purpose, reading the diff):
+// DEALROOM_PARITY_RECORD=1 pnpm test:unit --testPathPattern dealroom_parity
 
 jest.mock('../../../../../lib/credentials', () => ({
   decryptToken: async () => '{}',
   encryptToken: async () => '',
 }));
 
+// The platform's encrypted store, as a vault the test seeds: the module line
+// reads its credential through the secrets family exactly as in production.
+const vault: { current?: ReturnType<typeof import('movement-engine/public/secrets').createMemoryVault> } = {};
+jest.mock('../../../../credentials/secrets_postgres', () => ({
+  postgresSecrets: () => {
+    if (vault.current === undefined) throw new Error('no vault seeded');
+    return vault.current;
+  },
+}));
+
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
-import { getDealroomClient } from '../../../../../adapters/dealroom/apiClient';
-import { DealroomAdapter } from '../index';
-import { DealroomPollSource } from '../poll';
+import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
+import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
+import { getAdapter, getPollSource } from '../../registry';
+import { BUILTIN_MODULES } from '../../builtin_modules';
+import { DealroomApiClient, DealroomAdapter, pollDealroom } from '@lf/dealroom';
+import { logger } from 'movement-engine/public/log';
 import { recordingServer, replayingServer, type Exchange } from './parity/exchange';
 import { bootFakeDealroom } from './parity/fake_dealroom';
 import { runParityScript, type ParitySubject, type TranscriptEntry } from './parity/script';
@@ -33,14 +52,13 @@ interface Recording {
   exchanges: Exchange[];
 }
 
-/** The legacy adapter and poll source, on a client pointed at `baseUrl`. */
+/** The legacy line's adapter and poll, on a client pointed at `baseUrl` (its
+ *  credential path, the decrypted row, is the one thing replaced). */
 function legacySubject(baseUrl: string): ParitySubject {
-  // The client memo is per (key, base URL), so each server gets its own
-  // client and pacing gate.
-  const client = getDealroomClient(API_KEY, baseUrl);
+  const client = new DealroomApiClient({ apiKey: API_KEY, baseUrl, fetch, log: logger });
   return {
-    adapter: new DealroomAdapter(TEAM, 'cred-parity', client),
-    poll: (input) => new DealroomPollSource(TEAM, 'cred-parity', client).getEvents(input),
+    adapter: new DealroomAdapter(async () => client),
+    poll: (input) => pollDealroom(client, input),
   };
 }
 
@@ -90,7 +108,62 @@ async function expectParity(subjectAt: (baseUrl: string) => Promise<ParitySubjec
     expect(transcript.find((e) => e.step === 'poll from a checkpoint')?.answer).toMatchObject({ events: expect.arrayContaining([expect.anything()]) });
   });
 
-  it('legacy replays identically (the recording is deterministic)', async () => {
+  it('the legacy line replays identically', async () => {
     await expectParity(legacySubject);
   });
+
+  it('the module in process, through the platform registry, replays identically', async () => {
+    expect(BUILTIN_MODULES.dealroom?.line).toBe('module');
+    await expectParity((baseUrl) => {
+      vault.current = createMemoryVault({ 'cred-parity': { apiKey: API_KEY, baseUrl } });
+      const install = { adapterType: 'dealroom', teamId: TEAM, credentialsId: 'cred-parity' };
+      const source = getPollSource(install);
+      if (source === null) throw new Error('dealroom has no poll source');
+      return { adapter: getAdapter(install), poll: (input) => source.getEvents(input) };
+    });
+  });
+
+  it('the module served as a process, over protocol 2, replays identically', async () => {
+    const served = await serveDealroom();
+    try {
+      await expectParity(async (baseUrl) => {
+        const credentials = createMemoryVault({ 'cred-parity': { apiKey: API_KEY, baseUrl } });
+        const config = { adapterType: 'dealroom', teamId: TEAM, baseUrl: served.url, authStrategy: { kind: 'bearer' as const }, credentialsId: 'cred-parity' };
+        const remote = createRemoteAdapter({
+          config,
+          secret: '',
+          cacheScopeId: 'parity',
+          manifest: await fetchRemoteManifest(config, ''),
+          documents: { put: async () => ({}) } as never,
+          credential: { name: 'dealroom', secrets: createSecretsFamily({ backend: credentials }), ref: 'cred-parity' },
+        });
+        return { adapter: remote, poll: (input) => remote.poll(input) };
+      });
+    } finally {
+      served.stop();
+    }
+  });
 });
+
+/** `serve-module @lf/dealroom` as a child process. */
+async function serveDealroom(): Promise<{ url: string; stop(): void }> {
+  const repo = join(__dirname, '../../../../../../../..');
+  const child = spawn(process.execPath, [join(repo, 'packages/module-kit/bin/serve-module.cjs'), '.'], {
+    cwd: join(repo, 'modules/dealroom'),
+    env: { ...process.env, PORT: '0' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('serve-module printed no port within 30s')), 30_000);
+    child.once('exit', (code) => reject(new Error(`serve-module exited (${code})`)));
+    if (child.stdout === null) return;
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const match = /^listening (\d+)$/.exec(line);
+      if (match?.[1] !== undefined) {
+        clearTimeout(timer);
+        resolve(Number(match[1]));
+      }
+    });
+  });
+  return { url: `http://127.0.0.1:${port}/`, stop: () => child.kill() };
+}

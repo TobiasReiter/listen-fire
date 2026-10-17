@@ -47,12 +47,9 @@ import {
   createEvertraceAdapter,
 } from './evertrace';
 import { createEvertracePollSource } from './evertrace/poll';
-import {
-  DEALROOM_ADAPTER_TYPE,
-  DEALROOM_MANIFEST,
-  createDealroomAdapter,
-} from './dealroom';
-import { createDealroomPollSource } from './dealroom/poll';
+import { DEALROOM_ADAPTER_TYPE } from '@lf/dealroom/types';
+import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { builtinAdapterFactory, builtinPollSourceFactory } from './builtin_modules';
 import { GMAIL_ADAPTER_TYPE, GMAIL_MANIFEST, createGmailAdapter } from './gmail';
 import { createGmailPollSource } from './gmail/poll';
 import { ASK_ADAPTER_TYPE, ASK_MANIFEST, createAskAdapter } from './ask';
@@ -153,10 +150,14 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   [EVERTRACE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
     createEvertraceAdapter({ teamId, credentialsId }),
   // Dealroom — polled source (new funding rounds) and read-only otherwise: the
-  // API has no record-writing endpoint at all. Event production lives on its
-  // PollSource (POLL_SOURCE_FACTORIES below).
-  [DEALROOM_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createDealroomAdapter({ teamId, credentialsId }),
+  // API has no record-writing endpoint at all. A module (@lf/dealroom); its
+  // poll is the module's declared one (POLL_SOURCE_FACTORIES below).
+  // Its line in BUILTIN_MODULES says module or legacy; either is loaded on
+  // first use.
+  [DEALROOM_ADAPTER_TYPE]: builtinAdapterFactory(DEALROOM_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createDealroomAdapter }: typeof import('./dealroom') = require('./dealroom');
+    return createDealroomAdapter({ teamId, credentialsId });
+  }),
   // Ask adapter — the awaitable "ask a person" intrinsic (asks-as-adapter).
   // Credential-free, team-scoped; families (Check/Provide/Select/Review) are
   // its writable positions. Runs alongside the legacy `ask` statement.
@@ -186,8 +187,10 @@ const POLL_SOURCE_FACTORIES: Record<string, PollSourceFactory> = {
     createGranolaPollSource({ teamId, credentialsId }),
   [EVERTRACE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
     createEvertracePollSource({ teamId, credentialsId }),
-  [DEALROOM_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createDealroomPollSource({ teamId, credentialsId }),
+  [DEALROOM_ADAPTER_TYPE]: builtinPollSourceFactory(DEALROOM_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createDealroomPollSource }: typeof import('./dealroom') = require('./dealroom');
+    return createDealroomPollSource({ teamId, credentialsId });
+  }),
   [GMAIL_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
     createGmailPollSource({ teamId, credentialsId }),
   [SYSTEM_ADAPTER_TYPE]: ({ teamId }) => createSystemPollSource({ teamId }),

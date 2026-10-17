@@ -15,11 +15,13 @@ import { AIRTABLE_WORK_KINDS } from '../../airtable_webhook_refresh/worker';
 import { ASK_ADAPTER_TYPE, askResponseDescriptorFor } from './ask';
 import { askAwaitKeeper } from './ask/await_keeper';
 import { ASK_WORK_KINDS } from './ask/closed_sweep';
+import { builtinModuleWorkKinds } from './builtin_modules';
 
 
-/** Every package's own work kinds, for the process that drains. */
+/** Every package's own work kinds, for the process that drains: the legacy
+ *  packages' by name, and each module line's declared periodic tasks. */
 export function adapterWorkKinds(): WorkKindRegistration[] {
-  return [...ASK_WORK_KINDS, ...AIRTABLE_WORK_KINDS];
+  return [...ASK_WORK_KINDS, ...AIRTABLE_WORK_KINDS, ...builtinModuleWorkKinds()];
 }
 
 /** Every package's keeper of record-backed awaits. */

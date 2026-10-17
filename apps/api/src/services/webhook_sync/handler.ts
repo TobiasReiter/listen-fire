@@ -55,6 +55,7 @@ import { webhookProviderKey } from './urls';
 import { listRemoteAdapters } from '../translation_graph/adapters/remote/store';
 import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';
 import { LEGACY_INTERCEPTS, LEGACY_SIGNATURE_HEADERS } from '../inbound/legacy_signature_headers';
+import { builtinModuleInboundVerifier } from '../translation_graph/adapters/builtin_modules';
 
 function jsonb(value: unknown): unknown {
   return sql`${JSON.stringify(value)}::jsonb` as unknown;
@@ -111,7 +112,9 @@ function signingSecretFor(subscription: InboundSubscription): string {
 /** A built-in provider's subscription: verified by the frozen table, read by
  *  the adapter its provider key aliases. */
 function builtInSource(subscription: InboundSubscription): InboundSource | null {
-  const verifier = LEGACY_SIGNATURE_HEADERS[subscription.providerKey];
+  // A built-in on a module line that declares its inbound is held to the
+  // host's one rule for a declared signed inbound; the rest keep their door's.
+  const verifier = builtinModuleInboundVerifier(subscription.providerKey) ?? LEGACY_SIGNATURE_HEADERS[subscription.providerKey];
   if (!verifier) return null;
   return {
     verifier,
