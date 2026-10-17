@@ -136,6 +136,9 @@ importers:
       '@lf/granola':
         specifier: workspace:*
         version: link:../../modules/granola
+      '@lf/dropbox':
+        specifier: workspace:*
+        version: link:../../modules/dropbox
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12)
@@ -840,6 +843,7 @@ importers:
         version: 5.5.4
 
   modules/granola:
+  modules/dropbox:
     dependencies:
       '#shared':
         specifier: workspace:@listen-fire/shared@*

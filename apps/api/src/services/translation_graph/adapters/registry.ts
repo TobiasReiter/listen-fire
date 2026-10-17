@@ -32,11 +32,8 @@ import {
   GOOGLE_DRIVE_MANIFEST,
   createGoogleDriveAdapter,
 } from './google_drive';
-import {
-  DROPBOX_ADAPTER_TYPE,
-  DROPBOX_MANIFEST,
-  createDropboxAdapter,
-} from './dropbox';
+import { DROPBOX_ADAPTER_TYPE } from '@lf/dropbox/types';
+import { DROPBOX_MANIFEST } from '@lf/dropbox/manifest';
 import { CRON_ADAPTER_TYPE, CRON_MANIFEST, createCronAdapter } from './cron';
 import { MANUAL_ADAPTER_TYPE, MANUAL_MANIFEST, createManualAdapter } from './manual';
 import { GRANOLA_ADAPTER_TYPE } from '@lf/granola/types';
@@ -127,8 +124,10 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Dropbox adapter — create-only write target (v3-output parity). Source-side
   // triggers (snapshot/poll) are deferred — Dropbox has no v3 input — so it
   // appears as a target in the editor picker, not a source.
-  [DROPBOX_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createDropboxAdapter({ teamId, credentialsId }),
+  [DROPBOX_ADAPTER_TYPE]: builtinAdapterFactory(DROPBOX_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createDropboxAdapter }: typeof import('./dropbox') = require('./dropbox');
+    return createDropboxAdapter({ teamId, credentialsId });
+  }),
   // Cron adapter — time as a source. Credential-free intrinsic; the
   // platform's movement scheduler emits its tick events (see
   // services/movement_scheduler/worker.ts).

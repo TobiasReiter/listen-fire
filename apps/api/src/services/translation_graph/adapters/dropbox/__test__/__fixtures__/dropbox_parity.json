@@ -1,0 +1,821 @@
+{
+  "transcript": [
+    {
+      "step": "listEntryPoints",
+      "answer": [
+        {
+          "typeId": "Folder",
+          "displayName": "Folder",
+          "description": "A Dropbox folder — list them from the root, create one anywhere.",
+          "writable": true,
+          "readable": true,
+          "collectionName": "Folders"
+        },
+        {
+          "typeId": "File",
+          "displayName": "File",
+          "description": "A file in Dropbox — read content, upload new files.",
+          "writable": true,
+          "readable": true,
+          "collectionName": "Files"
+        }
+      ]
+    },
+    {
+      "step": "describe Folder",
+      "answer": {
+        "typeId": "Folder",
+        "displayName": "Folder",
+        "description": "A Dropbox folder. Creating one reuses an existing folder with the same name in the same parent instead of duplicating it.",
+        "fields": [
+          {
+            "fieldId": "name",
+            "displayName": "Name",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": true
+          },
+          {
+            "fieldId": "parent",
+            "displayName": "Parent folder",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false,
+            "readable": false,
+            "description": "Dropbox folder path to create this inside. Optional: a bare create lands in the Dropbox root, and a create along a folder's edge inherits that folder automatically."
+          },
+          {
+            "fieldId": "path",
+            "displayName": "Path",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "url",
+            "displayName": "Url",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "folders",
+            "targetTypeId": "Folder",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Folders",
+            "writable": true
+          },
+          {
+            "fieldId": "files",
+            "targetTypeId": "File",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Files",
+            "writable": true
+          },
+          {
+            "fieldId": "parent",
+            "targetTypeId": "Folder",
+            "cardinality": "one",
+            "direction": "outgoing",
+            "name": "Parent",
+            "writable": false
+          }
+        ],
+        "uniquenessAuthorable": false
+      }
+    },
+    {
+      "step": "describe File",
+      "answer": {
+        "typeId": "File",
+        "displayName": "File",
+        "description": "A file in Dropbox. `File` carries the content — read it as bytes, or set it on a create (a File-typed value, or inline text saved as a plain-text file).",
+        "fields": [
+          {
+            "fieldId": "name",
+            "displayName": "Name",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false,
+            "description": "The file name. Optional on a create — defaults to the file value's own name."
+          },
+          {
+            "fieldId": "file",
+            "displayName": "File",
+            "kind": "file",
+            "cardinality": "one",
+            "writable": true,
+            "required": true,
+            "description": "The file content. On a create: a File-typed value (e.g. FILE(…) or a file read from another system) or inline text. On a read: the bytes — feed them to extraction or another upload."
+          },
+          {
+            "fieldId": "parent",
+            "displayName": "Parent folder",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false,
+            "readable": false,
+            "description": "Dropbox folder path to create this inside. Optional: a bare create lands in the Dropbox root, and a create along a folder's edge inherits that folder automatically."
+          },
+          {
+            "fieldId": "path",
+            "displayName": "Path",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "url",
+            "displayName": "Url",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "size",
+            "displayName": "Size",
+            "kind": "number",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "parent",
+            "targetTypeId": "Folder",
+            "cardinality": "one",
+            "direction": "outgoing",
+            "name": "Parent",
+            "writable": false
+          }
+        ],
+        "uniquenessAuthorable": false
+      }
+    },
+    {
+      "step": "describe Nonexistent",
+      "answer": null
+    },
+    {
+      "step": "edgesFrom meta",
+      "answer": {
+        "descriptor": {
+          "typeId": "meta",
+          "displayName": "Dropbox",
+          "description": "The connected Dropbox. Its root is a real folder, so `Folders` and `Files` list what is in it — and creating along either edge puts the new item there.",
+          "fields": [],
+          "references": [
+            {
+              "fieldId": "Folders",
+              "targetTypeId": "Folder",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Folders",
+              "writable": true,
+              "description": "Folders at the top of the connected Dropbox."
+            },
+            {
+              "fieldId": "Files",
+              "targetTypeId": "File",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Files",
+              "writable": true,
+              "description": "Files at the top of the connected Dropbox."
+            }
+          ]
+        },
+        "targetPositions": {
+          "Folders": {
+            "adapterType": "dropbox",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          },
+          "Files": {
+            "adapterType": "dropbox",
+            "recordType": "File",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          }
+        },
+        "targetNodes": {
+          "Folders": {
+            "typeId": "Folder",
+            "displayName": "Folder",
+            "description": "A Dropbox folder. Creating one reuses an existing folder with the same name in the same parent instead of duplicating it.",
+            "fields": [
+              {
+                "fieldId": "name",
+                "displayName": "Name",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": true
+              },
+              {
+                "fieldId": "parent",
+                "displayName": "Parent folder",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "readable": false,
+                "description": "Dropbox folder path to create this inside. Optional: a bare create lands in the Dropbox root, and a create along a folder's edge inherits that folder automatically."
+              },
+              {
+                "fieldId": "path",
+                "displayName": "Path",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "url",
+                "displayName": "Url",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              }
+            ],
+            "uniquenessAuthorable": false
+          },
+          "Files": {
+            "typeId": "File",
+            "displayName": "File",
+            "description": "A file in Dropbox. `File` carries the content — read it as bytes, or set it on a create (a File-typed value, or inline text saved as a plain-text file).",
+            "fields": [
+              {
+                "fieldId": "name",
+                "displayName": "Name",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "description": "The file name. Optional on a create — defaults to the file value's own name."
+              },
+              {
+                "fieldId": "file",
+                "displayName": "File",
+                "kind": "file",
+                "cardinality": "one",
+                "writable": true,
+                "required": true,
+                "description": "The file content. On a create: a File-typed value (e.g. FILE(…) or a file read from another system) or inline text. On a read: the bytes — feed them to extraction or another upload."
+              },
+              {
+                "fieldId": "parent",
+                "displayName": "Parent folder",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "readable": false,
+                "description": "Dropbox folder path to create this inside. Optional: a bare create lands in the Dropbox root, and a create along a folder's edge inherits that folder automatically."
+              },
+              {
+                "fieldId": "path",
+                "displayName": "Path",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "url",
+                "displayName": "Url",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "size",
+                "displayName": "Size",
+                "kind": "number",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              }
+            ],
+            "uniquenessAuthorable": false
+          }
+        }
+      }
+    },
+    {
+      "step": "resolveEntity",
+      "answer": {
+        "candidates": []
+      }
+    },
+    {
+      "step": "root Folders",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Deals",
+              "data": {
+                "name": "Deals",
+                "path": "/Deals",
+                "isFolder": true,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "root Files",
+      "answer": []
+    },
+    {
+      "step": "Folder.Name",
+      "answer": "Deals"
+    },
+    {
+      "step": "Folder.Path",
+      "answer": "/Deals"
+    },
+    {
+      "step": "Folder.Url",
+      "answer": "https://www.dropbox.com/home/Deals"
+    },
+    {
+      "step": "Folder.Size",
+      "answer": null
+    },
+    {
+      "step": "Folder.File",
+      "answer": null
+    },
+    {
+      "step": "Folder Folders",
+      "answer": []
+    },
+    {
+      "step": "Folder Files",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Deals/foo-notes.txt",
+              "data": {
+                "name": "foo-notes.txt",
+                "path": "/Deals/foo-notes.txt",
+                "isFolder": false,
+                "size": 38
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Folder Parent",
+      "answer": []
+    },
+    {
+      "step": "File.Name",
+      "answer": "foo-notes.txt"
+    },
+    {
+      "step": "File.Path",
+      "answer": "/Deals/foo-notes.txt"
+    },
+    {
+      "step": "File.Url",
+      "answer": "https://www.dropbox.com/home/Deals/foo-notes.txt"
+    },
+    {
+      "step": "File.Size",
+      "answer": 38
+    },
+    {
+      "step": "File Parent",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Deals",
+              "data": {
+                "name": "Deals",
+                "path": "/Deals",
+                "isFolder": true,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "File.File",
+      "answer": {
+        "__brand": "FileRef",
+        "name": "foo-notes.txt",
+        "size": 38,
+        "source": {
+          "adapterType": "dropbox",
+          "credentialId": "cred-parity",
+          "handle": "/Deals/foo-notes.txt"
+        }
+      }
+    },
+    {
+      "step": "resolveFileRef",
+      "answer": {
+        "body": "Foo Corp notes: strong team, pre-seed.",
+        "contentType": null
+      }
+    },
+    {
+      "step": "create Folder at the root",
+      "answer": {
+        "adapterType": "dropbox",
+        "externalId": "/Clients",
+        "data": {
+          "name": "Clients",
+          "url": "https://www.dropbox.com/home/Clients"
+        }
+      }
+    },
+    {
+      "step": "create the same Folder again (reused)",
+      "answer": {
+        "adapterType": "dropbox",
+        "externalId": "/Clients",
+        "data": {
+          "name": "clients",
+          "url": "https://www.dropbox.com/home/Clients"
+        }
+      }
+    },
+    {
+      "step": "create Folder along an edge",
+      "answer": {
+        "adapterType": "dropbox",
+        "externalId": "/Deals/2026",
+        "data": {
+          "name": "2026",
+          "url": "https://www.dropbox.com/home/Deals/2026"
+        }
+      }
+    },
+    {
+      "step": "create File from inline text",
+      "answer": {
+        "adapterType": "dropbox",
+        "externalId": "/hello.txt",
+        "data": {
+          "name": "hello.txt",
+          "url": "https://www.dropbox.com/home/hello.txt"
+        }
+      }
+    },
+    {
+      "step": "create File from a file value",
+      "answer": {
+        "adapterType": "dropbox",
+        "externalId": "/memo.txt",
+        "data": {
+          "name": "memo.txt",
+          "url": "https://www.dropbox.com/home/memo.txt"
+        }
+      }
+    },
+    {
+      "step": "create File copied from a Dropbox file",
+      "answer": {
+        "adapterType": "dropbox",
+        "externalId": "/Clients/copy.txt",
+        "data": {
+          "name": "copy.txt",
+          "url": "https://www.dropbox.com/home/Clients/copy.txt"
+        }
+      }
+    },
+    {
+      "step": "create File with no content",
+      "answer": {
+        "error": "DropboxAdapter.createRecord(File): the `File` field is empty — map a file value or inline text into it."
+      }
+    },
+    {
+      "step": "create an unknown type",
+      "answer": {
+        "error": "DropboxAdapter.createRecord: unrecognised recordType \"Spreadsheet\"."
+      }
+    },
+    {
+      "step": "updateRecord",
+      "answer": {
+        "error": "Dropbox is create-only — updateRecord is not supported. Folder and File creates have no in-place edit; model a change as a new write instead."
+      }
+    },
+    {
+      "step": "deleteRecord",
+      "answer": {
+        "error": "Dropbox is create-only — deleteRecord is not supported. Created folders/files have no delete path through this adapter."
+      }
+    },
+    {
+      "step": "root Folders after",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Deals",
+              "data": {
+                "name": "Deals",
+                "path": "/Deals",
+                "isFolder": true,
+                "size": null
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Clients",
+              "data": {
+                "name": "Clients",
+                "path": "/Clients",
+                "isFolder": true,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Folder Folders after",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Deals/2026",
+              "data": {
+                "name": "2026",
+                "path": "/Deals/2026",
+                "isFolder": true,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Folder Files after",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "dropbox",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "/Deals/foo-notes.txt",
+              "data": {
+                "name": "foo-notes.txt",
+                "path": "/Deals/foo-notes.txt",
+                "isFolder": false,
+                "size": 38
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH1dLCJjdXJzb3IiOiJmYWtlLWN1cnNvciIsImhhc19tb3JlIjpmYWxzZX0="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH1dLCJjdXJzb3IiOiJmYWtlLWN1cnNvciIsImhhc19tb3JlIjpmYWxzZX0="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/download",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": "{\"path\":\"/Deals/foo-notes.txt\"}",
+      "contentType": null,
+      "body": "",
+      "status": 200,
+      "responseContentType": "application/octet-stream; charset=utf-8",
+      "response": "Rm9vIENvcnAgbm90ZXM6IHN0cm9uZyB0ZWFtLCBwcmUtc2VlZC4="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/create_folder_v2",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0NsaWVudHMifQ==",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJtZXRhZGF0YSI6eyJuYW1lIjoiQ2xpZW50cyIsInBhdGhfZGlzcGxheSI6Ii9DbGllbnRzIiwicGF0aF9sb3dlciI6Ii9jbGllbnRzIn19"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9LHsiLnRhZyI6ImZvbGRlciIsIm5hbWUiOiJDbGllbnRzIiwicGF0aF9kaXNwbGF5IjoiL0NsaWVudHMiLCJwYXRoX2xvd2VyIjoiL2NsaWVudHMifV0sImN1cnNvciI6ImZha2UtY3Vyc29yIiwiaGFzX21vcmUiOmZhbHNlfQ=="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH1dLCJjdXJzb3IiOiJmYWtlLWN1cnNvciIsImhhc19tb3JlIjpmYWxzZX0="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/create_folder_v2",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0RlYWxzLzIwMjYifQ==",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJtZXRhZGF0YSI6eyJuYW1lIjoiMjAyNiIsInBhdGhfZGlzcGxheSI6Ii9EZWFscy8yMDI2IiwicGF0aF9sb3dlciI6Ii9kZWFscy8yMDI2In19"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/upload",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": "{\"path\":\"/hello.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
+      "contentType": "application/octet-stream",
+      "body": "aGVsbG8gZnJvbSBhIHJ1bg==",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJuYW1lIjoiaGVsbG8udHh0IiwicGF0aF9kaXNwbGF5IjoiL2hlbGxvLnR4dCIsInBhdGhfbG93ZXIiOiIvaGVsbG8udHh0Iiwic2l6ZSI6MTZ9"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/upload",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": "{\"path\":\"/memo.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
+      "contentType": "application/octet-stream",
+      "body": "aW5saW5lIGNvbnRlbnQ=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJuYW1lIjoibWVtby50eHQiLCJwYXRoX2Rpc3BsYXkiOiIvbWVtby50eHQiLCJwYXRoX2xvd2VyIjoiL21lbW8udHh0Iiwic2l6ZSI6MTR9"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/download",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": "{\"path\":\"/Deals/foo-notes.txt\"}",
+      "contentType": null,
+      "body": "",
+      "status": 200,
+      "responseContentType": "application/octet-stream; charset=utf-8",
+      "response": "Rm9vIENvcnAgbm90ZXM6IHN0cm9uZyB0ZWFtLCBwcmUtc2VlZC4="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/upload",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": "{\"path\":\"/Clients/copy.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
+      "contentType": "application/octet-stream",
+      "body": "Rm9vIENvcnAgbm90ZXM6IHN0cm9uZyB0ZWFtLCBwcmUtc2VlZC4=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJuYW1lIjoiY29weS50eHQiLCJwYXRoX2Rpc3BsYXkiOiIvQ2xpZW50cy9jb3B5LnR4dCIsInBhdGhfbG93ZXIiOiIvY2xpZW50cy9jb3B5LnR4dCIsInNpemUiOjM4fQ=="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9LHsiLnRhZyI6ImZvbGRlciIsIm5hbWUiOiJDbGllbnRzIiwicGF0aF9kaXNwbGF5IjoiL0NsaWVudHMiLCJwYXRoX2xvd2VyIjoiL2NsaWVudHMifSx7Ii50YWciOiJmaWxlIiwibmFtZSI6ImhlbGxvLnR4dCIsInBhdGhfZGlzcGxheSI6Ii9oZWxsby50eHQiLCJwYXRoX2xvd2VyIjoiL2hlbGxvLnR4dCIsInNpemUiOjE2fSx7Ii50YWciOiJmaWxlIiwibmFtZSI6Im1lbW8udHh0IiwicGF0aF9kaXNwbGF5IjoiL21lbW8udHh0IiwicGF0aF9sb3dlciI6Ii9tZW1vLnR4dCIsInNpemUiOjE0fV0sImN1cnNvciI6ImZha2UtY3Vyc29yIiwiaGFzX21vcmUiOmZhbHNlfQ=="
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH0seyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IjIwMjYiLCJwYXRoX2Rpc3BsYXkiOiIvRGVhbHMvMjAyNiIsInBhdGhfbG93ZXIiOiIvZGVhbHMvMjAyNiJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+    },
+    {
+      "method": "POST",
+      "path": "/2/files/list_folder",
+      "authorization": "Bearer parity-access-token",
+      "apiArg": null,
+      "contentType": "application/json",
+      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "status": 200,
+      "responseContentType": "application/json; charset=utf-8",
+      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH0seyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IjIwMjYiLCJwYXRoX2Rpc3BsYXkiOiIvRGVhbHMvMjAyNiIsInBhdGhfbG93ZXIiOiIvZGVhbHMvMjAyNiJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+    }
+  ]
+}

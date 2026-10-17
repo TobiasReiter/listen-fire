@@ -32,11 +32,11 @@
 //
 // Dependency-light by design: Node `http` types only, no express.
 
-import { fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
+import { fileDescriptorOf, fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcRequest } from 'engine-contracts';
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
-import type { Adapter } from 'movement-engine/public/adapter';
+import type { Adapter, ResolveFileRefResult } from 'movement-engine/public/adapter';
 import type { MethodName, RpcResponseShape, WireCredentialShape } from 'engine-contracts';
 
 /**
@@ -282,6 +282,10 @@ export async function answerAdapterRequest(
     adapter: Adapter;
     manifest: () => unknown;
     warn: (message: string) => void;
+    /** Hosts the bytes of a file the adapter serves, at a short-lived URL the
+     *  caller fetches (`resolveFileRef` answers by URL). Absent: only a ref
+     *  that already carries a URL is servable. */
+    serveBytes?: (file: { stream: NodeJS.ReadableStream; contentType?: string }) => string;
   },
   request: CheckedRequest,
 ): Promise<ProtocolAnswer> {
@@ -297,8 +301,9 @@ export async function answerAdapterRequest(
   }
 
   // `resolveFileRef`'s in-process answer is a stream, which can't ride the
-  // envelope; the wire answer is a URL the client fetches. Only a ref that
-  // already carries one is servable — the kit hosts no bytes itself.
+  // envelope; the wire answer is a URL the client fetches. A ref that already
+  // carries one is answered with it; otherwise the bytes are hosted at a URL
+  // of the host's making (`serveBytes`) or the ref is not servable.
   if (method === 'resolveFileRef') {
     const { ref } = METHODS.resolveFileRef.params.parse(params);
     if (typeof ref.url === 'string') {
@@ -306,6 +311,16 @@ export async function answerAdapterRequest(
         status: 200,
         body: { ok: true, result: { url: ref.url, ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}) } },
       };
+    }
+    if (opts.serveBytes !== undefined) {
+      try {
+        const file = (await call({ ref })) as ResolveFileRefResult;
+        const contentType = file.contentType ?? ref.contentType;
+        const url = opts.serveBytes({ stream: file.stream, ...(contentType !== undefined ? { contentType } : {}) });
+        return { status: 200, body: { ok: true, result: { url, ...(contentType !== undefined ? { contentType } : {}) } } };
+      } catch (err) {
+        return { status: 200, body: errorAnswer(method, err) };
+      }
     }
     return {
       status: 200,
@@ -333,10 +348,21 @@ export async function answerAdapterRequest(
     }
 
     const result = await call(...(method === 'createRecord' || method === 'updateRecord' ? [await withDeclaredFiles(adapter, args[0])] : args));
-    return { status: 200, body: { ok: true, result: result ?? null } };
+    return { status: 200, body: { ok: true, result: (method === 'getFieldValue' ? wireFiles(result) : result) ?? null } };
   } catch (err) {
     return { status: 200, body: errorAnswer(method, err) };
   }
+}
+
+/** A file the adapter returns, in the wire's spelling: its owner type and
+ *  handle (an in-process adapter names the file `{ adapterType, handle }`, and
+ *  the host adds which install owns it). Anything else is as it came. */
+function wireFiles(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(wireFiles);
+  const ref = fileDescriptorOf(value);
+  const source = ref?.source;
+  if (ref === undefined || source === undefined || 'store' in source || 'ownerAdapterType' in source) return value;
+  return { ...ref, source: { ownerAdapterType: source.adapterType, handle: source.handle } };
 }
 
 /** A throw from served code, as the envelope says it: a bad request is not
@@ -379,6 +405,8 @@ export function createAdapterProtocolHandler(opts: {
    *  `DRAINED_PAGE_LIMIT`). Defaults to `console.warn`, keeping the kit free
    *  of the host's logger. */
   warn?: (message: string) => void;
+  /** Hosts the bytes of a file the adapter serves (see `answerAdapterRequest`). */
+  serveBytes?: (file: { stream: NodeJS.ReadableStream; contentType?: string }) => string;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { adapter, authenticate } = opts;
   const warn = opts.warn ?? ((message: string) => console.warn(message));
@@ -396,7 +424,15 @@ export function createAdapterProtocolHandler(opts: {
     }
     sendAnswer(
       res,
-      await answerAdapterRequest({ adapter, warn, manifest: () => adapterManifestResult(adapter, advertisedMethods) }, read.request),
+      await answerAdapterRequest(
+        {
+          adapter,
+          warn,
+          manifest: () => adapterManifestResult(adapter, advertisedMethods),
+          ...(opts.serveBytes !== undefined ? { serveBytes: opts.serveBytes } : {}),
+        },
+        read.request,
+      ),
     );
   };
 }

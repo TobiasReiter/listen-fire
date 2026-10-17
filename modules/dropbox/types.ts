@@ -1,4 +1,4 @@
-// Dropbox TG adapter — shared types + the name → structured-identifier cache.
+// Dropbox — shared types + the name → structured-identifier cache.
 // Dropbox's surface is the two nouns the API itself has (adapters/CLAUDE.md
 // rule 4 — the old `document`/`upload` write forms were ONE concept, a File:
 // `files/upload` is the single file-creation endpoint and "create a text
@@ -72,27 +72,10 @@ export function requireStructuredId(name: string, method: string): DropboxTypeKi
   return kind;
 }
 
-// ── Display URL helper (lifted from output_v3/adapters/dropbox.ts) ───────────
-// Copied, not imported (P4), so the TG adapter carries its own behavioral
-// reference and never reaches into the v3 module. Dropbox addresses by path,
-// so the URL is built from the path (vs Drive's id-based URL).
+// ── Display URL helper ───────────────────────────────────────────────────────
+// Dropbox addresses by path, so the URL is built from the path (vs Drive's
+// id-based URL).
 
 export function dropboxWebUrl(path: string): string {
   return `https://www.dropbox.com/home${path}`;
 }
-
-// ── Credential parser ──────────────────────────────────────────────────────
-// Mirrors `dropboxCredsParser` from `adapters/dropbox/authClient` so the
-// adapter validates the decrypted payload at its own boundary. `baseUrl` is the
-// test-harness redirect slot injected by `injectFakeBaseUrl` (fake-channels'
-// `/dropbox` mount for the dev-loop team).
-import { z } from 'zod';
-
-export const dropboxAdapterCredsParser = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-  expiresAt: z.number(),
-  baseUrl: z.string().url().optional(),
-});
-
-export type DropboxAdapterCreds = z.infer<typeof dropboxAdapterCredsParser>;

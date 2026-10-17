@@ -1,4 +1,4 @@
-// Dropbox TG adapter — schema introspection. The surface is the two nouns the
+// Dropbox — schema introspection. The surface is the two nouns the
 // Dropbox API itself has — Folder and File — each ONE type that is both the
 // read noun and the create form (adapters/CLAUDE.md rules 4/6: the old
 // `Dropbox Document` / `Dropbox Upload` write forms were duplicates of the
@@ -25,9 +25,9 @@ import type {
   SchemaFieldDescriptor,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
-import { META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE } from 'movement-engine/public/catalog';
 import { DISPLAY_NAME_BY_KIND, structuredIdFor } from './types';
 
 export const DROPBOX_FOLDER_TYPE = DISPLAY_NAME_BY_KIND.folder;

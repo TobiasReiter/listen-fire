@@ -1,0 +1,18 @@
+// The compiled artifact. `@lf/dropbox` is a SOURCE package — `main`/`types` point
+// at `index.ts`, which every source-consuming tool here (tsc, ts-node, ts-jest)
+// resolves directly, so there is exactly one copy of the truth while you work.
+//
+// A compiled `node build/…` boot has no such reader, so the application build
+// that produces it also produces this emit, into its OWN output tree. Emitting
+// beside the sources instead would leave a `.js` shadowing every `.ts` in this
+// package — the hazard that makes jest and ts-node disagree about which file
+// they are running.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": true
+  },
+  "exclude": ["node_modules", "jest.config.borrowed.cjs", "**/__test__/**"]
+}
