@@ -1,5 +1,5 @@
 {
-  "total": 813,
+  "total": 812,
   "byModule": {
     "adapters/webhook/configSchema": 2,
     "lib/anthropic": 3,
@@ -38,7 +38,7 @@
     "services/run_host/drain": 4,
     "services/run_host/lease": 3,
     "services/run_host/rules": 6,
-    "services/run_host/store": 5,
+    "services/run_host/store": 4,
     "services/translation_graph/adapter": 135,
     "services/translation_graph/adapter_type": 1,
     "services/translation_graph/adapters/remote": 3,

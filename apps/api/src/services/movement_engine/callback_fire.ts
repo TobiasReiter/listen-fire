@@ -23,20 +23,26 @@ import type { CallbackParamSpec } from 'engine-contracts';
 import { getAutomationsQb } from '../../lib/kysely';
 import { SECOND } from '../../constants';
 import { fireCallbackFiring } from '../translation_graph/movement/execute';
-import { drainRunAwaits, runResumeSlot } from './await_resume';
+import { awaitStepper, runResumeSlot } from './await_resume';
 import { loadRunContext } from './resume_step';
-import { postgresRunHostStore } from './run_host_store';
+import { hostedRunHost } from './run_host';
+import { triggerRunIdOf } from './run_host_store';
 import { takeRunLease, withRunLease, type HeldRunLease } from './run_lease';
 import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
 import { enqueueAwaitWake } from './await_wake';
-import { CallbackBodyPayload } from 'movement-engine/public/run-host';
+import {
+  CallbackBodyPayload,
+  runCallbackBody,
+  type CallbackBodyOutcome,
+  type CallbackBodyRun,
+} from 'movement-engine/public/run-host';
 import {
   claimCallbackFireWithBody,
   coerceCallbackValues,
   enqueueCallbackBody,
   getCallback,
   callbackRefusal,
-  markCallbackBodyStarted,
+  postgresCallbackStore,
   type CallbackRecord,
 } from './callback_store';
 
@@ -153,23 +159,16 @@ async function takeLeaseOrQueue(callback: CallbackRecord, callIndex: number): Pr
   }
 }
 
-/** Why a queued body must not run now, or null when it may: the door's own
- *  rule (`callbackRefusal`, for a call already recorded), applied when the
- *  body finally gets the run; a body the ledger says already started never
- *  runs again; and, in case revocation has not caught up with the run's end,
- *  a run that is gone or over runs no more of its bodies. */
-async function queuedBodyRefusal(callback: CallbackRecord, callIndex: number): Promise<string | null> {
-  const refused = callbackRefusal(callback, { for: 'a recorded call', now: new Date() });
-  if (refused !== null) return `its callback is ${refused}`;
-  if (callback.calls[callIndex]?.bodyStartedAt !== undefined) return 'its body already started';
+/** Whether the run can still take a body: in case revocation has not caught
+ *  up with the run's end, a run that is gone or over runs no more of its
+ *  bodies. */
+async function runIsOpen(runId: string): Promise<boolean> {
   const run = await getAutomationsQb(['trigger_run'])
     .selectFrom('trigger_run')
-    .where('id', '=', callback.runId)
+    .where('id', '=', triggerRunIdOf(runId))
     .select('status')
     .executeTakeFirst();
-  if (run === undefined) return 'its run is gone';
-  if (run.status !== 'running' && run.status !== 'parked') return `its run has ended (${run.status})`;
-  return null;
+  return run !== undefined && (run.status === 'running' || run.status === 'parked');
 }
 
 /** A queued body: run it under the run's lease, or defer while the run is
@@ -187,14 +186,13 @@ export const fireCallbackHandler: WorkHandler = {
       runResumeSlot.exclusive(queued.runId, async () => {
         const callback = await getCallback(callbackId);
         if (callback === null) return;
-        const refusal = await queuedBodyRefusal(callback, callIndex);
-        if (refusal !== null) {
-          logger.info('[Callback] queued body not run', { callbackId, callIndex, reason: refusal });
-          return;
-        }
-        // Not started because the lease was lost before the body began: the
-        // row stays, deferred, for whoever holds the run next.
-        if ((await executeFire(callback, callIndex, lease)) === 'not_started') {
+        // Everything that decides whether it runs is the core's, read again
+        // under the lease. Not started because the lease was lost before the
+        // body began: the row stays, deferred, for whoever holds the run next.
+        const ran = await executeFire(callback, callIndex, lease);
+        if (ran.kind === 'refused') {
+          logger.info('[Callback] queued body not run', { callbackId, callIndex, reason: ran.reason });
+        } else if (ran.kind === 'not_started') {
           throw new WorkDeferred(`run ${queued.runId}'s lease was lost before the body started`);
         }
       }),
@@ -316,89 +314,73 @@ export function callbackAckText(outcome: CallbackFireOutcome): string {
 }
 
 /**
- * The off-request half, under the run's lease and single-flight slot: run the body, then
- * wake whoever awaits `Called`. A body-less `callback()` is not special-cased —
- * it runs an EMPTY body, which is exactly the recorded call plus the wake, and
- * still leaves its segment on the step channel so the tap is visible in the run
- * inspector. Drains awaits DIRECTLY rather than through the slot — we are
- * already inside it.
+ * The off-request half, under the run's lease and single-flight slot: the
+ * core's body runner (`runCallbackBody`, the one lf runs) re-checks the call,
+ * marks its body started, runs the body, then wakes whoever awaits `Called`.
+ * A body-less `callback()` runs an EMPTY body, so the tap is still visible in
+ * the run inspector. The wake drains awaits directly, never through the slot
+ * (we are already inside it).
  */
 async function executeFire(
   callback: CallbackRecord,
   callIndex: number,
   lease: HeldRunLease,
-): Promise<'ran' | 'not_started'> {
+): Promise<CallbackBodyRun> {
   try {
-    const context = await loadRunContext(callback.runId);
-    if ('unresumable' in context) {
-      logger.error('[Callback] fired callback has no resumable run context', {
-        callbackId: callback.id,
-        runId: callback.runId,
-        reason: context.unresumable,
-      });
-    } else {
-      // Marked before the body starts: at most once after start, a crash
-      // included (the ledger's own comment says what that trades away).
-      // The lease lapsed before the body began: the run is another
-      // instance's, and so is this body. Neither marked nor run, it is left
-      // to its `fire_callback` row, which runs it under the next holder: the
-      // door's row is still pending (due at the backstop), and a row already
-      // running defers itself (`fireCallbackHandler`).
-      if (lease.isLost()) return 'not_started';
-      if (!(await markCallbackBodyStarted({ id: callback.id, callIndex, lease }))) {
-        logger.warn('[Callback] body not started: the run lease is no longer this one', {
-          callbackId: callback.id,
-          callIndex,
-        });
-        return 'not_started';
-      }
-      const outcome = await fireCallbackFiring({
-        teamId: callback.teamId,
-        triggerId: context.triggerId,
-        triggerName: context.triggerName,
-        ...(context.firedMovementName !== null
-          ? { firedMovementName: context.firedMovementName }
-          : {}),
-        pinnedSource: context.pinnedSource,
-        pinnedLanguageVersion: context.pinnedLanguageVersion,
-        movementVersionId: context.movementVersionId,
-        runId: callback.runId,
-        movementId: context.movementId,
-        event: context.event,
-        recordingTriggerType: context.triggerType,
-        state: callback.state,
-        values: callback.calls[callIndex]?.values ?? {},
-        callIndex,
-        lease,
-      });
-      // Lost mid-body: the body started, so it is never run again (at most
-      // once after start), and the run's awaiters are the new holder's.
-      if (outcome.leaseLost) return 'ran';
-    }
+    return await runCallbackBody(hostedRunHost(), postgresCallbackStore, {
+      id: callback.id,
+      callIndex,
+      lease,
+      now: new Date().toISOString(),
+      runOpen: runIsOpen,
+      body: ({ values }) => runBodySegment(callback, { callIndex, values, lease }),
+      stepper: awaitStepper,
+    });
   } catch (err) {
-    // A failing side entry never kills the primary await — it is already
-    // recorded on the step channel by the firing wrapper.
-    logger.error('[Callback] fire execution failed', {
+    // A failing side entry never kills the primary await; a failed wake is
+    // covered by the queued backstop wake.
+    logger.error('[Callback] fire execution failed (the queued backstop wake will retry)', {
       callbackId: callback.id,
       runId: callback.runId,
       error: err instanceof Error ? err.message : String(err),
     });
+    return { kind: 'ran', outcome: { kind: 'failed', error: err instanceof Error ? err.message : String(err) } };
   }
+}
 
-  // Wake the awaiters LAST: the call is on the ledger, and a body that wrote
-  // something the awaiting continuation reads has already written it.
-  try {
-    const parks = await postgresRunHostStore.correlations.correlated({
-      adapterType: CALLBACK_AWAIT_TYPE,
-      teamId: callback.teamId,
-      correlationKey: callback.id,
-    });
-    if (parks.length > 0) await drainRunAwaits(callback.runId, parks, lease);
-  } catch (err) {
-    logger.error('[Callback] await wake failed (the queued backstop wake will retry)', {
+/** The body: one engine segment entered at the callback, recorded on the run's
+ *  step channel. A body that fails fails its segment, never the run. */
+async function runBodySegment(
+  callback: Pick<CallbackRecord, 'id' | 'teamId' | 'runId' | 'state'>,
+  input: { callIndex: number; values: Record<string, unknown>; lease: HeldRunLease },
+): Promise<CallbackBodyOutcome> {
+  const context = await loadRunContext(callback.runId);
+  if ('unresumable' in context) {
+    logger.error('[Callback] fired callback has no resumable run context', {
       callbackId: callback.id,
-      error: err instanceof Error ? err.message : String(err),
+      runId: callback.runId,
+      reason: context.unresumable,
     });
+    return { kind: 'failed', error: context.unresumable };
   }
-  return 'ran';
+  const outcome = await fireCallbackFiring({
+    teamId: callback.teamId,
+    triggerId: context.triggerId,
+    triggerName: context.triggerName,
+    ...(context.firedMovementName !== null ? { firedMovementName: context.firedMovementName } : {}),
+    pinnedSource: context.pinnedSource,
+    pinnedLanguageVersion: context.pinnedLanguageVersion,
+    movementVersionId: context.movementVersionId,
+    runId: callback.runId,
+    movementId: context.movementId,
+    event: context.event,
+    recordingTriggerType: context.triggerType,
+    state: callback.state,
+    values: input.values,
+    callIndex: input.callIndex,
+    lease: input.lease,
+  });
+  if (outcome.leaseLost) return { kind: 'leaseLost' };
+  if (outcome.error !== undefined) return { kind: 'failed', error: outcome.error };
+  return { kind: 'ran' };
 }

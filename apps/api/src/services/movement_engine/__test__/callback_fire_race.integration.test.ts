@@ -427,8 +427,8 @@ describe('two processes fire one run at once', () => {
 
     // Between the row taking the lease and the body starting, another
     // instance takes the run over.
-    const realMark = callbackStore.markCallbackBodyStarted;
-    const mark = jest.spyOn(callbackStore, 'markCallbackBodyStarted').mockImplementationOnce(async (input) => {
+    const realMark = callbackStore.postgresCallbackStore.markBodyStarted;
+    const mark = jest.spyOn(callbackStore.postgresCallbackStore, 'markBodyStarted').mockImplementationOnce(async (input) => {
       await getAutomationsQb(['trigger_run'])
         .updateTable('trigger_run')
         .set({ lease_token: randomUUID(), lease_owner: 'the-new-holder' })
