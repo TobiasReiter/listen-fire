@@ -9,6 +9,7 @@ export * from '../services/movement_engine/errors';
 export * from '../services/movement_engine/address';
 export { assertExtractionTiersConfigured } from '../services/movement_engine/ai_tiers';
 export { assertMaxCallDepthConfigured } from '../services/movement_engine/call_depth';
+export { assertSegmentLimitsConfigured } from '../services/movement_engine/segment_limits';
 export { listUnsupportedConstructs } from '../services/movement_engine/interpretable';
 export * from '../services/movement_engine/rust_stats';
 export { RUST_ENGINE_FROM_VERSION } from '../services/movement_engine/rust_engine';

@@ -146,7 +146,7 @@ A customer's movement is code you did not write. Set every limit, and a cost cap
 
 - **`limits`** on the run's input: steps (statements and expressions, the CPU bound), one text's size, one collection's size, and the result's size. Past one, the run fails with `MOVENG_LIMIT_STEPS`, `MOVENG_LIMIT_TEXT_SIZE`, `MOVENG_LIMIT_COLLECTION_SIZE` or `MOVENG_LIMIT_RESULT_SIZE`. Nothing in the movement can catch it. Absent, each is the engine's default, which is generous.
 - **`costCapMicrodollars`** on the run's input: the most the run may spend on model calls and priced plugins. Past it, the engine refuses the next priced call itself. One call already under way may overshoot by its own cost.
-- **The wall clock is yours.** The engine reads no clock. Stop waiting on a run past your deadline (its cancel gate, `control.cancel`, is consulted at every statement).
+- **`maxSegmentSeconds`** on the run's input: how long one segment may take, waits on your host included (default 900, or `MOVEMENT_MAX_SEGMENT_SECONDS`). The engine reads no clock, so the host keeps this one. Past it, the calls already at your host finish, nothing more is asked, and the run fails with `MOVENG_LIMIT_WALL_CLOCK`.
 - **Calls your modules make are not priced.** A module that pays for a service counts against the cap only if it reports its cost.
 
 The full table is [docs/contracts/run-limits.md](contracts/run-limits.md).

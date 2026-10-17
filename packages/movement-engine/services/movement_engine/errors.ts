@@ -32,7 +32,9 @@ export type MovementEngineErrorCode =
   | 'MOVENG_LIMIT_STEPS'
   | 'MOVENG_LIMIT_TEXT_SIZE'
   | 'MOVENG_LIMIT_COLLECTION_SIZE'
-  | 'MOVENG_LIMIT_RESULT_SIZE';
+  | 'MOVENG_LIMIT_RESULT_SIZE'
+  // The host's own limit: the segment ran past its wall clock (rust_engine.ts).
+  | 'MOVENG_LIMIT_WALL_CLOCK';
 
 export class MovementEngineError extends Error {
   constructor(

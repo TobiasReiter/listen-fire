@@ -742,3 +742,105 @@ describe("a segment's wire", () => {
     }
   });
 });
+
+describe("the host's limits on a segment", () => {
+  const SAVED = { ...process.env };
+  afterEach(() => {
+    process.env = { ...SAVED };
+  });
+
+  it("past the wall clock, lets the request already at the host finish, answers nothing more, and fails the segment", async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let hostCallFinished = false;
+    const served = await hostWith({
+      control: {
+        cancel: {
+          cancelled: async () => {
+            await held;
+            hostCallFinished = true;
+            return false;
+          },
+          cancelledNow: async () => false,
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
+    const { engine, answers, finished } = scriptedEngine(() => ({ pending: [request(1, 'control.cancel', 'cancelled', inSegment(segmentId, {}))] }));
+    let rejection: unknown;
+    const drive = driveEngine(engine, {}, { ...served, wallClockSeconds: 0.05 }).catch((error: unknown) => {
+      rejection = error;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Past the deadline the segment waits for its host call, not on it.
+    expect({ rejection, hostCallFinished }).toEqual({ rejection: undefined, hostCallFinished: false });
+    release();
+    await drive;
+    expect(hostCallFinished).toBe(true);
+    expect(rejection).toMatchObject({ code: 'MOVENG_LIMIT_WALL_CLOCK' });
+    expect(answers).toEqual([]);
+    expect(finished()).toBe(true);
+  });
+
+  it('serves nothing the engine asks once the wall clock has passed', async () => {
+    const asked: string[] = [];
+    const served = await hostWith({
+      control: {
+        cancel: {
+          cancelled: async () => {
+            asked.push('cancelled');
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            return false;
+          },
+          cancelledNow: async () => {
+            asked.push('cancelledNow');
+            return false;
+          },
+        },
+      },
+    });
+    const segmentId = served.context.segmentId;
+    // The first answer arrives past the deadline: the engine's next request
+    // is never made of the host.
+    const { engine } = scriptedEngine((seen) =>
+      seen.length === 0
+        ? { pending: [request(1, 'control.cancel', 'cancelled', inSegment(segmentId, {}))] }
+        : { pending: [request(2, 'control.cancel', 'cancelledNow', inSegment(segmentId, {}))] },
+    );
+    await expect(driveEngine(engine, {}, { ...served, wallClockSeconds: 0.03 })).rejects.toMatchObject({ code: 'MOVENG_LIMIT_WALL_CLOCK' });
+    expect(asked).toEqual(['cancelled']);
+  });
+
+  it('a segment that ends in time is untouched by its wall clock', async () => {
+    const served = await hostWith({});
+    const { engine } = scriptedEngine(() => ({ done: { ok: true } }));
+    await expect(driveEngine(engine, {}, { ...served, wallClockSeconds: 1 })).resolves.toEqual({ ok: true });
+  });
+
+  it("hands the engine the deployment's limits, each overridden by the run's own", async () => {
+    process.env.MOVEMENT_MAX_STEPS = '5000';
+    process.env.MOVEMENT_MAX_TEXT_BYTES = '1024';
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
+    const input = {
+      source: '',
+      event: { payload: {} },
+      teamId: TEAM,
+      catalog: EMPTY_CATALOG_SNAPSHOT,
+      host: served.host,
+      limits: { maxSteps: 100, maxResultBytes: 2048 },
+    } as unknown as RunMovementInput;
+    const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
+    await runSegmentInRust({ input, context: served.context }, engine).catch(() => undefined);
+    expect(started[0]).toMatchObject({ limits: { maxSteps: 100, maxTextBytes: 1024, maxResultBytes: 2048 } });
+  });
+
+  it('refuses a limit set to something that is not a positive whole number, never reading it as no limit', async () => {
+    process.env.MOVEMENT_MAX_SEGMENT_SECONDS = 'ten';
+    const served = await hostWith({ adapters: { resolve: () => fakeAdapter() } });
+    const input = { source: '', event: { payload: {} }, teamId: TEAM, catalog: EMPTY_CATALOG_SNAPSHOT, host: served.host } as unknown as RunMovementInput;
+    const { engine } = scriptedEngine(() => ({ done: { result: {} } }));
+    await expect(runSegmentInRust({ input, context: served.context }, engine)).rejects.toThrow(/MOVEMENT_MAX_SEGMENT_SECONDS="ten" is not a positive whole number/);
+  });
+});

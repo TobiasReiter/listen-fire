@@ -24,6 +24,7 @@ import { logger } from '../logger';
 import { MovementEngineError, MovementRunFailed, isCheckFailure, type MovementEngineErrorCode } from './errors';
 import { servedHostMethods } from './host';
 import { maxFileChars } from './extraction';
+import { deploymentWallClockSeconds, segmentLimitsFor, wallClockExceeded } from './segment_limits';
 import type { MovementRunResult, ResumeMovementInput, RunMovementInput } from './run';
 import type { CallbackBodyInput, SettleRaceInput } from 'engine-contracts';
 import type { RunContext } from './run_context';
@@ -195,6 +196,7 @@ async function segmentInRust(
   let outcome: RunOutcome;
   try {
     const done = await driveEngine(engine ?? openWasmEngine(), start, {
+      wallClockSeconds: input.maxSegmentSeconds ?? deploymentWallClockSeconds(),
       host: input.host,
       context,
       catalog: input.catalog,
@@ -326,15 +328,23 @@ export function noteEngine(input: Pick<RunMovementInput, 'runId' | 'dryRun'>, en
  * Runs one segment to its result: starts it, serves every request it issues
  * from `input.host` concurrently, answers each as it settles, and finishes
  * the segment however the run ends.
+ *
+ * `wallClockSeconds` is the host's limit on the segment, waits included (the
+ * engine reads no clock; between two requests its step budget bounds the
+ * work). Past it, the requests already at the host finish (a write half-sent
+ * to a module is never cut off), nothing more is served or answered, and the
+ * segment fails with MOVENG_LIMIT_WALL_CLOCK.
  */
 export async function driveEngine(
   engine: EngineProtocol,
   start: unknown,
-  input: Omit<RouteContext, 'hostErrors' | 'positions' | 'wire' | 'checked'> & {
+  { wallClockSeconds, ...input }: Omit<RouteContext, 'hostErrors' | 'positions' | 'wire' | 'checked'> & {
     /** The errors host calls failed with, by the `ref` their answers carry. */
     hostErrors?: unknown[];
     /** The segment's wire, when its input went out on it. */
     wire?: WireOut;
+    /** Absent: no wall clock (a test's double). */
+    wallClockSeconds?: number;
   },
 ): Promise<unknown> {
   const context: RouteContext = {
@@ -355,10 +365,14 @@ export async function driveEngine(
   // in flight (a race over every one of them per answer was O(n) each).
   const settled = new SettleQueue();
   let inFlight = 0;
+  const deadline = wallClockSeconds === undefined ? undefined : new Deadline(wallClockSeconds, () => settled.wake());
+  const pastDeadline = (): boolean => deadline?.passed() === true;
   try {
     let step = engine.start(start);
     for (;;) {
       if ('done' in step) return step.done;
+      // Past the deadline nothing more is served.
+      if (deadline !== undefined && pastDeadline()) throw wallClockExceeded(deadline.seconds);
       for (const request of step.pending) {
         inFlight += 1;
         serve(request, context).then(
@@ -373,7 +387,8 @@ export async function driveEngine(
       // woken together ask together (crates/movement-engine/README.md,
       // "Concurrent flows").
       const pending: HostRequest[] = [];
-      let next: Settled | undefined = await settled.next();
+      let next: Settled | undefined = await settled.next(pastDeadline);
+      if (next === undefined && deadline !== undefined) throw wallClockExceeded(deadline.seconds);
       while (next !== undefined) {
         inFlight -= 1;
         if ('failure' in next) throw next.failure;
@@ -386,13 +401,42 @@ export async function driveEngine(
       step = { pending };
     }
   } catch (error) {
-    // The segment is ending (a shim fault, or the engine's own throw): every
+    // The segment is ending (a shim fault, the engine's own throw, or its
+    // wall clock): every
     // request still in flight settles first, so no host call outlives the
     // segment it named.
     for (; inFlight > 0; inFlight -= 1) await settled.next();
     throw error;
   } finally {
+    deadline?.clear();
     engine.finish();
+  }
+}
+
+/** A segment's wall clock: passed once its time is up, and it says so to
+ *  whoever is waiting. */
+class Deadline {
+  private expired = false;
+  private readonly timer: ReturnType<typeof setTimeout>;
+
+  constructor(
+    readonly seconds: number,
+    onExpiry: () => void,
+  ) {
+    this.timer = setTimeout(() => {
+      this.expired = true;
+      onExpiry();
+    }, seconds * 1000);
+    // A segment's clock never keeps a process alive on its own.
+    this.timer.unref?.();
+  }
+
+  passed(): boolean {
+    return this.expired;
+  }
+
+  clear(): void {
+    clearTimeout(this.timer);
   }
 }
 
@@ -423,8 +467,20 @@ class SettleQueue {
     return item;
   }
 
-  async next(): Promise<Settled> {
+  /** Wake the waiter with nothing settled, for it to ask `stop` again. */
+  wake(): void {
+    const wake = this.waiter;
+    this.waiter = undefined;
+    wake?.();
+  }
+
+  /** The next settled item; or, with `stop`, undefined once `stop` holds
+   *  while nothing has settled. */
+  async next(): Promise<Settled>;
+  async next(stop: () => boolean): Promise<Settled | undefined>;
+  async next(stop?: () => boolean): Promise<Settled | undefined> {
     while (this.head === this.items.length) {
+      if (stop?.() === true) return undefined;
       await new Promise<void>((resolve) => {
         this.waiter = resolve;
       });
@@ -529,9 +585,10 @@ function segmentInput(
       // How many named calls deep the run may nest (version 3): the
       // deployment's, read here for the same reason.
       maxCallDepth: maxCallDepth(),
-      // What one segment may consume (docs/contracts/run-limits.md); each
-      // absent one is the engine's default.
-      ...(input.limits !== undefined ? { limits: input.limits } : {}),
+      // What one segment may consume (docs/contracts/run-limits.md): the
+      // deployment's, each overridden by the run's own; an absent one is the
+      // engine's default.
+      limits: segmentLimitsFor(input),
       // What this deployment buys for each extraction tier: read here so the
       // engine reads no environment; the built-in table where it names none.
       extractionTiers: extractionTierAssignments(),

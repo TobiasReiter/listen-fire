@@ -16,7 +16,7 @@ What keeps a movement someone else wrote from harming the host that runs it. An 
 | One list's members, or one map's keys | engine | 1,000,000 | `limits.maxCollectionItems` | `MOVENG_LIMIT_COLLECTION_SIZE` |
 | The segment's result, as JSON text | engine | 64 MiB | `limits.maxResultBytes` | `MOVENG_LIMIT_RESULT_SIZE` |
 | Call depth: named calls nested in one run | engine | 32 | `maxCallDepth` | `CallDepthExceeded` (lf prints `MOVENG_CALL_DEPTH`) |
-| Wall clock per segment, waits included | run host | 900 s (lf) | lf: `MOVEMENT_MAX_SEGMENT_SECONDS` | `MOVENG_LIMIT_WALL_CLOCK` |
+| Wall clock per segment, waits included | run host | 900 s | `MOVEMENT_MAX_SEGMENT_SECONDS` (TypeScript: also `RunInput.maxSegmentSeconds`) | `MOVENG_LIMIT_WALL_CLOCK` |
 | Cost per run: model calls and priced plugins | engine and run host | no cap | `spend.capMicrodollars` (lf: `maxRunCostUsd` in lf.yaml) | `RunCostCapExceeded` (the flow suspends where the host can park it) |
 | Module calls per run | run host | 2,000 | lf: `REMOTE_ADAPTER_MAX_CALLS_PER_RUN` | `AdapterCallCeilingExceeded` |
 
@@ -29,12 +29,12 @@ type SegmentLimits = {          // on the segment's input, beside maxCallDepth
 };
 ```
 
-lf reads each engine limit from the environment, as it reads the call depth: `MOVEMENT_MAX_STEPS`, `MOVEMENT_MAX_TEXT_BYTES`, `MOVEMENT_MAX_COLLECTION_ITEMS`, `MOVEMENT_MAX_RESULT_BYTES`. A value that is set but is not a positive whole number refuses the run; it is never read as no limit.
+lf and the TypeScript host read each engine limit from the environment, as they read the call depth: `MOVEMENT_MAX_STEPS`, `MOVEMENT_MAX_TEXT_BYTES`, `MOVEMENT_MAX_COLLECTION_ITEMS`, `MOVEMENT_MAX_RESULT_BYTES`. A value that is set but is not a positive whole number refuses the run; it is never read as no limit. On the TypeScript host a run's own `limits` override the environment's, one limit at a time.
 
 ## How each is kept
 
 - **Steps are the CPU bound.** The engine reads no clock (it runs as WASM, and must stay deterministic), so it counts work instead: one step per statement, one per expression evaluated. Members of a collection op are expressions, so a loop over a list pays per member.
-- **The wall clock is the host's.** The engine hands control back to its host at every statement (the cancel gate asks the host). So the host checks its deadline between requests, and the step budget bounds the work between two of them. Past the deadline the host drops what is still in flight rather than wait for it.
+- **The wall clock is the host's.** The engine hands control back to its host at every statement (the cancel gate asks the host). So the host checks its deadline between requests, and the step budget bounds the work between two of them. Past the deadline the host serves nothing more and answers the engine nothing more. The requests already at the host finish first, so a write is never cut off half-sent to its module; then the segment fails.
 - **Sizes are checked on every value an expression produces.** A value is checked for its own size, not its members' (each member was checked when it was produced). So a text doubled in a loop fails as soon as it passes the limit.
 - **The result size is checked once, as the segment ends.** It replaces the result with the limit error; the cost lines still go back, because that money is spent.
 - **Call depth was already there.** Only named calls nest; an expression makes no call.
@@ -61,4 +61,3 @@ Reviewed for this release:
 
 - **Memory as a whole.** The size limits bound each value, not their sum. A movement could still hold many values each under the limits; the step budget bounds how many it can build.
 - **One step's own work.** A single step can still do work proportional to its input (sorting a list of a million). The collection limit bounds that input.
-- **The TypeScript host's wall clock.** A TypeScript host sets the engine limits on the run's input (`RunInput.limits`), but keeps no wall clock of its own yet.
