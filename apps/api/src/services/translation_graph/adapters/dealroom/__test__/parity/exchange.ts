@@ -14,6 +14,9 @@ export interface Exchange {
   /** Path and query, relative to the base URL the adapter was given. */
   path: string;
   authorization: string | null;
+  /** The request headers the provider is held to beyond `authorization`
+   *  (those named in the server's `headers` option); absent when none are. */
+  headers?: Record<string, string>;
   body: unknown;
   status: number;
   response: string;
@@ -49,8 +52,14 @@ function parsedBody(text: string): unknown {
   }
 }
 
+/** Request headers beyond `authorization` that are part of the exchange (a
+ *  provider that refuses a request without its version header). */
+export interface ExchangeOptions {
+  headers?: readonly string[];
+}
+
 function requestKey(request: ExchangeRequest): string {
-  return JSON.stringify([request.method, request.path, request.authorization, request.body]);
+  return JSON.stringify([request.method, request.path, request.authorization, request.headers ?? null, request.body]);
 }
 
 async function listen(server: Server): Promise<string> {
@@ -63,23 +72,29 @@ function closer(server: Server): () => Promise<void> {
   return () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
 
-async function received(req: IncomingMessage): Promise<ExchangeRequest> {
+async function received(req: IncomingMessage, tracked: readonly string[]): Promise<ExchangeRequest> {
   const authorization = req.headers.authorization;
+  const headers: Record<string, string> = {};
+  for (const name of tracked) {
+    const value = req.headers[name.toLowerCase()];
+    if (typeof value === 'string') headers[name.toLowerCase()] = value;
+  }
   return {
     method: req.method ?? 'GET',
     path: req.url ?? '/',
     authorization: typeof authorization === 'string' ? authorization : null,
+    ...(tracked.length > 0 ? { headers } : {}),
     body: parsedBody(await readBody(req)),
   };
 }
 
 /** Forward to `upstream` and keep each exchange. */
-export async function recordingServer(upstream: string): Promise<ExchangeServer> {
+export async function recordingServer(upstream: string, options: ExchangeOptions = {}): Promise<ExchangeServer> {
   const exchanges: Exchange[] = [];
   const server = createServer((req, res) => {
     void (async () => {
-      const request = await received(req);
-      const headers: Record<string, string> = { accept: 'application/json' };
+      const request = await received(req, options.headers ?? []);
+      const headers: Record<string, string> = { accept: 'application/json', ...request.headers };
       if (request.authorization !== null) headers.authorization = request.authorization;
       if (request.body !== null) headers['content-type'] = 'application/json';
       const answer = await fetch(upstream.replace(/\/+$/, '') + request.path, {
@@ -107,7 +122,7 @@ export async function recordingServer(upstream: string): Promise<ExchangeServer>
  * and body); a request the recording does not have answers 599, so the
  * implementation under test fails where it diverged rather than later.
  */
-export async function replayingServer(recorded: readonly Exchange[]): Promise<ExchangeServer> {
+export async function replayingServer(recorded: readonly Exchange[], options: ExchangeOptions = {}): Promise<ExchangeServer> {
   const answers = new Map<string, Exchange[]>();
   for (const exchange of recorded) {
     const key = requestKey(exchange);
@@ -116,7 +131,7 @@ export async function replayingServer(recorded: readonly Exchange[]): Promise<Ex
   const requests: ExchangeRequest[] = [];
   const server = createServer((req, res) => {
     void (async () => {
-      const request = await received(req);
+      const request = await received(req, options.headers ?? []);
       requests.push(request);
       const queue = answers.get(requestKey(request)) ?? [];
       const answer = queue.shift();

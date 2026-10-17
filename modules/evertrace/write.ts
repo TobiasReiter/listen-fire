@@ -10,19 +10,18 @@ import type {
   DeleteInput,
   DeleteResult,
   UpdateInput,
+  UpdateNotFound,
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
 import {
   EvertraceApiError,
   type EvertraceApiClient,
   type EvertraceSearchFilterRow,
-} from '../../../../adapters/evertrace/apiClient';
-import { writeParentLinks, containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { UPDATE_NOT_FOUND } from '../not_found';
+} from './api_client';
+import { writeParentLinks, containerAssociation } from 'movement-engine/public/adapter';
 import {
   EVERTRACE_ADAPTER_TYPE,
   EVERTRACE_LIST_DISPLAY_NAME,
@@ -36,6 +35,16 @@ import {
   decodeListEntryId,
   encodeListEntryId,
 } from './types';
+
+/** The typed not-found signal an `updateRecord` returns when its target is
+ *  gone, so the engine's bind self-heal can re-mint. */
+const UPDATE_NOT_FOUND: UpdateNotFound = { notFound: true };
+
+/** A switch over `EvertraceWritableTypeId` that reaches here has met a type
+ *  the union does not name. */
+function unreachable(typeId: never): never {
+  throw new Error(`EvertraceAdapter: unhandled writable type ${String(typeId)}`);
+}
 
 /** The types with any write surface at all. A string typeId narrowed once, so
  *  the switches below are exhaustively checked rather than defaulting. */
@@ -170,7 +179,7 @@ export async function createEvertraceRecord(input: {
       };
     }
     default:
-      return neverAsAny(input.typeId);
+      return unreachable(input.typeId);
   }
 }
 
@@ -258,7 +267,7 @@ export async function updateEvertraceRecord(input: {
           'add it again (adding is idempotent) or remove it.',
       );
     default:
-      return neverAsAny(input.typeId);
+      return unreachable(input.typeId);
   }
 }
 
@@ -337,6 +346,6 @@ export async function deleteEvertraceRecord(input: {
       return {};
     }
     default:
-      return neverAsAny(input.typeId);
+      return unreachable(input.typeId);
   }
 }

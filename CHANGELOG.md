@@ -1484,6 +1484,16 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `pnpm checks:corpus`: the reader pass over the still incomplete corpus no longer prints an
   upgrade-rate failure (the floor is checked on the final pass), and the pinned test-only language
   version 99 is accepted rather than warned about.
+### ev4-small
+
+- Granola and Evertrace are now modules, `@lf/granola` and `@lf/evertrace` (`modules/granola`,
+  `modules/evertrace`), loaded in process by the platform and served by `serve-module` everywhere
+  else. Nothing changes for a team using either: the same requests, the same answers, the same
+  writes and the same polled events, held by a recording of each old adapter replayed against the
+  module both ways. Switching either back is one line (`BUILTIN_MODULES`).
+- Both are polled sources with no inbound (no webhook, so no signed-inbound rule applies). Their
+  poll is now the module's declared poll: five minutes, the same default as before, and the
+  `pollIntervalSeconds` listen option still overrides it.
 
 ## [v0.11.0] - 2026-10-12
 

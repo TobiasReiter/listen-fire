@@ -12,7 +12,7 @@
 // fetch.
 
 import type { Expression } from '#shared/expression/types';
-import type { EvertraceSignalFilter } from '../../../../adapters/evertrace/apiClient';
+import type { EvertraceSignalFilter } from './api_client';
 
 import { EVERTRACE_PROFILE_TAGS, EVERTRACE_SIGNAL_KINDS } from './types';
 
