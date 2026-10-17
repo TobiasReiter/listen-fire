@@ -28,12 +28,19 @@ import type AutomationsSchema from '../../generated/kysely/automations/Automatio
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { JoinPendingFrameAddress } from '../../generated/kysely/automations/JoinPending';
 import type { JoinBranchExportFrameAddress, JoinBranchExportBranchAddress } from '../../generated/kysely/automations/JoinBranchExport';
+import type { ParkLibrarySourceTeamId, ParkLibrarySourceHash } from '../../generated/kysely/automations/ParkLibrarySource';
 
 import { getAutomationsQb } from '../../lib/kysely';
 import { isWorkKind } from '../work/kinds';
 import { claimDueWork, completeWork, enqueueWork, releaseWork } from '../work/store';
 
 // ── Boundary conversions ────────────────────────────────────────────────────
+
+/** A library source's key (a team and a sha256, plain text) as the
+ *  source row's key. */
+function librarySourceKeyOf(teamId: string, hash: string): { team_id: ParkLibrarySourceTeamId; hash: ParkLibrarySourceHash } {
+  return { team_id: teamId as ParkLibrarySourceTeamId, hash: hash as ParkLibrarySourceHash };
+}
 
 /** A run id from the core (plain text) as the run's row id. */
 export function triggerRunIdOf(runId: string): TriggerRunId {
@@ -505,17 +512,18 @@ export const postgresRunHostStore: RunHostStore = {
     async put({ teamId, hash, source }) {
       await getAutomationsQb(['park_library_source'])
         .insertInto('park_library_source')
-        .values({ team_id: teamId, hash, source })
+        .values({ ...librarySourceKeyOf(teamId, hash), source })
         .onConflict((oc) => oc.columns(['team_id', 'hash']).doNothing())
         .execute();
     },
 
     async get({ teamId, hash }) {
+      const key = librarySourceKeyOf(teamId, hash);
       const row = await getAutomationsQb(['park_library_source'])
         .selectFrom('park_library_source')
         .select('source')
-        .where('team_id', '=', teamId)
-        .where('hash', '=', hash)
+        .where('team_id', '=', key.team_id)
+        .where('hash', '=', key.hash)
         .executeTakeFirst();
       return row?.source ?? null;
     },
