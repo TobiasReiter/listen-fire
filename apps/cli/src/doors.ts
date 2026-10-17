@@ -20,7 +20,7 @@ import { z } from 'zod';
 import type { WireInboundDeclarationShape } from 'engine-contracts';
 import {
   answerDelivery,
-  UNREGISTERED_SECRET,
+  declaredInboundVerifier,
   type InboundAdapter,
   type InboundAnswer,
   type InboundDelivery,
@@ -69,12 +69,6 @@ export function inboundSetupOf(running: RunningExternal): InboundSetup | undefin
  *  upper-cased, so any casing in a URL reaches it. */
 export function providerKeyOf(setup: InboundSetup): string {
   return setup.declaration.providerKey.toUpperCase();
-}
-
-/** The one host rule for a signed inbound: a missing, empty or placeholder
- *  secret verifies nothing, whatever the scheme would otherwise allow. */
-function usableSecret(secret: string | undefined): secret is string {
-  return secret !== undefined && secret !== '' && secret !== UNREGISTERED_SECRET;
 }
 
 export interface LfInboundOptions {
@@ -188,9 +182,9 @@ export function createLfInboundStores(session: DoorSession, options: LfInboundOp
       const setup = running && inboundSetupOf(running);
       if (!credential || !running || !setup) return null;
       return {
-        verifier: usableSecret(subscription.secret)
-          ? { scheme: setup.declaration.scheme, signatureHeaders: setup.declaration.signatureHeaders }
-          : { verifyInbound: () => false },
+        // The core's one signed-inbound rule, for a manifest's `inbound` and
+        // for a `webhook:` block alike (the latter is the protocol's scheme).
+        verifier: declaredInboundVerifier(setup.declaration),
         secret: subscription.secret,
         open: async () => ({
           adapterType: running.external.manifest.name,
