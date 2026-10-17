@@ -56,6 +56,12 @@ pub const ADAPTER_METHODS: &[&str] = &[
     "invokeFieldFunction",
 ];
 
+/// The adapter methods that change the external system: a dry run rehearses
+/// the record writes instead of calling them, and a segment past its wall
+/// clock still waits for any of these in flight rather than cut it off.
+pub const WRITE_METHODS: &[&str] =
+    &["createRecord", "updateRecord", "deleteRecord", "linkRecords", "unlinkRecords", "ensureEventSubscription", "removeEventSubscription"];
+
 /// `OPTIONAL_REMOTE_METHODS`: a remote instance has one only when the
 /// external advertises it.
 const OPTIONAL_REMOTE_METHODS: &[&str] = &[

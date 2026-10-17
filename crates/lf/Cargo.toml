@@ -62,3 +62,7 @@ webpki-roots = "1"
 # strings written as WHATWG URL / URLSearchParams do, and the random state
 # and PKCE verifier of a sign-in.
 url = "2"
+
+[dev-dependencies]
+# Paused time: a test of the wall clock's grace runs in no time.
+tokio = { version = "1", features = ["test-util"] }

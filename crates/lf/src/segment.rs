@@ -23,7 +23,7 @@ use crate::documents::Documents;
 use crate::file_ref::{descriptor_of, field_type_of, files_at_type, owner_of, Owner};
 use crate::json::{Js, Obj};
 use crate::obj;
-use crate::remote::{ADAPTER_METHODS, SegmentAdapters};
+use crate::remote::{ADAPTER_METHODS, SegmentAdapters, WRITE_METHODS};
 use crate::run_host::{arm_timer_wake, cancel_subtrees, queue_await_wake, save_source, settle_if_cancel_requested};
 use crate::backend::{MintCallback, RunHostStore};
 use crate::store::StoreError;
@@ -305,20 +305,59 @@ pub async fn run_segment(host: &SegmentHost<'_>, input: SegmentInput<'_>) -> Res
 
 type Served<'a> = Pin<Box<dyn Future<Output = (u32, Result<Json, Fault>)> + 'a>>;
 
+/// How long the calls in flight when a segment's wall clock runs out have to
+/// finish before a read or a model call still waiting is dropped.
+const PAST_DEADLINE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// One request being served.
+struct Serving<'a> {
+    served: Served<'a>,
+    /// It changes an external system, so it is never dropped mid-flight.
+    writes: bool,
+}
+
 /// The requests in flight, polled together.
 struct InFlight<'a> {
-    futures: Vec<Served<'a>>,
+    futures: Vec<Serving<'a>>,
+}
+
+/// Whether the engine's request is an adapter call that changes the external.
+fn writes_externally(request: &Json) -> bool {
+    request.get("family").and_then(Json::as_str) == Some("adapters")
+        && request.get("method").and_then(Json::as_str) == Some("call")
+        && request.get("args").and_then(|args| args.get("method")).and_then(Json::as_str).is_some_and(|method| WRITE_METHODS.contains(&method))
 }
 
 impl<'a> InFlight<'a> {
+    fn push(&mut self, writes: bool, served: Served<'a>) {
+        self.futures.push(Serving { served, writes });
+    }
+
     fn poll_any(&mut self, cx: &mut Context<'_>) -> Poll<(u32, Result<Json, Fault>)> {
         for i in 0..self.futures.len() {
-            if let Poll::Ready(settled) = self.futures[i].as_mut().poll(cx) {
+            if let Poll::Ready(settled) = self.futures[i].served.as_mut().poll(cx) {
                 drop(self.futures.swap_remove(i));
                 return Poll::Ready(settled);
             }
         }
         Poll::Pending
+    }
+
+    /// Past the deadline: what is in flight gets `grace` to finish, its
+    /// answers unread. Then a read or a model call still waiting is dropped
+    /// (it may be the very wait that overran), and a write is still awaited,
+    /// so none is cut off half-sent or its outcome lost mid-flight.
+    async fn stop(&mut self, grace: std::time::Duration) {
+        let until = tokio::time::Instant::now() + grace;
+        while !self.futures.is_empty() {
+            if tokio::time::timeout_at(until, self.next()).await.is_err() {
+                break;
+            }
+        }
+        self.futures.retain(|serving| serving.writes);
+        while !self.futures.is_empty() {
+            let _ = self.next().await;
+        }
     }
 
     async fn next(&mut self) -> (u32, Result<Json, Fault>) {
@@ -370,19 +409,17 @@ async fn drive(host: &SegmentHost<'_>, input: &str, wall_clock: std::time::Durat
         let pending = step.get("pending").and_then(Json::as_array).cloned().ok_or_else(|| Fault("the Rust engine's step is neither pending nor done".into()))?;
         for request in pending {
             let id = request.get("id").and_then(Json::as_u64).ok_or_else(|| Fault("a request from the Rust engine has no id".into()))? as u32;
-            in_flight.futures.push(Box::pin(async move { (id, serve(host, &request).await) }));
+            in_flight.push(writes_externally(&request), Box::pin(async move { (id, serve(host, &request).await) }));
         }
         if in_flight.futures.is_empty() {
             break Err(Fault("the Rust engine is waiting with no request in flight".into()));
         }
-        // Past the deadline, what is in flight is dropped, not awaited: it
-        // may be the very wait that overran.
         if tokio::time::Instant::now() >= deadline {
-            in_flight.futures.clear();
+            in_flight.stop(PAST_DEADLINE_GRACE).await;
             break Err(past_deadline());
         }
         let Ok(first) = tokio::time::timeout_at(deadline, in_flight.next()).await else {
-            in_flight.futures.clear();
+            in_flight.stop(PAST_DEADLINE_GRACE).await;
             break Err(past_deadline());
         };
         let mut settled = Some(first);
@@ -1145,4 +1182,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_an_adapter_call_that_changes_the_external_is_a_write() {
+        let call = |method: &str| json!({ "family": "adapters", "method": "call", "args": { "method": method } });
+        assert!(writes_externally(&call("createRecord")));
+        assert!(writes_externally(&call("ensureEventSubscription")));
+        assert!(!writes_externally(&call("getFieldValue")));
+        assert!(!writes_externally(&json!({ "family": "llm", "method": "client.call", "args": { "method": "createRecord" } })));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn past_the_deadline_a_write_in_flight_finishes_and_a_read_still_waiting_is_dropped_after_the_grace() {
+        let settled = std::rc::Rc::new(RefCell::new(Vec::new()));
+        let mut in_flight = InFlight { futures: Vec::new() };
+        for (id, writes, seconds) in [(1, true, 30), (2, false, 60), (3, false, 1)] {
+            let settled = settled.clone();
+            in_flight.push(
+                writes,
+                Box::pin(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+                    settled.borrow_mut().push(id);
+                    (id, Ok(json!({})))
+                }),
+            );
+        }
+        let stopping = tokio::time::Instant::now();
+        in_flight.stop(PAST_DEADLINE_GRACE).await;
+        // The quick read finished inside the grace, the write was awaited to
+        // its end, and the slow read was dropped when the grace ran out.
+        assert_eq!(*settled.borrow(), vec![3, 1]);
+        assert_eq!(stopping.elapsed(), std::time::Duration::from_secs(30));
+    }
 }
