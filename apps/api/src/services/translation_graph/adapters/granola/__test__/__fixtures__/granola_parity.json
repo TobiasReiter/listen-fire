@@ -1,0 +1,1822 @@
+{
+  "transcript": [
+    {
+      "step": "listEntryPoints",
+      "answer": [
+        {
+          "typeId": "granola:note",
+          "displayName": "Meeting Note",
+          "writable": false,
+          "readable": true,
+          "collectionName": "Meetings"
+        },
+        {
+          "typeId": "granola:note",
+          "displayName": "Meeting Note",
+          "writable": false,
+          "readable": false,
+          "fires": true,
+          "description": "Delivered when a meeting note is new or has changed since the last poll. The note itself — read its summary, transcript and attendees."
+        },
+        {
+          "typeId": "granola:attendee",
+          "displayName": "Attendee",
+          "writable": false,
+          "readable": false
+        }
+      ]
+    },
+    {
+      "step": "describe granola:note",
+      "answer": {
+        "typeId": "granola:note",
+        "displayName": "Meeting Note",
+        "description": "A Granola meeting note — summary, transcript, attendees.",
+        "fields": [
+          {
+            "fieldId": "title",
+            "displayName": "Title",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The note title (or the calendar event title)."
+          },
+          {
+            "fieldId": "summary",
+            "displayName": "Summary",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The meeting summary (markdown when available)."
+          },
+          {
+            "fieldId": "transcript_text",
+            "displayName": "Transcript",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The full meeting transcript (`[You]/[Speaker]: …` lines), when the note has one."
+          },
+          {
+            "fieldId": "scheduled_start",
+            "displayName": "Meeting Start",
+            "kind": "date",
+            "writable": false,
+            "required": false,
+            "description": "When the meeting was scheduled to start."
+          },
+          {
+            "fieldId": "scheduled_end",
+            "displayName": "Meeting End",
+            "kind": "date",
+            "writable": false,
+            "required": false,
+            "description": "When the meeting was scheduled to end."
+          },
+          {
+            "fieldId": "organizer_email",
+            "displayName": "Organizer Email",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The meeting organizer."
+          },
+          {
+            "fieldId": "folder_names",
+            "displayName": "Folder Names",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The Granola folders this note belongs to."
+          },
+          {
+            "fieldId": "note_owner_email",
+            "displayName": "Note Owner Email",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The Granola user who owns the note."
+          },
+          {
+            "fieldId": "note_owner_name",
+            "displayName": "Note Owner Name",
+            "kind": "string",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "created_at",
+            "displayName": "Created At",
+            "kind": "date",
+            "writable": false,
+            "required": true
+          },
+          {
+            "fieldId": "updated_at",
+            "displayName": "Updated At",
+            "kind": "date",
+            "writable": false,
+            "required": true
+          },
+          {
+            "fieldId": "granola_note_id",
+            "displayName": "Granola Note ID",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The stable Granola note id."
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "attendees",
+            "targetTypeId": "granola:attendee",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Attendees",
+            "description": "The people on the call (zero or more)."
+          }
+        ]
+      }
+    },
+    {
+      "step": "describe Meeting Note",
+      "answer": {
+        "typeId": "granola:note",
+        "displayName": "Meeting Note",
+        "description": "A Granola meeting note — summary, transcript, attendees.",
+        "fields": [
+          {
+            "fieldId": "title",
+            "displayName": "Title",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The note title (or the calendar event title)."
+          },
+          {
+            "fieldId": "summary",
+            "displayName": "Summary",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The meeting summary (markdown when available)."
+          },
+          {
+            "fieldId": "transcript_text",
+            "displayName": "Transcript",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The full meeting transcript (`[You]/[Speaker]: …` lines), when the note has one."
+          },
+          {
+            "fieldId": "scheduled_start",
+            "displayName": "Meeting Start",
+            "kind": "date",
+            "writable": false,
+            "required": false,
+            "description": "When the meeting was scheduled to start."
+          },
+          {
+            "fieldId": "scheduled_end",
+            "displayName": "Meeting End",
+            "kind": "date",
+            "writable": false,
+            "required": false,
+            "description": "When the meeting was scheduled to end."
+          },
+          {
+            "fieldId": "organizer_email",
+            "displayName": "Organizer Email",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The meeting organizer."
+          },
+          {
+            "fieldId": "folder_names",
+            "displayName": "Folder Names",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The Granola folders this note belongs to."
+          },
+          {
+            "fieldId": "note_owner_email",
+            "displayName": "Note Owner Email",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The Granola user who owns the note."
+          },
+          {
+            "fieldId": "note_owner_name",
+            "displayName": "Note Owner Name",
+            "kind": "string",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "created_at",
+            "displayName": "Created At",
+            "kind": "date",
+            "writable": false,
+            "required": true
+          },
+          {
+            "fieldId": "updated_at",
+            "displayName": "Updated At",
+            "kind": "date",
+            "writable": false,
+            "required": true
+          },
+          {
+            "fieldId": "granola_note_id",
+            "displayName": "Granola Note ID",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The stable Granola note id."
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "attendees",
+            "targetTypeId": "granola:attendee",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Attendees",
+            "description": "The people on the call (zero or more)."
+          }
+        ]
+      }
+    },
+    {
+      "step": "describe granola:attendee",
+      "answer": {
+        "typeId": "granola:attendee",
+        "displayName": "Attendee",
+        "description": "A person who attended the meeting.",
+        "fields": [
+          {
+            "fieldId": "email",
+            "displayName": "Email",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The attendee's email — their identity."
+          },
+          {
+            "fieldId": "name",
+            "displayName": "Name",
+            "kind": "string",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": []
+      }
+    },
+    {
+      "step": "describe Attendee",
+      "answer": {
+        "typeId": "granola:attendee",
+        "displayName": "Attendee",
+        "description": "A person who attended the meeting.",
+        "fields": [
+          {
+            "fieldId": "email",
+            "displayName": "Email",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "The attendee's email — their identity."
+          },
+          {
+            "fieldId": "name",
+            "displayName": "Name",
+            "kind": "string",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": []
+      }
+    },
+    {
+      "step": "describe granola:workspace",
+      "answer": {
+        "typeId": "granola:workspace",
+        "displayName": "Granola Meetings",
+        "description": "The Granola workspace — traverse its `Meetings` to pull in PAST meeting notes (distinct from a live listener, which fires only on new or changed notes).",
+        "fields": [],
+        "references": [
+          {
+            "fieldId": "Meetings",
+            "targetTypeId": "granola:note",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Meetings",
+            "description": "Past meeting notes the connected Granola account can see. No default lookback — an unbounded walk covers the whole archive, so give the WHERE a date lower bound (e.g. `Meeting Start` >= a date) to keep it fast; other filters (like `Title`) still scan every note."
+          }
+        ]
+      }
+    },
+    {
+      "step": "describe Nonexistent",
+      "answer": null
+    },
+    {
+      "step": "edgesFrom meta",
+      "answer": {
+        "descriptor": {
+          "typeId": "meta",
+          "displayName": "Granola Meetings",
+          "description": "The Granola workspace. Walk `Meetings` to pull in PAST meeting notes; listen on `Meeting Note` to be told about new or changed ones.",
+          "fields": [],
+          "references": [
+            {
+              "fieldId": "Meetings",
+              "targetTypeId": "granola:note",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Meetings",
+              "description": "Past meeting notes the connected Granola account can see. No default lookback — an unbounded walk covers the whole archive, so give the WHERE a date lower bound (e.g. `Meeting Start` >= a date) to keep it fast; other filters (like `Title`) still scan every note.",
+              "sequenced": "chronological"
+            },
+            {
+              "fieldId": "fires:granola:note",
+              "targetTypeId": "granola:note",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Meeting Note",
+              "fires": true,
+              "readable": false,
+              "description": "A meeting note being created or changed — what a listen delivers."
+            }
+          ]
+        },
+        "targetPositions": {
+          "Meetings": {
+            "adapterType": "granola",
+            "recordType": "granola:note",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          },
+          "fires:granola:note": {
+            "adapterType": "granola",
+            "recordType": "granola:note",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          }
+        },
+        "targetNodes": {
+          "Meetings": {
+            "typeId": "granola:note",
+            "displayName": "Meeting Note",
+            "description": "A Granola meeting note — summary, transcript, attendees.",
+            "fields": [
+              {
+                "fieldId": "title",
+                "displayName": "Title",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "The note title (or the calendar event title)."
+              },
+              {
+                "fieldId": "summary",
+                "displayName": "Summary",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The meeting summary (markdown when available)."
+              },
+              {
+                "fieldId": "transcript_text",
+                "displayName": "Transcript",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The full meeting transcript (`[You]/[Speaker]: …` lines), when the note has one."
+              },
+              {
+                "fieldId": "scheduled_start",
+                "displayName": "Meeting Start",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When the meeting was scheduled to start."
+              },
+              {
+                "fieldId": "scheduled_end",
+                "displayName": "Meeting End",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When the meeting was scheduled to end."
+              },
+              {
+                "fieldId": "organizer_email",
+                "displayName": "Organizer Email",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The meeting organizer."
+              },
+              {
+                "fieldId": "folder_names",
+                "displayName": "Folder Names",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The Granola folders this note belongs to."
+              },
+              {
+                "fieldId": "note_owner_email",
+                "displayName": "Note Owner Email",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "The Granola user who owns the note."
+              },
+              {
+                "fieldId": "note_owner_name",
+                "displayName": "Note Owner Name",
+                "kind": "string",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "created_at",
+                "displayName": "Created At",
+                "kind": "date",
+                "writable": false,
+                "required": true
+              },
+              {
+                "fieldId": "updated_at",
+                "displayName": "Updated At",
+                "kind": "date",
+                "writable": false,
+                "required": true
+              },
+              {
+                "fieldId": "granola_note_id",
+                "displayName": "Granola Note ID",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "The stable Granola note id."
+              }
+            ]
+          },
+          "fires:granola:note": {
+            "typeId": "granola:note",
+            "displayName": "Meeting Note",
+            "description": "A Granola meeting note — summary, transcript, attendees.",
+            "fields": [
+              {
+                "fieldId": "title",
+                "displayName": "Title",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "The note title (or the calendar event title)."
+              },
+              {
+                "fieldId": "summary",
+                "displayName": "Summary",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The meeting summary (markdown when available)."
+              },
+              {
+                "fieldId": "transcript_text",
+                "displayName": "Transcript",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The full meeting transcript (`[You]/[Speaker]: …` lines), when the note has one."
+              },
+              {
+                "fieldId": "scheduled_start",
+                "displayName": "Meeting Start",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When the meeting was scheduled to start."
+              },
+              {
+                "fieldId": "scheduled_end",
+                "displayName": "Meeting End",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When the meeting was scheduled to end."
+              },
+              {
+                "fieldId": "organizer_email",
+                "displayName": "Organizer Email",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The meeting organizer."
+              },
+              {
+                "fieldId": "folder_names",
+                "displayName": "Folder Names",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The Granola folders this note belongs to."
+              },
+              {
+                "fieldId": "note_owner_email",
+                "displayName": "Note Owner Email",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "The Granola user who owns the note."
+              },
+              {
+                "fieldId": "note_owner_name",
+                "displayName": "Note Owner Name",
+                "kind": "string",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "created_at",
+                "displayName": "Created At",
+                "kind": "date",
+                "writable": false,
+                "required": true
+              },
+              {
+                "fieldId": "updated_at",
+                "displayName": "Updated At",
+                "kind": "date",
+                "writable": false,
+                "required": true
+              },
+              {
+                "fieldId": "granola_note_id",
+                "displayName": "Granola Note ID",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "The stable Granola note id."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": "Meetings",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Portfolio review",
+                "summary": "Quarterly review.",
+                "scheduled_start": "2026-08-01T09:00:00.000Z",
+                "scheduled_end": "2026-08-01T10:00:00.000Z",
+                "organizer_email": "sam@fund.com",
+                "folder_names": "Portfolio, Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-08-01T09:00:00.000Z",
+                "updated_at": "2026-08-01T11:00:00.000Z",
+                "granola_note_id": "note-parity-4",
+                "attendees": [
+                  {
+                    "email": "sam@fund.com",
+                    "name": "Sam Fund"
+                  }
+                ],
+                "transcript_text": "[Speaker]: Numbers are up."
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Untitled Meeting",
+                "summary": "Intro call, no follow-up.",
+                "note_owner_email": "sam@fund.com",
+                "created_at": "2026-07-02T14:00:00.000Z",
+                "updated_at": "2026-07-02T15:30:00.000Z",
+                "granola_note_id": "note-parity-2",
+                "attendees": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Series A sync",
+                "summary": "## Notes\nThey want **$2M**.",
+                "scheduled_start": "2026-06-19T09:00:00.000Z",
+                "scheduled_end": "2026-06-19T09:30:00.000Z",
+                "organizer_email": "priya@fund.com",
+                "folder_names": "Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-06-19T09:00:00.000Z",
+                "updated_at": "2026-06-19T10:00:00.000Z",
+                "granola_note_id": "note-parity-1",
+                "attendees": [
+                  {
+                    "email": "ceo@acme.com",
+                    "name": "Acme CEO"
+                  },
+                  {
+                    "email": "cfo@acme.com"
+                  }
+                ],
+                "transcript_text": "[You]: Hi\n[Speaker]: Hello"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Meetings WHERE Meeting Start >= 2026-07-01",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Portfolio review",
+                "summary": "Quarterly review.",
+                "scheduled_start": "2026-08-01T09:00:00.000Z",
+                "scheduled_end": "2026-08-01T10:00:00.000Z",
+                "organizer_email": "sam@fund.com",
+                "folder_names": "Portfolio, Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-08-01T09:00:00.000Z",
+                "updated_at": "2026-08-01T11:00:00.000Z",
+                "granola_note_id": "note-parity-4",
+                "attendees": [
+                  {
+                    "email": "sam@fund.com",
+                    "name": "Sam Fund"
+                  }
+                ],
+                "transcript_text": "[Speaker]: Numbers are up."
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Untitled Meeting",
+                "summary": "Intro call, no follow-up.",
+                "note_owner_email": "sam@fund.com",
+                "created_at": "2026-07-02T14:00:00.000Z",
+                "updated_at": "2026-07-02T15:30:00.000Z",
+                "granola_note_id": "note-parity-2",
+                "attendees": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Meetings WHERE Title ==",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Portfolio review",
+                "summary": "Quarterly review.",
+                "scheduled_start": "2026-08-01T09:00:00.000Z",
+                "scheduled_end": "2026-08-01T10:00:00.000Z",
+                "organizer_email": "sam@fund.com",
+                "folder_names": "Portfolio, Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-08-01T09:00:00.000Z",
+                "updated_at": "2026-08-01T11:00:00.000Z",
+                "granola_note_id": "note-parity-4",
+                "attendees": [
+                  {
+                    "email": "sam@fund.com",
+                    "name": "Sam Fund"
+                  }
+                ],
+                "transcript_text": "[Speaker]: Numbers are up."
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Untitled Meeting",
+                "summary": "Intro call, no follow-up.",
+                "note_owner_email": "sam@fund.com",
+                "created_at": "2026-07-02T14:00:00.000Z",
+                "updated_at": "2026-07-02T15:30:00.000Z",
+                "granola_note_id": "note-parity-2",
+                "attendees": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Series A sync",
+                "summary": "## Notes\nThey want **$2M**.",
+                "scheduled_start": "2026-06-19T09:00:00.000Z",
+                "scheduled_end": "2026-06-19T09:30:00.000Z",
+                "organizer_email": "priya@fund.com",
+                "folder_names": "Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-06-19T09:00:00.000Z",
+                "updated_at": "2026-06-19T10:00:00.000Z",
+                "granola_note_id": "note-parity-1",
+                "attendees": [
+                  {
+                    "email": "ceo@acme.com",
+                    "name": "Acme CEO"
+                  },
+                  {
+                    "email": "cfo@acme.com"
+                  }
+                ],
+                "transcript_text": "[You]: Hi\n[Speaker]: Hello"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Meetings LIMIT 1",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Portfolio review",
+                "summary": "Quarterly review.",
+                "scheduled_start": "2026-08-01T09:00:00.000Z",
+                "scheduled_end": "2026-08-01T10:00:00.000Z",
+                "organizer_email": "sam@fund.com",
+                "folder_names": "Portfolio, Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-08-01T09:00:00.000Z",
+                "updated_at": "2026-08-01T11:00:00.000Z",
+                "granola_note_id": "note-parity-4",
+                "attendees": [
+                  {
+                    "email": "sam@fund.com",
+                    "name": "Sam Fund"
+                  }
+                ],
+                "transcript_text": "[Speaker]: Numbers are up."
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Meetings ORDER BY Updated At LIMIT 1",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Portfolio review",
+                "summary": "Quarterly review.",
+                "scheduled_start": "2026-08-01T09:00:00.000Z",
+                "scheduled_end": "2026-08-01T10:00:00.000Z",
+                "organizer_email": "sam@fund.com",
+                "folder_names": "Portfolio, Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-08-01T09:00:00.000Z",
+                "updated_at": "2026-08-01T11:00:00.000Z",
+                "granola_note_id": "note-parity-4",
+                "attendees": [
+                  {
+                    "email": "sam@fund.com",
+                    "name": "Sam Fund"
+                  }
+                ],
+                "transcript_text": "[Speaker]: Numbers are up."
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Untitled Meeting",
+                "summary": "Intro call, no follow-up.",
+                "note_owner_email": "sam@fund.com",
+                "created_at": "2026-07-02T14:00:00.000Z",
+                "updated_at": "2026-07-02T15:30:00.000Z",
+                "granola_note_id": "note-parity-2",
+                "attendees": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Meeting Note",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "title": "Series A sync",
+                "summary": "## Notes\nThey want **$2M**.",
+                "scheduled_start": "2026-06-19T09:00:00.000Z",
+                "scheduled_end": "2026-06-19T09:30:00.000Z",
+                "organizer_email": "priya@fund.com",
+                "folder_names": "Dealflow",
+                "note_owner_email": "priya@fund.com",
+                "note_owner_name": "Priya Owner",
+                "created_at": "2026-06-19T09:00:00.000Z",
+                "updated_at": "2026-06-19T10:00:00.000Z",
+                "granola_note_id": "note-parity-1",
+                "attendees": [
+                  {
+                    "email": "ceo@acme.com",
+                    "name": "Acme CEO"
+                  },
+                  {
+                    "email": "cfo@acme.com"
+                  }
+                ],
+                "transcript_text": "[You]: Hi\n[Speaker]: Hello"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Note 0.Title",
+      "answer": "Portfolio review"
+    },
+    {
+      "step": "Note 0.Summary",
+      "answer": "Quarterly review."
+    },
+    {
+      "step": "Note 0.Transcript",
+      "answer": "[Speaker]: Numbers are up."
+    },
+    {
+      "step": "Note 0.Meeting Start",
+      "answer": "2026-08-01T09:00:00.000Z"
+    },
+    {
+      "step": "Note 0.Meeting End",
+      "answer": "2026-08-01T10:00:00.000Z"
+    },
+    {
+      "step": "Note 0.Organizer Email",
+      "answer": "sam@fund.com"
+    },
+    {
+      "step": "Note 0.Folder Names",
+      "answer": "Portfolio, Dealflow"
+    },
+    {
+      "step": "Note 0.Note Owner Email",
+      "answer": "priya@fund.com"
+    },
+    {
+      "step": "Note 0.Note Owner Name",
+      "answer": "Priya Owner"
+    },
+    {
+      "step": "Note 0.Created At",
+      "answer": "2026-08-01T09:00:00.000Z"
+    },
+    {
+      "step": "Note 0.Updated At",
+      "answer": "2026-08-01T11:00:00.000Z"
+    },
+    {
+      "step": "Note 0.Granola Note ID",
+      "answer": "note-parity-4"
+    },
+    {
+      "step": "Note 0.granola_note_id",
+      "answer": {
+        "error": "'granola_note_id' is not a known field of 'Meeting Note' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 0.Nonexistent",
+      "answer": {
+        "error": "'Nonexistent' is not a known field of 'Meeting Note' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 0 Attendees",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Attendee",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "email": "sam@fund.com",
+                "name": "Sam Fund"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Note 0 incoming",
+      "answer": []
+    },
+    {
+      "step": "Note 0 Attendee 0.Email",
+      "answer": "sam@fund.com"
+    },
+    {
+      "step": "Note 0 Attendee 0.Name",
+      "answer": "Sam Fund"
+    },
+    {
+      "step": "Note 0 Attendee 0.Nonexistent",
+      "answer": {
+        "error": "'Nonexistent' is not a known field of 'Attendee' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 1.Title",
+      "answer": "Untitled Meeting"
+    },
+    {
+      "step": "Note 1.Summary",
+      "answer": "Intro call, no follow-up."
+    },
+    {
+      "step": "Note 1.Transcript",
+      "answer": null
+    },
+    {
+      "step": "Note 1.Meeting Start",
+      "answer": null
+    },
+    {
+      "step": "Note 1.Meeting End",
+      "answer": null
+    },
+    {
+      "step": "Note 1.Organizer Email",
+      "answer": null
+    },
+    {
+      "step": "Note 1.Folder Names",
+      "answer": null
+    },
+    {
+      "step": "Note 1.Note Owner Email",
+      "answer": "sam@fund.com"
+    },
+    {
+      "step": "Note 1.Note Owner Name",
+      "answer": null
+    },
+    {
+      "step": "Note 1.Created At",
+      "answer": "2026-07-02T14:00:00.000Z"
+    },
+    {
+      "step": "Note 1.Updated At",
+      "answer": "2026-07-02T15:30:00.000Z"
+    },
+    {
+      "step": "Note 1.Granola Note ID",
+      "answer": "note-parity-2"
+    },
+    {
+      "step": "Note 1.granola_note_id",
+      "answer": {
+        "error": "'granola_note_id' is not a known field of 'Meeting Note' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 1.Nonexistent",
+      "answer": {
+        "error": "'Nonexistent' is not a known field of 'Meeting Note' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 1 Attendees",
+      "answer": []
+    },
+    {
+      "step": "Note 1 incoming",
+      "answer": []
+    },
+    {
+      "step": "Note 2.Title",
+      "answer": "Series A sync"
+    },
+    {
+      "step": "Note 2.Summary",
+      "answer": "## Notes\nThey want **$2M**."
+    },
+    {
+      "step": "Note 2.Transcript",
+      "answer": "[You]: Hi\n[Speaker]: Hello"
+    },
+    {
+      "step": "Note 2.Meeting Start",
+      "answer": "2026-06-19T09:00:00.000Z"
+    },
+    {
+      "step": "Note 2.Meeting End",
+      "answer": "2026-06-19T09:30:00.000Z"
+    },
+    {
+      "step": "Note 2.Organizer Email",
+      "answer": "priya@fund.com"
+    },
+    {
+      "step": "Note 2.Folder Names",
+      "answer": "Dealflow"
+    },
+    {
+      "step": "Note 2.Note Owner Email",
+      "answer": "priya@fund.com"
+    },
+    {
+      "step": "Note 2.Note Owner Name",
+      "answer": "Priya Owner"
+    },
+    {
+      "step": "Note 2.Created At",
+      "answer": "2026-06-19T09:00:00.000Z"
+    },
+    {
+      "step": "Note 2.Updated At",
+      "answer": "2026-06-19T10:00:00.000Z"
+    },
+    {
+      "step": "Note 2.Granola Note ID",
+      "answer": "note-parity-1"
+    },
+    {
+      "step": "Note 2.granola_note_id",
+      "answer": {
+        "error": "'granola_note_id' is not a known field of 'Meeting Note' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 2.Nonexistent",
+      "answer": {
+        "error": "'Nonexistent' is not a known field of 'Meeting Note' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 2 Attendees",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Attendee",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "email": "ceo@acme.com",
+                "name": "Acme CEO"
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "granola",
+            "recordType": "Attendee",
+            "identity": {
+              "kind": "unstable",
+              "data": {
+                "email": "cfo@acme.com"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Note 2 incoming",
+      "answer": []
+    },
+    {
+      "step": "Note 2 Attendee 0.Email",
+      "answer": "ceo@acme.com"
+    },
+    {
+      "step": "Note 2 Attendee 0.Name",
+      "answer": "Acme CEO"
+    },
+    {
+      "step": "Note 2 Attendee 0.Nonexistent",
+      "answer": {
+        "error": "'Nonexistent' is not a known field of 'Attendee' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "Note 2 Attendee 1.Email",
+      "answer": "cfo@acme.com"
+    },
+    {
+      "step": "Note 2 Attendee 1.Name",
+      "answer": null
+    },
+    {
+      "step": "Note 2 Attendee 1.Nonexistent",
+      "answer": {
+        "error": "'Nonexistent' is not a known field of 'Attendee' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "listEventTypes",
+      "answer": [
+        {
+          "tag": "granola:note",
+          "positionType": "granola:note",
+          "match": {
+            "path": "granola_note_id",
+            "equals": []
+          }
+        }
+      ]
+    },
+    {
+      "step": "poll first look",
+      "answer": {
+        "events": [],
+        "checkpoint": "string"
+      }
+    },
+    {
+      "step": "poll from a checkpoint",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "title": "Series A sync",
+              "summary": "## Notes\nThey want **$2M**.",
+              "scheduled_start": "2026-06-19T09:00:00.000Z",
+              "scheduled_end": "2026-06-19T09:30:00.000Z",
+              "organizer_email": "priya@fund.com",
+              "folder_names": "Dealflow",
+              "note_owner_email": "priya@fund.com",
+              "note_owner_name": "Priya Owner",
+              "created_at": "2026-06-19T09:00:00.000Z",
+              "updated_at": "2026-06-19T10:00:00.000Z",
+              "granola_note_id": "note-parity-1",
+              "attendees": [
+                {
+                  "email": "ceo@acme.com",
+                  "name": "Acme CEO"
+                },
+                {
+                  "email": "cfo@acme.com"
+                }
+              ],
+              "transcript_text": "[You]: Hi\n[Speaker]: Hello"
+            },
+            "externalId": "note-parity-1",
+            "tag": "granola:note",
+            "occurredAt": "2026-06-19T10:00:00.000Z"
+          },
+          {
+            "payload": {
+              "title": "Untitled Meeting",
+              "summary": "Intro call, no follow-up.",
+              "note_owner_email": "sam@fund.com",
+              "created_at": "2026-07-02T14:00:00.000Z",
+              "updated_at": "2026-07-02T15:30:00.000Z",
+              "granola_note_id": "note-parity-2",
+              "attendees": []
+            },
+            "externalId": "note-parity-2",
+            "tag": "granola:note",
+            "occurredAt": "2026-07-02T15:30:00.000Z"
+          },
+          {
+            "payload": {
+              "title": "Portfolio review",
+              "summary": "Quarterly review.",
+              "scheduled_start": "2026-08-01T09:00:00.000Z",
+              "scheduled_end": "2026-08-01T10:00:00.000Z",
+              "organizer_email": "sam@fund.com",
+              "folder_names": "Portfolio, Dealflow",
+              "note_owner_email": "priya@fund.com",
+              "note_owner_name": "Priya Owner",
+              "created_at": "2026-08-01T09:00:00.000Z",
+              "updated_at": "2026-08-01T11:00:00.000Z",
+              "granola_note_id": "note-parity-4",
+              "attendees": [
+                {
+                  "email": "sam@fund.com",
+                  "name": "Sam Fund"
+                }
+              ],
+              "transcript_text": "[Speaker]: Numbers are up."
+            },
+            "externalId": "note-parity-4",
+            "tag": "granola:note",
+            "occurredAt": "2026-08-01T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "updatedAfter": "2026-08-01T11:00:00.000Z"
+        }
+      }
+    },
+    {
+      "step": "poll folder Dealflow",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "title": "Series A sync",
+              "summary": "## Notes\nThey want **$2M**.",
+              "scheduled_start": "2026-06-19T09:00:00.000Z",
+              "scheduled_end": "2026-06-19T09:30:00.000Z",
+              "organizer_email": "priya@fund.com",
+              "folder_names": "Dealflow",
+              "note_owner_email": "priya@fund.com",
+              "note_owner_name": "Priya Owner",
+              "created_at": "2026-06-19T09:00:00.000Z",
+              "updated_at": "2026-06-19T10:00:00.000Z",
+              "granola_note_id": "note-parity-1",
+              "attendees": [
+                {
+                  "email": "ceo@acme.com",
+                  "name": "Acme CEO"
+                },
+                {
+                  "email": "cfo@acme.com"
+                }
+              ],
+              "transcript_text": "[You]: Hi\n[Speaker]: Hello"
+            },
+            "externalId": "note-parity-1",
+            "tag": "granola:note",
+            "occurredAt": "2026-06-19T10:00:00.000Z"
+          },
+          {
+            "payload": {
+              "title": "Portfolio review",
+              "summary": "Quarterly review.",
+              "scheduled_start": "2026-08-01T09:00:00.000Z",
+              "scheduled_end": "2026-08-01T10:00:00.000Z",
+              "organizer_email": "sam@fund.com",
+              "folder_names": "Portfolio, Dealflow",
+              "note_owner_email": "priya@fund.com",
+              "note_owner_name": "Priya Owner",
+              "created_at": "2026-08-01T09:00:00.000Z",
+              "updated_at": "2026-08-01T11:00:00.000Z",
+              "granola_note_id": "note-parity-4",
+              "attendees": [
+                {
+                  "email": "sam@fund.com",
+                  "name": "Sam Fund"
+                }
+              ],
+              "transcript_text": "[Speaker]: Numbers are up."
+            },
+            "externalId": "note-parity-4",
+            "tag": "granola:note",
+            "occurredAt": "2026-08-01T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "updatedAfter": "2026-08-01T11:00:00.000Z"
+        }
+      }
+    },
+    {
+      "step": "poll folders list",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "title": "Portfolio review",
+              "summary": "Quarterly review.",
+              "scheduled_start": "2026-08-01T09:00:00.000Z",
+              "scheduled_end": "2026-08-01T10:00:00.000Z",
+              "organizer_email": "sam@fund.com",
+              "folder_names": "Portfolio, Dealflow",
+              "note_owner_email": "priya@fund.com",
+              "note_owner_name": "Priya Owner",
+              "created_at": "2026-08-01T09:00:00.000Z",
+              "updated_at": "2026-08-01T11:00:00.000Z",
+              "granola_note_id": "note-parity-4",
+              "attendees": [
+                {
+                  "email": "sam@fund.com",
+                  "name": "Sam Fund"
+                }
+              ],
+              "transcript_text": "[Speaker]: Numbers are up."
+            },
+            "externalId": "note-parity-4",
+            "tag": "granola:note",
+            "occurredAt": "2026-08-01T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "updatedAfter": "2026-08-01T11:00:00.000Z"
+        }
+      }
+    },
+    {
+      "step": "poll past the newest",
+      "answer": {
+        "events": [],
+        "checkpoint": {
+          "updatedAfter": "2026-09-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "step": "extractActor 0",
+      "answer": {
+        "identifier": "priya@fund.com",
+        "scheme": "email",
+        "adapterType": "granola",
+        "email": "priya@fund.com",
+        "name": "Priya Owner"
+      }
+    },
+    {
+      "step": "getActorCandidates 0",
+      "answer": [
+        {
+          "identity": {
+            "identifier": "priya@fund.com",
+            "scheme": "email",
+            "adapterType": "granola",
+            "email": "priya@fund.com",
+            "name": "Priya Owner"
+          },
+          "source": "originator"
+        }
+      ]
+    },
+    {
+      "step": "extractActor 1",
+      "answer": {
+        "identifier": "sam@fund.com",
+        "scheme": "email",
+        "adapterType": "granola",
+        "email": "sam@fund.com"
+      }
+    },
+    {
+      "step": "getActorCandidates 1",
+      "answer": [
+        {
+          "identity": {
+            "identifier": "sam@fund.com",
+            "scheme": "email",
+            "adapterType": "granola",
+            "email": "sam@fund.com"
+          },
+          "source": "originator"
+        }
+      ]
+    },
+    {
+      "step": "extractActor 2",
+      "answer": {
+        "identifier": "priya@fund.com",
+        "scheme": "email",
+        "adapterType": "granola",
+        "email": "priya@fund.com",
+        "name": "Priya Owner"
+      }
+    },
+    {
+      "step": "getActorCandidates 2",
+      "answer": [
+        {
+          "identity": {
+            "identifier": "priya@fund.com",
+            "scheme": "email",
+            "adapterType": "granola",
+            "email": "priya@fund.com",
+            "name": "Priya Owner"
+          },
+          "source": "originator"
+        }
+      ]
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/notes?page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?updated_after=2026-07-01T00%3A00%3A00.000Z&page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?updated_after=2026-06-01T00%3A00%3A00.000Z&page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?updated_after=2026-06-01T00%3A00%3A00.000Z&page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?updated_after=2026-06-01T00%3A00%3A00.000Z&page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?updated_after=2026-09-01T00%3A00%3A00.000Z&page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes?updated_after=2026-06-01T00%3A00%3A00.000Z&page_size=30",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"notes\":[{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\"},{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\"},{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\"},{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\"}],\"hasMore\":false,\"cursor\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-1?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-1\",\"object\":\"note\",\"title\":\"Series A sync\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-06-19T09:00:00.000Z\",\"updated_at\":\"2026-06-19T10:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Series A sync (calendar)\",\"invitees\":[{\"email\":\"ceo@acme.com\"}],\"organiser\":\"priya@fund.com\",\"calendar_event_id\":\"cal-1\",\"scheduled_start_time\":\"2026-06-19T09:00:00.000Z\",\"scheduled_end_time\":\"2026-06-19T09:30:00.000Z\"},\"attendees\":[{\"name\":\"Acme CEO\",\"email\":\"ceo@acme.com\"},{\"name\":null,\"email\":\"cfo@acme.com\"}],\"folder_membership\":[{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"They want $2M.\",\"summary_markdown\":\"## Notes\\nThey want **$2M**.\",\"transcript\":[{\"speaker\":{\"source\":\"microphone\"},\"text\":\"Hi\",\"start_time\":\"0\",\"end_time\":\"1\"},{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Hello\",\"start_time\":\"1\",\"end_time\":\"2\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-2?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-2\",\"object\":\"note\",\"title\":null,\"owner\":{\"name\":null,\"email\":\"sam@fund.com\"},\"created_at\":\"2026-07-02T14:00:00.000Z\",\"updated_at\":\"2026-07-02T15:30:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"Intro call, no follow-up.\",\"summary_markdown\":null,\"transcript\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-3?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-3\",\"object\":\"note\",\"title\":\"Empty\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-07-10T08:00:00.000Z\",\"updated_at\":\"2026-07-10T08:05:00.000Z\",\"calendar_event\":null,\"attendees\":[],\"folder_membership\":[],\"summary_text\":\"\",\"summary_markdown\":null,\"transcript\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notes/note-parity-4?include=transcript",
+      "authorization": "Bearer dev-loop-granola-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"note-parity-4\",\"object\":\"note\",\"title\":\"Portfolio review\",\"owner\":{\"name\":\"Priya Owner\",\"email\":\"priya@fund.com\"},\"created_at\":\"2026-08-01T09:00:00.000Z\",\"updated_at\":\"2026-08-01T11:00:00.000Z\",\"calendar_event\":{\"event_title\":\"Portfolio review\",\"invitees\":[],\"organiser\":\"sam@fund.com\",\"calendar_event_id\":\"cal-4\",\"scheduled_start_time\":\"2026-08-01T09:00:00.000Z\",\"scheduled_end_time\":\"2026-08-01T10:00:00.000Z\"},\"attendees\":[{\"name\":\"Sam Fund\",\"email\":\"sam@fund.com\"}],\"folder_membership\":[{\"id\":\"f2\",\"name\":\"Portfolio\"},{\"id\":\"f1\",\"name\":\"Dealflow\"}],\"summary_text\":\"Quarterly review.\",\"summary_markdown\":null,\"transcript\":[{\"speaker\":{\"source\":\"speaker\"},\"text\":\"Numbers are up.\",\"start_time\":\"0\",\"end_time\":\"4\"}]}"
+    }
+  ]
+}
