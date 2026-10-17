@@ -1,5 +1,5 @@
 {
-  "total": 780,
+  "total": 779,
   "byModule": {
     "adapters/webhook/configSchema": 2,
     "lib/anthropic": 3,
@@ -46,7 +46,7 @@
     "services/translation_graph/engine/adapter_table": 1,
     "services/translation_graph/engine/batched_extraction/llm_call": 2,
     "services/translation_graph/engine/batched_extraction/model_choice": 1,
-    "services/translation_graph/engine/dry_run_adapter": 2,
+    "services/translation_graph/engine/dry_run_adapter": 1,
     "services/translation_graph/engine/files/document_store": 4,
     "services/translation_graph/engine/files/file_outside_team": 4,
     "services/translation_graph/engine/files/file_owners": 1,
