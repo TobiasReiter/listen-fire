@@ -8,6 +8,7 @@
 //!     (the external's `auth` field), the webhook secret its inbound deliveries
 //!     are signed with, and the OAuth app's client id and secret, stored once
 //!     per module, with the redirect port the app registered.
+//!
 //! User credentials are not set up here: `lf credential add --module <module>`.
 //! With no module named, it lists the modules it knows.
 

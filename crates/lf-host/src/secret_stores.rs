@@ -228,9 +228,12 @@ impl SecretsBackend for CredentialSecrets {
     }
 }
 
+/// A loaded credential: its name, and the secrets file it was read from.
+type FamilyKey = (String, Option<PathBuf>);
+
 thread_local! {
     /// One family per loaded credential, so its single flight covers every call.
-    static FAMILIES: RefCell<HashMap<(String, Option<PathBuf>), Rc<SecretsFamily>>> = RefCell::new(HashMap::new());
+    static FAMILIES: RefCell<HashMap<FamilyKey, Rc<SecretsFamily>>> = RefCell::new(HashMap::new());
 }
 
 /// The secrets family a loaded credential is refreshed and written back through.
@@ -277,11 +280,14 @@ pub fn secrets_file_for_writes(project: &Project, env: &[(String, String)]) -> R
     Ok(SecretsFile { path: created, encrypted: false })
 }
 
+/// A whole entry, its keys in order: binding keys, then fields.
+pub type Entry = Vec<(String, String)>;
+
 pub enum EntryChange<'a> {
     /// Create the entry; refused when it exists.
-    Create(Vec<(String, String)>),
+    Create(Entry),
     /// Replace it by what the function makes of it as stored now (None: it is gone).
-    Replace(&'a dyn Fn(Option<Vec<(String, String)>>) -> Result<Vec<(String, String)>, String>),
+    Replace(&'a dyn Fn(Option<Entry>) -> Result<Entry, String>),
     Delete,
 }
 

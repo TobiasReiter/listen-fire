@@ -35,8 +35,10 @@ async function tokenServer(): Promise<{ url: string; forms: URLSearchParams[]; a
 }
 
 /** The example, its external declaring an `oauth2` credential and logging the
- *  `credential` each request carries. */
-function project(tokenUrl: string): string {
+ *  `credential` each request carries; `answering` replaces how it answers a
+ *  call (the source of an expression over `method`, `result` and `calls`, the
+ *  number of calls of that method so far). */
+function project(tokenUrl: string, options: { secrets?: string; answering?: string } = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'lf-declared-'));
   cpSync(EXAMPLE, dir, { recursive: true, filter: (src) => !src.includes(`${EXAMPLE}/.lf`) });
   mkdirSync(join(dir, '.lf'), { recursive: true });
@@ -46,7 +48,8 @@ function project(tokenUrl: string): string {
   const source = readFileSync(server, 'utf8');
   const methods = "    methods: Object.keys(METHODS).filter((m) => m !== 'manifest'),\n";
   const parse = '      const { method, params } = JSON.parse(body);\n';
-  assert.ok(source.includes(methods) && source.includes(parse), 'the example external changed; update this test patch');
+  const answer = '      send(res, 200, { ok: true, result: await handler(params ?? {}) });\n';
+  assert.ok(source.includes(methods) && source.includes(parse) && source.includes(answer), 'the example external changed; update this test patch');
   const declaration = JSON.stringify([
     { name: 'acme', kind: 'oauth2', fields: [{ name: 'webhook_secret' }], oauth2: { authorizeUrl: 'https://acme.example.test/authorize', tokenUrl } },
   ]);
@@ -54,11 +57,18 @@ function project(tokenUrl: string): string {
     server,
     source
       .replace(methods, `${methods}    credentials: ${declaration},\n`)
-      .replace(parse, `${parse}      (await import('node:fs')).appendFileSync(process.env.CREDENTIAL_LOG, JSON.stringify(JSON.parse(body).credential ?? null) + '\\n');\n`),
+      .replace(parse, `${parse}      (await import('node:fs')).appendFileSync(process.env.CREDENTIAL_LOG, JSON.stringify(JSON.parse(body).credential ?? null) + '\\n');\n`)
+      .replace(
+        answer,
+        options.answering === undefined
+          ? answer
+          : `      globalThis.calls ??= {};\n      const calls = (globalThis.calls[method] = (globalThis.calls[method] ?? 0) + 1);\n      const result = await handler(params ?? {});\n      send(res, 200, ${options.answering});\n`,
+      ),
   );
   writeFileSync(
     join(dir, '.lf/secrets.yaml'),
-    'acme:\n  external: acme_crm\n  access_token: stale-token\n  refresh_token: r1\n  client_id: cid\n  client_secret: csecret\n  webhook_secret: w\n  expires_at: 2000-01-01T00:00:00Z\n',
+    options.secrets ??
+      'acme:\n  external: acme_crm\n  access_token: stale-token\n  refresh_token: r1\n  client_id: cid\n  client_secret: csecret\n  webhook_secret: w\n  expires_at: 2000-01-01T00:00:00Z\n',
   );
   return dir;
 }
@@ -97,6 +107,34 @@ test('a declared oauth2 credential is refreshed from the declaration, sent with 
     assert.match(file, /access_token: fresh-token/);
     assert.match(file, /refresh_token: r2/);
     assert.match(file, /client_secret: csecret/);
+  } finally {
+    token.close();
+  }
+});
+
+test("a credentialUpdate the module answers is written back to the credential it was sent, from a failed answer too", async () => {
+  const token = await tokenServer();
+  try {
+    // listEntryPoints rotates the refresh token; the first describe is refused
+    // as unauthorized and rotates the webhook secret; the host stores both,
+    // refreshes with the module's refresh token, and retries.
+    const answering = `method === 'listEntryPoints'
+      ? { ok: true, result, credentialUpdate: { name: 'acme', fields: { refresh_token: 'r-module' } } }
+      : method === 'describe' && calls === 1
+        ? { ok: false, error: { code: 'unauthorized', message: 'token revoked', retryable: false }, credentialUpdate: { name: 'acme', fields: { webhook_secret: 'w2' } } }
+        : { ok: true, result }`;
+    const dir = project(token.url, {
+      answering,
+      secrets: 'acme:\n  external: acme_crm\n  access_token: live-token\n  refresh_token: r1\n  client_id: cid\n  client_secret: csecret\n  webhook_secret: w\n  expires_at: 2999-01-01T00:00:00Z\n',
+    });
+    const run = await lf(dir, ['run', '--event', EVENT]);
+    assert.equal(run.code, 0, run.out);
+    assert.equal(token.forms.length, 1, 'one refresh, on the unauthorized answer');
+    assert.equal(token.forms[0]?.get('refresh_token'), 'r-module', "the refresh spends the module's rotated token");
+    const file = readFileSync(join(dir, '.lf/secrets.yaml'), 'utf8');
+    assert.match(file, /webhook_secret: w2/);
+    assert.match(file, /access_token: fresh-token/);
+    assert.match(file, /refresh_token: r2/);
   } finally {
     token.close();
   }
