@@ -34,6 +34,10 @@ refusal (`x.k` would read the field). A narrowing a host registers matches a hop
 the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
 
+### lfr-upgrade
+
+- `lf-host upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.
+
 ### Language version 5, Dancing Wren: what breaks
 
 - **A field read off text is refused** (`MOV_TEXT_HAS_NO_FIELDS`, from version 5). `t.Name` where
