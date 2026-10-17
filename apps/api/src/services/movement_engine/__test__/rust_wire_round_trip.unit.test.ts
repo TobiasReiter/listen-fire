@@ -5,18 +5,16 @@
 // host of its own, and the assertions say how the run must end and what the
 // host was handed.
 //
-// The values are what `JSON.parse` makes of a host's text: an own
-// `__proto__` key is a key like any other (transition artefacts row 7). It
-// crosses as itself, a read of it reads the own value, `TEXT.SERIALISE`
-// prints it, and wherever JavaScript assigns keys one by one
-// (`Object.assign`, `object[key] = …`) it sets the prototype.
+// The wire is plain JSON (version 5, Dancing Wren). The values are what
+// `JSON.parse` makes of a host's text: an own `__proto__` key is a key like
+// any other. It crosses as itself, and a map is a map: a read of it reads the
+// own value, a spread copies it, `Json.stringify` prints it, and nothing ever
+// makes it a prototype, so no read goes through one.
 //
-// A string is any run of UTF-16 code units, a lone surrogate included
-// (`JSON.parse('"\\ud83d"')` makes one; a cut through a pair, a `split("")`
-// or a match through one makes another): it crosses as its code units
-// (`["s16", units]`), the host's JSON text as the escape `JSON.stringify`
-// writes (transition artefacts row 9), and every reading of it — its length,
-// a cut, a split, a regex, a print — is JavaScript's.
+// A lone surrogate in a host's value (`JSON.parse('"\\ud83d"')` makes one)
+// crosses as U+FFFD, and one the engine makes (a cut through a pair, a
+// `split("")`) crosses back to the host as U+FFFD too. Inside the run a text
+// is still read in UTF-16 code units: its length, a cut, a split, a regex.
 
 import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
 
@@ -179,7 +177,7 @@ async function resumedFrom(c: Case, parks: string): Promise<string> {
 }
 
 describe('own `__proto__` keys on the wire', () => {
-  it('reads an event field holding one as the key it is: printed, read, spread and filed as JavaScript does', async () => {
+  it('reads an event field holding one as the key it is: printed, read, spread and filed', async () => {
     const { ended } = await run({
       source: program(
         '  v = msg.`meta`',
@@ -193,15 +191,18 @@ describe('own `__proto__` keys on the wire', () => {
         '  fail("${Json.stringify(v)} | ${Json.stringify(v.`__proto__`.`x`)} | ${Json.stringify(v.`x`)} | ${Json.stringify(s)} | ${Json.stringify(s.`x`)} | ${Json.stringify(g)} | ${Json.stringify(g.`a`)} | ${Json.stringify(k)}")',
       ),
     });
-    // The own key printed and read; the spread made it the prototype, which
-    // no print shows and a read goes through.
+    // The own key printed and read, and no read goes through it.
     expect(ended).toContain('"__proto__": {');
     expect(ended).toContain('| "via" | null |');
-    expect(ended).toContain('"b": 2');
-    expect(ended).toMatch(/\| "via" \| \{/);
+    // The spread copied it as a key, which its print shows; still no read
+    // goes through it.
+    expect(ended).toMatch(/"b": 2,\s+"items"[\s\S]*\| null \| \{/);
+    expect(ended).not.toMatch(/\| "via" \| \{/);
+    // Filed under it as under any other key.
+    expect(ended).toMatch(/"__proto__": \[\s+\{\s+"__proto__": "__proto__"/);
   });
 
-  it("reads a plugin's answer holding one: assigned into a record's fields, kept in a found record's, assigned again where it is written out", async () => {
+  it("reads a plugin's answer holding one as a field: a record's, and a found record's", async () => {
     const answer = JSON.parse('{"text":"a page","data":{"name":"Acme","__proto__":{"x":"via"}},"records":[{"u":"1","__proto__":{"x":1}}]}');
     const { ended } = await run({
       source: program(
@@ -211,14 +212,14 @@ describe('own `__proto__` keys on the wire', () => {
       ),
       invoked: answer,
     });
-    // `Object.assign` made the data's key the record's prototype, which a
-    // field read goes through.
-    expect(ended).toContain('Acme via');
+    // The data's key is a field of the record, and no read goes through it.
+    expect(ended).toContain('MOVENG_ERROR: Acme  {');
+    expect(ended).not.toContain('Acme via');
     // The trace names the data's keys as the answer held them.
     expect(ended).toContain('"fields":["name","__proto__"]');
-    // A found record keeps it as a field, and writing the record out
-    // (`plainRecordOf`'s `plain[field] = …`) assigns it: no print shows it.
-    expect(ended).not.toContain('"__proto__": {');
+    // Both records print it as the field they hold.
+    expect(ended).toMatch(/"__proto__": \{\s+"x": "via"\s+\},\s+"name": "Acme"/);
+    expect(ended).toMatch(/"__proto__": \{\s+"x": 1\s+\},\s+"u": "1"/);
   });
 
   it('reads a model reply holding one: an AI() answer, and an extraction read in one call', async () => {
@@ -247,16 +248,19 @@ describe('own `__proto__` keys on the wire', () => {
     expect(ended).toContain('MOVENG_ERROR: 1 1 {');
   });
 
-  it('ends at the check a program naming a binding or a parameter `__proto__`', async () => {
-    for (const body of [['  __proto__ = 1', '  fail("${__proto__}")'], ['  xs = map([1, 2], (__proto__) => {', '    return __proto__', '  })', '  fail("${count(xs)}")']]) {
-      resetRustRunStats();
-      const ran = await runOn({ source: program(...body) });
-      expect(rustRunStats).toMatchObject({ segments: 0, endedAtCheck: 1 });
-      expect(ran.ended).toContain('MOV_NAME_PROTO');
+  // MOV_NAME_PROTO applies before version 5 only.
+  it('runs a program naming a binding or a parameter `__proto__`', async () => {
+    const cases = [
+      { body: ['  __proto__ = 1', '  fail("${__proto__}")'], ends: 'MOVENG_ERROR: 1 |' },
+      { body: ['  xs = map([1, 2], (__proto__) => {', '    return __proto__', '  })', '  fail("${count(xs)}")'], ends: 'MOVENG_ERROR: 2 |' },
+    ];
+    for (const { body, ends } of cases) {
+      const ran = await run({ source: program(...body) });
+      expect(ran.ended).toContain(ends);
     }
   });
 
-  it('parks a value holding one as JavaScript writes it, and the park resumes to the same ending', async () => {
+  it('parks a value holding one as the key it is, and the park resumes to the same ending', async () => {
     const source = program('  v = msg.`meta`', '  s = { ...v }', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(s)} ${Json.stringify(s.`x`)}")');
     const parked = await run({ source });
     expect(parked.parks).toContain('"__proto__"');
@@ -293,7 +297,7 @@ describe('own `__proto__` keys on the wire', () => {
 const LONE = JSON.parse('{"hi":"a\\ud83d","lo":"\\ude00b","pair":"x😀y","\\udc00key":"\\ud800","astral":"😀𝒜"}');
 
 describe('lone surrogates on the wire', () => {
-  it('reads an event field holding them as JavaScript does: counted, cut, split, matched, printed, compared', async () => {
+  it('reads an event field holding them as U+FFFD: counted, cut, split, matched, printed, compared', async () => {
     const { ended } = await run({
       source: program(
         '  v = msg.`meta`',
@@ -305,14 +309,15 @@ describe('lone surrogates on the wire', () => {
       ),
       meta: LONE,
     });
-    // The halves written side by side are the pair; `split("")` and `.`
-    // part an astral character into its halves.
-    expect(ended).toContain('MOVENG_ERROR: 2 4 true 4');
+    // Each half arrived as U+FFFD, so side by side they are no pair;
+    // `split("")` and `.` still part an astral character into its halves.
+    expect(ended).toContain('MOVENG_ERROR: 2 4 false 4');
     expect(ended).toContain('"\\ud83d"');
-    expect(ended).toContain('"\\udc00key": "\\ud800"');
+    expect(ended).toContain('"\ufffdkey": "\ufffd"');
+    expect(ended).not.toContain('\\udc00');
   });
 
-  it("reads a plugin's answer holding them: a record's data, and a records plugin's text spread into its code units", async () => {
+  it("reads a plugin's answer holding them as U+FFFD: a record's data, and a records plugin's text spread into its code units", async () => {
     const answer = JSON.parse('{"text":"a page \\ud83d","data":{"name":"\\udfffAcme","x":"y"},"records":["a😀"]}');
     const { ended } = await run({
       source: program(
@@ -322,20 +327,23 @@ describe('lone surrogates on the wire', () => {
       ),
       invoked: answer,
     });
-    expect(ended).toContain('"\\udfffAcme"');
+    expect(ended).toContain('MOVENG_ERROR: \ufffdAcme 5 {');
+    expect(ended).toContain('"text": "a page \ufffd"');
     // `{ ..."a😀" }`: three code units, the pair's halves apart.
     expect(ended).toContain('"1": "\\ud83d"');
   });
 
-  it('reads a model reply holding them, and traces an AI() prompt cut through a pair as JavaScript cuts it', async () => {
+  it('reads a model reply holding them as U+FFFD, and traces an AI() prompt cut through a pair with U+FFFD for the half', async () => {
     const ai = await run({
       source: program('  x = ai("${msg.`subject`}")', '  fail("${Json.stringify(x)} ${Text.length(x.`a`)}")'),
       meta: LONE,
       replies: [JSON.parse('{"value":{"a":"\\ud800","\\udbffk":2}}')],
     });
     expect(ai.asked).toHaveLength(1);
-    expect(ai.ended).toContain('\\\\ud800');
-    // The trace keeps the prompt's first 300 code units: the high half.
+    expect(ai.ended).toContain('\\"a\\":\\"\ufffd\\"');
+    expect(ai.ended).not.toContain('ud800');
+    // The trace keeps the prompt's first 300 code units: the high half, which
+    // crosses to the host as U+FFFD.
     const long = { ...event(LONE), payload: { subject: `${'p'.repeat(299)}😀 tail`, meta: LONE } };
     const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
     const input = { ...inputOf({ source: program('  x = ai("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
@@ -343,21 +351,25 @@ describe('lone surrogates on the wire', () => {
     const result = await runMovement(input);
     expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
     const traced = result.trace.find((entry) => Reflect.get(entry, 'kind') === 'ai');
-    expect(JSON.stringify(traced)).toEqual(expect.stringContaining(`${'p'.repeat(299)}\\ud83d…`));
+    expect(JSON.stringify(traced)).toEqual(expect.stringContaining(`${'p'.repeat(299)}\ufffd…`));
     const extraction = await run({
       source: program(...ONE_COMPANY, '  fail("${found.name} ${Text.length(found.name)}")'),
       replies: [JSON.parse(`{"record":{"name":{"value":"${'n'.repeat(199)}😀\\udc00","evidence":{"item":0,"quote":"q"}}}}`)],
     });
-    // Read in one call (before: the Rust engine retried).
+    // Read in one call, the lone half as U+FFFD: still 202 code units.
     expect(extraction.asked).toHaveLength(1);
-    expect(extraction.ended).toContain(' 202');
+    expect(extraction.ended).toContain('😀\ufffd 202');
   });
 
-  it('parks a value holding them as JavaScript writes it, and the park resumes to the same ending', async () => {
+  it('parks a value holding them with U+FFFD for each lone half, and the park resumes to that ending', async () => {
     const source = program('  v = msg.`meta`', '  h = Text.split(v.`pair`, "")', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(h)}")');
     const parked = await run({ source, meta: LONE });
-    expect(parked.parks).toContain('\\ud83d');
-    expect(await resumedFrom({ source, meta: LONE }, parked.parks)).toContain('"\\udc00key": "\\ud800"');
+    // A half the run made (`split("")`) crosses into the park as U+FFFD too.
+    expect(parked.parks).toContain('"h":{"kind":"value","value":["x","\ufffd","\ufffd","y"]');
+    expect(parked.parks).not.toContain('\\ud83d');
+    const resumed = await resumedFrom({ source, meta: LONE }, parked.parks);
+    expect(resumed).toContain('"\ufffdkey": "\ufffd"');
+    expect(resumed).toMatch(/"x",\s+"\ufffd",\s+"\ufffd",\s+"y"/);
   });
 
   it.each([
