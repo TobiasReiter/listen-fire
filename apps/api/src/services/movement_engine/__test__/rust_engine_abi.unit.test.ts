@@ -87,7 +87,7 @@ describe('the Rust engine artifact', () => {
     }
   });
 
-  it('is driven by the shim against a host: the host's check fails, and its failure ends the run', async () => {
+  it('is driven by the shim against a host: the host check fails, and its failure ends the run', async () => {
     // Parses, and fails the check: no adapter `nope` in the snapshot.
     const host = makeTestHost();
     const context = await openRunContext({ host, teamId: tenantIdOf('team-1'), languageVersion: 5, spend: {} });

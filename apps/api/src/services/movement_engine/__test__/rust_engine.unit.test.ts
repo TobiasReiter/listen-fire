@@ -745,4 +745,3 @@ describe("a segment's wire", () => {
     }
   });
 });
-});
