@@ -1166,6 +1166,19 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
 
+### ev1-lfhost
+
+- `lf-host`, a new Rust binary (`crates/lf-host`), is the first slice of the one-binary `lf`. It reads
+  the same project (`lf.yaml`, the externals, the secrets) and `lf-host check` prints exactly what
+  `lf check` prints: it starts the externals, builds the same catalog byte for byte, and runs the Rust
+  checker natively. Nothing else of `lf` is in it yet; the TypeScript `lf` is unchanged and still
+  the one to use.
+- The run host's state can now live in a Rust SQLite store with the TypeScript lf's schema. The run
+  host's contract suite drives it over a stdio JSON-RPC bridge (`lf-host --contract-store`) and it
+  passes every case (30 of 30).
+- `lf check` reports a file that does not parse at the column the parser names. It reported column 1
+  for every such file.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
