@@ -115,7 +115,8 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Google Sheets adapter — append-only write target (v3-output parity).
   // Source-side triggers (snapshot/poll) are deferred — Sheets has no v3
   // input — so it appears as a target in the editor picker, not a source.
-  [GOOGLE_SHEETS_ADAPTER_TYPE]: ({ teamId, credentialsId, constructionArgs }) =>
+  // Its line in BUILTIN_MODULES says module or legacy.
+  [GOOGLE_SHEETS_ADAPTER_TYPE]: builtinAdapterFactory(GOOGLE_SHEETS_ADAPTER_TYPE, ({ teamId, credentialsId, constructionArgs }) =>
     createGoogleSheetsAdapter({
       teamId,
       credentialsId,
@@ -123,6 +124,7 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
         ? { spreadsheet: constructionArgs.spreadsheet }
         : {}),
     }),
+  ),
   // Google Drive adapter — create-only write target (v3-output parity).
   // Source-side triggers (snapshot/poll) are deferred — Drive has no v3
   // input — so it appears as a target in the editor picker, not a source.

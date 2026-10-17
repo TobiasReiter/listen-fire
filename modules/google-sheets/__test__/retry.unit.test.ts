@@ -3,12 +3,7 @@
 // firings on the first hiccup (prod report, 2026-07-06). 5xx/429/network
 // errors retry with jitter; 4xx and success return immediately.
 
-jest.mock('../../registry', () => ({ services: {} }));
-jest.mock('movement-engine/services/logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-
-import { sheetsFetchWithRetry } from '../apiClient';
+import { sheetsFetchWithRetry } from '../api_client';
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as never;

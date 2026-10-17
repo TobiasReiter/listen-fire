@@ -18,8 +18,6 @@
 // codec: an identifier is never flattened into a string and crammed onto a
 // position.
 
-import { z } from 'zod';
-
 /** Stable adapter identifier. Matches `MutationContext.source.adapterType`
  *  and the `GOOGLE_SHEETS` trigger-kind alias in the registry. */
 export const GOOGLE_SHEETS_ADAPTER_TYPE = 'google_sheets';
@@ -41,16 +39,8 @@ export interface SheetTabId {
   sheetId: number;
 }
 
-// ── Credential parser ──────────────────────────────────────────────────────
-// Mirrors `googleCredsParser` from `adapters/google/authClient` so the adapter
-// validates the decrypted payload at its own boundary. `baseUrl` is the
-// test-harness redirect slot injected by `injectFakeBaseUrl`.
+/** The one top-level type: a granted spreadsheet. */
+export const SPREADSHEET_META_TYPE = 'Spreadsheet';
 
-export const googleSheetsAdapterCredsParser = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-  expiresAt: z.number(),
-  baseUrl: z.string().url().optional(),
-});
-
-export type GoogleSheetsAdapterCreds = z.infer<typeof googleSheetsAdapterCredsParser>;
+/** Drive's mime type for a spreadsheet: the grants Sheets reads. */
+export const SPREADSHEET_MIME = 'application/vnd.google-apps.spreadsheet';

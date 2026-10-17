@@ -8,7 +8,8 @@
 // candidates → the engine appends a fresh row). `updateRecord` / `deleteRecord`
 // throw — a sheet append has no addressable row to mutate.
 
-import type { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
+import type { ModuleLog } from 'module-kit';
+import type { GoogleSheetsApiClient } from './api_client';
 import type {
   RelatedResult,
   ResolveEntityInput,
@@ -19,11 +20,10 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
-import { logger } from 'movement-engine/services/logger';
-import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
+import { containerAssociation } from 'movement-engine/public/adapter';
+import { makeStablePosition } from 'movement-engine/public/catalog';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   type SheetsTableId,
@@ -47,6 +47,7 @@ export async function createRecord(input: {
   client: GoogleSheetsApiClient;
   ids: SheetsTableId;
   fields: Record<string, unknown>;
+  log: ModuleLog;
 }): Promise<WriteResult> {
   // `ids` is the resolved structured identifier — the adapter recovered it from
   // the write's pretty type NAME via the name cache before calling here.
@@ -55,6 +56,7 @@ export async function createRecord(input: {
     spreadsheetId: input.ids.spreadsheetId,
     tableId: input.ids.tableId,
     fields: input.fields,
+    log: input.log,
   });
 }
 
@@ -69,6 +71,7 @@ export async function createSheetRow(input: {
   client: GoogleSheetsApiClient;
   ids: SheetTabId;
   fields: Record<string, unknown>;
+  log: ModuleLog;
 }): Promise<WriteResult> {
   const { spreadsheetId, sheetId } = input.ids;
   const row: Record<string, string | number | boolean | Date> = {};
@@ -85,7 +88,7 @@ export async function createSheetRow(input: {
   if (Object.keys(row).length > 0) {
     await input.client.addRow({ spreadsheetId, sheetId, row });
   } else {
-    logger.debug('[GoogleSheetsAdapter] no values to append to sheet tab', {
+    input.log.debug('[GoogleSheetsAdapter] no values to append to sheet tab', {
       spreadsheetId,
       sheetId,
     });
@@ -107,6 +110,7 @@ async function appendTableRow(input: {
   spreadsheetId: string;
   tableId: string;
   fields: Record<string, unknown>;
+  log: ModuleLog;
 }): Promise<WriteResult> {
   const columns = await input.client.getTableColumns({
     spreadsheetId: input.spreadsheetId,
@@ -122,7 +126,7 @@ async function appendTableRow(input: {
     if (value == null) continue;
     const col = columnByName.get(key);
     if (!col) {
-      logger.debug('[GoogleSheetsAdapter] field has no matching table column — skipped', {
+      input.log.debug('[GoogleSheetsAdapter] field has no matching table column — skipped', {
         tableId: input.tableId,
         fieldId: key,
       });
@@ -138,7 +142,7 @@ async function appendTableRow(input: {
       valuesByColumn,
     });
   } else {
-    logger.debug('[GoogleSheetsAdapter] no column values to append to table', {
+    input.log.debug('[GoogleSheetsAdapter] no column values to append to table', {
       spreadsheetId: input.spreadsheetId,
       tableId: input.tableId,
     });

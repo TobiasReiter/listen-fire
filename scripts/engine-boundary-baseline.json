@@ -1,5 +1,5 @@
 {
-  "total": 779,
+  "total": 765,
   "byModule": {
     "adapters/webhook/configSchema": 2,
     "lib/anthropic": 3,
@@ -21,7 +21,7 @@
     "services/context/current_id": 1,
     "services/knowledge_pipeline/output_v3/expression": 7,
     "services/knowledge_pipeline/output_v3/schemas": 18,
-    "services/logger": 228,
+    "services/logger": 224,
     "services/movement_engine/address": 1,
     "services/movement_engine/ai_tiers": 1,
     "services/movement_engine/call_depth": 1,
@@ -39,7 +39,7 @@
     "services/run_host/lease": 3,
     "services/run_host/rules": 6,
     "services/run_host/store": 4,
-    "services/translation_graph/adapter": 127,
+    "services/translation_graph/adapter": 122,
     "services/translation_graph/adapter_type": 1,
     "services/translation_graph/adapters/remote": 3,
     "services/translation_graph/awaitable": 2,
@@ -64,8 +64,8 @@
     "services/translation_graph/triggerConfig": 2,
     "services/translation_graph/triggers/listen_config": 4,
     "services/translation_graph/triggers/trigger_event": 1,
-    "services/translation_graph/triggers/types": 34,
-    "services/translation_graph/types": 86,
+    "services/translation_graph/triggers/types": 33,
+    "services/translation_graph/types": 82,
     "services/translation_graph/uniqueness": 5,
     "services/webhook_sync/remote_inbound": 1,
     "services/write_locks/write_locks": 4

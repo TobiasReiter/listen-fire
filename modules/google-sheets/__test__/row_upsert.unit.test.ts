@@ -5,7 +5,7 @@
 // columns. Authors opt in via `unique by (`Column`)` — raw row numbers are
 // never the authoring surface.
 
-import type { GoogleSheetsApiClient } from '../../../../../adapters/googleSheets/apiClient';
+import type { GoogleSheetsApiClient } from '../api_client';
 
 import {
   resolveEntity,
@@ -15,7 +15,7 @@ import {
   rowAddress,
 } from '../row';
 import { loadTableCatalog, tableTypeNamesOf, resolveTable } from '../schema_catalog';
-import { parseA1Cell } from '../../../../../adapters/googleSheets/cells';
+import { parseA1Cell } from '../cells';
 
 const COLUMNS = [
   { columnIndex: 0, columnName: 'Name', columnType: 'TEXT' },
@@ -32,6 +32,7 @@ const getTableRows = jest.fn(async () => ROWS);
 const updateTableRow = jest.fn(async () => undefined);
 const client = { getTableColumns, getTableRows, updateTableRow } as unknown as GoogleSheetsApiClient;
 const ids = { spreadsheetId: 'ss1', tableId: 't1' };
+const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -136,6 +137,7 @@ describe('loadTableCatalog — same-named tables across spreadsheets', () => {
         { spreadsheetId: 'ss-a', name: 'Pipeline Sheet' },
         { spreadsheetId: 'ss-b', name: 'Portfolio Tracker' },
       ],
+      log: quiet,
     });
     // One deduped edge name off the Spreadsheet node — no cross-spreadsheet
     // qualification…
@@ -158,6 +160,7 @@ describe('loadTableCatalog — same-named tables across spreadsheets', () => {
         listNamedRanges: async () => [],
       } as never,
       grants: [{ spreadsheetId: 'ss-a', name: 'Pipeline Sheet' }],
+      log: quiet,
     });
     expect(resolveTable(catalog, { name: 'Deals (table)', spreadsheetId: 'ss-a' })).toEqual({ spreadsheetId: 'ss-a', tableId: 't1' });
   });

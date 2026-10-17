@@ -14,18 +14,19 @@
 // over those, and an empty config yields an empty catalog (the editor still
 // lets the author paste a spreadsheet id, which `describe` resolves directly).
 
-import type { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
+import type { ModuleLog } from 'module-kit';
+import type { GoogleSheetsApiClient } from './api_client';
 import type { Expression } from '#shared/expression/types';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
-import { writableColumnNames } from '../../../../adapters/googleSheets/columns';
-import { logger } from 'movement-engine/services/logger';
+import { writableColumnNames } from './columns';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
+  SPREADSHEET_META_TYPE,
   type SheetsTableId,
   type SheetTabId,
 } from './types';
@@ -197,7 +198,7 @@ export function resolveRange(
  *  — the narrowing machinery gates members on the edge's own type
  *  (`-[s:Spreadsheet WHERE …]->`), so a second word for the same node
  *  (`GrantedSpreadsheet`, retired 2026-07-17) made every WHERE match nothing. */
-export const SPREADSHEET_META_TYPE = 'Spreadsheet';
+export { SPREADSHEET_META_TYPE };
 
 export function spreadsheetMetaEntryPoint(): SchemaEntryPoint {
   return {
@@ -503,6 +504,7 @@ export async function loadTableCatalog(input: {
   client: GoogleSheetsApiClient;
   /** The credential's granted spreadsheets (ids + remembered names). */
   grants: readonly { spreadsheetId: string; name: string | null }[];
+  log: ModuleLog;
 }): Promise<SheetsTableCatalog> {
   const merged: SheetsTableCatalog = { tables: [], tabs: [], ranges: [] };
   for (const grant of input.grants) {
@@ -515,7 +517,7 @@ export async function loadTableCatalog(input: {
       merged.tabs.push(...surface.tabs);
       merged.ranges.push(...surface.ranges);
     } catch (err) {
-      logger.warn('[GoogleSheetsAdapter.loadTableCatalog] failed to enumerate spreadsheet', {
+      input.log.warn('[GoogleSheetsAdapter.loadTableCatalog] failed to enumerate spreadsheet', {
         spreadsheetId: grant.spreadsheetId,
         error: err instanceof Error ? err.message : String(err),
       });

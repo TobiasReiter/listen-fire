@@ -9,99 +9,55 @@
 //   4. updateRecord guards non-row addresses; deleteRecord throws.
 //   5. resolveEntity — bridge-only (linked_object match, else 0 candidates).
 //
-// The API client is mocked by overriding the adapter's private getApiClient;
-// fake-channels is never hit. Module-scope deps that crash at load are stubbed
-// exactly as the Airtable / Attio adapter tests do.
-
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-
-jest.mock('movement-engine/services/logger', () => ({
-  logger: {
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  },
-}));
-
-jest.mock('../../../../../lib/recording', () => ({
-  isTestHarnessTeam: () => false,
-  injectFakeBaseUrl: (p: unknown) => p,
-}));
-
-// The real Google Sheets apiClient pulls in the google-auth-library + adapters
-// registry chain that crashes at module load in jest. The adapter under test
-// references `GoogleSheetsApiClient` as a value (constructed inside
-// getApiClient — overridden here), so stub it as a no-op class.
-jest.mock('../../../../../adapters/googleSheets/apiClient', () => ({
-  GoogleSheetsApiClient: class {},
-}));
-
-// types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
-// the leaf — the adapter consumes it only at type level.
-jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret, extend: ret, merge: ret,
-    pick: ret, omit: ret, partial: ret, describe: ret, or: ret, and: ret, min: ret,
-  });
-  return {
-    traversalStepSchema: stub,
-    fieldRefSchema: stub,
-    expressionSchema: stub,
-    filterExpressionSchema: stub,
-    webhookGraphOutputConfigSchema: stub,
-  };
-});
-
-// The granted-spreadsheets store reads from Postgres; the adapter feeds it
-// into the name → structured-id cache (listEntryPoints + describe). Mock it so
-// the table fixture's spreadsheet is granted — tests stay DB-free.
-const grantedSpreadsheetIds: string[] = [];
-jest.mock('../grants', () => ({
-  listGrantedSpreadsheets: async () =>
-    grantedSpreadsheetIds.map((id) => ({ spreadsheetId: id, name: `Sheet ${id}` })),
-  grantSpreadsheet: async () => undefined,
-}));
-
-jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret,
-  });
-  return {
-    isEdgeToEntry: (entry: { kind?: string }) => entry?.kind === 'edge_to',
-    storedUniquenessConstraintsSchema: stub,
-  };
-});
+// The API client is mocked by overriding the adapter's private getApiClient,
+// and the grants are a kv the test holds; fake-channels is never hit.
 
 import type { Expression } from '#shared/expression/types';
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { ModuleKv } from 'module-kit';
 import type {
   ResolveEntityInput,
   WriteInput,
   UpdateInput,
   DeleteInput,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
-import { GoogleSheetsAdapter } from '../index';
+import { GoogleSheetsAdapter } from '../adapter';
 import { SPREADSHEET_META_TYPE, cellAddressesInWhere } from '../schema_catalog';
 import {
   makeMetaPosition,
   makeStablePosition,
   positionData,
   positionRecordId,
-} from 'movement-engine/services/translation_graph/types';
-import { sheetCellValue } from '../../../../../adapters/googleSheets/cells';
+} from 'movement-engine/public/catalog';
+import { sheetCellValue } from '../cells';
+
+// The install's grants, as the host's kv holds them: the fixture spreadsheets
+// the tests grant, each named `Sheet <id>`. The adapter feeds them into the
+// name → structured-id cache (listEntryPoints + describe).
+const grantedSpreadsheetIds: string[] = [];
+const grantsKv: ModuleKv = {
+  get: async () => undefined,
+  set: async () => undefined,
+  delete: async () => undefined,
+  list: async (prefix) =>
+    grantedSpreadsheetIds
+      .map((id) => ({ key: `granted/${id}`, value: { mimeType: 'application/vnd.google-apps.spreadsheet', name: `Sheet ${id}` } }))
+      .filter((entry) => entry.key.startsWith(prefix)),
+};
+const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+
+/** An adapter whose client the test swaps in (`getApiClient`). */
+function sheetsAdapter(opts?: { spreadsheet?: string }): GoogleSheetsAdapter {
+  return new GoogleSheetsAdapter({
+    client: async () => {
+      throw new Error('no client: the test swaps getApiClient');
+    },
+    kv: grantsKv,
+    log: quiet,
+    tenant: 'team-sheets',
+    ...(opts?.spreadsheet !== undefined ? { spreadsheet: opts.spreadsheet } : {}),
+  });
+}
 
 
 // ---------------------------------------------------------------------------
@@ -135,11 +91,7 @@ interface FakeClientCalls {
 }
 
 function makeAdapter(opts?: { spreadsheet?: string }): { adapter: GoogleSheetsAdapter; calls: FakeClientCalls } {
-  const adapter = new GoogleSheetsAdapter({
-    teamId: 'team-sheets' as TeamId,
-    credentialsId: 'creds-1',
-    ...(opts?.spreadsheet !== undefined ? { spreadsheet: opts.spreadsheet } : {}),
-  });
+  const adapter = sheetsAdapter(opts);
   const calls: FakeClientCalls = { listTables: [], addTableRow: [] };
   const fakeClient = {
     listTables: async ({ spreadsheetId }: { spreadsheetId: string }) => {
@@ -598,10 +550,7 @@ interface TabClientCalls {
 /** An adapter over a spreadsheet with a plain tab "Sheet1" (no native Table)
  *  whose header row is Timestamp/Sender/Message/Company — the reporter's case. */
 function makeTabAdapter(options?: { headers?: string[] }): { adapter: GoogleSheetsAdapter; calls: TabClientCalls } {
-  const adapter = new GoogleSheetsAdapter({
-    teamId: 'team-sheets' as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = sheetsAdapter();
   const calls: TabClientCalls = { addRow: [] };
   const header = options?.headers ?? ['Timestamp', 'Sender', 'Message', 'Company'];
   const fakeClient = {

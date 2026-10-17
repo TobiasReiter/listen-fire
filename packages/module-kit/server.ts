@@ -413,6 +413,11 @@ async function withDeclaredFiles(adapter: Adapter, input: unknown): Promise<unkn
   const recordType: unknown = Reflect.get(input, 'recordType');
   const fields: unknown = Reflect.get(input, 'fields');
   if (typeof recordType !== 'string' || fields === null || typeof fields !== 'object' || Array.isArray(fields)) return input;
+  // No value the wire spelled as a file: nothing to make one, and no need to
+  // ask the adapter's catalog (a describe can cost the provider a fetch).
+  const spelledAsFile = (value: unknown): boolean =>
+    Array.isArray(value) ? value.some((member) => fileValueOf(member) !== undefined) : fileValueOf(value) !== undefined;
+  if (!Object.values(fields).some(spelledAsFile)) return input;
   const descriptor = await adapter.describe(recordType).catch(() => null);
   const files = new Set(
     (descriptor?.fields ?? []).filter((field) => field.kind === 'file').flatMap((field) => [field.fieldId, field.displayName]),

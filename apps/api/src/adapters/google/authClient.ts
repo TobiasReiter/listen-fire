@@ -10,32 +10,20 @@ import {
   type OAuth2Declaration,
 } from 'movement-engine/public/secrets';
 
+import { GOOGLE_DRIVE_FILE_OAUTH2, GOOGLE_DRIVE_FILE_SCOPES, GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT } from '@lf/google-sheets/google_oauth';
+
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
-const scopes = [
-  'https://www.googleapis.com/auth/drive.file',
-];
+const scopes = [...GOOGLE_DRIVE_FILE_SCOPES];
 
-/** Google's OAuth endpoints, shared by every Google credential (Sheets and
- *  Drive here, Gmail on its own scopes). */
-export const GOOGLE_OAUTH2_ENDPOINTS = {
-  authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenUrl: 'https://oauth2.googleapis.com/token',
-} as const;
-
-/** `access_type=offline` with `prompt=consent` is what makes Google issue a
- *  refresh token on every connect, not only on an account's first grant. */
-export const GOOGLE_OFFLINE_CONSENT = { access_type: 'offline', prompt: 'consent' } as const;
+// Google's endpoints and the Sheets and Drive connect declaration live with
+// the module that declares them (@lf/google-sheets); re-exported for the
+// platform's connect flows (Gmail's among them).
+export { GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT };
 
 /** How a Google (Sheets and Drive) credential is connected: what its module
- *  manifest will declare. The client goes in the form body. */
-export const googleOAuth2: OAuth2Declaration = {
-  ...GOOGLE_OAUTH2_ENDPOINTS,
-  scopes,
-  clientAuth: 'body',
-  pkce: true,
-  authorizeParams: { ...GOOGLE_OFFLINE_CONSENT },
-};
+ *  manifest declares. The client goes in the form body. */
+export const googleOAuth2: OAuth2Declaration = GOOGLE_DRIVE_FILE_OAUTH2;
 
 /** The platform's own Google app (Sheets and Drive), from the environment
  *  `services.google` is built from; undefined when it is not configured. */
