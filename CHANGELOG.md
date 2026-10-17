@@ -1365,6 +1365,22 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
   signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
 
+### ev4-google
+
+- Google Sheets is a module: `@lf/google-sheets` (`modules/google-sheets`). Nothing changes for a
+  team using it: the same requests, the same answers and the same writes (create, grant and share a
+  spreadsheet, table rows and unique-by overwrites, tab appends, named cells, cells), held by a
+  recording of the old adapter replayed against the module in process and as a process. Switching
+  back is one line (`BUILTIN_MODULES`).
+- The platform now refreshes a module's Google token itself, five minutes before it expires (as
+  google-auth-library did), once per credential however many calls find it stale, and stores it
+  back in the shape the connect flow wrote. Stored credentials are unchanged.
+- The spreadsheets a user granted are the module's own state (`ctx.kv`); on the platform that is the
+  same grants table the picker writes, so existing grants carry over untouched.
+- `serve-module` keeps a module's state in files when given `MODULE_STATE_DIR` (one file per team),
+  and serves one install's construction arguments from `MODULE_CONSTRUCTION_ARGS` (the protocol
+  carries none).
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
