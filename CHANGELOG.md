@@ -1451,8 +1451,31 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   workers can drain one Postgres store at once, and every run's work is done once.
 - A Postgres store's rows belong to one team (`--team <uuid>`, else a fixed uuid for lf). A worker
   claims only its team's work.
-- Thin for now: connections are plain (no TLS), and a run's trace count covers only the current
-  process, because the hosted schema has no trace table.
+
+### lfr-merge
+
+- The five lf-host streams (upgrade, model calls, Postgres store, secrets and credential commands,
+  serve) are one binary. Callbacks and cancel requests are store methods, served by the SQLite file
+  and by Postgres alike, so `lf-host serve`, `call` and `cancel` take `--store` too.
+- A module external no longer needs `LF_SERVE_MODULE`: lf-host finds module-kit's `serve-module`
+  in the project's node_modules, then in the workspace it was built in, and names the fix when it
+  finds none. lf.yaml's `startTimeout` (seconds, default 30; or `--start-timeout`) is how long a
+  started external has to print its listening line.
+- The Postgres store connects over TLS (rustls), verifying the server by default; `sslmode`
+  keeps its libpq meaning (`disable`, `prefer`, `require`, `verify-ca`, `verify-full`) and
+  `sslrootcert` names a CA file. lf.yaml's `store:` may read the URL from the environment
+  (`store: { env: LF_STORE_URL }`) or a secrets entry's `url` field (`store: { credential: db }`);
+  a URL with its password written in lf.yaml is refused.
+- On Postgres, a run's trace is kept where the hosted product keeps it (a movement step per
+  segment on `trigger_run.steps`, at `diagnostics.trace`), so a run another worker resumed shows
+  its whole trace.
+- `maxRunCostUsd` in lf.yaml caps what one run may spend, as the platform's
+  `MOVEMENT_MAX_RUN_COST_USD` does: a run that meets it pauses before the priced call that would go
+  over it, and `lf resume <run>` carries on with its usage reset. A callback body, which cannot
+  pause, fails at the cap instead.
+- An inbound pull cursor (a notify-then-pull source's) is kept only by the SQLite store; a
+  Postgres store refuses it, because the hosted product keeps it on a webhook subscription row lf
+  has no counterpart for.
 
 ## [v0.11.0] - 2026-10-12
 
