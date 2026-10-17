@@ -3752,7 +3752,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "unstable",
         },
         "recordType": "meta",
@@ -3779,7 +3778,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-1",
         },
@@ -3794,7 +3792,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-2",
         },
@@ -3809,7 +3806,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-3",
         },
@@ -3824,7 +3820,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-4",
         },
@@ -3839,7 +3834,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-5",
         },
@@ -3854,7 +3848,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-1",
         },
@@ -3869,7 +3862,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-2",
         },
@@ -3884,7 +3876,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-4",
         },
@@ -3899,7 +3890,6 @@ exports[`the expression tail, on both engines parks a picked record, and the eve
       "position": {
         "adapterType": "graph",
         "identity": {
-          "data": undefined,
           "kind": "stable",
           "recordId": "n-5",
         },

@@ -1,10 +1,9 @@
-// Writes and parks in the Rust engine (slice 2b), held to the TypeScript
-// engine: each program runs under MOVEMENT_ENGINE=ts and =rust against fakes
-// of its own, and the two must agree on everything a caller can see — the
+// Writes and parks in the Rust engine, the version 5 reference: each program
+// runs against fakes of its own, and everything a caller can see — the
 // result or the error, the trace, every call each adapter received in order,
 // the resolver's requests, the judge's questions, a rehearsal's captured
-// writes, the park sink's rows. A park written by either engine resumes on
-// the other.
+// writes, the park sink's rows — is held to the recorded snapshot. A park
+// resumes on the engine that wrote it.
 
 import {
   CURRENT_LANGUAGE_VERSION,
@@ -15,7 +14,7 @@ import {
 } from 'movement-lang';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
-import { tenantIdOf } from 'engine-contracts';
+import { tenantIdOf, type AnyParkedScopeState } from 'engine-contracts';
 import { hostRecordingSchema, type HostRecording } from 'engine-contracts/conformance';
 
 import { RunCostCapExceeded } from 'movement-engine/lib/run_cost';
@@ -234,7 +233,7 @@ interface Case {
   /** The judge, given the questions it is asked. */
   judge?: (asked: unknown[]) => NonNullable<TestHostOverrides['llm']>['arbitrateEntities'];
   /** Resume this state rather than run. */
-  resume?: ParkedScopeState;
+  resume?: AnyParkedScopeState;
   /** Resume re-entering the parked statement (an operator's limit resume). */
   reenter?: boolean;
   costCapMicrodollars?: number;
@@ -245,8 +244,8 @@ interface Case {
   /** The movement fired, when the program holds more than one. */
   movementName?: string;
   /** The first language version whose checker refuses the program, so the
-   *  run ends at its check on either engine and never reaches the Rust
-   *  one (absent: no version's does). A case says so, or fails. */
+   *  run ends at its check and never reaches the engine (absent: no
+   *  version's does). A case says so, or fails. */
   endsAtCheckFrom?: LanguageVersion;
   /** Which of the sink's suspension methods it has: both by default. */
   suspends?: 'both' | 'suspension_only' | 'neither';
@@ -453,7 +452,7 @@ describe('the answers a segment sends the Rust engine', () => {
 });
 
 describe('writes in the Rust engine', () => {
-  it('creates, pipes the handle into a linked write and a second create, as the TypeScript engine does', async () => {
+  it('creates, pipes the handle into a linked write and a second create', async () => {
     const { rust } = await onRust({
       source: DEALFLOW,
       event: webhook({ subject: 'Acme', text: 'acme.dev' }),
@@ -555,12 +554,10 @@ describe('writes in the Rust engine', () => {
       },
       keep: (recording) => kept.push(recording),
     });
-    for (const run of [rust, rust]) {
-      expect(run.result?.writes.map((w) => [w.outcome, Object.hasOwn(w, 'old')])).toEqual([
-        ['update', false],
-        ['update', false],
-      ]);
-    }
+    expect(rust.result?.writes.map((w) => [w.outcome, Object.hasOwn(w, 'old')])).toEqual([
+      ['update', false],
+      ['update', false],
+    ]);
     expect(rust.result?.writes[1]?.writtenValues).toEqual({ stage: 'matched' });
     expect(
       kept.map(
@@ -601,7 +598,7 @@ describe('writes in the Rust engine', () => {
     });
   });
 
-  it('asks the judge among several candidates, and records it unavailable as the TypeScript engine does', async () => {
+  it('asks the judge among several candidates, and records it unavailable', async () => {
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  write crm-[:companies]-> { unique by (FUZZY `name`) name: msg.`subject` }',
@@ -627,7 +624,7 @@ describe('writes in the Rust engine', () => {
           languageVersion: input.languageVersion,
           budget: input.budget,
         });
-        // What the judge's model call spent, charged to the run by either engine.
+        // What the judge's model call spent, charged to the run.
         return {
           index,
           ...(unavailable !== undefined ? { judgeUnavailable: unavailable } : {}),
@@ -761,7 +758,7 @@ describe('writes in the Rust engine', () => {
       '}',
     ].join('\n');
     const { rust } = await onRust({ source, event: webhook({ subject: 'Acme' }) });
-    // The park holds the graph as the TypeScript engine holds it: `owner` an
+    // The park holds the graph as it is: `owner` an
     // edge landing the handle, not a field. `co` and the edge are one write
     // handle under two names, so the park numbers it once (B7): the edge
     // refers to the number `co` holds.
@@ -774,7 +771,7 @@ describe('writes in the Rust engine', () => {
     expect(g?.kind === 'nodePosition' && 'owner' in g.fields).toBe(false);
   });
 
-  it('fails a delete of the event or of a value as the TypeScript engine fails it: no record position', async () => {
+  it('fails a delete of the event or of a value: no record position', async () => {
     // Version 5 (Dancing Wren) refuses both at the check
     // (MOV_DELETE_NOT_DECLARED, MOV_DELETE_NOT_RECORD).
     for (const body of ['  delete msg', '  x = "a"\n  delete x']) {
@@ -787,8 +784,8 @@ describe('writes in the Rust engine', () => {
   });
 
   // Henry's ruling (PLAN-08A group F′): a `Date` a host answers is its ISO
-  // text on both engines, so a date-typed field runs on the Rust one too.
-  it('reads a `Date` the event or an adapter answers as its ISO text on both engines: interpolated, compared, parked', async () => {
+  // text, so a date-typed field runs on the Rust engine.
+  it('reads a `Date` the event or an adapter answers as its ISO text: interpolated, compared, parked', async () => {
     const at = new Date('2026-01-01T09:00:00.000Z');
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
@@ -807,12 +804,10 @@ describe('writes in the Rust engine', () => {
       event: webhook({ when: at }),
       attio: { landings: { 'co-1': { name: 'Acme', updated: at } } },
     });
-    for (const run of [rust, rust]) {
-      const written = JSON.stringify(run.attio.filter(([method]) => method === 'createRecord'));
-      expect(written).toContain('Acme updated 2026-01-01T09:00:00.000Z');
-      expect(written).toContain('at 2026-01-01T09:00:00.000Z');
-      expect(holdsDate(run.parks)).toBe(false);
-    }
+    const written = JSON.stringify(rust.attio.filter(([method]) => method === 'createRecord'));
+    expect(written).toContain('Acme updated 2026-01-01T09:00:00.000Z');
+    expect(written).toContain('at 2026-01-01T09:00:00.000Z');
+    expect(holdsDate(rust.parks)).toBe(false);
     expect(JSON.stringify(rust.parks.map((p) => p.state))).toMatchSnapshot();
   });
 });
@@ -931,7 +926,7 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
     });
   });
 
-  it('fails as the TypeScript engine fails: recursion before version 3, the depth limit from it, a value passed to a position', async () => {
+  it('fails on recursion past the depth limit, and on a value passed to a position', async () => {
     const recursive = intake(
       '  write crm-[:companies]-> { name: msg.`subject` }',
       '  intake(msg: msg)',
@@ -946,7 +941,7 @@ describe('calls of the movements a program declares, in the Rust engine', () => 
       else process.env.MOVEMENT_MAX_CALL_DEPTH = previous;
     }
     // A value passed to a position parameter: the checker refuses it
-    // (MOV_CALL_ARG_TYPE), so the run ends at its check on either engine.
+    // (MOV_CALL_ARG_TYPE), so the run ends at its check.
     const position = [
       'movement persist(c: <crm-[:company]->>) {',
       '  write c-[:notes]-> { body: "x" }',
@@ -1178,9 +1173,9 @@ describe('the graphs a run builds, in the Rust engine', () => {
     });
   });
 
-  it('fails where the TypeScript engine fails: a target WHERE, an edge the node lacks (the checker, before either engine), a bare name in a hop WHERE over landings before 5 (in the engine)', async () => {
+  it('fails a target WHERE and an edge the node lacks at the check; a bare name in a hop WHERE over landings runs', async () => {
     // The checker refuses the first four (MOV_TARGET_WHERE_LOCAL,
-    // MOV_NODE_EDGE_UNDECLARED): each ends at its check on either engine.
+    // MOV_NODE_EDGE_UNDECLARED): each ends at its check.
     for (const [lines, endsAtCheckFrom] of [
       [
         [
@@ -1222,7 +1217,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
     expect(rust.failed).toBe(false);
   });
 
-  it('parks a node with a declared edge as the TypeScript engine does, and resumes it on either engine', async () => {
+  it('parks a node with a declared edge, and resumes it', async () => {
     const source = program([
       '  deduped = node { companies: <Company> }',
       '  a = write deduped-[:companies]-> { unique by (`name`) name: msg.`subject` }',
@@ -1242,9 +1237,7 @@ describe('the graphs a run builds, in the Rust engine', () => {
     expect(text(rust)).toContain(
       '"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}',
     );
-    for (const parked of [rust, rust]) {
-      await onRust({ source, event, resume: JSON.parse(text(parked)) as ParkedScopeState });
-    }
+    await onRust({ source, event, resume: JSON.parse(text(rust)) as ParkedScopeState });
   });
 });
 
@@ -1262,8 +1255,8 @@ describe('parks in the Rust engine', () => {
   ].join('\n');
 
   it('parks a dict holding a handle, whose kind names returned records, as the dict holding a record it is', async () => {
-    // Data is never an engine object (Henry's ruling, 2026-10-10), on
-    // either engine: the dict parks as the dict it is.
+    // Data is never an engine object (Henry's ruling, 2026-10-10): the dict
+    // parks as the dict it is.
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  co = write crm-[:companies]-> { unique by (`name`) name: msg.`subject` }',
@@ -1273,20 +1266,18 @@ describe('parks in the Rust engine', () => {
       '}',
     ].join('\n');
     const { rust } = await onRust({ source, event: webhook({ subject: 'Acme' }) });
-    for (const run of [rust, rust]) {
-      expect(run.parks).toHaveLength(1);
-      const state = JSON.parse(JSON.stringify(run.parks[0]?.state)) as ParkedScopeState;
-      const held = JSON.stringify(
-        state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined),
-      );
-      expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
-      // `co` and the dict's entry are one handle under two names (B7): the
-      // entry refers to the number `co` holds.
-      expect(held).toContain('"kind":"handleRef"');
-    }
+    expect(rust.parks).toHaveLength(1);
+    const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
+    const held = JSON.stringify(
+      state.scopeChain.map((scope) => scope.bindings.held).find((b) => b !== undefined),
+    );
+    expect(held).toMatch(/^\{"kind":"recordValue","value":\{"kind":"map",/);
+    // `co` and the dict's entry are one handle under two names (B7): the
+    // entry refers to the number `co` holds.
+    expect(held).toContain('"kind":"handleRef"');
   });
 
-  it('parks at a sleep with the state the TypeScript engine writes', async () => {
+  it('parks at a sleep with the state the engine writes', async () => {
     const { rust } = await onRust({ source: PARKS, event: webhook({ subject: 'Acme' }) });
     expect(rust.result).toMatchObject({ parked: true, parkedAddress: 's2.b0.s0' });
     expect(rust.parks[0]?.address).toBe('s2.b0.s0');
@@ -1294,7 +1285,7 @@ describe('parks in the Rust engine', () => {
     expect(JSON.stringify(rust.parks[0]?.state)).toMatchSnapshot();
   });
 
-  it('parks a program with file-level declarations as the TypeScript engine does, and resumes it on either engine', async () => {
+  it('parks a program with file-level declarations, and resumes it', async () => {
     // Task 2: a plugin import, a type, a shape and two file-level values,
     // the shape's description reading one of them. Each binds at file scope
     // and runs nothing; the body reads the values.
@@ -1327,13 +1318,11 @@ describe('parks in the Rust engine', () => {
       Lead: { kind: 'shape', name: 'Lead' },
       tag: { kind: 'value', value: 'ROUTE INFRA!' },
     });
-    for (const parked of [rust, rust]) {
-      const resume = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-      const resumed = await onRust({ source, event, resume });
-      expect(resumed.rust.result?.writes.map((w) => w.writtenValues)).toEqual([
-        { name: 'Acme ROUTE INFRA!', stage: 'route infra' },
-      ]);
-    }
+    const resume = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
+    const resumed = await onRust({ source, event, resume });
+    expect(resumed.rust.result?.writes.map((w) => w.writtenValues)).toEqual([
+      { name: 'Acme ROUTE INFRA!', stage: 'route infra' },
+    ]);
   });
 
   it('a rehearsal fast-forwards past a sleep', async () => {
@@ -1354,7 +1343,7 @@ describe('parks in the Rust engine', () => {
     expect(rust.result?.writes.map((w) => w.recordType)).toEqual(['note', 'company']);
   });
 
-  it('parks and resumes a bound block that returned nothing (no returned records), on either engine', async () => {
+  it('parks and resumes a bound block that returned nothing (no returned records)', async () => {
     const source = [
       'movement m(msg: <inbox-[:message]->>) {',
       '  rows = crm-[c:companies]-> {',
@@ -1370,13 +1359,11 @@ describe('parks in the Rust engine', () => {
     expect(JSON.stringify(rust.parks[0]?.state)).toContain(
       '"rows":{"kind":"positions","landings":[]}',
     );
-    for (const parked of [rust, rust]) {
-      const state = JSON.parse(JSON.stringify(parked.parks[0]?.state)) as ParkedScopeState;
-      const resumed = await onRust({ source, event, resume: state });
-      // An empty list, written to a field the adapter does not describe as
-      // many: the joined text of nothing.
-      expect(resumed.rust.result?.writes[0]?.writtenValues).toEqual({ name: 'after', blob: '' });
-    }
+    const state = JSON.parse(JSON.stringify(rust.parks[0]?.state)) as ParkedScopeState;
+    const resumed = await onRust({ source, event, resume: state });
+    // An empty list, written to a field the adapter does not describe as
+    // many: the joined text of nothing.
+    expect(resumed.rust.result?.writes[0]?.writtenValues).toEqual({ name: 'after', blob: '' });
   });
 
   describe('the park state of every binding a record verb or a bound block makes', () => {
@@ -1428,7 +1415,7 @@ describe('parks in the Rust engine', () => {
       ],
     ];
     for (const [what, lines, attio] of cases) {
-      it(`${what}: parked as one string on both engines, resumed by either from either`, async () => {
+      it(`${what}: parked as one string, and resumed`, async () => {
         const source = ['movement m(msg: <inbox-[:message]->>) {', ...lines, '}'].join('\n');
         const event = webhook({ subject: 'Acme' });
         const { rust } = await onRust({
@@ -1439,18 +1426,14 @@ describe('parks in the Rust engine', () => {
         expect(rust.result).toMatchObject({ parked: true });
         const text = (o: Outcome) => JSON.stringify(o.parks[0]?.state);
         expect(text(rust)).toMatchSnapshot();
-        const fromTs = JSON.parse(text(rust)) as ParkedScopeState;
-        const fromRust = JSON.parse(text(rust)) as ParkedScopeState;
-        for (const state of [fromTs, fromRust]) {
-          const resumed = await onRust({
-            source,
-            event,
-            attio,
-            resume: state,
-          });
-          expect(resumed.rust.result?.parked).toBeUndefined();
-          expect(JSON.stringify(resumed.rust.result)).toMatchSnapshot();
-        }
+        const resumed = await onRust({
+          source,
+          event,
+          attio,
+          resume: JSON.parse(text(rust)),
+        });
+        expect(resumed.rust.result?.parked).toBeUndefined();
+        expect(JSON.stringify(resumed.rust.result)).toMatchSnapshot();
       });
     }
   });
@@ -1500,8 +1483,8 @@ describe('parks in the Rust engine', () => {
     const event = webhook({ subject: 'Acme' });
     // A block's meta edges bound as a name: the one kind besides a body's
     // own shape (the crate's tests) this engine does not rebuild.
-    const state: ParkedScopeState = {
-      version: 1,
+    const state: AnyParkedScopeState = {
+      version: 2,
       address: 's2.b0.s0',
       bindingName: null,
       scopeChain: [{ bindings: {} }, { bindings: { x: { kind: 'blockMeta', edges: {} } } }],
@@ -1567,7 +1550,7 @@ describe('the cost cap in the Rust engine', () => {
     ...c,
   });
 
-  it('pauses where the TypeScript engine pauses: the same pause, suspension, trace and partial effects', async () => {
+  it('pauses at the cap: the pause, suspension, trace and partial effects', async () => {
     const { rust } = await onRust(capped());
     // The first judge took the run past its cap and its write stands; the
     // second was refused, and the run suspended just before its statement.
@@ -1584,7 +1567,7 @@ describe('the cost cap in the Rust engine', () => {
     // Key for key, in order.
     expect(JSON.stringify(rust.suspensions[0]?.state)).toMatchSnapshot();
     expect(rust.suspensions[0]?.state).toMatchObject({
-      version: 1,
+      version: 2,
       address: 's2.b0.s0',
       bindingName: null,
       suspended: true,
@@ -1607,7 +1590,7 @@ describe('the cost cap in the Rust engine', () => {
     });
   });
 
-  it('runs a capped run that could suspend inside a call or holding a kept walk as the TypeScript engine runs it', async () => {
+  it('runs a capped run that could suspend inside a call or holding a kept walk', async () => {
     const callee = [
       'movement save(t: <text>) {',
       '  write crm-[:companies]-> { unique by (`name`) name: t }',
@@ -1687,7 +1670,7 @@ describe('the cost cap in the Rust engine', () => {
     ]);
   });
 
-  it('pauses at a capped PLAIN write whose search finds several candidates, as the TypeScript engine does', async () => {
+  it('pauses at a capped PLAIN write whose search finds several candidates', async () => {
     // No `unique by`: the descriptor's fuzzy resolution searches by name, two
     // candidates come back, and the judge decides — a priced call all the same.
     const { rust } = await onRust(
