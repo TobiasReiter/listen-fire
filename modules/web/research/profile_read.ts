@@ -20,10 +20,8 @@
 import type { ProfileIdentity } from '../linkedin_identity';
 import type { SearchHit } from '../search_hygiene';
 
-import { services } from '../../../../../adapters/registry';
-import { SECOND } from '../../../../../constants';
-import { logger } from 'movement-engine/services/logger';
-import { describeError } from '../fetch_resource';
+import { describeError } from '../addresses';
+import { logger, SECOND, tools } from '../tools';
 import { canonicalProfileUrl, isThin, matchesSlug, readTitle } from '../linkedin_identity';
 
 /** Only spent when the index gave a thin headline, and it has to fit inside
@@ -68,9 +66,10 @@ export async function readProfile(args: {
   }
 
   let text: string | null = null;
-  if (isThin(identity) && services.linkedin) {
+  const profiles = tools().profiles;
+  if (isThin(identity) && profiles) {
     try {
-      const profile = await services.linkedin.getProfileTextByUrl(profileUrl, {
+      const profile = await profiles.getProfileTextByUrl(profileUrl, {
         maxWaitMs: PROFILE_WAIT_MS,
       });
       const read = profile?.text?.trim();

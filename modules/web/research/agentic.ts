@@ -33,8 +33,8 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
-import type { PageFetchResult, WebSearchResult, WebToolEvent } from '../../../../../lib/anthropic';
+import type { ChatModelName } from 'movement-engine/public/anthropic';
+import type { PageFetchResult, WebSearchResult, WebToolEvent } from 'movement-engine/public/anthropic';
 import type { SearchHit } from '../search_hygiene';
 import type { ProfileRead } from './profile_read';
 import type {
@@ -47,21 +47,12 @@ import type {
   ResearchUsage,
 } from './contract';
 
-import {
-  anthropicChatStructured,
-  anthropicWebChat,
-  defaultPageReader,
-  meterAnthropicUsage,
-} from '../../../../../lib/anthropic';
-import { runFields } from '../../../../../lib/llm_usage';
-import { resolveModel } from 'movement-engine/lib/models/map';
-import { logger } from 'movement-engine/services/logger';
-import { missingBrightDataVars, ScraperService } from '../../../../scraper';
-import { WebSearchService } from '../../../../web_search';
-import { describeError } from '../fetch_resource';
+import { defaultPageReader, meterAnthropicUsage } from 'movement-engine/public/anthropic';
+import { resolveModel } from 'movement-engine/public/anthropic';
+import { describeError, isLinkedInUrl } from '../addresses';
 import { profileSlug } from '../linkedin_identity';
 import { runSearch } from '../search_hygiene';
-import { isLinkedInUrl } from '../url-fetch';
+import { anthropicChatStructured, anthropicWebChat, logger, runFields, tools } from '../tools';
 import {
   budgetOf,
   DEFAULT_RESEARCH_MODEL,
@@ -277,7 +268,7 @@ async function scrapePage(url: string): Promise<PageFetchResult> {
   // one; the profile the entry carried has already been read above.
   if (isLinkedInUrl(url)) return { error: 'linkedin.com cannot be read' };
   try {
-    const text = await ScraperService.getWebsite(url, { provider: 'brightdata' });
+    const text = await tools().scrape(url);
     return text.trim() ? { text } : { error: 'the page had no readable text' };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
@@ -289,7 +280,7 @@ async function scrapePage(url: string): Promise<PageFetchResult> {
  *  failure is reported to the model rather than read as no results. */
 async function searchWeb(query: string): Promise<WebSearchResult> {
   try {
-    const found = await WebSearchService.search(query);
+    const found = await tools().search(query);
     return {
       hits: (found.items ?? []).flatMap((item) =>
         item.link ? [{ url: item.link, title: item.title ?? '', snippet: item.snippet ?? '' }] : [],
@@ -376,7 +367,7 @@ async function researchWithin(
   // nothing can answer one, would discover that one failed read at a time and
   // report it as a subject with no signal.
   const pageReader = defaultPageReader(resolveModel(model).provider);
-  const missingFetcher = pageReader === 'own' ? missingBrightDataVars() : [];
+  const missingFetcher = pageReader === 'own' ? tools().missingScraperSettings() : [];
   if (missingFetcher.length > 0) {
     return pageFetcherUnconfigured({ missing: missingFetcher, usage, name, run });
   }

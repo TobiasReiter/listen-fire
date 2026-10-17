@@ -1548,6 +1548,22 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   The mailbox allowlist is checked before the module is handed anything.
 - In the dev loop a delegated Gmail mailbox now authenticates to the fake with a placeholder bearer
   token instead of an API key parameter.
+### ev4-plugins
+
+- The six bundled plugins are one module, `@lf/web` (`modules/web`). Nothing changes for a team
+  using them: the same model calls, searches, scrapes and stored documents, in the same order, and
+  the same answers, held by a recording of the old plugins replayed against the module in process
+  and as a process. Switching one plugin back is one line (`BUILTIN_MODULES`).
+- A movement may import them as the package, as well as one by one:
+  ``import { `@lf/web` as web } from plugins``, then `web.fetchUrl(u)`. Existing imports are
+  unchanged.
+- `lf`: `@lf/web` runs as any plugin external does (`module:` naming `modules/web`). Off the
+  platform it reads models through Anthropic and the web through Bright Data, on a `web` credential
+  whose fields are all optional; with no scrape provider it reads a page with a plain request. It
+  has no profile reader, gated-document browser or document store there, so a LinkedIn address or
+  a gated deck comes back as nothing.
+- `examples/lf-custom-plugin`: a plugin module of your own, in one file with no imports, dropped
+  into a project's externals.
 
 ## [v0.11.0] - 2026-10-12
 

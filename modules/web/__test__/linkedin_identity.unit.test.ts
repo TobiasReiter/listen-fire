@@ -1,4 +1,4 @@
-import { readTitle } from './linkedin_identity';
+import { readTitle } from '../linkedin_identity';
 
 describe('readTitle', () => {
   it('strips a localised suffix: Norwegian', () => {

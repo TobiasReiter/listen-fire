@@ -8,9 +8,8 @@
 // plugin-specific — an anchor is an anchor — so they live here and each
 // plugin decides only what its own anchors ARE.
 
-import { logger } from 'movement-engine/services/logger';
-import { WebSearchService } from '../../../web_search';
-import { describeError } from './fetch_resource';
+import { describeError } from './addresses';
+import { logger, tools } from './tools';
 
 export type SearchHit = { title: string; snippet: string; link: string };
 
@@ -83,7 +82,7 @@ export async function runSearch(
   run: Record<string, unknown>,
 ): Promise<SearchHit[]> {
   try {
-    const results = await WebSearchService.search(query);
+    const results = await tools().search(query);
     const hits = (results.items ?? []).flatMap((item) =>
       item.link ? [{ title: item.title ?? '', snippet: item.snippet ?? '', link: item.link }] : [],
     );

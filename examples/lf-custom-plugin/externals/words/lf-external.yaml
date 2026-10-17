@@ -1,0 +1,6 @@
+# A custom plugin module, served by serve-module as the bundled ones are.
+# Drop this folder into a project's externals (and movements/initials.mvt
+# into its movements) — the example project, examples/lf-acme, for one.
+name: words
+kind: plugin
+module: ./words.ts

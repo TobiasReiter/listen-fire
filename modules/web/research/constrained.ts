@@ -22,7 +22,7 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatModelName } from 'movement-engine/public/anthropic';
 import type { ProfileIdentity } from '../linkedin_identity';
 import type { SearchHit } from '../search_hygiene';
 import type {
@@ -35,13 +35,9 @@ import type {
   ResearchUsage,
 } from './contract';
 
-import { SECOND } from '../../../../../constants';
-import { anthropicChatStructured, meterAnthropicUsage } from '../../../../../lib/anthropic';
-import { DocumentSourceService } from '../../../../../lib/document_sources';
-import { runFields } from '../../../../../lib/llm_usage';
-import { looksLikeNonHtmlAddress } from '../../../../../lib/utils/url';
-import { logger } from 'movement-engine/services/logger';
-import { describeError, fetchWithTimeout } from '../fetch_resource';
+import { meterAnthropicUsage } from 'movement-engine/public/anthropic';
+import { describeError, looksLikeNonHtmlAddress } from '../addresses';
+import { anthropicChatStructured, logger, runFields, SECOND, tools } from '../tools';
 import { canonicalProfileUrl, isLinkedInLink, profileSlug } from '../linkedin_identity';
 import {
   addHit,
@@ -111,7 +107,7 @@ interface Evidence {
  *  the shared fetch would route one into the document pipeline before the
  *  scraper's own file guard is reached. */
 function unreadableAddress(link: string): string | null {
-  if (DocumentSourceService.isSupportedUrl(link)) return 'a document source, not a page';
+  if (tools().isDocumentSource(link)) return 'a document source, not a page';
   if (looksLikeNonHtmlAddress(link)) return 'an address that names a file';
   return null;
 }
@@ -708,7 +704,7 @@ async function fetchExcerpt(url: string, run: Record<string, unknown>): Promise<
     }, PAGE_FETCH_TIMEOUT_MS);
   });
   try {
-    const fetched = await Promise.race([fetchWithTimeout(url, null), abandon]);
+    const fetched = await Promise.race([tools().fetchResource(url, null), abandon]);
     const content = fetched?.content?.trim();
     if (!content) return null;
     logger.info(`${LOG} Read a page`, { url, chars: content.length, ...run });

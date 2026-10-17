@@ -1,0 +1,11 @@
+import { acme_crm } from adapters
+import { `@acme/words` as words } from plugins
+import { acme } from credentials
+
+crm = connect acme_crm using acme
+
+function tag(company: <crm-[:Company]->>) {
+  write crm-[:Company]-> { Name: "${company.Name} (${words.initials(company.Name)})" }
+}
+
+listen to crm { events: ["company.created"] } fire tag

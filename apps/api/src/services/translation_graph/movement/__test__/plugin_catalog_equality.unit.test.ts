@@ -80,3 +80,31 @@ describe('the plugin catalog the checkers see', () => {
     expect(observed).toEqual(recorded);
   });
 });
+
+// The bundled plugins are one module, `@lf/web` (modules/web): a movement
+// imports them one by one, as it always has, or as the package, and both
+// checkers read the same members off the hosted catalog.
+describe('the bundled plugins as a package', () => {
+  const program = (imports: string, call: string) => `${imports}
+function m(u: <text>) {
+  r = ${call}
+  return r
+}
+`;
+
+  it.each([
+    ['one by one', program('import { fetchUrl } from plugins', 'fetchUrl(u)')],
+    ['as the package', program('import { `@lf/web` as web } from plugins', 'web.fetchUrl(u)')],
+  ])('checks clean %s, in both checkers', (_how, source) => {
+    const catalog = staticCatalogFromManifests();
+    const snapshot = staticCatalogSnapshot();
+    expect(diagnoseMovementSource(source, { catalog, languageVersion: 5 }).diagnostics).toEqual([]);
+    expect(diagnoseMovementSource(source, { catalog, languageVersion: 5, snapshot }).diagnostics).toEqual([]);
+  });
+
+  it('names its members when one is missing', () => {
+    const source = program('import { `@lf/web` as web } from plugins', 'web.whisper(u)');
+    const messages = diagnoseMovementSource(source, { catalog: staticCatalogFromManifests(), languageVersion: 5 }).diagnostics.map((d) => d.message);
+    expect(messages.join('\n')).toMatch(/has no member `whisper`.*fetchUrl/);
+  });
+});

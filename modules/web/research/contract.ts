@@ -9,10 +9,10 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatModelName } from 'movement-engine/public/anthropic';
 
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { describeError } from '../fetch_resource';
+import { neverAsAny } from 'movement-lang';
+import { describeError } from '../addresses';
 
 /** One entry to research: whatever it carries, plus what the caller wants to
  *  know. Everything but the name is optional, because the case this is built

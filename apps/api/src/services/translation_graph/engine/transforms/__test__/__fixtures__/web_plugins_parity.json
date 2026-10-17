@@ -1,0 +1,649 @@
+[
+  {
+    "name": "fetch-url: a page",
+    "calls": [
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://acme-rockets.example",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "RawTextService.getOrCreateFromContent",
+        "args": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production."
+      },
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://acme-rockets.example",
+          "url": "https://acme-rockets.example",
+          "rawTextId": "raw-1",
+          "retrievedAt": "<date>",
+          "isDemo": false,
+          "isPrivate": true
+        }
+      }
+    ],
+    "result": {
+      "text": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production.",
+      "records": [
+        {
+          "name": "https://acme-rockets.example",
+          "url": "https://acme-rockets.example",
+          "text": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production."
+        }
+      ],
+      "outcome": "fetched"
+    }
+  },
+  {
+    "name": "fetch-url: a page too thin to keep",
+    "calls": [
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://thin.example",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      }
+    ],
+    "result": {
+      "outcome": "fetch_failed"
+    }
+  },
+  {
+    "name": "fetch-url: a gated deck stored as a document",
+    "calls": [
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://docsend.com/view/abc",
+          "url": "https://docsend.com/view/abc",
+          "isPrivate": true,
+          "metadata": {
+            "email": "ada@vc.example",
+            "password": "pw1"
+          }
+        }
+      },
+      {
+        "service": "pitchDeckUrlTool",
+        "args": {
+          "url": "https://docsend.com/view/abc",
+          "email": "ada@vc.example",
+          "password": "pw1"
+        }
+      },
+      {
+        "service": "ResourceService.update",
+        "args": {
+          "id": "resource-1",
+          "patch": {
+            "documentId": "doc-7"
+          }
+        }
+      },
+      {
+        "service": "extractDocumentTextTool",
+        "args": {
+          "documentId": "doc-7"
+        }
+      },
+      {
+        "service": "ResourceService.update",
+        "args": {
+          "id": "resource-1",
+          "patch": {
+            "rawTextId": "raw-2"
+          }
+        }
+      },
+      {
+        "service": "RawTextService.getById",
+        "args": "raw-2"
+      },
+      {
+        "service": "DocumentService.getById",
+        "args": "doc-7"
+      }
+    ],
+    "result": {
+      "text": "Acme Rockets — Series A deck. Market, team, traction.",
+      "records": [
+        {
+          "name": "https://docsend.com/view/abc",
+          "url": "https://docsend.com/view/abc",
+          "text": "Acme Rockets — Series A deck. Market, team, traction.",
+          "file": {
+            "__brand": "FileRef",
+            "name": "Acme deck",
+            "source": {
+              "store": "document",
+              "objectUri": "s3://docs/doc-7.pdf"
+            }
+          }
+        }
+      ],
+      "outcome": "fetched"
+    }
+  },
+  {
+    "name": "fetch-url: a profile address",
+    "calls": [
+      {
+        "service": "linkedin.getProfileTextByUrl",
+        "args": {
+          "url": "https://www.linkedin.com/in/ada-lovelace",
+          "budget": {
+            "maxWaitMs": 15000
+          }
+        }
+      },
+      {
+        "service": "RawTextService.getOrCreateFromContent",
+        "args": "Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites."
+      },
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://www.linkedin.com/in/ada-lovelace",
+          "url": "https://www.linkedin.com/in/ada-lovelace",
+          "rawTextId": "raw-1",
+          "retrievedAt": "<date>",
+          "isDemo": false,
+          "isPrivate": false
+        }
+      },
+      {
+        "service": "RawTextService.getById",
+        "args": "raw-1"
+      }
+    ],
+    "result": {
+      "text": "Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites.",
+      "records": [
+        {
+          "name": "https://www.linkedin.com/in/ada-lovelace",
+          "url": "https://www.linkedin.com/in/ada-lovelace",
+          "text": "Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites."
+        }
+      ],
+      "outcome": "fetched"
+    }
+  },
+  {
+    "name": "fetch-url: no url",
+    "calls": [],
+    "result": {}
+  },
+  {
+    "name": "vc-url-retrieval: a deck and a site among a pixel",
+    "calls": [
+      {
+        "service": "anthropicChat",
+        "args": {
+          "system": "Classify a URL based on its surrounding context in an email/message.\n\nReturn JSON: { \"type\": \"<type>\", \"password\": \"<password or null>\" }\n\n## Types\n\n- \"pitch_deck\" — links to pitch decks, presentations, slide decks (Docsend, Papermark, Google Slides, .pdf/.pptx links described as decks)\n- \"document\" — shared documents, data rooms, file-sharing links (Google Drive, Dropbox, Notion) that aren't pitch decks\n- \"company_website\" — company homepages, landing pages, product pages\n- \"profile\" — social media profiles (LinkedIn, Twitter, etc.)\n- \"article\" — news articles, blog posts, investor updates\n- \"tracking_pixel\" — 1x1 images, beacons, email open trackers, analytics pixels. Look for: img tags with tiny dimensions, display:none, alt=\"beacon\"/\"pixel\", or URLs in hidden image elements\n- \"unsubscribe\" — opt-out links, email preference management, \"manage subscription\" links\n- \"calendar\" — scheduling links (Calendly, cal.com, meeting invites)\n- \"image\" — visible images, logos, banners (.gif/.png/.jpg that aren't tracking pixels)\n- \"irrelevant\" — anything else not worth fetching\n\n## Password extraction\n\nIf the context mentions a password, passcode, or access code near this URL, extract it. Formats include \"Password: X\", \"pw X\", \"passcode is X\", \"code: X\". Strip any formatting markers. If none, return null.\n\n## Rules\n\nClassify based on what the CONTEXT tells you the link contains, not just the URL structure. A tracking redirect URL wrapping a pitch deck (context says \"deck attached\") is a \"pitch_deck\". The same redirect domain used as a hidden img src is a \"tracking_pixel\". Context is authoritative.",
+          "userMessage": "URL: https://docsend.com/view/abc\n\nContext:\nHi — our deck is at https://docsend.com/view/abc (passcode: rocket) and the site is https://acme-rockets.example. <img src=\"https://track.example/p.gif\" width=1>",
+          "model": "claude-haiku-4-5-20251001",
+          "label": "knowledge_plugin_url_classify"
+        }
+      },
+      {
+        "service": "anthropicChat",
+        "args": {
+          "system": "Classify a URL based on its surrounding context in an email/message.\n\nReturn JSON: { \"type\": \"<type>\", \"password\": \"<password or null>\" }\n\n## Types\n\n- \"pitch_deck\" — links to pitch decks, presentations, slide decks (Docsend, Papermark, Google Slides, .pdf/.pptx links described as decks)\n- \"document\" — shared documents, data rooms, file-sharing links (Google Drive, Dropbox, Notion) that aren't pitch decks\n- \"company_website\" — company homepages, landing pages, product pages\n- \"profile\" — social media profiles (LinkedIn, Twitter, etc.)\n- \"article\" — news articles, blog posts, investor updates\n- \"tracking_pixel\" — 1x1 images, beacons, email open trackers, analytics pixels. Look for: img tags with tiny dimensions, display:none, alt=\"beacon\"/\"pixel\", or URLs in hidden image elements\n- \"unsubscribe\" — opt-out links, email preference management, \"manage subscription\" links\n- \"calendar\" — scheduling links (Calendly, cal.com, meeting invites)\n- \"image\" — visible images, logos, banners (.gif/.png/.jpg that aren't tracking pixels)\n- \"irrelevant\" — anything else not worth fetching\n\n## Password extraction\n\nIf the context mentions a password, passcode, or access code near this URL, extract it. Formats include \"Password: X\", \"pw X\", \"passcode is X\", \"code: X\". Strip any formatting markers. If none, return null.\n\n## Rules\n\nClassify based on what the CONTEXT tells you the link contains, not just the URL structure. A tracking redirect URL wrapping a pitch deck (context says \"deck attached\") is a \"pitch_deck\". The same redirect domain used as a hidden img src is a \"tracking_pixel\". Context is authoritative.",
+          "userMessage": "URL: https://acme-rockets.example\n\nContext:\nHi — our deck is at https://docsend.com/view/abc (passcode: rocket) and the site is https://acme-rockets.example. <img src=\"https://track.example/p.gif\" width=1>",
+          "model": "claude-haiku-4-5-20251001",
+          "label": "knowledge_plugin_url_classify"
+        }
+      },
+      {
+        "service": "anthropicChat",
+        "args": {
+          "system": "Classify a URL based on its surrounding context in an email/message.\n\nReturn JSON: { \"type\": \"<type>\", \"password\": \"<password or null>\" }\n\n## Types\n\n- \"pitch_deck\" — links to pitch decks, presentations, slide decks (Docsend, Papermark, Google Slides, .pdf/.pptx links described as decks)\n- \"document\" — shared documents, data rooms, file-sharing links (Google Drive, Dropbox, Notion) that aren't pitch decks\n- \"company_website\" — company homepages, landing pages, product pages\n- \"profile\" — social media profiles (LinkedIn, Twitter, etc.)\n- \"article\" — news articles, blog posts, investor updates\n- \"tracking_pixel\" — 1x1 images, beacons, email open trackers, analytics pixels. Look for: img tags with tiny dimensions, display:none, alt=\"beacon\"/\"pixel\", or URLs in hidden image elements\n- \"unsubscribe\" — opt-out links, email preference management, \"manage subscription\" links\n- \"calendar\" — scheduling links (Calendly, cal.com, meeting invites)\n- \"image\" — visible images, logos, banners (.gif/.png/.jpg that aren't tracking pixels)\n- \"irrelevant\" — anything else not worth fetching\n\n## Password extraction\n\nIf the context mentions a password, passcode, or access code near this URL, extract it. Formats include \"Password: X\", \"pw X\", \"passcode is X\", \"code: X\". Strip any formatting markers. If none, return null.\n\n## Rules\n\nClassify based on what the CONTEXT tells you the link contains, not just the URL structure. A tracking redirect URL wrapping a pitch deck (context says \"deck attached\") is a \"pitch_deck\". The same redirect domain used as a hidden img src is a \"tracking_pixel\". Context is authoritative.",
+          "userMessage": "URL: https://track.example/p.gif\n\nContext:\nHi — our deck is at https://docsend.com/view/abc (passcode: rocket) and the site is https://acme-rockets.example. <img src=\"https://track.example/p.gif\" width=1>",
+          "model": "claude-haiku-4-5-20251001",
+          "label": "knowledge_plugin_url_classify"
+        }
+      },
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://docsend.com/view/abc",
+          "url": "https://docsend.com/view/abc",
+          "isPrivate": true,
+          "metadata": {
+            "email": "ada@vc.example",
+            "password": "rocket"
+          }
+        }
+      },
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://acme-rockets.example",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://track.example/p.gif",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "pitchDeckUrlTool",
+        "args": {
+          "url": "https://docsend.com/view/abc",
+          "email": "ada@vc.example",
+          "password": "rocket"
+        }
+      },
+      {
+        "service": "RawTextService.getOrCreateFromContent",
+        "args": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production."
+      },
+      {
+        "service": "ResourceService.update",
+        "args": {
+          "id": "resource-1",
+          "patch": {
+            "rawTextId": "raw-2"
+          }
+        }
+      },
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://acme-rockets.example",
+          "url": "https://acme-rockets.example",
+          "rawTextId": "raw-3",
+          "retrievedAt": "<date>",
+          "isDemo": false,
+          "isPrivate": true
+        }
+      },
+      {
+        "service": "RawTextService.getById",
+        "args": "raw-2"
+      }
+    ],
+    "result": {
+      "text": "Acme deck as text: team, market, ask.\n\nAcme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production.",
+      "records": [
+        {
+          "name": "https://docsend.com/view/abc",
+          "url": "https://docsend.com/view/abc",
+          "text": "Acme deck as text: team, market, ask."
+        },
+        {
+          "name": "https://acme-rockets.example",
+          "url": "https://acme-rockets.example",
+          "text": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production."
+        }
+      ]
+    }
+  },
+  {
+    "name": "vc-url-retrieval: no links",
+    "calls": [],
+    "result": {}
+  },
+  {
+    "name": "linkedin-enrichment: found by search",
+    "calls": [
+      {
+        "service": "anthropicChat",
+        "args": {
+          "system": "You are identifying a PERSON. You are given the person's own extracted fields, and optionally context about their organisation. Return JSON with:\n- \"name\": the person's full name, taken from the person's OWN fields (required — return null only if the person's own fields carry no name). Never return the organisation's name as the person's name.\n- \"company\": the organisation most associated with this person — use the organisation context when present (optional, null if unknown)\n- \"description\": a terse summary of distinguishing info about the PERSON — role/title, previous companies, location, domain expertise — to help find their LinkedIn (optional, null if nothing useful)\n\nReturn ONLY valid JSON, no markdown.",
+          "userMessage": "Name: Ada Lovelace\nRole: CEO",
+          "model": "claude-haiku-4-5-20251001",
+          "label": "knowledge_plugin_linkedin_identify"
+        }
+      },
+      {
+        "service": "WebSearchService.findLinkedIn",
+        "args": {
+          "input": {
+            "name": "Ada Lovelace",
+            "company": "Acme Rockets",
+            "description": "CEO"
+          }
+        }
+      },
+      {
+        "service": "linkedin.getProfileTextByUrl",
+        "args": {
+          "url": "https://www.linkedin.com/in/ada-lovelace"
+        }
+      }
+    ],
+    "result": {
+      "data": {
+        "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+        "linkedin_profile": "Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites."
+      }
+    }
+  },
+  {
+    "name": "linkedin-enrichment: address already carried",
+    "calls": [
+      {
+        "service": "linkedin.getProfileTextByUrl",
+        "args": {
+          "url": "https://www.linkedin.com/in/ada-lovelace"
+        }
+      }
+    ],
+    "result": {
+      "data": {
+        "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+        "linkedin_profile": "Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites."
+      }
+    }
+  },
+  {
+    "name": "web-research: finds and fetches the site",
+    "calls": [
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are finding one company's own website.\n\nYou are given a name and a line of context about it — whatever a message said: what it does, where it is, who is behind it.\n\nReturn JSON:\n- \"queries\": at most two web searches that would surface that company's own site. Every query must contain the name AND at least one distinctive word from the context (a city, a sector, a product, a person). A query that is only the name searches for the word, not for the company.\n- \"anchors\": the distinctive words FROM THE CONTEXT you relied on, each written exactly as it appears there. A word you did not take from the context is not an anchor.\n\nIf the context says nothing distinctive, return empty lists. That is a real answer: some names cannot be searched for.",
+          "userMessage": "Name: Acme Rockets\nContext: reusable launch vehicles, Berlin",
+          "schema": "<schema>",
+          "toolName": "plan_searches",
+          "toolDescription": "Plan the searches that would find this company's own website.",
+          "model": "claude-sonnet-5",
+          "label": "plugin_web_research_plan"
+        }
+      },
+      {
+        "service": "WebSearchService.search",
+        "args": "\"Acme Rockets\" reusable launch Berlin"
+      },
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are deciding whether one of these websites belongs to the company described.\n\nYou are given a company name, the context a message gave about it, and numbered candidate sites with their titles, snippets and hosts.\n\nReturn JSON:\n- \"choice\": the number of the candidate that is that company's own site, or null if none of them is.\n- \"confidence\": \"high\" only if the candidate's content matches the context — the same business, the same sector, and where the context names a place or a person, no contradiction. \"medium\" if it is plausibly them but the page says nothing that confirms it. \"low\" otherwise.\n\nA different company with the same name is the failure to avoid, and it is common: names are reused across countries and sectors. When the evidence only says \"this name exists\", the answer is null.\n\nTwo more nulls, both of which look like matches:\n- a page belonging to a large established company, product, standard or framework that happens to share the name — the company described is one a message has just noticed, not a household name;\n- a page ABOUT the company rather than BY it: an article, a directory entry, a review, a jobs board, a list it appears on.",
+          "userMessage": "Name: Acme Rockets\nContext: reusable launch vehicles, Berlin\nCandidates:\n1. acme-rockets.example\n   Acme Rockets — reusable launch\n   Reusable launch vehicles from Berlin.\n2. directory.example\n   Acme Rockets | Directory\n   Company profile.",
+          "schema": "<schema>",
+          "toolName": "confirm_website",
+          "toolDescription": "Say which candidate is this company's own site, or that none is.",
+          "model": "claude-sonnet-5",
+          "label": "plugin_web_research_confirm"
+        }
+      },
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://acme-rockets.example",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "RawTextService.getOrCreateFromContent",
+        "args": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production."
+      },
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://acme-rockets.example",
+          "url": "https://acme-rockets.example",
+          "rawTextId": "raw-1",
+          "retrievedAt": "<date>",
+          "isDemo": false,
+          "isPrivate": true
+        }
+      }
+    ],
+    "result": {
+      "text": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production.",
+      "data": {
+        "website": "https://acme-rockets.example"
+      },
+      "records": [
+        {
+          "name": "https://acme-rockets.example",
+          "url": "https://acme-rockets.example",
+          "text": "Acme Rockets builds reusable launch vehicles for small satellites. Founded in Berlin in 2021, Acme has flown four missions and is raising a Series A to scale production."
+        }
+      ],
+      "outcome": "resolved"
+    }
+  },
+  {
+    "name": "web-research: stands down for a record with a site",
+    "calls": [],
+    "result": {
+      "outcome": "has_link"
+    }
+  },
+  {
+    "name": "linkedin-research: profile, search, synthesis",
+    "calls": [
+      {
+        "service": "WebSearchService.search",
+        "args": "https://www.linkedin.com/in/ada-lovelace"
+      },
+      {
+        "service": "WebSearchService.search",
+        "args": "site:linkedin.com/in/ada-lovelace"
+      },
+      {
+        "service": "linkedin.getProfileTextByUrl",
+        "args": {
+          "url": "https://www.linkedin.com/in/ada-lovelace",
+          "budget": {
+            "maxWaitMs": 75000
+          }
+        }
+      },
+      {
+        "service": "anthropicChat",
+        "args": {
+          "system": "You are planning web searches to find out what a specific person is doing NOW.\n\nYou are given who they are, taken from their LinkedIn profile, and any other fields the record about them carries.\n\nReturn ONLY valid JSON, no markdown, with:\n- \"queries\": the ONE search query most likely to surface their RECENT activity — posts and articles under their name, press, funding or launch announcements naming them, event, podcast or conference appearances, pages of their organisation that list them. Pick the single query that best covers what this person is likely to have in the public record; only one is run. Quote the person's name. Do not search for their LinkedIn profile — we already have it. Each entry is an object: { \"query\": \"...\", \"worth_reading\": true|false } where worth_reading says whether a result from this query is likely to repay loading the whole page rather than reading its snippet.\n- \"terms\": the 2 or 3 terms from the headline — the organisation, the field, the location — that a search result must be consistent with to be about THIS person and not a namesake.\n- \"organisation\": the organisation the headline names, \"\" if it names none. A LinkedIn headline often reads as one phrase rather than segments, so this is where the organisation is read out of it.\n\nA headline saying \"Stealth\", \"Stealth Startup\", \"Stealth Mode\", \"Confidential\", \"Self-employed\", \"Independent\" or \"Freelance\" names no organisation: it is what someone writes when they will not say where they work. Report \"\" for \"organisation\" in that case, never search for the placeholder as if it were a company, and do not use it as a consistency term. Every query must name the person, or a real organisation they are attached to.",
+          "userMessage": "Name: Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites.\nHeadline: unknown\nOrganisation: unknown\nOther fields on the record about them:\n  name: Ada Lovelace",
+          "model": "claude-haiku-4-5-20251001",
+          "label": "plugin_linkedin_research_plan"
+        }
+      },
+      {
+        "service": "WebSearchService.search",
+        "args": "Ada Lovelace Acme Rockets"
+      },
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://news.example/acme-series-a",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "RawTextService.getOrCreateFromContent",
+        "args": "Acme Rockets, led by CEO Ada Lovelace, raised a Series A to scale reusable launch production in Berlin."
+      },
+      {
+        "service": "ResourceService.getOrCreate",
+        "args": {
+          "type": "URL",
+          "name": "https://news.example/acme-series-a",
+          "url": "https://news.example/acme-series-a",
+          "rawTextId": "raw-1",
+          "retrievedAt": "<date>",
+          "isDemo": false,
+          "isPrivate": true
+        }
+      },
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are writing a short, honest account of what one person is currently doing, from their LinkedIn headline and a set of web search results.\n\nTHE ACCEPTANCE RULE. Attribute a result to this person only if it is consistent with the consistency terms you are given — the organisation, the field, or the location from their own headline. A result that merely matches the name is a namesake's news and must be excluded. If the evidence is thin, say it is thin; never pad the answer.\n\nReport your answer through the tool. Every field is required; when nothing survives the acceptance rule, report found = false with empty strings and an empty source list.\n\n- \"found\": true only if at least one source consistent with the headline was found.\n- \"confidence\": \"high\" when the headline and at least two independent recent sources agree; \"medium\" when the headline plus one recent source agree, or when several sources agree but nothing is dated within about a year; \"low\" when you have the headline only, or sources that are consistent but thin.\n- \"current_role\" and \"current_organisation\": as you read them, \"\" when unknown.\n- \"summary\": the answer, in prose. Their current role and organisation, what they appear to be doing or building now, recent notable activity with dates where you know them, and an explicit hedge where the public record ends (\"appears to be starting something in X, unconfirmed\"). Cite every claim with a bracketed number, [1], [2].\n- \"sources\": the addresses your citations refer to, in citation order.\n\nA bracketed number is a position in the \"sources\" list YOU build, counting from 1 — never the position of a result in the list you were given. Every number in the summary must have an entry in \"sources\", and every entry must be cited.",
+          "userMessage": "Profile address: https://www.linkedin.com/in/ada-lovelace\n\nName: Ada Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites.\n\nHeadline: unknown\n\nOrganisation as read from the headline: Acme Rockets\n\nConsistency terms (the acceptance rule): the headline above\n\nProfile page:\nAda Lovelace — Founder & CEO at Acme Rockets · Berlin · Previously propulsion lead at Orbital Works. Building reusable launch for small satellites.\n\nFields on the record about them:\n  name: Ada Lovelace\n\nSearch results:\n- Acme Rockets raises Series A\n  https://news.example/acme-series-a\n  Ada Lovelace, CEO of Acme Rockets, said…\n\nPages read in full:\nhttps://news.example/acme-series-a\nAcme Rockets, led by CEO Ada Lovelace, raised a Series A to scale reusable launch production in Berlin.",
+          "schema": "<schema>",
+          "toolName": "report_activity",
+          "toolDescription": "Report what this person is currently doing, with a confidence and the sources it rests on.",
+          "model": "claude-sonnet-5",
+          "label": "plugin_linkedin_research_synthesise"
+        }
+      }
+    ],
+    "result": {
+      "data": {
+        "activity_summary": "Ada Lovelace runs Acme Rockets, which just raised a Series A.",
+        "activity_confidence": "low",
+        "current_role": "Founder & CEO",
+        "current_organisation": "Acme Rockets",
+        "activity_sources": "1. https://news.example/acme-series-a"
+      }
+    }
+  },
+  {
+    "name": "research (agentic): a dossier",
+    "calls": [
+      {
+        "service": "anthropicWebChat",
+        "args": {
+          "system": "You are researching one subject — a company or a person — and writing a short, honest dossier about it.\n\nYou have web search and a page reader. Use them; do not answer from memory. You may read a page only if its address is already in front of you: one the message gave you, or one a search returned — never a guessed or constructed address, a likely homepage or company URL you were never actually handed. A guessed address is not read; it fails.\n\nYou cannot open linkedin.com. The page reader refuses that host outright, so do not try: an attempt spends a read and returns nothing. Where the message carried a profile address it has ALREADY been read for you, and what was read appears below under \"THE PROFILE, AS READ\". That address anchors identity — whoever holds that profile is the subject — so nothing is attributed to the person unless it is consistent with that profile's own headline.\n\nWHAT TO LOOK FOR, IN THIS ORDER\n1. The subject's OWN page: their website, or the profile whose address you were given.\n2. Recent, dated coverage that names them.\n3. Everything else, which is context rather than evidence.\n\nSTOP AS SOON AS YOU CAN ANSWER\nAnswer the moment the questions are answered: a page that has already answered them is not a reason to open a second one, and an allowance you have not spent is not a budget to use up. A page that will not open is not opened again — say nothing about it and move on.\n\nTHE RULES YOU MUST NOT BREAK\n- A source that merely matches the name is a namesake's. Accept it only if it is consistent with what you were told about the subject — the sector, the location, the people, and where the subject is a person, their own headline. Nothing is attributed to a person unless it is consistent with their own headline.\n- A famous company, product, standard or framework that shares the name is NOT the subject. The subject is one a message has just noticed.\n- Prefer the subject's own domain to a directory, an app store, an encyclopaedia, a jobs board or a news aggregator. Those say the name exists, which was never in doubt.\n- A WRONG website is worse than none. If you are not confident a site belongs to this subject, report no website at all.\n- Refuse honestly. If nothing consistent turns up, say so. Never pad an answer, and never present a plausible guess as a finding.\n\nWHAT TO WRITE\nAnswer the questions you were asked and stop. Cite every claim with the address it came from. Then, under a heading \"DOSSIER\", quote the passages that bear on those questions, each under its source address — the quotes themselves, not a second summary, so a later reader can find a detail your answer did not anticipate. Keep the whole thing to a few paragraphs.\n\nWrite as if the caller never doubted who this is: never mention searching, which sources you kept or excluded, or that the identity checks out. Put any doubt about identity in CONFIDENCE, not in the prose.\n\nThe FIRST SENTENCE says what the subject does. Not that they match what you were told, not that the identification is consistent, not which of several candidates this is. And never close on what you could or could not retrieve — a page that would not open, an address you could not read: that is what CONFIDENCE is for, and it belongs nowhere in the prose.\n\nEnd with three lines exactly:\nWEBSITE: <the subject's own site, or \"none\">\nLINKEDIN: <the profile address, or \"none\">\nCONFIDENCE: <high | medium | low>",
+          "userMessage": "Subject: Acme Rockets\nWhat the message said about it: reusable launch vehicles, Berlin\nThe message carried no addresses.\nWhat the caller wants to know: what it does, where it is based",
+          "model": "claude-sonnet-5",
+          "effort": "medium",
+          "maxSearches": 4,
+          "maxFetches": 3,
+          "pageReader": "hosted",
+          "fetchPage": "<function>",
+          "searchWeb": "<function>",
+          "signal": "<signal>",
+          "label": "plugin_research_agentic"
+        }
+      },
+      {
+        "service": "WebSearchService.search",
+        "args": "Acme Rockets Berlin launch"
+      },
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://acme-rockets.example/",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are filing a research write-up into fixed fields. The write-up is already done; do not research anything, add anything, or soften anything.\n\n- \"found\": false when the write-up says nothing consistent was found.\n- \"answers_everything\": true only when every question the caller asked is answered in the write-up.\n- \"confidence\", \"website\", \"linkedin\": as the write-up's own last three lines state them. \"none\" means an empty string.\n- \"summary\": the write-up's answer, without the dossier and without the three trailing lines. If the write-up narrates its own verification — sources kept or excluded, identity checking out — drop that framing and keep only the answers. Drop an opening sentence that announces the identification (\"this matches strongly\", \"the subject best matching X is\") and a closing note about what could or could not be retrieved: the summary starts with what the subject does.\n- \"dossier\": the quoted passages under their source addresses, as written.\n- \"sources\": every address the write-up cites, in the order it first cites them.",
+          "userMessage": "The write-up:\n\nAcme Rockets builds reusable launch vehicles in Berlin [1].",
+          "schema": "<schema>",
+          "toolName": "file_research",
+          "toolDescription": "File this research write-up into its fields, unchanged.",
+          "model": "claude-sonnet-5",
+          "maxTokens": 8192,
+          "label": "plugin_research_agentic_shape"
+        }
+      }
+    ],
+    "result": {
+      "data": {
+        "summary": "Acme Rockets builds reusable launch vehicles in Berlin.",
+        "confidence": "high",
+        "sources": "1. https://acme-rockets.example/",
+        "website": "https://acme-rockets.example/",
+        "dossier": "Acme Rockets: reusable launch for small satellites; Berlin; four missions; raising a Series A."
+      },
+      "outcome": "resolved"
+    }
+  },
+  {
+    "name": "research (constrained): a dossier",
+    "calls": [
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are planning web searches to find out about one specific subject — a company or a person.\n\nYou are given a name, a line of context about it (whatever a message said: what it does, where it is, who is behind it), and what the caller wants to find out.\n\nReturn JSON:\n- \"queries\": at most three web searches that would surface the subject's own pages and recent news about it. Every query must contain the name AND at least one distinctive word from the context (a city, a sector, a product, a person). A query that is only the name searches for the word, not for the subject.\n- \"anchors\": the distinctive words FROM THE CONTEXT you relied on, each written exactly as it appears there. A word you did not take from the context is not an anchor.\n\nA context saying \"Stealth\", \"Stealth Startup\", \"Confidential\", \"Self-employed\", \"Independent\" or \"Freelance\" names nothing: it is what someone writes when they will not say. Never anchor on one.\n\nIf the context says nothing distinctive, return empty lists. That is a real answer: some names cannot be searched for.",
+          "userMessage": "Name: Acme Rockets\nContext: reusable launch vehicles, Berlin\nThe caller wants to know: what it does",
+          "schema": "<schema>",
+          "toolName": "plan_searches",
+          "toolDescription": "Plan the searches that would find this subject's own pages.",
+          "model": "claude-sonnet-5",
+          "label": "plugin_research_plan"
+        }
+      },
+      {
+        "service": "WebSearchService.search",
+        "args": "\"Acme Rockets\" reusable launch"
+      },
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are deciding whether one of these websites belongs to the subject described.\n\nYou are given a name, the context a message gave about it, and numbered candidate sites with their titles, snippets and hosts.\n\nReturn JSON:\n- \"choice\": the number of the candidate that is that subject's own site, or null if none of them is.\n- \"confidence\": \"high\" only if the candidate's content matches the context — the same business, the same sector, and where the context names a place or a person, no contradiction. \"medium\" if it is plausibly them but the page says nothing that confirms it. \"low\" otherwise.\n\nA different subject with the same name is the failure to avoid, and it is common: names are reused across countries and sectors. When the evidence only says \"this name exists\", the answer is null.\n\nTwo more nulls, both of which look like matches:\n- a page belonging to a large established company, product, standard or framework that happens to share the name — the subject described is one a message has just noticed, not a household name;\n- a page ABOUT the subject rather than BY it: an article, a directory entry, a review, a jobs board, a list it appears on.",
+          "userMessage": "Name: Acme Rockets\nContext: reusable launch vehicles, Berlin\nCandidates:\n1. acme-rockets.example\n   Acme Rockets — reusable launch\n   Reusable launch vehicles from Berlin.",
+          "schema": "<schema>",
+          "toolName": "confirm_website",
+          "toolDescription": "Say which candidate is this subject's own site, or that none is.",
+          "model": "claude-sonnet-5",
+          "label": "plugin_research_confirm"
+        }
+      },
+      {
+        "service": "ScraperService.getWebsite",
+        "args": {
+          "url": "https://acme-rockets.example",
+          "options": {
+            "provider": "brightdata"
+          }
+        }
+      },
+      {
+        "service": "anthropicChatStructured",
+        "args": {
+          "system": "You are writing a short, honest dossier about one subject — a company or a person — from what has been gathered about it: search snippets, pages read in full, and where there is one, a LinkedIn headline.\n\nTHE ACCEPTANCE RULE. Attribute a source to this subject only if it is consistent with the consistency terms you are given — the organisation, the sector, the location. A source that merely matches the name is a namesake's and must be excluded. Where the subject is a person and their own headline is given, nothing is attributed to them that contradicts it. A famous namesake is not a match.\n\nSIZE IT TO THE QUESTIONS. You are told what the caller wants to know. Answer that and stop. A dossier for \"what does it do and which sector\" is a few paragraphs, not a page dump.\n\nANSWER, DON'T NARRATE. Write the summary as if the caller never doubted who this is: never mention searching, which sources were accepted or excluded, or that the identity checks out. Any doubt about identity belongs in confidence, not in the prose.\n\nTHE FIRST SENTENCE SAYS WHAT THE SUBJECT DOES. Not that a source matches, not that the identification is consistent, not which of several candidates this is. And never close on what could or could not be retrieved — a page that would not open, an address that could not be read: that is what confidence is for, and it belongs nowhere in the prose.\n\nReport through the tool. Every field is required; when nothing survives the acceptance rule, report found = false with empty strings and an empty source list.\n\n- \"found\": true only if at least one source consistent with the subject was found.\n- \"answers_everything\": true only if the questions asked are all answered. False when some are and some are not.\n- \"confidence\": \"high\" when the subject's own page, or two independent sources that agree, support the answer; \"medium\" when it is plausible and unconfirmed; \"low\" when the material is thin.\n- \"summary\": the answer, in prose, sized to the questions. Cite every claim with a bracketed number, [1], [2].\n- \"dossier\": the content itself — the excerpts and snippets that bear on the questions, each under its source address, so a later stage can read a detail this summary did not anticipate. Quote; do not paraphrase into a second summary.\n- \"sources\": the addresses your citations refer to, in citation order.\n\nA bracketed number is a position in the \"sources\" list YOU build, counting from 1 — never the position of a source in the list you were given. Every number in the summary must have an entry in \"sources\".",
+          "userMessage": "Subject: Acme Rockets\n\nWhat the message said about it: reusable launch vehicles, Berlin\n\nThe caller wants to know: what it does\n\nConsistency terms (the acceptance rule): launch\n\nResolved website: https://acme-rockets.example\n\nSearch results:\n- Acme Rockets — reusable launch\n  https://acme-rockets.example/\n  Reusable launch vehicles from Berlin.",
+          "schema": "<schema>",
+          "toolName": "report_research",
+          "toolDescription": "Report what was found about this subject, with a confidence and its sources.",
+          "model": "claude-sonnet-5",
+          "maxTokens": 8192,
+          "label": "plugin_research_synthesise"
+        }
+      }
+    ],
+    "result": {
+      "data": {
+        "summary": "Acme Rockets builds reusable launch vehicles.",
+        "confidence": "high",
+        "sources": "1. https://acme-rockets.example/",
+        "website": "https://acme-rockets.example",
+        "dossier": "Reusable launch for small satellites, Berlin."
+      },
+      "outcome": "resolved"
+    }
+  },
+  {
+    "name": "research: a bare name is left alone",
+    "calls": [],
+    "result": {
+      "outcome": "no_anchor"
+    }
+  }
+]

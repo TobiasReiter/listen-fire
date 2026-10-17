@@ -73,7 +73,7 @@ import { isCredentialType } from '../adapters/credential_type';
 import { indexManifestsByName, listAdapterManifests } from '../adapters/registry';
 import { listRemoteAdapters } from '../adapters/remote/store';
 import { teamAdapterManifests } from '../adapters/team_manifests';
-import { bundledPluginNamed, bundledPluginSpecs, pluginSpecOf } from 'movement-engine/public/plugins';
+import { bundledPluginSpecNamed, bundledPluginSpecs } from 'movement-engine/public/plugins';
 import { assembleMovementFileSources, resolverOverSources } from './files';
 import {
   adapterInstanceIsWarm,
@@ -265,9 +265,9 @@ export function staticCatalogFromManifests(
       return Object.keys(options.credentials ?? {});
     },
     plugin(name): PluginSpec | undefined {
-      const declaration = bundledPluginNamed(name);
-      return declaration ? pluginSpecOf(declaration) : undefined;
+      return bundledPluginSpecNamed(name);
     },
+    pluginNames: () => Object.keys(bundledPluginSpecs()),
     instantiate(adapterName): InstanceSchema | undefined {
       // STUB — construction arguments are ignored; see module header for
       // the real per-credential seam.
@@ -1134,9 +1134,9 @@ async function assembleTeamCatalog(
       return Object.keys(credentialsByName);
     },
     plugin(name): PluginSpec | undefined {
-      const declaration = bundledPluginNamed(name);
-      return declaration ? pluginSpecOf(declaration) : undefined;
+      return bundledPluginSpecNamed(name);
     },
+    pluginNames: () => Object.keys(bundledPluginSpecs()),
     instantiate(adapterName, args): InstanceSchema | undefined {
       const manifest = manifestBySlug.get(adapterName);
       if (!manifest) return undefined;

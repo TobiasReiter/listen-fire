@@ -1,4 +1,4 @@
-import { emptyUsage, noteFetchFailure, outcomeOf } from './contract';
+import { emptyUsage, noteFetchFailure, outcomeOf } from '../research/contract';
 
 // The one place both research engines decide `ResearchOutcome` — see
 // 1_contract.md "Outcomes". A failed side fetch must never outrank a real

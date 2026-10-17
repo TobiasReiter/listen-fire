@@ -47,7 +47,8 @@
             }
           }
         }
-      ]
+      ],
+      "package": "@lf/web"
     },
     "fetch_url": {
       "args": [
@@ -75,7 +76,8 @@
           "kind": "maybeAbsent",
           "of": "text"
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin_enrichment": {
       "args": [],
@@ -100,7 +102,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin_research": {
       "args": [
@@ -143,7 +146,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "web_research": {
       "args": [
@@ -180,7 +184,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "research": {
       "args": [
@@ -237,7 +242,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     }
   },
   "snapshotPlugins": {
@@ -288,7 +294,8 @@
             }
           }
         }
-      ]
+      ],
+      "package": "@lf/web"
     },
     "fetch_url": {
       "args": [
@@ -316,7 +323,8 @@
           "kind": "maybeAbsent",
           "of": "text"
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin_enrichment": {
       "args": [],
@@ -341,7 +349,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin_research": {
       "args": [
@@ -384,7 +393,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "web_research": {
       "args": [
@@ -421,7 +431,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "research": {
       "args": [
@@ -478,7 +489,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     }
   },
   "liveCatalog": {
@@ -508,7 +520,8 @@
           "kind": "maybeAbsent",
           "of": "text"
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "fetch-url": {
       "args": [
@@ -536,7 +549,8 @@
           "kind": "maybeAbsent",
           "of": "text"
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin_enrichment": {
       "args": [],
@@ -561,7 +575,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin-enrichment": {
       "args": [],
@@ -586,7 +601,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin_research": {
       "args": [
@@ -629,7 +645,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "linkedin-research": {
       "args": [
@@ -672,7 +689,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "research": {
       "args": [
@@ -729,7 +747,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "vc_url_retrieval": {
       "args": [
@@ -778,7 +797,8 @@
             }
           }
         }
-      ]
+      ],
+      "package": "@lf/web"
     },
     "vc-url-retrieval": {
       "args": [
@@ -827,7 +847,8 @@
             }
           }
         }
-      ]
+      ],
+      "package": "@lf/web"
     },
     "web_research": {
       "args": [
@@ -864,7 +885,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     },
     "web-research": {
       "args": [
@@ -901,7 +923,8 @@
             "of": "text"
           }
         }
-      }
+      },
+      "package": "@lf/web"
     }
   },
   "diagnostics": {

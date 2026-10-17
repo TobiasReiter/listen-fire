@@ -1,15 +1,16 @@
-// One URL → one fetched resource, shared by the two retrieval plugins.
+// One URL → one fetched resource: the platform's `fetchResource` for the web
+// plugins (`@lf/web`, through `./hosted_tools`).
 //
 // `vc-url-retrieval` scans a message and fetches everything it decides is
 // worth fetching; `fetch-url` fetches the one link an author named. What
 // happens to a single URL once something has decided to fetch it is the same
 // either way — the gated-document path, the profile path, the plain scrape —
-// so it lives here rather than in whichever plugin was written first.
+// and it needs the platform's browser and document store, so it lives here.
 
 import type { FetchedSegment } from './url-fetch';
 import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
-import type { EphemeralEmission } from './registry';
 
+import { describeError } from '@lf/web';
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
 import { isBudgetExhausted } from 'movement-engine/lib/run_cost';
@@ -118,22 +119,6 @@ async function fetchUrlInner(
   }
 }
 
-/** Winston's `format.simple()` serialises meta fields with plain JSON, and an
- *  `Error`'s message/stack aren't enumerable — so `{ error: e }` logs as `{}`.
- *  Render the message + stack explicitly so a failure is legible. */
-export function describeError(e: unknown): string {
-  if (e instanceof Error) return e.stack ?? `${e.name}: ${e.message}`;
-  return typeof e === 'string' ? e : safeStringifyError(e);
-}
-
-function safeStringifyError(e: unknown): string {
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return String(e);
-  }
-}
-
 export async function fetchWithTimeout(
   url: string,
   email: string | null,
@@ -158,21 +143,4 @@ export async function fetchWithTimeout(
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
-}
-
-/** The ephemeral record a fetched page becomes: the link, a name, the
- *  downloaded file, and the text. One shape, so both plugins' emissions read
- *  identically downstream. */
-export function emissionOf(r: FetchedResource): EphemeralEmission {
-  return { data: { name: r.url, url: r.url, file: r.documentId, text: r.content } };
-}
-
-/** A web-address field is as likely to hold `acme.com` as `https://acme.com`,
- *  so a bare host gets the scheme a discovered bare domain would have got.
- *  A value that is blank, missing, or not text at all is nothing to load. */
-export function normaliseUrl(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
