@@ -733,7 +733,9 @@ impl Run<'_> {
             return Ok(state);
         }
         let mut named = Vec::new();
-        for library in libraries.items().iter() {
+        // Copied out: the list's borrow must not be held across a host ask.
+        let libraries: Vec<Js> = libraries.items().to_vec();
+        for library in &libraries {
             let (Some(path), Some(source)) = (crate::park::text(crate::park::at(library, "path")), crate::park::text(crate::park::at(library, "source"))) else {
                 return Err(Failure::engine("MOVENG_RUNTIME", "park: a library without its path or text".into()));
             };
