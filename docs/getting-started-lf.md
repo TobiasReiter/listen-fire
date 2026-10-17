@@ -8,9 +8,9 @@
 lf init my-project && cd my-project
 ```
 
-This writes `lf.yaml`, `movements/`, `externals/` and `.lf/` (run state and secrets, git-ignored). `lf.yaml` pins the engine version the project runs on.
+This writes `lf.yaml`, a starter movement in `movements/`, `externals/` and `.lf/` (run state and secrets, git-ignored). It never overwrites a file that exists. `lf.yaml` pins the engine version the project runs on, and its `core:` section chooses the modules run state, models, the judge and files come from ([core slots](core-slots.md)). The defaults need no setup.
 
-A working project to read or copy is [`examples/lf-acme`](../examples/lf-acme): one movement, one external, a sample secrets file.
+A working project to read or copy is [`examples/lf-acme`](../examples/lf-acme): one movement, one external, a sample secrets file (copy it to `.lf/secrets.yaml`).
 
 ## 2. Write a movement
 
@@ -36,9 +36,11 @@ listen to crm { events: ["company.created"] } fire welcome
 A system is reached through an external: a folder in `externals/` holding an `lf-external.yaml` that says how the host starts or reaches it.
 
 ```
-lf connect              # lists the modules lf knows
+lf connect              # lists the modules lf knows, and which are set up
 lf connect <module>     # installs it and asks for its server secret, webhook secret and OAuth app
 ```
+
+`ai(…)` and `extract(…)` call models: `lf connect @lf/anthropic` stores your API key.
 
 ## 4. Add a credential
 

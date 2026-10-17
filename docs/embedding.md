@@ -105,7 +105,7 @@ if (listener.adapter === 'crm' && eventMatchesTriggerScope(event, listener.confi
     event: triggerEvent,
     teamId: tenantIdOf(tenant),
     catalog,
-    credentialIds: { workspace: credentialRefOf(tenant) },
+    credentialIds: { workspace: credentialRef(tenant) },
     costCapMicrodollars: 50_000,
     limits: { maxSteps: 100_000, maxTextBytes: 1 << 20, maxCollectionItems: 10_000, maxResultBytes: 4 << 20 },
     host,
@@ -126,7 +126,7 @@ const host = inProcessHost({
 });
 ```
 
-The host has the same slots as `lf.yaml`'s `core:` section. You fill each with your own part.
+The host has the same slots as `lf.yaml`'s `core:` section ([core slots](core-slots.md)). You fill each with your own part.
 
 | slot | what a run asks of it | how you fill it |
 |---|---|---|
