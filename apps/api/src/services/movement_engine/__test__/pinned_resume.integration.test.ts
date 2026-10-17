@@ -26,6 +26,7 @@ import { cleanupTeam } from '../../../test/harness/cleanup';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
+import type { ParkLibrarySourceTeamId } from '../../../generated/kysely/automations/ParkLibrarySource';
 import type { PipelineConfigurationId } from '../../../generated/kysely/public/PipelineConfiguration';
 import { dispatchTriggerByIdEvent } from '../../translation_graph/triggers/router';
 import { runCatalogSnapshotForTeam, snapshotOverManifests, staticCatalogFromManifests } from '../../translation_graph/movement/catalog';
@@ -211,10 +212,12 @@ function spelled(text: string): string {
   return spelledFor(5, text, fromCatalogSnapshot(catalog), { resolveFile: resolveFileFromSnapshot(catalog) });
 }
 
+/** The library-source store keys its rows by its own team id type. */
+const libraryRowTeam = (teamId: TeamId): ParkLibrarySourceTeamId => teamId as string as ParkLibrarySourceTeamId;
+
 describe('a paused run resumes on the text it was pinned to (real DB, Rust engine)', () => {
   let teamId: TeamId;
   let slackCreates: Record<string, unknown>[];
-  const previousEngine = process.env.MOVEMENT_ENGINE;
 
   /** The catalog snapshot the run host reads, with the team's library as saved now. */
   function serveLibrary(marker: string) {
@@ -227,7 +230,6 @@ describe('a paused run resumes on the text it was pinned to (real DB, Rust engin
   }
 
   beforeEach(async () => {
-    process.env.MOVEMENT_ENGINE = 'rust';
     teamId = randomUUID() as TeamId;
     await getCoreQb(['team'])
       .insertInto('team')
@@ -245,10 +247,8 @@ describe('a paused run resumes on the text it was pinned to (real DB, Rust engin
   });
 
   afterEach(async () => {
-    if (previousEngine === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previousEngine;
     await cleanupTeam(teamId);
-    await getAutomationsQb(['park_library_source']).deleteFrom('park_library_source').where('team_id', '=', teamId).execute();
+    await getAutomationsQb(['park_library_source']).deleteFrom('park_library_source').where('team_id', '=', libraryRowTeam(teamId)).execute();
     jest.clearAllMocks();
   });
 
@@ -290,7 +290,7 @@ describe('a paused run resumes on the text it was pinned to (real DB, Rust engin
     expect(state.libraries).toEqual([{ path: 'lib/words', hash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) }]);
     const stored = await getAutomationsQb(['park_library_source'])
       .selectFrom('park_library_source')
-      .where('team_id', '=', teamId)
+      .where('team_id', '=', libraryRowTeam(teamId))
       .select(['hash', 'source'])
       .execute();
     expect(stored).toEqual([{ hash: state.libraries[0]?.hash, source: spelled(LIBRARY('ORIGINAL')) }]);
