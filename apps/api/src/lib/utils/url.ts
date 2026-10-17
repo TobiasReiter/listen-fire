@@ -30,18 +30,8 @@ function toUrl(url: string, opts?: ToUrlOpts): URL {
   return parsedUrl;
 }
 
-const NON_HTML_PATH_PATTERN = /\.(?:pdf|png|jpe?g|gif|webp|svg|zip|mp4|docx?|xlsx?|pptx?)$/i;
+// Shared with the web plugins, which decline a file address for the same
+// reason the scraper does.
+export { looksLikeNonHtmlAddress } from '@lf/web/addresses';
 
-/** Whether the address itself says the target is a file rather than a page.
- *  Cheaper than learning it from the response, and the only way to learn it
- *  without paying for the fetch — which is why it is shared: the scraper
- *  declines to fetch one, and the research plugin declines to queue one. */
-function looksLikeNonHtmlAddress(url: string): boolean {
-  try {
-    return NON_HTML_PATH_PATTERN.test(new URL(url).pathname);
-  } catch {
-    return false;
-  }
-}
-
-export { toUrl, safeToUrl, looksLikeNonHtmlAddress };
+export { toUrl, safeToUrl };

@@ -13,6 +13,7 @@
 
 import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
 
+import { isLinkedInUrl, LINKEDIN_PROFILE_REGEX } from '@lf/web';
 import { services } from '../../../../adapters/registry';
 import { SECOND } from '../../../../constants';
 import { extractDocumentTextTool } from '../../../../lib/agent/tools/extract_document_text';
@@ -27,21 +28,6 @@ type FetchedSegment = {
   rawTextId: string | null;
   documentId: string | null;
 };
-
-// LinkedIn shows a login wall to anything arriving without a session, so a
-// scrape of any LinkedIn address comes back as a hundred characters of "join
-// to view" — after tens of seconds of rendering, and indistinguishable
-// downstream from a page that was genuinely thin. The profile service is the
-// one mechanism that reads LinkedIn, and it reads people: a profile address
-// goes to it, and every other LinkedIn address is known here to be
-// unreadable, without spending a request to find out.
-const LINKEDIN_HOST_REGEX = /^(?:https?:\/\/)?(?:[\w-]+\.)?linkedin\.com(?:[/?#]|$)/i;
-const LINKEDIN_PROFILE_REGEX =
-  /^(?:https?:\/\/)?(?:[\w-]+\.)?linkedin\.com\/(?:pub|in|profile)\/([\w-]+)/i;
-
-function isLinkedInUrl(url: string): boolean {
-  return LINKEDIN_HOST_REGEX.test(url);
-}
 
 async function fetchPitchDeckUrl({
   url,

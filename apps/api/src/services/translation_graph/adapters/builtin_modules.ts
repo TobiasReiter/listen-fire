@@ -32,7 +32,7 @@ import { createSecretsFamily, type SecretsFamily } from 'movement-engine/public/
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
-import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
+import { pluginDeclarationNamed, pluginProgramName } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
@@ -50,6 +50,23 @@ export type BuiltinModuleLine =
 
 /** The table a lookup reads: `BUILTIN_MODULES`, or a test's own. */
 export type BuiltinModuleTable = Readonly<Record<string, BuiltinModuleLine>>;
+
+let webModule: PluginModuleDefinition | undefined;
+
+/** `@lf/web` with the platform's own tools: the services the plugins called
+ *  before they were a module. Loaded once, on the first plugin call. */
+const WEB_MODULE_LINE: BuiltinModuleLine = {
+  kind: 'plugin',
+  line: 'module',
+  load: () => {
+    if (webModule === undefined) {
+      const { webModuleWith }: typeof import('@lf/web') = require('@lf/web');
+      const { hostedWebTools }: typeof import('../engine/transforms/hosted_tools') = require('../engine/transforms/hosted_tools');
+      webModule = webModuleWith(() => hostedWebTools);
+    }
+    return webModule;
+  },
+};
 
 /**
  * Every built-in that becomes a module (plan 22 #1), by adapter type or
@@ -77,13 +94,14 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
   gmail: { kind: 'adapter', line: 'legacy' },
   telegram: { kind: 'adapter', line: 'legacy' },
   slack: { kind: 'adapter', line: 'legacy' },
-  // The bundled plugins (Henry 2026-10-17: plugins are modules too).
-  'fetch-url': { kind: 'plugin', line: 'legacy' },
-  'web-research': { kind: 'plugin', line: 'legacy' },
-  research: { kind: 'plugin', line: 'legacy' },
-  'linkedin-research': { kind: 'plugin', line: 'legacy' },
-  'linkedin-enrichment': { kind: 'plugin', line: 'legacy' },
-  'vc-url-retrieval': { kind: 'plugin', line: 'legacy' },
+  // The bundled plugins (Henry 2026-10-17: plugins are modules too), all six
+  // in one module, `@lf/web`. Each plugin keeps its own line.
+  'fetch-url': WEB_MODULE_LINE,
+  'web-research': WEB_MODULE_LINE,
+  research: WEB_MODULE_LINE,
+  'linkedin-research': WEB_MODULE_LINE,
+  'linkedin-enrichment': WEB_MODULE_LINE,
+  'vc-url-retrieval': WEB_MODULE_LINE,
 };
 
 type AdapterModuleLine = Extract<BuiltinModuleLine, { kind: 'adapter'; line: 'module' }>;
@@ -271,7 +289,7 @@ export function builtinModuleWorkKinds(
 
 /**
  * The in-process plugin module that serves `plugin` (either spelling), when a
- * plugin module line declares it; undefined sends the call to the legacy
+ * plugin is on a module line whose module declares it; undefined sends the call to the legacy
  * registry. A plugin's module is loaded for the team the run belongs to.
  */
 export function builtinPluginModule(
@@ -279,8 +297,11 @@ export function builtinPluginModule(
   install: Pick<BuiltinInstall, 'teamId'>,
   table: BuiltinModuleTable = BUILTIN_MODULES,
 ): InProcessPluginModule | undefined {
-  for (const entry of Object.values(table)) {
+  // A plugin's own line decides, so one plugin of a module can be rolled back
+  // while the others stay on it.
+  for (const [name, entry] of Object.entries(table)) {
     if (entry.kind !== 'plugin' || entry.line !== 'module') continue;
+    if (pluginProgramName(name) !== pluginProgramName(plugin)) continue;
     const definition = entry.load();
     if (pluginDeclarationNamed(definition.plugins, plugin) === undefined) continue;
     const secrets = createSecretsFamily({ backend: postgresSecrets({ teamId: install.teamId }), warn: (message) => logger.warn(message) });

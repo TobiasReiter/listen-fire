@@ -25,7 +25,7 @@ jest.mock('../../context/utils', () => ({ runInContext: jest.fn() }));
 jest.mock('../engine/transforms/fetch_resource', () => ({ describeError: String }));
 jest.mock('../engine/transforms/research', () => ({
   research: jest.fn(),
-  usageWasNotMeasured: jest.requireActual('../engine/transforms/research/contract')
+  usageWasNotMeasured: jest.requireActual('@lf/web/research/contract')
     .usageWasNotMeasured,
 }));
 jest.mock('../../../lib/anthropic', () => ({ anthropicChatStructured: jest.fn() }));

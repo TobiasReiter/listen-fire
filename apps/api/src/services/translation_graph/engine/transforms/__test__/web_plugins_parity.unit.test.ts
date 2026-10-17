@@ -25,15 +25,29 @@ jest.mock('movement-engine/services/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+import { noCredential, pluginsInProcess, refusingFiles, refusingKv } from 'module-kit';
+import { webModuleWith } from '@lf/web';
+import { recordingTools, type RecordedInvocation, type ToolCall } from '@lf/web/__test__/replay_tools';
+import { logger } from 'movement-engine/public/log';
+import { hostedWebTools } from '../hosted_tools';
+
+import { NO_BUDGET_LIMIT } from 'movement-engine/public/models';
 
 import { PARITY_CASES, type ParityCase } from './parity/cases';
 import { normalised, startCase, takeCalls, type StubCall } from './parity/stub_services';
-import { registryTransformInvoker } from '../../../movement/transform_invoker';
+import { BUILTIN_MODULES, builtinPluginModule } from '../../../adapters/builtin_modules';
+import { registryTransformInvoker, transformInvokerFor } from '../../../movement/transform_invoker';
+import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 const FIXTURE = join(__dirname, '__fixtures__/web_plugins_parity.json');
 const RECORD = process.env.WEB_PARITY_RECORD === '1';
+// What each plugin asked of its tools on this platform, and the module's
+// answer: the recording @lf/web's own tests replay in process and as a
+// process (serve-module), where the platform's services do not exist.
+const TOOLS_FIXTURE = join(__dirname, '../../../../../../../../modules/web/__test__/__fixtures__/web_tools_parity.json');
 
 interface Recorded {
   name: string;
@@ -56,7 +70,36 @@ async function play(c: ParityCase, invoke: Invoke): Promise<Recorded> {
 }
 
 const legacy: Invoke = (c) =>
-  registryTransformInvoker.invoke({ plugin: c.plugin, config: c.config, extractedContext: c.extractedContext });
+  registryTransformInvoker.invoke({ plugin: c.plugin, config: c.config, extractedContext: c.extractedContext, budget: NO_BUDGET_LIMIT });
+
+if (process.env.WEB_TOOLS_RECORD === '1') {
+  it('records what the plugins ask of their tools on this platform', async () => {
+    const recorded: RecordedInvocation[] = [];
+    for (const c of PARITY_CASES) {
+      const tools: ToolCall[] = [];
+      const module = pluginsInProcess(webModuleWith(() => recordingTools(hostedWebTools, tools)), {
+        tenant: 'team-parity',
+        credential: noCredential('the platform passes the web plugins no credential'),
+        log: logger,
+        files: refusingFiles('no files'),
+        kv: refusingKv('no kv'),
+        validateResults: true,
+      });
+      const { result: answer } = await play(c, () => module.invoke({ name: c.plugin, config: c.config, extractedContext: c.extractedContext }));
+      recorded.push({
+        name: c.name,
+        plugin: c.plugin,
+        config: c.config,
+        extractedContext: c.extractedContext,
+        ...(c.env !== undefined ? { env: c.env } : {}),
+        tools,
+        answer,
+      });
+    }
+    mkdirSync(dirname(TOOLS_FIXTURE), { recursive: true });
+    writeFileSync(TOOLS_FIXTURE, `${JSON.stringify(recorded, null, 2)}\n`);
+  });
+}
 
 if (RECORD) {
   it('records the legacy plugins', async () => {
@@ -66,7 +109,17 @@ if (RECORD) {
   });
 } else {
   const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Recorded[];
-  const subjects: Array<[string, Invoke]> = [['the legacy line', legacy]];
+  const team = 'team-parity' as TeamId;
+  const moduleLine: Invoke = (c) =>
+    transformInvokerFor(team).invoke({ plugin: c.plugin, config: c.config, extractedContext: c.extractedContext, budget: NO_BUDGET_LIMIT });
+  const subjects: Array<[string, Invoke]> = [
+    ['the legacy line', legacy],
+    ['the module line (@lf/web in process)', moduleLine],
+  ];
+
+  it('every bundled plugin is on the module line', () => {
+    for (const c of PARITY_CASES) expect(builtinPluginModule(c.plugin, { teamId: team }, BUILTIN_MODULES)).toBeDefined();
+  });
 
   describe.each(subjects)('%s', (_subject, invoke) => {
     it.each(PARITY_CASES.map((c) => [c.name, c] as const))('%s', async (name, c) => {
