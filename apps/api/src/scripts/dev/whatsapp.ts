@@ -72,10 +72,10 @@ const WHATSAPP_INTAKE_MOVEMENT = `
 import { whatsapp, slack } from adapters
 import { \`Dev Loop Slack\` } from credentials
 
-wa   = whatsapp()
-chat = slack(credentials: \`Dev Loop Slack\`)
+wa   = connect whatsapp
+chat = connect slack using \`Dev Loop Slack\`
 
-movement whatsapp_intake(m: <wa-[:\`Message\`]->>) {
+function whatsapp_intake(m: <wa-[:\`Message\`]->>) {
   chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "WhatsApp from \${m.\`From\`}: \${m.\`Body\`}"
@@ -89,9 +89,9 @@ listen to wa {} fire whatsapp_intake
 const WHATSAPP_REPLY_MOVEMENT = `
 import { whatsapp } from adapters
 
-wa = whatsapp()
+wa = connect whatsapp
 
-movement wa_reply(m: <wa-[:\`Message\`]->>) {
+function wa_reply(m: <wa-[:\`Message\`]->>) {
   write m-[:Reactions]-> { Emoji: "👍" }
   write m-[:Typing]-> {}
   write m-[:Replies]-> { Body: "Noted: \${m.\`Body\`}" }
