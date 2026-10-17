@@ -591,8 +591,8 @@ function resultOf(value: unknown, trace: MovementRunResult['trace'], wire: WireO
   }
   if (result.cancelled !== undefined && result.cancelled !== true) throw new RustShimError('a cancelled result says true');
   if (result.parked !== undefined && result.parked !== true) throw new RustShimError('a parked result says true');
-  // A value an adapter answered is in the writes as that very object.
-  const writes = wire.read(result.writes ?? ['l', 0, []]);
+  // A result naming no writes wrote nothing.
+  const writes = result.writes === undefined ? [] : wire.read(result.writes);
   if (!Array.isArray(writes) || !writes.every(isWriteRecord)) throw new RustShimError('the Rust engine result writes are write records');
   const extractionSites = result.extractionSites === undefined ? {} : wire.read(result.extractionSites);
   if (!isSiteTable(extractionSites)) throw new RustShimError('the Rust engine result extractionSites are site summaries');

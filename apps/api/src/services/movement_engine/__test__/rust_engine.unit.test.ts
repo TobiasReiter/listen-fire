@@ -510,11 +510,8 @@ describe('the Rust engine shim', () => {
     expect(documented.sort()).toEqual(Object.keys(ENGINE_OWN_ROUTES).sort());
   });
 
-  // A shim bug: a result naming no writes is read as the old wire's empty
-  // list (`['l', 0, []]`, rust_engine.ts `resultOf`), which the plain wire
-  // refuses ("a wire list is [\"l\", items]"). Fails until the default is
-  // `['l', []]`.
-  it.failing('reads a result that names no writes as writing nothing', async () => {
+  // A result may leave its writes out: it wrote nothing.
+  it('reads a result that names no writes as writing nothing', async () => {
     const context = { trace: { entries: [], published: 0 }, ledger: new RunLedger({}) };
     expect(readRunResult({ result: { movementName: 'm' } }, { context, hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [], trace: [], extractionSites: {} },
