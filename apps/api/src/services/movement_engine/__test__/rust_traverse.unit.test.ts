@@ -1263,6 +1263,63 @@ describe('the expression tail, on both engines', () => {
 
 // chunk 5A's three engine fixes (the write ledger in program order; fans that
 // settle before failing; resolutions memoised), on a program both engines run.
+// A walk off a name holding a value starts from the records the value
+// holds, exactly as a walk off the event or a block's landing does: one
+// record is itself, a list its record members. Anything else in it (nothing,
+// a text) holds no record, so contributes nothing to walk from.
+describe('a walk off a value starts from the records it holds', () => {
+  const withDeals: GraphOptions = {
+    collections: { company: COMPANIES, deal: [
+      { id: 'd-1', fields: { title: 'Seed round', stage: 'open' } },
+      { id: 'd-2', fields: { title: 'Series A', stage: 'won' } },
+    ] },
+    links: { 'n-1/deals': ['d-1', 'd-2'], 'n-2/deals': ['d-2'] },
+  };
+
+  it('walks from a picked record and from each record of a kept walk', async () => {
+    const { rust } = await onRust({
+      body: [
+        '  top = FIRST(kg-[c:company WHERE `stage` == "Seed" ORDER BY `name`]->)',
+        '  rows = kg-[c:company WHERE `stage` == "Seed"]->',
+        '  if top != null {',
+        '    n = COUNT(top-[:deals]->)',
+        '    titles = JOIN(top-[d:deals ORDER BY `title`]->.`title`, ",")',
+        '    won = EXISTS(top-[d:deals WHERE `stage` == "won"]->)',
+        '    write kg-[:note]-> { text: "${n} ${titles} ${won} ${COUNT(rows-[:deals]->)}" }',
+        '  }',
+      ].join('\n'),
+      graph: withDeals,
+    });
+    expect(rust.error).toBeUndefined();
+    expect(written(rust)).toEqual(['2 Seed round,Series A true 3']);
+  });
+
+  it('finds nothing from a kept walk that found nothing', async () => {
+    const { rust } = await onRust({
+      body: [
+        '  rows = kg-[c:company WHERE `stage` == "Gone"]->',
+        '  write kg-[:note]-> { text: "${COUNT(rows-[:deals]->)} ${EXISTS(rows-[:deals]->)} ${EXISTS(rows-[d:deals WHERE `stage` == "won"]->)}" }',
+      ].join('\n'),
+      graph: withDeals,
+    });
+    expect(rust.error).toBeUndefined();
+    expect(written(rust)).toEqual(['0 false false']);
+  });
+
+  it('walks from the records of a list that holds other values too', async () => {
+    const { rust } = await onRust({
+      body: [
+        '  acme = ONLY(kg-[c:company WHERE `name` == "Acme"]->)',
+        '  both = [acme, msg.`subject`, null]',
+        '  write kg-[:note]-> { text: "${EXISTS(both-[:deals]->)} ${COUNT(both-[:deals]->)}" }',
+      ].join('\n'),
+      graph: withDeals,
+    });
+    expect(rust.error).toBeUndefined();
+    expect(written(rust)).toEqual(['true 2']);
+  });
+});
+
 describe("5A's engine fixes, on both engines", () => {
   it('writes the ledger in program order, iteration by iteration, each record citing its place there', async () => {
     const { rust } = await onRust({

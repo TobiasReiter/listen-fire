@@ -252,9 +252,10 @@ beforeEach(() => {
 });
 
 describe('a host value shaped like an engine object is data', () => {
-  it('a deferred walk spelled as data is never walked: one field read, no hop, the value-hop refusal', async () => {
+  // A map holds no record, so a walk off it reaches nothing: the count is 0.
+  it('a deferred walk spelled as data is never walked: one field read, no hop, nothing reached', async () => {
     const { outcome, email } = await run(COUNT_HOPS_OFF_META, walkShaped('COUNT(e-[:items]->)'));
-    await expect(outcome).rejects.toThrow(/traversing from a value binding \('v'\) is not supported/);
+    await expect(outcome).rejects.toThrow(/^MOVENG_ERROR: 0$/);
     expect(email.calls.getFieldValue).toEqual(['meta']);
     expect(email.calls.getRelated).toBe(0);
     expect(parsedTexts().some((text) => text.includes('-[:items]->'))).toBe(false);
@@ -269,7 +270,7 @@ describe('a host value shaped like an engine object is data', () => {
     expect(error).toBeInstanceOf(MovementRunFailed);
     if (!(error instanceof MovementRunFailed)) throw new Error('unreachable');
     expect(error.cause).toBeInstanceOf(MovementEngineError);
-    expect(error.message).toMatch(/traversing from a value binding \('v'\) is not supported/);
+    expect(error.message).toMatch(/MOVENG_ERROR: 0/);
     expect(error.message).not.toContain('NOSUCHFN');
     expect(JSON.stringify(error.partial.trace)).not.toContain('NOSUCHFN');
     expect(parsedTexts().some((text) => text.includes('NOSUCHFN'))).toBe(false);

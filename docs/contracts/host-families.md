@@ -352,6 +352,7 @@ answer:
   - `removeEventSubscription` answers `null`.
 - **Not callable here:** `manifest` (`adapters.resolve` answers it as data), `iterateRelated` (an async iteration never crosses; the engine pages), and `resolveFileRef` (its answer is a byte stream; bytes stay on the host, which redeems a descriptor itself).
 - **Why the result is wrapped.** A record-shaped result (a `readRecord`'s field values) can carry its own `error` field, so the answer is `{ result }` or `{ error }`, never a bare result.
+- **An answer of nothing is `{}`.** A method that answers nothing (a `getFieldValue` of a field the record lacks) answers no `result`, which the engine reads as nothing; `{ result: null }` is null, a value. On the eval wire nothing would cross as null, so a node entry or a write built from the read would be present.
 - **Errors as data:**
   - `call_ceiling`: the segment has made as many third-party calls as one segment may. The engine fails the run with the message (named `AdapterCallCeilingExceeded`), and a collection op's `onError` never forgives it.
   - `adapter_error`: the adapter failed, or the instance does not implement the method, or the segment is not open (the message names it). The engine fails the statement with the message, under the failure's own `name`, with `detail` on the error it raises. The host logs the original failure (class, stack, cause) at warn with the segment and run ids as it classifies it.

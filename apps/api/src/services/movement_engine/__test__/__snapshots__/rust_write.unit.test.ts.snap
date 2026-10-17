@@ -15728,14 +15728,7 @@ exports[`writes in the Rust engine expands a write spread by the fields the chec
               "kind": "source_field",
             },
           ],
-          "stage": [
-            {
-              "adapterType": "email",
-              "field": "missing",
-              "instance": "inbox",
-              "kind": "source_field",
-            },
-          ],
+          "stage": [],
         },
         "recordType": "company",
         "resultData": {
@@ -15951,9 +15944,7 @@ exports[`writes in the Rust engine fails the create a required field leaves empt
           "constraints": {
             "any": [],
           },
-          "record": {
-            "body": null,
-          },
+          "record": {},
           "recordType": "note",
         },
       ],

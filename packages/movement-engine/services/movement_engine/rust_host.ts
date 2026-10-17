@@ -223,6 +223,11 @@ const ROUTES: Record<string, Route> = {
     // A `Date` in it reads as its ISO text, as the TypeScript's stand-in reads it.
     const read = isoDates(answer.result);
     const answered = request.filesIn === 'resources' ? relatedResourcesWithFiles(read) : read;
+    // An answer of nothing (a field the record lacks) crosses as no result,
+    // which the engine reads as nothing, as the TypeScript does: on the wire
+    // it would be null, a value, so a node entry or a write built from it
+    // would be present.
+    if (answered === undefined) return new Plain({});
     const result = wire.value(filesAt !== undefined ? filesAtType(filesAt, answered) : answered);
     if (result === REFUSED) throw new RustShimError(`adapters.call ${method} returned a value the eval wire cannot carry as itself`);
     return new Plain({ result });
