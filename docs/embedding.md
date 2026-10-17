@@ -138,7 +138,7 @@ The host has the same slots as `lf.yaml`'s `core:` section. You fill each with y
 
 Two more pieces are yours and have safe defaults:
 
-- **Secrets.** `createSecretsFamily({ backend })` over your vault: one entry per connection, never shared between tenants. `createMemoryVault` is the in-memory one; a real vault implements `SecretsBackend` (resolve, write back at a version, a lock), and the contract cases in `public/secrets-testing` hold it. OAuth 2 refresh is `declaredRefresher` and the family's `refresh`.
+- **Secrets.** `createSecretsFamily({ backend })` over your vault: one entry per connection, never shared between tenants. `createMemoryVault` is the in-memory one; a real vault implements `SecretsBackend` (resolve, write back at a version, a lock), and the contract cases in `public/secrets-testing` hold it. An OAuth 2 credential a module reads through `secretsCredential` (module kit) is refreshed when given `oauth2: { declaration, client }`: before a call when it is about to expire, and when the provider refuses its token, one refresh at a time.
 - **Write locks.** Two runs writing the same record take turns. The default is in memory, which holds within one process; across processes, supply `locks` over your database.
 
 ## 6. Limits and the cost cap
