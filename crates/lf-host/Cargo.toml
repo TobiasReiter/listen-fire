@@ -41,3 +41,10 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.11"
 # The engine's pin: ISO instants written as `Date.toISOString` writes them.
 jiff = { version = "=0.2.16", default-features = false, features = ["std"] }
+# The provider's HTTPS (src/anthropic.rs): pure-Rust TLS on the system-free
+# root set, so the binary still needs no system library.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+# A reply's JSON repaired as the TypeScript lf's `jsonrepair` repairs it.
+jsonrepair = { version = "0.1", default-features = false }

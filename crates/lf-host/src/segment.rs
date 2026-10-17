@@ -12,7 +12,7 @@
 //! (the TypeScript shim's settle queue).
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -68,20 +68,6 @@ const SERVES: &[&str] = &[
     "trace.append",
     "clock.now",
     "ids.mint",
-];
-
-/// The chat models a run is held to (`runChatModels` over the model
-/// registry's Anthropic list). THIN until lf-host calls models (G6): the
-/// TypeScript lf's list, as its registry names it today.
-const RUN_CHAT_MODELS: &[&str] = &[
-    "claude-fable-5-1",
-    "claude-opus-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-sonnet-5",
-    "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001",
 ];
 
 /// The trace entry kinds the engine appends (`traceEntry`).
@@ -161,6 +147,9 @@ pub struct SegmentHost<'s> {
     cancelled: Cell<bool>,
     lock_tokens: RefCell<HashMap<String, Vec<String>>>,
     next_lock: Cell<u64>,
+    /// What the segment's priced calls spent, by cost source: the engine
+    /// reports the same lines from its own ledger, and they must agree.
+    spent: RefCell<BTreeMap<String, f64>>,
 }
 
 impl<'s> SegmentHost<'s> {
@@ -179,6 +168,17 @@ impl<'s> SegmentHost<'s> {
             cancelled: Cell::new(false),
             lock_tokens: RefCell::new(HashMap::new()),
             next_lock: Cell::new(0),
+            spent: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// Charge a priced call's cost lines to the segment's account.
+    fn charge(&self, cost: Option<&Js>) {
+        let mut spent = self.spent.borrow_mut();
+        for line in cost.and_then(Js::as_array).into_iter().flatten() {
+            if let (Some(source), Some(Js::Num(microdollars))) = (line.get("source").and_then(Js::as_str), line.get("microdollars")) {
+                *spent.entry(source.to_string()).or_insert(0.0) += microdollars.as_f64().unwrap_or(0.0);
+            }
         }
     }
 }
@@ -257,7 +257,7 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
         Js::Obj(map) => map.clone(),
         _ => return Err("the catalog snapshot is not an object".into()),
     };
-    catalog.insert("models".into(), Js::strings(RUN_CHAT_MODELS));
+    catalog.insert("models".into(), Js::strings(crate::models::run_chat_models(input.catalog)));
     let head = Json::Object(segment).to_string();
     Ok(format!("{},\"catalog\":{}}}", &head[..head.len() - 1], Js::Obj(catalog).to_json()))
 }
@@ -386,10 +386,18 @@ fn read_result(host: &SegmentHost<'_>, done: &Json) -> Result<Ran, Ended> {
     if let Some(reason) = done.get("refused").or_else(|| done.get("declined")).and_then(Json::as_str) {
         return Err(Ended::Failed(format!("the Rust engine does not run this movement ({reason})")));
     }
-    if let Some(cost) = done.get("cost").and_then(Json::as_array)
-        && !cost.is_empty()
-    {
-        return Err(Ended::Failed("the Rust engine reports spending, but this host made no priced call".into()));
+    let mut reported: BTreeMap<String, f64> = BTreeMap::new();
+    for line in done.get("cost").and_then(Json::as_array).into_iter().flatten() {
+        let (Some(source), Some(microdollars)) = (line.get("source").and_then(Json::as_str), line.get("microdollars").and_then(Json::as_f64)) else {
+            return Err(Ended::Failed("a Rust engine cost line is {source, microdollars}".into()));
+        };
+        *reported.entry(source.to_string()).or_insert(0.0) += microdollars;
+    }
+    if reported != *host.spent.borrow() {
+        return Err(Ended::Failed(format!(
+            "the Rust engine reports spending {reported:?}, but its host charged {:?}",
+            host.spent.borrow()
+        )));
     }
     let failure = done.get("thrown").or_else(|| done.get("failed").and_then(|f| f.get("error")));
     if let Some(error) = failure {
@@ -739,10 +747,17 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
             Ok(Some(host.wire.borrow().write(&Hv::of_js(&answer))))
         }
         "llm.transforms.invoke" => invoke_plugin(host, args).await?,
-        // Families lf-host does not serve yet: the run fails naming them.
         "llm.client.call" | "llm.extractCall.call" | "llm.arbitrateEntities" => {
-            Err(failure(format!("{label}: lf-host does not call models yet; use the TypeScript lf for a movement that does")))
+            match crate::llm_calls::serve(label, args, host.adapters.externals().credentials).await {
+                Ok(answer) => {
+                    host.charge(answer.get("cost"));
+                    Ok(Some(host.wire.borrow().write(&Hv::of_js(&answer))))
+                }
+                Err(crate::llm_calls::Failed::Fault(message)) => return Err(Fault(message)),
+                Err(crate::llm_calls::Failed::Run(message)) => Err(failure(message)),
+            }
         }
+        // Families lf-host does not serve yet: the run fails naming them.
         "park.bindings.record" | "park.bindings.findBoundCounterpart" | "park.bindings.delete" => {
             Err(failure(format!("{label}: lf-host keeps no record bindings yet; use the TypeScript lf for a movement that binds records")))
         }
@@ -780,6 +795,7 @@ async fn invoke_plugin(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
         let line = obj! { "source" => Js::Str(format!("plugin:{plugin}")), "microdollars" => Js::Num(microdollars.clone()) };
         out.insert("cost".into(), Js::Arr(vec![Js::Obj(line)]));
     }
+    host.charge(out.get("cost"));
     Ok(Ok(Some(host.wire.borrow().write(&Hv::of_js(&Js::Obj(out))))))
 }
 
