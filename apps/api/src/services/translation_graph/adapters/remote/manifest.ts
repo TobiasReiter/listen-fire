@@ -12,7 +12,7 @@
 // Registration
 
 import { z } from 'zod';
-import { WireListenDeclarations, WireManifestProtocolVersion } from 'engine-contracts';
+import { WireListenDeclarations, WireManifestProtocolVersion, WireModuleDeclarations } from 'engine-contracts';
 
 import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
@@ -88,6 +88,14 @@ export const RemoteAdapterManifestFile = z.object({
    *  declarations a built-in's manifest makes, so the checker refuses a listen
    *  config this adapter would never route. */
   ...WireListenDeclarations.shape,
+  /** What a module declares beyond its methods — the credential it needs,
+   *  how its provider signs webhooks, its poll, its periodic tasks, the
+   *  plugins it serves — exactly as its `manifest` answers them. All
+   *  optional, so every manifest stored before they existed still parses.
+   *  Not paired with `methods` here, as the protocol pairs them: a stored
+   *  file could list `poll` without its declaration (the file used to drop
+   *  it), and a stored row must never stop parsing. */
+  ...WireModuleDeclarations.shape,
   /** Whole-adapter capability (mirrors `Adapter.runtimeCapabilities()`):
    *  incoming-edge traversal, edge properties, resources. Per-edge / per-field
    *  capability rides `describe()`, not here. */
