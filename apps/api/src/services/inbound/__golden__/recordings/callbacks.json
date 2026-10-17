@@ -1,0 +1,493 @@
+[
+  {
+    "id": "get-unknown-id",
+    "door": "callbacks",
+    "note": "An id this store never minted renders the invalid-link page, 404.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_missing",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "976"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This link is not valid</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>This link is not valid</h1><p class=\"muted\">Nothing here — the link may have been mistyped.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-foreign-id-shape",
+    "door": "callbacks",
+    "note": "An id without the cb_ prefix never reaches a query: the same 404.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/anything",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "976"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This link is not valid</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>This link is not valid</h1><p class=\"muted\">Nothing here — the link may have been mistyped.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-live-no-params",
+    "door": "callbacks",
+    "note": "A live callback with no parameters renders one Confirm button that POSTs; the GET fires nothing.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1055"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Confirm</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>Confirm this action</h1><p class=\"muted\">This carries on a workflow that is waiting on you.</p><form method=\"post\" action=\"/api/cb/cb_golden0001\"><button type=\"submit\">Confirm</button></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-live-with-params",
+    "door": "callbacks",
+    "note": "One control per declared parameter, typed from the signature, in declaration order.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1758"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Confirm</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>Confirm this action</h1><p class=\"muted\">This carries on a workflow that is waiting on you.</p><form method=\"post\" action=\"/api/cb/cb_golden0001\"><label><span>note</span><input type=\"text\" name=\"note\" required></label><label><span>approved</span><select name=\"approved\"><option value=\"true\">Yes</option><option value=\"false\">No</option></select></label><label><span>amount</span><input type=\"number\" step=\"any\" name=\"amount\" required></label><label><span>due</span><input type=\"date\" name=\"due\" required></label><label><span>at</span><input type=\"datetime-local\" name=\"at\" required></label><label><span>extra</span><textarea name=\"extra\" rows=\"4\" required placeholder=\"{ }\"></textarea></label><label><span>attachment</span><input type=\"text\" name=\"attachment\" required placeholder=\"supplied by the calling system\"></label><div class=\"actions\"><button type=\"submit\">Confirm</button></div></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-already-fired",
+    "door": "callbacks",
+    "note": "A spent callback renders the closed page, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "978"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This action was closed</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>This action was closed</h1><p class=\"muted\">This was already used. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-revoked",
+    "door": "callbacks",
+    "note": "A revoked callback renders the finished-workflow page, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1007"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This action was closed</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>This action was closed</h1><p class=\"muted\">The workflow this belonged to has finished, so there is nothing left to do here.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-expired",
+    "door": "callbacks",
+    "note": "A lapsed callback renders the expired page, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1000"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This action has expired</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>This action has expired</h1><p class=\"muted\">This was only available for a limited time, and that window has passed.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-expiry-in-future-still-live",
+    "door": "callbacks",
+    "note": "A callback with a future expiry is still confirmable.",
+    "request": {
+      "method": "GET",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1055"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Confirm</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>Confirm this action</h1><p class=\"muted\">This carries on a workflow that is waiting on you.</p><form method=\"post\" action=\"/api/cb/cb_golden0001\"><button type=\"submit\">Confirm</button></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "post-recorded-json",
+    "door": "callbacks",
+    "note": "A JSON caller (a BYO server) gets {outcome, message} with 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{\"note\":\"ok\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "101"
+      },
+      "body": "{\"outcome\":\"recorded\",\"message\":\"Thanks — that has been recorded and the workflow is carrying on.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {
+          "note": "ok"
+        }
+      }
+    ]
+  },
+  {
+    "id": "post-recorded-queued",
+    "door": "callbacks",
+    "note": "A fire queued behind a running step answers 202.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 202,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "101"
+      },
+      "body": "{\"outcome\":\"recorded\",\"message\":\"Thanks — that has been recorded and the workflow is carrying on.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      }
+    ]
+  },
+  {
+    "id": "post-recorded-html",
+    "door": "callbacks",
+    "note": "A browser form post (Accept: text/html) gets a Done page.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "text/html",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "note=ok"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "957"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Done</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>Done</h1><p class=\"muted\">Thanks — that has been recorded and the workflow is carrying on.</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {
+          "note": "ok"
+        }
+      }
+    ]
+  },
+  {
+    "id": "post-values-from-query-and-body",
+    "door": "callbacks",
+    "note": "Values are taken from the query string and the body, the body winning on a clash; every key passes through raw.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001?a=1&note=from-query",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{\"note\":\"from-body\",\"n\":2}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "101"
+      },
+      "body": "{\"outcome\":\"recorded\",\"message\":\"Thanks — that has been recorded and the workflow is carrying on.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {
+          "a": "1",
+          "note": "from-body",
+          "n": 2
+        }
+      }
+    ]
+  },
+  {
+    "id": "post-not-found",
+    "door": "callbacks",
+    "note": "An unknown id is 404.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "85"
+      },
+      "body": "{\"outcome\":\"not_found\",\"message\":\"Nothing here — the link may have been mistyped.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      }
+    ]
+  },
+  {
+    "id": "post-closed",
+    "door": "callbacks",
+    "note": "A settled callback is 410.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "154"
+      },
+      "body": "{\"outcome\":\"closed\",\"message\":\"This is no longer open — it was already used, or the workflow it belonged to has finished. Nothing more is needed here.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      }
+    ]
+  },
+  {
+    "id": "post-expired",
+    "door": "callbacks",
+    "note": "A lapsed callback is 410 with its own message.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "105"
+      },
+      "body": "{\"outcome\":\"expired\",\"message\":\"This was only available for a limited time, and that window has passed.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      }
+    ]
+  },
+  {
+    "id": "post-mismatch",
+    "door": "callbacks",
+    "note": "A value that does not fit the signature is 400 and says exactly what was expected.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{\"amount\":\"x\"}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "58"
+      },
+      "body": "{\"outcome\":\"mismatch\",\"message\":\"amount must be a number\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {
+          "amount": "x"
+        }
+      }
+    ]
+  },
+  {
+    "id": "post-mismatch-html",
+    "door": "callbacks",
+    "note": "The same refusal as a page.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "text/html",
+        "content-type": "application/json"
+      },
+      "body": "{\"amount\":\"x\"}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "992"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>That doesn't match what this action expects</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>That doesn't match what this action expects</h1><p class=\"muted\">amount must be a number</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {
+          "amount": "x"
+        }
+      }
+    ]
+  },
+  {
+    "id": "post-firing-throws-json",
+    "door": "callbacks",
+    "note": "A thrown firing is a 500 {outcome:error}; the call may already be on the ledger.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "98"
+      },
+      "body": "{\"outcome\":\"error\",\"message\":\"Something went wrong recording that. Please try again in a moment.\"}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      }
+    ]
+  },
+  {
+    "id": "post-firing-throws-html",
+    "door": "callbacks",
+    "note": "The same failure as a page.",
+    "request": {
+      "method": "POST",
+      "path": "/api/cb/cb_golden0001",
+      "headers": {
+        "accept": "text/html",
+        "content-type": "application/json"
+      },
+      "body": ""
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "989"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Something went wrong</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}.muted{color:#666}form{margin-top:1.5rem}label{display:block;margin-bottom:1rem}label span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}input,select,textarea{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.actions{margin-top:1.5rem}</style></head><body><h1>Something went wrong</h1><p class=\"muted\">Something went wrong recording that. Please try again in a moment.</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      }
+    ]
+  }
+]

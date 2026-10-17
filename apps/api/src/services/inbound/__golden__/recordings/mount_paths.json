@@ -1,0 +1,65 @@
+{
+  "routers": {
+    "/api/public/webhook-sync": [
+      "POST /:provider/:subscriptionId"
+    ],
+    "/api/public/adapter": [
+      "POST /:adapterType/emit",
+      "POST /:adapterType/wake"
+    ],
+    "/api/public/telegram": [
+      "POST /builtin"
+    ],
+    "/api/public/slack": [
+      "POST /events"
+    ],
+    "/api/public/slack-actions": [
+      "POST /"
+    ],
+    "/api/public/whatsapp": [
+      "GET /webhook",
+      "POST /webhook"
+    ],
+    "/api/cb": [
+      "GET /:id",
+      "POST /:id"
+    ],
+    "/api/asks": [
+      "GET /:token",
+      "GET /:token/detail",
+      "POST /:token"
+    ],
+    "/api/v1/valuations/webhooks": [
+      "DELETE /",
+      "GET /",
+      "POST /"
+    ]
+  },
+  "mountLines": {
+    "server.ts": [
+      "app.use('/api/public/webhook-sync', express.raw({ type: 'application/json' }), webhookSyncRouter);",
+      "app.use('/api/public/adapter', adapterDoorsRouter);",
+      "app.use('/api/public/telegram', express.raw({ type: 'application/json' }), telegramBuiltinRouter);",
+      "app.use('/api/public/slack', express.raw({ type: 'application/json' }), slackEventsRouter);",
+      "app.use('/api/public/slack-actions', express.raw({ type: '*/*' }), slackInteractivityRouter);",
+      "app.use('/api/resend', express.raw({ type: 'application/json' }));",
+      "app.use('/api/cb', callbacksRouter);",
+      "app.use('/api/asks', asksRouter);",
+      "app.use('/api/public', publicRouter);",
+      "app.use('/api', privateRouter);"
+    ],
+    "interfaces/rest/index.ts": [
+      "if (mounts('automations')) publicRouter.use('/whatsapp', whatsappRouter);",
+      "privateRouter.post('/mailgun/callback', inboundEmailHandler);",
+      "privateRouter.post('/resend/callback', resendInboundEmailHandler);",
+      "privateRouter.use('/webhook', webhookRouter);",
+      "if (mounts('valuations')) privateRouter.use('/v1/valuations', valuationsRouter);"
+    ],
+    "interfaces/rest/v1/valuations/index.ts": [
+      "valuationsRouter.use('/webhooks', webhooksRouter);"
+    ],
+    "interfaces/rest/webhooks/index.ts": [
+      "webhookRouter.use('/mailgun', mailgunRouter);"
+    ]
+  }
+}

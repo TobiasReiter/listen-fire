@@ -1180,6 +1180,13 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 
 - Contributors: the engine package now has public entries under `packages/movement-engine/public/` (the engine, host, run host, adapter, catalog, inbound, models, files, log, testing), and `code:type-check` in apps/api runs an engine boundary guard that fails if the API imports more engine internals than the recorded baseline. No change to a deployment.
 
+### ev1-golden
+
+- A golden corpus now records how every inbound door answers today (webhook-sync per provider, the
+  remote adapter push doors, the shared Telegram bot, both Slack app doors, WhatsApp, Resend mail,
+  `/api/cb`, `/api/asks`, the valuations webhook routes), with the callback URL of every provider key
+  and every mount path. No behaviour changes; it is the baseline the shared inbound core must match.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

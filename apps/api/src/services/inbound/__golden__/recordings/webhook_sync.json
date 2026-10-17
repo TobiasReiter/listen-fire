@@ -1,0 +1,2615 @@
+[
+  {
+    "id": "attio-good-signature",
+    "door": "webhook_sync",
+    "note": "Attio-Signature over the raw body: captured, queued before the 200, drain poked after.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "attio-bad-signature",
+    "door": "webhook_sync",
+    "note": "A wrong signature is refused 401 before anything is parsed or captured.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "attio-missing-signature",
+    "door": "webhook_sync",
+    "note": "No signature header at all is the same 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "attio-signature-via-x-attio-signature",
+    "door": "webhook_sync",
+    "note": "The second header in the chain is honoured.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "attio-signature-via-x-webhook-signature",
+    "door": "webhook_sync",
+    "note": "The outbox worker header, last in the chain, is honoured.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "attio-first-header-in-chain-wins",
+    "door": "webhook_sync",
+    "note": "With a bad attio-signature and a good x-webhook-signature the FIRST present header is the one checked: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "content-type": "application/json",
+        "x-webhook-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "attio-remote-header-ignored-for-builtin",
+    "door": "webhook_sync",
+    "note": "x-listen-fire-signature heads the chain for every non-Slack, non-Affinity provider, so a bad one shadows a good attio-signature.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json",
+        "x-listen-fire-signature": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "provider-path-is-case-insensitive",
+    "door": "webhook_sync",
+    "note": "The path segment is upper-cased to the provider key.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/ATTIO/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "unknown-provider-no-subscription",
+    "door": "webhook_sync",
+    "note": "No such provider and no such row: 404 unknown_provider.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/nope/missing",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "28"
+      },
+      "body": "{\"error\":\"unknown_provider\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "known-provider-no-subscription",
+    "door": "webhook_sync",
+    "note": "A known provider with no live row: 404 subscription_not_found.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/missing",
+      "headers": {
+        "attio-signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "34"
+      },
+      "body": "{\"error\":\"subscription_not_found\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "provider-mismatch",
+    "door": "webhook_sync",
+    "note": "The row belongs to ATTIO but the URL names AIRTABLE: 400 provider_mismatch.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/airtable/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"provider_mismatch\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "non-json-body-with-valid-signature",
+    "door": "webhook_sync",
+    "note": "A signed body that is not JSON passes the signature and fails the parse: 500 internal.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "d7e7fe374db3b19ef0641a15cedd3b8c333419a49243fa87f70fc9e1b8373833",
+        "content-type": "application/json"
+      },
+      "body": "this is not json"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "20"
+      },
+      "body": "{\"error\":\"internal\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "non-json-content-type",
+    "door": "webhook_sync",
+    "note": "A body that is not application/json is never read raw; the route re-serialises an empty object, which cannot match the signature: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "content-type": "text/plain"
+      },
+      "body": "plain text"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "body-over-100kb",
+    "door": "webhook_sync",
+    "note": "The raw parser's default 100 KB limit answers 413 from express itself, before the route runs.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "8a11d24857ef669e492a6bce7387da9013f2581d303ce6009721b1a2e9f64ae1",
+        "content-type": "application/json"
+      },
+      "body": {
+        "bytes": 120000,
+        "sha256": "eb8046bb459ee1af617f40c7814ca02b7c2a57fc1186268fb9967133751dff11",
+        "head": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\",\"pad\":\"xxxxxxxxxxxxxxxxx"
+      }
+    },
+    "response": {
+      "status": 413,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "144"
+      },
+      "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Payload Too Large</pre>\n</body>\n</html>\n"
+    },
+    "effects": []
+  },
+  {
+    "id": "no-events-no-wakes",
+    "door": "webhook_sync",
+    "note": "A delivery that carries nothing is acked 200 with zero events; nothing is queued but the drain is still poked.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":0}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "no-trigger-listens",
+    "door": "webhook_sync",
+    "note": "Events with no listening trigger are receipted nowhere but still acked.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": []
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "wake-keys-queued",
+    "door": "webhook_sync",
+    "note": "An adapter wake door names correlation keys: they are queued (after the events) before the ack.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":0}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": [
+          "thread:abc",
+          "thread:def"
+        ]
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "wake-keys-failure",
+    "door": "webhook_sync",
+    "note": "A wakeKeys that throws costs the delivery its ack, not its events: they are captured and queued, then 500 so the sender retries.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "20"
+      },
+      "body": "{\"error\":\"internal\"}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "receipt-enqueue-failure-is-isolated",
+    "door": "webhook_sync",
+    "note": "A receipt whose work row cannot be queued is logged and left for replay; the delivery is still acked 200 (only a wake that cannot be queued fails the request).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "wake-enqueue-failure",
+    "door": "webhook_sync",
+    "note": "A wake that cannot be queued is a 500 so the sender retries; the events were already receipted.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "20"
+      },
+      "body": "{\"error\":\"internal\"}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "capture-failure",
+    "door": "webhook_sync",
+    "note": "An event whose receipt cannot be stored is dropped from the count; the delivery is still acked 200 with zero processed.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":0}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "pull-checkpoint-advances",
+    "door": "webhook_sync",
+    "note": "An adapter that returns a checkpoint has it written to the subscription before the ack.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "db",
+        "op": "update",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "set",
+            [
+              {
+                "inbound_checkpoint": {
+                  "sql": [
+                    "{\"cursor\":\"c-2\"}"
+                  ]
+                }
+              }
+            ]
+          ],
+          [
+            "where",
+            [
+              "id",
+              "=",
+              "sub-1"
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "bridged-linked-object-refresh",
+    "door": "webhook_sync",
+    "note": "An event naming a record a knowledge node is bridged to also queues a linked-object refresh.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_linked_object_refresh",
+        "refresh": {
+          "teamId": "team-1",
+          "provider": "ATTIO",
+          "credentialsId": "cred-1",
+          "externalId": "rec-1"
+        },
+        "eventKey": "evt-attio-1"
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "adapter-cannot-preprocess",
+    "door": "webhook_sync",
+    "note": "An adapter with no preprocessInbound is a wiring bug: 500 with its error text.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "1ba60e8a8a13bef634dc037e889b4de609dd0fcd4dfab895c9f9fb280fa71170",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "45"
+      },
+      "body": "{\"error\":\"adapter cannot preprocess inbound\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "harness-team-skips-signature-and-drains",
+    "door": "webhook_sync",
+    "note": "The dev-loop team bypasses the signature, and its rows are drained before the ack so dispatch errors can be read from the response.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "not-even-hex",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-harness"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-harness",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-harness",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-harness",
+        "correlationKeys": []
+      },
+      {
+        "kind": "drain_until_idle",
+        "owner": "door",
+        "teamId": "team-harness"
+      }
+    ]
+  },
+  {
+    "id": "airtable-good-mac",
+    "door": "webhook_sync",
+    "note": "X-Airtable-Content-MAC: hmac-sha256=<hex> keyed by the base64-decoded secret.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/airtable/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-airtable-content-mac": "hmac-sha256=d8985fae05aa41151136cb2a2c7450dab88c92f4670f6d0419cb94037484efab"
+      },
+      "body": "{\"base\":{\"id\":\"app1\"},\"webhook\":{\"id\":\"wh1\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "airtable",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "AIRTABLE",
+          "airtable"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "airtable",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "base": {
+              "id": "app1"
+            },
+            "webhook": {
+              "id": "wh1"
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "airtable",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "airtable-bad-mac",
+    "door": "webhook_sync",
+    "note": "A MAC from the wrong key is 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/airtable/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-airtable-content-mac": "hmac-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "body": "{\"base\":{\"id\":\"app1\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "affinity-hex-signature",
+    "door": "webhook_sync",
+    "note": "Hex HMAC in x-affinity-signature.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-affinity-signature": "4cb7ffca036aebf6f6b0fc18a17582b285c028684bbff12e11dba5cd54ab31d2"
+      },
+      "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "affinity",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "AFFINITY",
+          "affinity"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "affinity",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "type": "list_entry.created",
+            "body": {
+              "id": 7
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "affinity",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "affinity-base64-signature-with-prefix",
+    "door": "webhook_sync",
+    "note": "Base64 digest with a sha256= prefix, in the generic x-signature header, is accepted.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-signature": "sha256=TLf/ygNq6/b2sPwYoXWCsoXAKGhLv/EuEdulzVSrMdI="
+      },
+      "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "affinity",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "AFFINITY",
+          "affinity"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "affinity",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "type": "list_entry.created",
+            "body": {
+              "id": 7
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "affinity",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "affinity-unset-key-accepts-unsigned",
+    "door": "webhook_sync",
+    "note": "A subscription with no signature key is accepted without any header (URL secrecy carries it).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "affinity",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "AFFINITY",
+          "affinity"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "affinity",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "type": "list_entry.created",
+            "body": {
+              "id": 7
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "affinity",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "affinity-key-set-unsigned-rejected",
+    "door": "webhook_sync",
+    "note": "With a key configured, an unsigned delivery is 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "affinity-ignores-attio-header",
+    "door": "webhook_sync",
+    "note": "Affinity's chain does not include attio-signature: a good one there is not seen.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "attio-signature": "9dc362f2cd2ecb4b73a37f356786c5b06d4d19857b968789b6d696c5984f9494",
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"list_entry.created\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "slack-url-verification",
+    "door": "webhook_sync",
+    "note": "The setup handshake is answered with the bare challenge before any row is read or signature checked.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/slack/anything",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"url_verification\",\"challenge\":\"ch-123\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "22"
+      },
+      "body": "{\"challenge\":\"ch-123\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "slack-url-verification-missing-challenge",
+    "door": "webhook_sync",
+    "note": "An envelope typed url_verification with no string challenge is 400 missing_challenge.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/slack/anything",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"url_verification\"}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"missing_challenge\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "slack-url-verification-wrong-provider",
+    "door": "webhook_sync",
+    "note": "The challenge short-circuit is Slack only: other providers go on to the subscription lookup.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/anything",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"url_verification\",\"challenge\":\"ch-123\"}"
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "34"
+      },
+      "body": "{\"error\":\"subscription_not_found\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "slack-good-signature",
+    "door": "webhook_sync",
+    "note": "X-Slack-Request-Timestamp + X-Slack-Signature v0 over the raw body.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/slack/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=60397a01840fb9b0838a813a5caa13a17134be5243cb310964ca278262207e44"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev1\",\"team_id\":\"T1\",\"event\":{\"type\":\"message\",\"channel\":\"C1\",\"user\":\"U1\",\"ts\":\"1760702400.000100\",\"text\":\"hello\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "slack",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "SLACK",
+          "slack"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "slack",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "Ev1",
+          "payload": {
+            "type": "event_callback",
+            "event_id": "Ev1",
+            "team_id": "T1",
+            "event": {
+              "type": "message",
+              "channel": "C1",
+              "user": "U1",
+              "ts": "1760702400.000100",
+              "text": "hello"
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "slack",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "slack-bad-signature",
+    "door": "webhook_sync",
+    "note": "Signed with another secret: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/slack/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=d505d10fee34dc369ab6f033cf11f27a246b17c2d9c34997d8b00301199e0a60"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev1\",\"team_id\":\"T1\",\"event\":{\"type\":\"message\",\"channel\":\"C1\",\"user\":\"U1\",\"ts\":\"1760702400.000100\",\"text\":\"hello\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "slack-missing-timestamp-header",
+    "door": "webhook_sync",
+    "note": "Either Slack header missing collapses to an empty signature: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/slack/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-signature": "v0=60397a01840fb9b0838a813a5caa13a17134be5243cb310964ca278262207e44"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev1\",\"team_id\":\"T1\",\"event\":{\"type\":\"message\",\"channel\":\"C1\",\"user\":\"U1\",\"ts\":\"1760702400.000100\",\"text\":\"hello\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "slack-uses-no-other-header",
+    "door": "webhook_sync",
+    "note": "A good x-webhook-signature does not help Slack: its chain is only the two Slack headers.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/slack/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "cd7878acec33478ba304bb829a6c6a055e0825b77cd88a8b5f265db5f2b7b21b"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev1\",\"team_id\":\"T1\",\"event\":{\"type\":\"message\",\"channel\":\"C1\",\"user\":\"U1\",\"ts\":\"1760702400.000100\",\"text\":\"hello\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "telegram-message-unsigned",
+    "door": "webhook_sync",
+    "note": "Telegram BYO has no signature check at all; the URL is the credential.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":1,\"message\":{\"message_id\":5,\"text\":\"hi\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "telegram",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "TELEGRAM",
+          "telegram"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "telegram",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "update_id": 1,
+            "message": {
+              "message_id": 5,
+              "text": "hi",
+              "chat": {
+                "id": 9
+              },
+              "from": {
+                "id": 3
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "telegram",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "telegram-callback-query-fires-callback",
+    "door": "webhook_sync",
+    "note": "A button tap carrying a callback id fires it, answers the tap, retires the keyboard, and ends the delivery (no events).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-1\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":0}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "telegram_answer_callback_query",
+        "teamId": "team-1",
+        "callbackQueryId": "cbq-1",
+        "text": "Thanks — that has been recorded."
+      },
+      {
+        "kind": "telegram_clear_reply_markup",
+        "teamId": "team-1",
+        "chatId": "9",
+        "messageId": 11
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "telegram-callback-query-not-served-keeps-keyboard",
+    "door": "webhook_sync",
+    "note": "A tap on an already-closed callback answers the tap but leaves the keyboard.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-2\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":0}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "telegram_answer_callback_query",
+        "teamId": "team-1",
+        "callbackQueryId": "cbq-2",
+        "text": "This request was already closed."
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "telegram-callback-query-firing-throws",
+    "door": "webhook_sync",
+    "note": "A firing that throws is acked to the tapper as a failure; the delivery still ends handled with 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-3\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":0}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "telegram_answer_callback_query",
+        "teamId": "team-1",
+        "callbackQueryId": "cbq-3",
+        "text": "Something went wrong recording that."
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "telegram-callback-query-foreign-data-falls-through",
+    "door": "webhook_sync",
+    "note": "A callback_query whose data is not ours is not handled here; the delivery continues to the adapter like any update.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-4\",\"data\":\"something-else\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "telegram",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "TELEGRAM",
+          "telegram"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "telegram",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "update_id": 2,
+            "callback_query": {
+              "id": "cbq-4",
+              "data": "something-else",
+              "message": {
+                "message_id": 11,
+                "chat": {
+                  "id": 9
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "telegram",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "whatsapp-good-signature-via-x-webhook-signature",
+    "door": "webhook_sync",
+    "note": "sha256=<hex> over the raw body, in x-webhook-signature (the only header of the chain that fits).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "sha256=9792522b99cc9661ce717989e60d761aafb9baedb10a9af599b77b98166d9376"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.1\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"hi\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "whatsapp",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "INBOUND_WHATSAPP",
+          "whatsapp"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "whatsapp",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "object": "whatsapp_business_account",
+            "entry": [
+              {
+                "id": "waba-1",
+                "changes": [
+                  {
+                    "field": "messages",
+                    "value": {
+                      "metadata": {
+                        "display_phone_number": "15550001111",
+                        "phone_number_id": "pn-1"
+                      },
+                      "contacts": [
+                        {
+                          "wa_id": "15550002222",
+                          "profile": {
+                            "name": "Ada"
+                          }
+                        }
+                      ],
+                      "messages": [
+                        {
+                          "from": "15550002222",
+                          "id": "wamid.1",
+                          "timestamp": "1760702400",
+                          "type": "text",
+                          "text": {
+                            "body": "hi"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "whatsapp",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "whatsapp-meta-header-not-read",
+    "door": "webhook_sync",
+    "note": "Meta's own x-hub-signature-256 is not in this door's header chain, so a correctly signed delivery carrying only it is 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=9792522b99cc9661ce717989e60d761aafb9baedb10a9af599b77b98166d9376"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.1\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"hi\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "whatsapp-interactive-reply-fires-callback-and-continues",
+    "door": "webhook_sync",
+    "note": "A tapped reply button carrying a callback id fires it and is acked on WhatsApp, and the delivery still goes on to the adapter.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "sha256=0c69ac91260d773dfa60c54f9d2747d0d879821968ed3b8ccd89c4ddf6552432"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.2\",\"timestamp\":\"1760702400\",\"type\":\"interactive\",\"interactive\":{\"type\":\"button_reply\",\"button_reply\":{\"id\":\"cb_golden0001\",\"title\":\"Approve\"}}}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "whatsapp_send_text",
+        "businessPhoneNumberId": "pn-1",
+        "to": "15550002222",
+        "text": "Thanks — that has been recorded.",
+        "options": {
+          "replyToMessageId": "wamid.2"
+        }
+      },
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "whatsapp",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "INBOUND_WHATSAPP",
+          "whatsapp"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "whatsapp",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "object": "whatsapp_business_account",
+            "entry": [
+              {
+                "id": "waba-1",
+                "changes": [
+                  {
+                    "field": "messages",
+                    "value": {
+                      "metadata": {
+                        "display_phone_number": "15550001111",
+                        "phone_number_id": "pn-1"
+                      },
+                      "messages": [
+                        {
+                          "from": "15550002222",
+                          "id": "wamid.2",
+                          "timestamp": "1760702400",
+                          "type": "interactive",
+                          "interactive": {
+                            "type": "button_reply",
+                            "button_reply": {
+                              "id": "cb_golden0001",
+                              "title": "Approve"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "whatsapp",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "native-valuations-good-signature",
+    "door": "webhook_sync",
+    "note": "The valuations outbox worker signs hex HMAC in x-webhook-signature.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/native_valuations/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "14b9478081df1dbd10ebd2920cd57e3f099850c6ac500d9fddec2be75e5ab496"
+      },
+      "body": "{\"event_type\":\"valuations:legal_entity:create\",\"id\":\"le-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "native-valuations",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "NATIVE_VALUATIONS",
+          "native-valuations"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "native-valuations",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "event_type": "valuations:legal_entity:create",
+            "id": "le-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "native-valuations",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "native-valuations-bad-signature",
+    "door": "webhook_sync",
+    "note": "A wrong digest is 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/native_valuations/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "body": "{\"event_type\":\"valuations:legal_entity:create\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "knowledge-mutation-good-signature",
+    "door": "webhook_sync",
+    "note": "The knowledge provider uses the same hex HMAC scheme.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/kg_mutation/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "3392ec653c0f3be87f37317826e902fb904f21bf4ebe0f2891f2acbc8b34182f"
+      },
+      "body": "{\"mutation\":\"node.created\",\"id\":\"n-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "kg",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "KG_MUTATION",
+          "kg"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "kg",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "mutation": "node.created",
+            "id": "n-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "kg",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "remote-install-good-signature",
+    "door": "webhook_sync",
+    "note": "A remote install's subscription signs in x-listen-fire-signature; the provider key is the upper-cased slug.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/acme-crm/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-signature": "9a339dcaffe2dac990002ce0a92cfbddaabd2c171c331fe5165a4c3c6ce87f41"
+      },
+      "body": "{\"records\":[{\"id\":\"r1\"}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "acme-crm",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ACME-CRM",
+          "acme-crm"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "acme-crm",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "records": [
+              {
+                "id": "r1"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "acme-crm",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "remote-install-unregistered-secret",
+    "door": "webhook_sync",
+    "note": "A subscription still holding the placeholder secret refuses everything.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/acme-crm/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-signature": "2b23d3d3a0728224b0ff8b90a13872e44a2c3d83a9dd7e6283b156ae83b66972"
+      },
+      "body": "{\"records\":[]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "remote-subscription-without-install",
+    "door": "webhook_sync",
+    "note": "A row for a remote provider key whose install is gone: 404 unknown_provider.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/acme-crm/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-signature": "7d7d0faa3cb32abe3cf1b158dde1ba54efc0ed1c105e7a3d2c43c28cd0bf6715"
+      },
+      "body": "{\"records\":[]}"
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "28"
+      },
+      "body": "{\"error\":\"unknown_provider\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "remote-install-without-credential",
+    "door": "webhook_sync",
+    "note": "An install with no credential verifies but cannot open an adapter: 500.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/acme-crm/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-signature": "7d7d0faa3cb32abe3cf1b158dde1ba54efc0ed1c105e7a3d2c43c28cd0bf6715"
+      },
+      "body": "{\"records\":[]}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "45"
+      },
+      "body": "{\"error\":\"adapter cannot preprocess inbound\"}"
+    },
+    "effects": []
+  }
+]

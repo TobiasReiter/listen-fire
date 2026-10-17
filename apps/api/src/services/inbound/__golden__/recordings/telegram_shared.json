@@ -1,0 +1,434 @@
+[
+  {
+    "id": "message-from-linked-sender",
+    "door": "telegram_shared",
+    "note": "Right secret: the update is handed over, its work rows queued before the 200, the drain poked after.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "65"
+      },
+      "body": "{\"ok\":true,\"classification\":\"message\",\"routedTeamIds\":[\"team-1\"]}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 10,
+          "message": {
+            "message_id": 5,
+            "text": "hello",
+            "chat": {
+              "id": 9
+            },
+            "from": {
+              "id": 3
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_shared_bot_rows"
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "wrong-secret",
+    "door": "telegram_shared",
+    "note": "A wrong secret is answered 200 with classification unauthorized, and the handler is never called.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "wrong"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "44"
+      },
+      "body": "{\"ok\":false,\"classification\":\"unauthorized\"}"
+    },
+    "effects": [
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "missing-secret-header",
+    "door": "telegram_shared",
+    "note": "No header: the same 200 unauthorized.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "44"
+      },
+      "body": "{\"ok\":false,\"classification\":\"unauthorized\"}"
+    },
+    "effects": [
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "secret-unset-refuses",
+    "door": "telegram_shared",
+    "note": "With no secret configured the door fails closed (200 unauthorized).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "44"
+      },
+      "body": "{\"ok\":false,\"classification\":\"unauthorized\"}"
+    },
+    "effects": [
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "secret-unset-unsigned-allowed",
+    "door": "telegram_shared",
+    "note": "With no secret and ALLOW_UNSIGNED_WEBHOOKS=true outside production, the dev loop can inject unsigned updates.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "41"
+      },
+      "body": "{\"ok\":true,\"classification\":\"no_message\"}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 10,
+          "message": {
+            "message_id": 5,
+            "text": "hello",
+            "chat": {
+              "id": 9
+            },
+            "from": {
+              "id": 3
+            }
+          }
+        }
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "invalid-json",
+    "door": "telegram_shared",
+    "note": "A body that is not JSON is 400 invalid_json, before the secret is read.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{not json"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "35"
+      },
+      "body": "{\"ok\":false,\"error\":\"invalid_json\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "non-json-content-type",
+    "door": "telegram_shared",
+    "note": "A non-JSON content type is not read raw; the handler gets the empty object express leaves.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "text/plain",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "x"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "41"
+      },
+      "body": "{\"ok\":true,\"classification\":\"no_message\"}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {}
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "callback-query-answered-inline",
+    "door": "telegram_shared",
+    "note": "A button tap is settled wholly before the ack; the body carries the callback outcome.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{\"update_id\":11,\"callback_query\":{\"id\":\"cbq-9\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "94"
+      },
+      "body": "{\"ok\":true,\"classification\":\"callback_query\",\"callback\":{\"handled\":true,\"outcome\":\"recorded\"}}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 11,
+          "callback_query": {
+            "id": "cbq-9",
+            "data": "cb_golden0001",
+            "message": {
+              "message_id": 11,
+              "chat": {
+                "id": 9
+              }
+            }
+          }
+        }
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "unlinked-sender-ignored",
+    "door": "telegram_shared",
+    "note": "An unlinked sender is acked 200 and ignored (the spam gate).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "46"
+      },
+      "body": "{\"ok\":true,\"classification\":\"unlinked_ignore\"}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 10,
+          "message": {
+            "message_id": 5,
+            "text": "hello",
+            "chat": {
+              "id": 9
+            },
+            "from": {
+              "id": 3
+            }
+          }
+        }
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "enqueue-failure",
+    "door": "telegram_shared",
+    "note": "Work rows that cannot be queued are the one non-2xx, so Telegram redelivers.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "37"
+      },
+      "body": "{\"ok\":false,\"error\":\"enqueue_failed\"}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 10,
+          "message": {
+            "message_id": 5,
+            "text": "hello",
+            "chat": {
+              "id": 9
+            },
+            "from": {
+              "id": 3
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "harness-team-drains-before-ack",
+    "door": "telegram_shared",
+    "note": "A dev-loop delivery drains its rows and answers with the dispatch outcome.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "94"
+      },
+      "body": "{\"ok\":true,\"classification\":\"message\",\"perTeam\":[{\"teamId\":\"team-harness\",\"dispatched\":true}]}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 10,
+          "message": {
+            "message_id": 5,
+            "text": "hello",
+            "chat": {
+              "id": 9
+            },
+            "from": {
+              "id": 3
+            }
+          }
+        }
+      },
+      {
+        "kind": "drain_until_idle",
+        "owner": "door",
+        "teamId": "team-harness"
+      }
+    ]
+  },
+  {
+    "id": "handler-throws",
+    "door": "telegram_shared",
+    "note": "A handler bug still answers 200 (no retry storm) with the error in the body.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/telegram/builtin",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-shared-secret-0001"
+      },
+      "body": "{\"update_id\":10,\"message\":{\"message_id\":5,\"text\":\"hello\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "72"
+      },
+      "body": "{\"ok\":false,\"classification\":\"no_message\",\"error\":\"classifier exploded\"}"
+    },
+    "effects": [
+      {
+        "kind": "telegram_shared_bot_inbound",
+        "raw": {
+          "update_id": 10,
+          "message": {
+            "message_id": 5,
+            "text": "hello",
+            "chat": {
+              "id": 9
+            },
+            "from": {
+              "id": 3
+            }
+          }
+        }
+      }
+    ]
+  }
+]

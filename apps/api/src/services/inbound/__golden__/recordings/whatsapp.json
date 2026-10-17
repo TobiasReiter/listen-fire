@@ -1,0 +1,371 @@
+[
+  {
+    "id": "verify-handshake",
+    "door": "whatsapp",
+    "note": "Meta GET handshake with the right token echoes the challenge.",
+    "request": {
+      "method": "GET",
+      "path": "/api/public/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=golden-whatsapp-verify-token&hub.challenge=1158201444",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "10"
+      },
+      "body": "1158201444"
+    },
+    "effects": []
+  },
+  {
+    "id": "verify-wrong-token",
+    "door": "whatsapp",
+    "note": "A wrong verify token is 403.",
+    "request": {
+      "method": "GET",
+      "path": "/api/public/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=nope&hub.challenge=1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 403,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "9"
+      },
+      "body": "Forbidden"
+    },
+    "effects": []
+  },
+  {
+    "id": "verify-missing-params",
+    "door": "whatsapp",
+    "note": "No mode or token is 400.",
+    "request": {
+      "method": "GET",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "Bad Request"
+    },
+    "effects": []
+  },
+  {
+    "id": "message-good-signature",
+    "door": "whatsapp",
+    "note": "A signed text message: acked EVENT_RECEIVED; the sender is announced to ops and the message dispatched to its team (off-request).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=11b6287da66af5fca53fe77462353b0810364a9bb71f4918330a22cf8e29c91f"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.10\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"see https://example.com/a/b\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "EVENT_RECEIVED"
+    },
+    "effects": [
+      {
+        "kind": "ops_notification",
+        "type": "OVI",
+        "teamId": "team-1",
+        "text": ":speech_balloon: New WhatsApp message from: Ada (15550002222)\n*Message*: \"see https://example.com/a/b\"",
+        "opsTitle": "New WhatsApp message from Ada"
+      },
+      {
+        "kind": "whatsapp_dispatch_message",
+        "message": {
+          "from": "15550002222",
+          "id": "wamid.10",
+          "timestamp": "1760702400",
+          "type": "text",
+          "text": {
+            "body": "see https://example.com/a/b"
+          }
+        },
+        "profileName": "Ada",
+        "businessNumber": "15550001111",
+        "businessPhoneNumberId": "pn-1"
+      }
+    ]
+  },
+  {
+    "id": "message-unknown-sender",
+    "door": "whatsapp",
+    "note": "An unknown sender is announced with the raw number; dispatch still runs.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=11b6287da66af5fca53fe77462353b0810364a9bb71f4918330a22cf8e29c91f"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.10\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"see https://example.com/a/b\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "EVENT_RECEIVED"
+    },
+    "effects": [
+      {
+        "kind": "ops_notification",
+        "type": "OVI",
+        "teamId": null,
+        "text": ":speech_balloon: New WhatsApp message from: Unknown user: 15550002222\n*Message*: \"see https://example.com/a/b\"",
+        "opsTitle": "New WhatsApp message from 15550002222"
+      },
+      {
+        "kind": "whatsapp_dispatch_message",
+        "message": {
+          "from": "15550002222",
+          "id": "wamid.10",
+          "timestamp": "1760702400",
+          "type": "text",
+          "text": {
+            "body": "see https://example.com/a/b"
+          }
+        },
+        "profileName": "Ada",
+        "businessNumber": "15550001111",
+        "businessPhoneNumberId": "pn-1"
+      }
+    ]
+  },
+  {
+    "id": "message-bad-signature",
+    "door": "whatsapp",
+    "note": "A digest from another secret is 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=64947905a93880488872640137fc3374151f38c9422443267c8e00758566addd"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.10\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"see https://example.com/a/b\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "Unauthorized"
+    },
+    "effects": []
+  },
+  {
+    "id": "message-missing-signature",
+    "door": "whatsapp",
+    "note": "No X-Hub-Signature-256 is 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.10\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"see https://example.com/a/b\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "Unauthorized"
+    },
+    "effects": []
+  },
+  {
+    "id": "interactive-reply-fires-callback",
+    "door": "whatsapp",
+    "note": "A tapped reply button with a callback id fires it and replies from the receiving number.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=dad94d64229ce9405d73fdf935602acb3f70a06b0894517395306cf1b1501ef1"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"phone_number_id\":\"pn-1\"},\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.11\",\"timestamp\":\"1760702400\",\"type\":\"interactive\",\"interactive\":{\"type\":\"button_reply\",\"button_reply\":{\"id\":\"cb_golden0001\",\"title\":\"Approve\"}}}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "EVENT_RECEIVED"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "whatsapp_send_text",
+        "businessPhoneNumberId": "pn-1",
+        "to": "15550002222",
+        "text": "Thanks — that has been recorded.",
+        "options": {
+          "replyToMessageId": "wamid.11"
+        }
+      },
+      {
+        "kind": "ops_notification",
+        "type": "OVI",
+        "teamId": "team-1",
+        "text": ":speech_balloon: New WhatsApp message from: Ada (15550002222)\n*Message*: \"Interactive Button: Approve (cb_golden0001)\"",
+        "opsTitle": "New WhatsApp message from Ada"
+      },
+      {
+        "kind": "whatsapp_dispatch_message",
+        "message": {
+          "from": "15550002222",
+          "id": "wamid.11",
+          "timestamp": "1760702400",
+          "type": "interactive",
+          "interactive": {
+            "type": "button_reply",
+            "button_reply": {
+              "id": "cb_golden0001",
+              "title": "Approve"
+            }
+          }
+        },
+        "businessPhoneNumberId": "pn-1"
+      }
+    ]
+  },
+  {
+    "id": "statuses-only-delivery",
+    "door": "whatsapp",
+    "note": "Delivery receipts are acked and not processed.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=e689baf85fe64cbb84ceb4854a25ec2a444bb31bd908f97fa3ad7ad9372c762b"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"statuses\":[{\"id\":\"wamid.1\",\"status\":\"delivered\",\"timestamp\":\"1\",\"recipient_id\":\"1\"}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "EVENT_RECEIVED"
+    },
+    "effects": []
+  },
+  {
+    "id": "other-object-never-answers",
+    "door": "whatsapp",
+    "note": "A signed body whose object is not whatsapp_business_account is never answered at all (the request hangs until the sender gives up).",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp/webhook",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=27edacb863aba144712e29f6991f3d24ccd2b01f47f0e5ff38179f173daad04c"
+      },
+      "body": "{\"object\":\"page\",\"entry\":[]}"
+    },
+    "response": {
+      "status": 0,
+      "headers": {},
+      "body": "no response within 400 ms"
+    },
+    "effects": []
+  },
+  {
+    "id": "unsigned-door-refuses-without-secret",
+    "door": "whatsapp",
+    "note": "The door built with no app secret fails closed (401) unless unsigned deliveries are allowed.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp-unsigned/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.10\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"see https://example.com/a/b\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "Unauthorized"
+    },
+    "effects": []
+  },
+  {
+    "id": "unsigned-door-allowed-in-dev",
+    "door": "whatsapp",
+    "note": "With ALLOW_UNSIGNED_WEBHOOKS=true outside production, the no-secret door accepts the delivery.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/whatsapp-unsigned/webhook",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.10\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"see https://example.com/a/b\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "EVENT_RECEIVED"
+    },
+    "effects": [
+      {
+        "kind": "ops_notification",
+        "type": "OVI",
+        "teamId": "team-1",
+        "text": ":speech_balloon: New WhatsApp message from: Ada (15550002222)\n*Message*: \"see https://example.com/a/b\"",
+        "opsTitle": "New WhatsApp message from Ada"
+      },
+      {
+        "kind": "whatsapp_dispatch_message",
+        "message": {
+          "from": "15550002222",
+          "id": "wamid.10",
+          "timestamp": "1760702400",
+          "type": "text",
+          "text": {
+            "body": "see https://example.com/a/b"
+          }
+        },
+        "profileName": "Ada",
+        "businessNumber": "15550001111",
+        "businessPhoneNumberId": "pn-1"
+      }
+    ]
+  }
+]

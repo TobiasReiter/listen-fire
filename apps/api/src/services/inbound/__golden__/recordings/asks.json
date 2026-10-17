@@ -1,0 +1,488 @@
+[
+  {
+    "id": "get-detail-open",
+    "door": "asks",
+    "note": "The JSON the web renderer fetches for an open ask.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1/detail",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "142"
+      },
+      "body": "{\"interactionType\":\"choose\",\"resultType\":{\"graph\":\"string\"},\"title\":\"Which plan should we use?\",\"richRenderable\":false,\"paramResolvable\":true}"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-detail-legacy-token",
+    "door": "asks",
+    "note": "A token this store did not mint is closed: 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/legacy-token/detail",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "18"
+      },
+      "body": "{\"error\":\"closed\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-detail-answered",
+    "door": "asks",
+    "note": "An answered ask is 410 already_resolved.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1/detail",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "28"
+      },
+      "body": "{\"error\":\"already_resolved\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-detail-closed-request",
+    "door": "asks",
+    "note": "A withdrawn ask is 410 (reported as expired).",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1/detail",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "19"
+      },
+      "body": "{\"error\":\"expired\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-detail-link-lapsed",
+    "door": "asks",
+    "note": "An open ask whose link lapsed is 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1/detail",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "19"
+      },
+      "body": "{\"error\":\"expired\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-choose",
+    "door": "asks",
+    "note": "A Choose ask renders a button per option; the GET answers nothing.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1937"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Respond</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Which plan should we use?</h1><form method=\"post\" action=\"/api/asks/ask_golden1\" class=\"stack\"><button type=\"submit\" name=\"answer\" value=\"Basic\" class=\"secondary\">Basic</button><button type=\"submit\" name=\"answer\" value=\"Pro\" class=\"secondary\">Pro</button></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-check",
+    "door": "asks",
+    "note": "A Check ask renders Approve / Decline.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1924"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Respond</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Which plan should we use?</h1><form method=\"post\" action=\"/api/asks/ask_golden1\" class=\"row\"><button type=\"submit\" name=\"answer\" value=\"true\">Approve</button><button type=\"submit\" name=\"answer\" value=\"false\" class=\"secondary\">Decline</button></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-provide",
+    "door": "asks",
+    "note": "A Provide ask renders a typed input.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1910"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Respond</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Which plan should we use?</h1><form method=\"post\" action=\"/api/asks/ask_golden1\"><input type=\"text\" name=\"answer\" required placeholder=\"Type your answer\" autofocus><div class=\"actions\"><button type=\"submit\">Submit</button></div></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-select",
+    "door": "asks",
+    "note": "A Select ask renders a checklist.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "2106"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Respond</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Which plan should we use?</h1><form method=\"post\" action=\"/api/asks/ask_golden1\"><input type=\"hidden\" name=\"answer\" value=\"\"><div class=\"options\"><label class=\"opt\"><input type=\"checkbox\" name=\"answer\" value=\"x\">x</label><label class=\"opt\"><input type=\"checkbox\" name=\"answer\" value=\"y\">y</label><label class=\"opt\"><input type=\"checkbox\" name=\"answer\" value=\"z\">z</label></div><button type=\"submit\">Submit selection</button></form></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-with-answer-param-confirms",
+    "door": "asks",
+    "note": "A link carrying ?answer= renders a confirm step and never resolves (prefetch safety).",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1?answer=Pro",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1982"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Confirm your answer</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Which plan should we use?</h1><p>You're about to answer: <strong>Pro</strong></p><form method=\"post\" action=\"/api/asks/ask_golden1\"><input type=\"hidden\" name=\"answer\" value=\"Pro\"><button type=\"submit\">Confirm</button></form><p class=\"muted\">This records your answer and resumes the workflow.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-answered",
+    "door": "asks",
+    "note": "An answered ask renders the recorded answer, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1816"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Already answered</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>This request has already been answered.</h1><p class=\"muted\">Recorded answer: <strong>Pro</strong>. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-closed-request",
+    "door": "asks",
+    "note": "A withdrawn ask renders the closed page, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1842"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This request was closed</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>This request was closed</h1><p class=\"muted\">This request is no longer open — nothing is waiting on an answer to it. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-link-lapsed",
+    "door": "asks",
+    "note": "A lapsed link renders the expired page, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/ask_golden1",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1785"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>No longer available</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>No longer available</h1><p class=\"muted\">This link has expired. Request a fresh one to answer.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "get-page-legacy-token",
+    "door": "asks",
+    "note": "A legacy token renders the closed page, 410.",
+    "request": {
+      "method": "GET",
+      "path": "/api/asks/legacy-token",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1840"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This request was closed</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>This request was closed</h1><p class=\"muted\">This request is no longer open — it was handled through the workflow. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "post-without-answer",
+    "door": "asks",
+    "note": "A POST with no answer anywhere is 400.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1745"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Missing answer</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Missing answer</h1><p class=\"muted\">No answer was supplied.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "post-answer-json",
+    "door": "asks",
+    "note": "A JSON answer goes through the one answer door and renders the confirmation, 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"answer\":\"Pro\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1812"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Answer recorded</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Thanks — your answer was recorded.</h1><p class=\"muted\">Recorded: <strong>Pro</strong>. The workflow will continue shortly.</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "answer_ask",
+        "token": "ask_golden1",
+        "raw": "Pro"
+      }
+    ]
+  },
+  {
+    "id": "post-answer-form",
+    "door": "asks",
+    "note": "The page forms post urlencoded.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "answer=Basic"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1814"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Answer recorded</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Thanks — your answer was recorded.</h1><p class=\"muted\">Recorded: <strong>Basic</strong>. The workflow will continue shortly.</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "answer_ask",
+        "token": "ask_golden1",
+        "raw": "Basic"
+      }
+    ]
+  },
+  {
+    "id": "post-answer-in-query",
+    "door": "asks",
+    "note": "The confirm form may carry the answer in the query string.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1?answer=Pro",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1812"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Answer recorded</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>Thanks — your answer was recorded.</h1><p class=\"muted\">Recorded: <strong>Pro</strong>. The workflow will continue shortly.</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "answer_ask",
+        "token": "ask_golden1",
+        "raw": "Pro"
+      }
+    ]
+  },
+  {
+    "id": "post-answer-invalid",
+    "door": "asks",
+    "note": "A value that does not fit is 400 with the reason.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"answer\":\"Platinum\"}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1799"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>No longer available</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>No longer available</h1><p class=\"muted\">That answer could not be accepted. (not one of the offered options)</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "answer_ask",
+        "token": "ask_golden1",
+        "raw": "Platinum"
+      }
+    ]
+  },
+  {
+    "id": "post-answer-lost-the-race",
+    "door": "asks",
+    "note": "An ask settled between lookup and write renders its terminal page, closed-request-wins.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"answer\":\"Pro\"}"
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1818"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Already answered</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>This request has already been answered.</h1><p class=\"muted\">Recorded answer: <strong>Basic</strong>. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": [
+      {
+        "kind": "answer_ask",
+        "token": "ask_golden1",
+        "raw": "Pro"
+      }
+    ]
+  },
+  {
+    "id": "post-already-answered",
+    "door": "asks",
+    "note": "A POST to an answered ask is its terminal page, 410, and never reaches the answer door.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/ask_golden1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"answer\":\"Basic\"}"
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1816"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Already answered</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>This request has already been answered.</h1><p class=\"muted\">Recorded answer: <strong>Pro</strong>. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": []
+  },
+  {
+    "id": "post-legacy-token",
+    "door": "asks",
+    "note": "A legacy token is closed: 410.",
+    "request": {
+      "method": "POST",
+      "path": "/api/asks/legacy-token",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"answer\":\"x\"}"
+    },
+    "response": {
+      "status": 410,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "1840"
+      },
+      "body": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>This request was closed</title><style>body{font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;line-height:1.5}h1{font-size:1.25rem}button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:1px solid #d0d0d0;background:#111;color:#fff;cursor:pointer}button:disabled{opacity:.5;cursor:default}button.secondary{background:#fff;color:#111}.muted{color:#666}form{margin-top:1.5rem}.row{display:flex;gap:.5rem}.stack{display:flex;flex-direction:column;gap:.5rem;align-items:stretch}.stack button{text-align:left}input[type=text],input[type=number],input[type=date]{font:inherit;width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d0d0d0;border-radius:.5rem}.options{border:1px solid #e3e3e3;border-radius:.75rem;overflow:hidden;margin-bottom:1rem}.opt{display:flex;gap:.6rem;align-items:center;padding:.7rem 1rem;border-top:1px solid #eee;cursor:pointer}.opt:first-child{border-top:0}.card{border:1px solid #e3e3e3;border-radius:.75rem;padding:1rem;margin-bottom:.75rem}.card.removed{opacity:.45}.card-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;font-weight:500}.field{display:block;margin-top:.6rem}.field span{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#888;margin-bottom:.25rem}.linkbtn{background:none;border:0;color:#666;cursor:pointer;font:inherit;font-size:.8rem;text-decoration:underline;padding:0}.actions{margin-top:1.5rem}</style></head><body><h1>This request was closed</h1><p class=\"muted\">This request is no longer open — it was handled through the workflow. Nothing more is needed here.</p></body></html>"
+    },
+    "effects": []
+  }
+]

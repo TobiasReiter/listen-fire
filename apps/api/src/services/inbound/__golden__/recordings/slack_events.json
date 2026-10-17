@@ -1,0 +1,256 @@
+[
+  {
+    "id": "good-signature",
+    "door": "slack_events",
+    "note": "A signed event_callback is acked {ok:true} at once and handed to the router off-request.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=fc07202f0e4a855f7d36238678f65597de38f00263f4f735c486ab404949e5bb"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev9\",\"team_id\":\"T9\",\"event\":{\"type\":\"message\",\"channel\":\"C9\",\"user\":\"U9\",\"ts\":\"1760702400.000900\",\"text\":\"hi\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "slack_events_inbound",
+        "raw": {
+          "type": "event_callback",
+          "event_id": "Ev9",
+          "team_id": "T9",
+          "event": {
+            "type": "message",
+            "channel": "C9",
+            "user": "U9",
+            "ts": "1760702400.000900",
+            "text": "hi"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "url-verification-needs-no-signature",
+    "door": "slack_events",
+    "note": "The setup handshake is answered before any signature is read.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"url_verification\",\"challenge\":\"ch-slack-app\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "28"
+      },
+      "body": "{\"challenge\":\"ch-slack-app\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "url-verification-missing-challenge",
+    "door": "slack_events",
+    "note": "No string challenge: 400 missing_challenge.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"url_verification\",\"challenge\":42}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"missing_challenge\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "bad-signature",
+    "door": "slack_events",
+    "note": "Another secret: 401 {ok:false}, nothing handed over.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=7ec7a555b106447c40aef7ccf67db6bbc7eeaedea538b743ad45c312f71e3de2"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev9\",\"team_id\":\"T9\",\"event\":{\"type\":\"message\",\"channel\":\"C9\",\"user\":\"U9\",\"ts\":\"1760702400.000900\",\"text\":\"hi\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "{\"ok\":false}"
+    },
+    "effects": []
+  },
+  {
+    "id": "missing-signature-headers",
+    "door": "slack_events",
+    "note": "No Slack headers: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev9\",\"team_id\":\"T9\",\"event\":{\"type\":\"message\",\"channel\":\"C9\",\"user\":\"U9\",\"ts\":\"1760702400.000900\",\"text\":\"hi\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "{\"ok\":false}"
+    },
+    "effects": []
+  },
+  {
+    "id": "secret-unset-refuses",
+    "door": "slack_events",
+    "note": "No signing secret configured fails closed with 500 {ok:false}.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev9\",\"team_id\":\"T9\",\"event\":{\"type\":\"message\",\"channel\":\"C9\",\"user\":\"U9\",\"ts\":\"1760702400.000900\",\"text\":\"hi\"}}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "{\"ok\":false}"
+    },
+    "effects": []
+  },
+  {
+    "id": "secret-unset-unsigned-allowed",
+    "door": "slack_events",
+    "note": "Unsigned deliveries are accepted only with ALLOW_UNSIGNED_WEBHOOKS=true outside production.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev9\",\"team_id\":\"T9\",\"event\":{\"type\":\"message\",\"channel\":\"C9\",\"user\":\"U9\",\"ts\":\"1760702400.000900\",\"text\":\"hi\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "slack_events_inbound",
+        "raw": {
+          "type": "event_callback",
+          "event_id": "Ev9",
+          "team_id": "T9",
+          "event": {
+            "type": "message",
+            "channel": "C9",
+            "user": "U9",
+            "ts": "1760702400.000900",
+            "text": "hi"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "signed-but-not-json",
+    "door": "slack_events",
+    "note": "A signed body that is not JSON is 400 invalid_json.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=9f70c86260194551eade04ea1b38f06e9eb4612306facab94c39c9690c03c870"
+      },
+      "body": "not json at all"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "35"
+      },
+      "body": "{\"ok\":false,\"error\":\"invalid_json\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "processing-fails-after-ack",
+    "door": "slack_events",
+    "note": "A router failure after the ack is logged only; Slack already has its 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack/events",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=fc07202f0e4a855f7d36238678f65597de38f00263f4f735c486ab404949e5bb"
+      },
+      "body": "{\"type\":\"event_callback\",\"event_id\":\"Ev9\",\"team_id\":\"T9\",\"event\":{\"type\":\"message\",\"channel\":\"C9\",\"user\":\"U9\",\"ts\":\"1760702400.000900\",\"text\":\"hi\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "slack_events_inbound",
+        "raw": {
+          "type": "event_callback",
+          "event_id": "Ev9",
+          "team_id": "T9",
+          "event": {
+            "type": "message",
+            "channel": "C9",
+            "user": "U9",
+            "ts": "1760702400.000900",
+            "text": "hi"
+          }
+        }
+      }
+    ]
+  }
+]
