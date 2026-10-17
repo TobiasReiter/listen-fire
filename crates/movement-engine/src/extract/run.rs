@@ -300,6 +300,16 @@ impl Run<'_> {
         Ok(answer)
     }
 
+    /// A model call is refused before the host is asked once the run has
+    /// spent its cap: the engine keeps the cap itself, the same on every
+    /// host, rather than trusting each host to refuse past `budget`.
+    pub(crate) fn admit_model_call(&self) -> Result<(), Failure> {
+        match self.ledger.exceeded() {
+            Some(cap) => Err(Failure::CapExceeded(cap)),
+            None => Ok(()),
+        }
+    }
+
     /// The cancel gate inside a statement (`throwIfCancelled`).
     pub(crate) async fn throw_if_cancelled(&self) -> Result<(), Stop> {
         let cancelled = self.ask(host::control::cancelled(self.segment())).await.map_err(thrown)?;

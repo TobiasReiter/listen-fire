@@ -64,6 +64,9 @@ pub enum EvalError {
     /// A priced call the evaluation awaited met the run's cost cap: the
     /// statement suspends (run.rs `body`).
     CapExceeded(crate::ledger::CapExceeded),
+    /// The segment met one of its host's limits (crate::limits): never
+    /// forgiven, it ends the segment.
+    Limit(crate::limits::LimitExceeded),
 }
 
 impl EvalError {
@@ -244,6 +247,14 @@ pub trait Reader {
     }
     /// An entry onto the running flow's trace (`ctx.trace.push`).
     fn trace(&self, _entry: crate::trace::TraceEntry) {}
+    /// One expression evaluated, against the segment's step budget.
+    fn step(&self) -> Result<(), EvalError> {
+        Ok(())
+    }
+    /// A value an expression came to, against the segment's size limits.
+    fn admit(&self, _value: &Js) -> Result<(), EvalError> {
+        Ok(())
+    }
 }
 
 pub struct Evaluator<'a> {
@@ -324,7 +335,13 @@ impl<'a> Evaluator<'a> {
     /// The walk, in the TypeScript's evaluation order: a read the run
     /// answers is awaited where it is made.
     pub fn eval<'s>(&'s self, expr: &'s Expression) -> Evaluating<'s> {
-        Box::pin(async move { self.eval_in_place(expr).await })
+        Box::pin(async move {
+            let Some(reader) = self.reader() else { return self.eval_in_place(expr).await };
+            reader.step()?;
+            let evaluated = self.eval_in_place(expr).await?;
+            reader.admit(&evaluated.value)?;
+            Ok(evaluated)
+        })
     }
 
     async fn eval_in_place(&self, expr: &Expression) -> Eval {

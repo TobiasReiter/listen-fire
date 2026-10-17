@@ -763,6 +763,7 @@ impl Run<'_> {
     /// One `llm.extractCall.call`, the cancel gate before it, priced.
     async fn ask_extract_call(&self, content: &[serde_json::Value], last: &str, label: &str, settings: &CallSettings, usage: &mut Vec<Js>) -> Result<Reply, Stop> {
         self.throw_if_cancelled().await?;
+        self.admit_model_call().map_err(thrown)?;
         let mut blocks = content.to_vec();
         blocks.push(json!({ "text": last }));
         let request = host::llm::extract_call(self.segment(), SYSTEM_PROMPT, blocks, label, settings, self.ledger.budget());

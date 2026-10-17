@@ -815,7 +815,7 @@ pub(crate) fn is_member_failure(failure: &Failure) -> bool {
         Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. } => false,
         Failure::Engine { .. } => true,
         Failure::Host(error) => !matches!(error.detail.get("name").and_then(serde_json::Value::as_str), Some("AdapterCallCeilingExceeded" | "RunLeaseLost" | "RunCancelledSignal")),
-        Failure::CapExceeded(_) | Failure::CallDepth { .. } => false,
+        Failure::CapExceeded(_) | Failure::CallDepth { .. } | Failure::Limit(_) => false,
     }
 }
 
@@ -826,6 +826,6 @@ pub(crate) fn error_message(failure: &Failure) -> String {
         Failure::Engine { class: crate::eval::ErrorClass::Unreproduced, .. } => unreachable!("never forgiven"),
         Failure::Engine { message, .. } => message.clone(),
         Failure::Host(error) => error.message().to_string(),
-        Failure::CapExceeded(_) | Failure::CallDepth { .. } => unreachable!("never forgiven"),
+        Failure::CapExceeded(_) | Failure::CallDepth { .. } | Failure::Limit(_) => unreachable!("never forgiven"),
     }
 }

@@ -81,7 +81,7 @@ fn the_standard_library_answers_as_it_was_frozen() {
                     ErrorClass::TypeError => json!({ "name": "TypeError", "message": message }),
                     ErrorClass::Unreproduced => json!({ "name": "MovementEngineError", "message": format!("MOVENG_UNSUPPORTED: {message}") }),
                 } }),
-                Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("no reader, so no host"),
+                Err(EvalError::Host(_) | EvalError::CapExceeded(_) | EvalError::Limit(_)) => unreachable!("no reader, so no host"),
                 Err(EvalError::Fallback(_)) => json!({ "fallback": true }),
             };
             frozen::answer(case, &["outcome"], vec![("outcome", outcome)])
