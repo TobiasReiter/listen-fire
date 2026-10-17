@@ -169,8 +169,10 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // mailbox. Event production lives on its PollSource (POLL_SOURCE_FACTORIES
   // below). Distinct from the `email` adapter, which only ever sees mail
   // FORWARDED to the deployment's inbound address.
-  [GMAIL_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
+  // Its line in BUILTIN_MODULES says module or legacy.
+  [GMAIL_ADAPTER_TYPE]: builtinAdapterFactory(GMAIL_ADAPTER_TYPE, ({ teamId, credentialsId }) =>
     createGmailAdapter({ teamId, credentialsId }),
+  ),
   [ASK_ADAPTER_TYPE]: ({ teamId }) => createAskAdapter({ teamId }),
   // System — the platform itself as a source (a run failed, …). Credential-
   // free and read-only; event production lives on its PollSource, which reads
@@ -194,8 +196,9 @@ const POLL_SOURCE_FACTORIES: Record<string, PollSourceFactory> = {
     const { createDealroomPollSource }: typeof import('./dealroom') = require('./dealroom');
     return createDealroomPollSource({ teamId, credentialsId });
   }),
-  [GMAIL_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
+  [GMAIL_ADAPTER_TYPE]: builtinPollSourceFactory(GMAIL_ADAPTER_TYPE, ({ teamId, credentialsId }) =>
     createGmailPollSource({ teamId, credentialsId }),
+  ),
   [SYSTEM_ADAPTER_TYPE]: ({ teamId }) => createSystemPollSource({ teamId }),
 };
 

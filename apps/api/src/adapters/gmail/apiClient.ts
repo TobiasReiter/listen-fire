@@ -136,6 +136,16 @@ function delegatedToken(mailbox: string, scope: GmailScope): () => Promise<strin
   };
 }
 
+/** One token for one scope, minted by the service account acting as the
+ *  mailbox, with when it expires. */
+export async function mintDelegatedGmailToken(mailbox: string, scope: string): Promise<{ token: string; expiresAt: number }> {
+  const client = await delegatedGoogleAuth({ subject: mailbox, scopes: [scope] }).getClient();
+  const { token } = await client.getAccessToken();
+  if (!token) throw new Error(`Google issued no token acting as ${mailbox}.`);
+  // A token without an expiry lasts the hour every Google token does.
+  return { token, expiresAt: client.credentials.expiry_date ?? Date.now() + 3600_000 };
+}
+
 /**
  * Gmail for ONE stored credential: the module's client, with its tokens from
  * the platform's token clients.

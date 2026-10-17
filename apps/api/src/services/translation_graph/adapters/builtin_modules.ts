@@ -8,7 +8,8 @@
 // production (`inProcessValidationDefault`). A line may add what its module
 // needs of the host beyond that: how its stored payload reads as fields, the
 // platform's OAuth app that refreshes its token, its dev-loop fake, its kv and
-// files. A file the module reads out is named as the install's, as a module
+// files — or the whole credential, when the platform's stored shapes need
+// more than a reading (Gmail's two connect methods). A file the module reads out is named as the install's, as a module
 // served as a process has its files named. The module declares the rest —
 // its poll, its periodic tasks, its signed inbound — and the platform acts on
 // the declarations, so nothing here names what a module does.
@@ -47,6 +48,7 @@ import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { GOOGLE_SHEETS_MANIFEST } from '@lf/google-sheets/manifest';
 import { GOOGLE_DRIVE_MANIFEST } from '@lf/google-drive/manifest';
+import { GMAIL_MANIFEST } from '@lf/gmail/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -55,6 +57,7 @@ import { camelTokenPayloadShape, postgresSecrets, type PayloadShape } from '../.
 import { grantedItemsKv } from '../../credentials/granted_items';
 import { platformModuleFiles } from '../engine/files/module_files';
 import { googleIntegrationsApp } from '../../../adapters/google/authClient';
+import { gmailModuleCredential } from '../../../adapters/gmail/module_credential';
 import { credentialTypeOf } from './credential_type';
 
 export type BuiltinLine = 'legacy' | 'module';
@@ -68,6 +71,10 @@ export interface ModuleLineHost {
   /** The platform's own OAuth app at the provider. With one, an `oauth2`
    *  credential is refreshed by the platform before it reaches the module. */
   hostApp?: () => OAuth2ClientApp | undefined;
+  /** The install's credential, when reading the stored payload is not
+   *  enough. Default: the stored credential, read the way `storedAs` says
+   *  and refreshed with `hostApp`. */
+  credential?: (install: BuiltinInstall) => ModuleCredential;
   /** The install's kv. Default: refused, by name. */
   kv?: (install: BuiltinInstall) => ModuleKv;
   /** The install's files. Default: refused, by name. */
@@ -148,7 +155,20 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/google-drive' }),
   },
   dropbox: { kind: 'adapter', line: 'legacy' },
-  gmail: { kind: 'adapter', line: 'legacy' },
+  gmail: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: GMAIL_MANIFEST,
+    load: () => {
+      const { gmailModule }: typeof import('@lf/gmail') = require('@lf/gmail');
+      return gmailModule;
+    },
+    // Two stored shapes (a sign-in, a delegated mailbox) behind one set of
+    // fields, the allowlist enforced before either is handed over.
+    credential: gmailModuleCredential,
+    harnessService: 'GOOGLE_GMAIL',
+    files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/gmail' }),
+  },
   telegram: { kind: 'adapter', line: 'legacy' },
   slack: { kind: 'adapter', line: 'legacy' },
   // The bundled plugins (Henry 2026-10-17: plugins are modules too).
@@ -248,7 +268,9 @@ function platformHost(
   });
   const unavailable = (what: string) => `module ${definition.name}: ${what} has no store on the platform for this module`;
   return {
-    credential: storedCredential(definition, install, { secrets, ...(entry.hostApp !== undefined ? { hostApp: entry.hostApp } : {}) }),
+    credential:
+      entry.credential?.(install) ??
+      storedCredential(definition, install, { secrets, ...(entry.hostApp !== undefined ? { hostApp: entry.hostApp } : {}) }),
     kv: entry.kv?.(install) ?? refusingKv(unavailable('ctx.kv')),
     files: entry.files?.(install) ?? refusingFiles(unavailable('ctx.files')),
   };
