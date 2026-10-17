@@ -50,6 +50,7 @@ mod http_out;
 mod inbound;
 mod init;
 mod json;
+mod json_repair;
 mod llm_calls;
 mod models;
 mod oauth2;

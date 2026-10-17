@@ -385,7 +385,7 @@ fn parse_json(text: &str) -> Option<Js> {
 }
 
 fn repaired(text: &str) -> Option<Js> {
-    let fixed = jsonrepair::repair_to_string(text, &jsonrepair::Options::default()).ok()?;
+    let fixed = crate::json_repair::repair(text).ok()?;
     Js::parse(fixed.as_bytes()).ok()
 }
 
@@ -459,6 +459,43 @@ mod tests {
         assert_eq!(parsed(r#"{"a":[1,2"#), r#"{"a":[1,2]}"#);
         assert_eq!(parsed("   "), "null");
         assert_eq!(parsed("no json at all"), r#""no json at all""#);
+    }
+
+    /// Every reply in the fixture reads as the TypeScript engine reads it
+    /// (apps/cli `json_replies.test.ts` holds the fixture to that engine).
+    #[test]
+    fn replies_read_as_the_typescript_engine_reads_them() {
+        let cases: Vec<Json> = serde_json::from_str(include_str!("testdata/json_replies.json")).unwrap();
+        // Valid JSON whose value lf cannot hold, so it reads the raw text: a
+        // number past a double's range (JavaScript's Infinity) and a lone
+        // UTF-16 surrogate (a Rust string is UTF-8).
+        const UNREPRESENTABLE: &[&str] = &[r#"{"a":1e400}"#, r#"{"a":"\ud83d"}"#];
+        let differences: Vec<String> = cases
+            .iter()
+            .filter_map(|case| {
+                let reply = case["reply"].as_str().unwrap();
+                if UNREPRESENTABLE.contains(&reply) {
+                    assert_eq!(parse_json_reply(reply), Js::str(reply));
+                    return None;
+                }
+                let expected = case["parsed"].as_str().unwrap();
+                let read = parse_json_reply(reply);
+                let expected_value: Option<Json> = serde_json::from_str(expected).ok();
+                let same = serde_json::to_value(&read).is_ok_and(|read| expected_value.is_some_and(|expected| same_value(&read, &expected)));
+                (!same).then(|| format!("{reply:?}\n  typescript: {expected}\n  lf:         {}", read.to_json()))
+            })
+            .collect();
+        assert!(differences.is_empty(), "{} of {} replies read differently:\n{}", differences.len(), cases.len(), differences.join("\n"));
+    }
+
+    /// Equal as JavaScript sees them: a number is its double, so `12.0` is `12`.
+    fn same_value(a: &Json, b: &Json) -> bool {
+        match (a, b) {
+            (Json::Number(a), Json::Number(b)) => a.as_f64() == b.as_f64(),
+            (Json::Array(a), Json::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b)),
+            (Json::Object(a), Json::Object(b)) => a.len() == b.len() && a.iter().all(|(key, a)| b.get(key).is_some_and(|b| same_value(a, b))),
+            _ => a == b,
+        }
     }
 
     fn credentials(base_url: &str) -> Credentials {

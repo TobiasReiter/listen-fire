@@ -1,0 +1,458 @@
+[
+  {
+    "reply": "{\"a\": \"hel",
+    "parsed": "{\"a\":\"hel\"}"
+  },
+  {
+    "reply": "{\"a\":",
+    "parsed": "{\"a\":null}"
+  },
+  {
+    "reply": "{\"a\":1,",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"items\":[{\"name\":\"x\",\"v\":[1,2",
+    "parsed": "{\"items\":[{\"name\":\"x\",\"v\":[1,2]}]}"
+  },
+  {
+    "reply": "{\"a\": 12.",
+    "parsed": "{\"a\":12}"
+  },
+  {
+    "reply": "{\"a\": 1e",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\": -",
+    "parsed": "{\"a\":0}"
+  },
+  {
+    "reply": "{\"a\": tru",
+    "parsed": "{\"a\":\"tru\"}"
+  },
+  {
+    "reply": "{\"a\": nul",
+    "parsed": "{\"a\":\"nul\"}"
+  },
+  {
+    "reply": "{\"ab",
+    "parsed": "{\"ab\":null}"
+  },
+  {
+    "reply": "{\"a\":\"x\\",
+    "parsed": "{\"a\":\"x\"}"
+  },
+  {
+    "reply": "{\"a\":\"\\u12",
+    "parsed": "{\"a\":\"\"}"
+  },
+  {
+    "reply": "{\"a\":1,}",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "[1,2,]",
+    "parsed": "[1,2]"
+  },
+  {
+    "reply": "{'a': 'b'}",
+    "parsed": "{\"a\":\"b\"}"
+  },
+  {
+    "reply": "{a: 1, b_c: \"x\"}",
+    "parsed": "{\"a\":1,\"b_c\":\"x\"}"
+  },
+  {
+    "reply": "{\"a\":1 // note\n}",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\":1 /* note */, \"b\": 2}",
+    "parsed": "{\"a\":1,\"b\":2}"
+  },
+  {
+    "reply": "{\"a\": None, \"b\": True, \"c\": False}",
+    "parsed": "{\"a\":null,\"b\":true,\"c\":false}"
+  },
+  {
+    "reply": "{\"a\":1 \"b\":2}",
+    "parsed": "{\"a\":1,\"b\":2}"
+  },
+  {
+    "reply": "[1 2 3]",
+    "parsed": "[1,2,3]"
+  },
+  {
+    "reply": "{\"a\" 1}",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\":\"line1\nline2\"}",
+    "parsed": "{\"a\":\"line1\\nline2\"}"
+  },
+  {
+    "reply": "{\"a\":\"tab\there\"}",
+    "parsed": "{\"a\":\"tab\\there\"}"
+  },
+  {
+    "reply": "{“a”: “b”}",
+    "parsed": "{\"a\":\"b\"}"
+  },
+  {
+    "reply": "{\"a\": NaN, \"b\": Infinity, \"c\": -Infinity}",
+    "parsed": "{\"a\":\"NaN\",\"b\":\"Infinity\",\"c\":\"-Infinity\"}"
+  },
+  {
+    "reply": "{\"a\":1}\n{\"b\":2}",
+    "parsed": "[{\"a\":1},{\"b\":2}]"
+  },
+  {
+    "reply": "```json\n{\"a\":[1,2",
+    "parsed": "{\"a\":[1,2]}"
+  },
+  {
+    "reply": "```json\n{\"a\":[1,2]}\n```",
+    "parsed": "{\"a\":[1,2]}"
+  },
+  {
+    "reply": "{\"a\": undefined}",
+    "parsed": "{\"a\":null}"
+  },
+  {
+    "reply": "{\"a\": 007}",
+    "parsed": "{\"a\":\"007\"}"
+  },
+  {
+    "reply": "{\"a\": \"x\" + \"y\"}",
+    "parsed": "{\"a\":\"x\\\" + \\\"y\"}"
+  },
+  {
+    "reply": "[1, 2, ...]",
+    "parsed": "[1,2]"
+  },
+  {
+    "reply": "{\"a\":[{\"b\":1},{\"c\":",
+    "parsed": "{\"a\":[{\"b\":1},{\"c\":null}]}"
+  },
+  {
+    "reply": "{\"a\":\"x\",\"b\":[",
+    "parsed": "{\"a\":\"x\",\"b\":[]}"
+  },
+  {
+    "reply": "{\"a\":\"😀 é ñ",
+    "parsed": "{\"a\":\"😀 é ñ\"}"
+  },
+  {
+    "reply": "callback({\"a\":1})",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\": NumberLong(2)}",
+    "parsed": "{\"a\":2}"
+  },
+  {
+    "reply": "\"{\\\"a\\\":1}\"",
+    "parsed": "\"{\\\"a\\\":1}\""
+  },
+  {
+    "reply": "{\"entities\":[{\"name\":\"Acme\",\"quote\":\"Acme, Inc. is \"the\" leader\"},{\"name\":\"Beta\",\"quote\":\"Beta",
+    "parsed": "{\"entities\":[{\"name\":\"Acme\",\"quote\":\"Acme, Inc. is \\\"the\\\" leader\"},{\"name\":\"Beta\",\"quote\":\"Beta\"}]}"
+  },
+  {
+    "reply": "{\"q\":\"the \"forever\" chemicals\", \"r\": [1,2",
+    "parsed": "{\"q\":\"the \\\"forever\\\" chemicals\",\"r\":[1,2]}"
+  },
+  {
+    "reply": "[{\"a\":1},{\"a\":2},{\"a\":",
+    "parsed": "[{\"a\":1},{\"a\":2},{\"a\":null}]"
+  },
+  {
+    "reply": "{\"a\":{\"b\":{\"c\":[1,{\"d\":\"e",
+    "parsed": "{\"a\":{\"b\":{\"c\":[1,{\"d\":\"e\"}]}}}"
+  },
+  {
+    "reply": "{\"a\":1}}",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\":[1,2]]}",
+    "parsed": "{\"a\":[1,2]}"
+  },
+  {
+    "reply": "{\"a\":1,,\"b\":2}",
+    "parsed": "\"{\\\"a\\\":1,,\\\"b\\\":2}\""
+  },
+  {
+    "reply": "{,\"a\":1}",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\": .5}",
+    "parsed": "\"{\\\"a\\\": .5}\""
+  },
+  {
+    "reply": "{\"a\": 1.}",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\": +1}",
+    "parsed": "\"{\\\"a\\\": +1}\""
+  },
+  {
+    "reply": "{\"a\": 0x1F}",
+    "parsed": "{\"a\":\"0x1F\"}"
+  },
+  {
+    "reply": "{\"a\": 1_000}",
+    "parsed": "{\"a\":\"1_000\"}"
+  },
+  {
+    "reply": "{\"a\":\"\\x41\"}",
+    "parsed": "{\"a\":\"x41\"}"
+  },
+  {
+    "reply": "{\"a\":\"\\'\"}",
+    "parsed": "{\"a\":\"'\"}"
+  },
+  {
+    "reply": "{\"a\":'it''s'}",
+    "parsed": "\"{\\\"a\\\":'it''s'}\""
+  },
+  {
+    "reply": "{\"a\": `b`}",
+    "parsed": "{\"a\":\"b\"}"
+  },
+  {
+    "reply": "{\"a\": \"b\"\n\"c\": 2}",
+    "parsed": "{\"a\":\"b\",\"c\":2}"
+  },
+  {
+    "reply": "{\n  \"a\": 1,\n  \"b\": [\n    \"x\",\n    \"y\"",
+    "parsed": "{\"a\":1,\"b\":[\"x\",\"y\"]}"
+  },
+  {
+    "reply": "{\"a\":true,\"b\":fals",
+    "parsed": "{\"a\":true,\"b\":\"fals\"}"
+  },
+  {
+    "reply": "{\"key with space\": 1, unquoted key: 2}",
+    "parsed": "{\"key with space\":1,\"unquoted key\":2}"
+  },
+  {
+    "reply": "{\"a\":\"\"",
+    "parsed": "{\"a\":\"\"}"
+  },
+  {
+    "reply": "{\"a\":\"\\\"",
+    "parsed": "{\"a\":\"\\\"\"}"
+  },
+  {
+    "reply": "[\"a\", \"b",
+    "parsed": "[\"a\",\"b\"]"
+  },
+  {
+    "reply": "[\"a\", \"b\\",
+    "parsed": "[\"a\",\"b\"]"
+  },
+  {
+    "reply": "{\"a\":[]",
+    "parsed": "{\"a\":[]}"
+  },
+  {
+    "reply": "{\"a\":{}",
+    "parsed": "{\"a\":{}}"
+  },
+  {
+    "reply": "{\"a\":1} trailing words",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "Sure, here it is: {\"a\": [1, 2",
+    "parsed": "{\"a\":[1,2]}"
+  },
+  {
+    "reply": "{\"a\":\"x\"}\n\nNote: I made up nothing.",
+    "parsed": "{\"a\":\"x\"}"
+  },
+  {
+    "reply": "[\n",
+    "parsed": "[]"
+  },
+  {
+    "reply": "{",
+    "parsed": "{}"
+  },
+  {
+    "reply": "[",
+    "parsed": "[]"
+  },
+  {
+    "reply": "{\"",
+    "parsed": "{\"\":null}"
+  },
+  {
+    "reply": "{\"a\"",
+    "parsed": "{\"a\":null}"
+  },
+  {
+    "reply": "{\"a\":\"b\"  ",
+    "parsed": "{\"a\":\"b\"}"
+  },
+  {
+    "reply": "{\"a\": 1 \n /* trailing",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "{\"a\": [1, 2, 3,\n",
+    "parsed": "{\"a\":[1,2,3]}"
+  },
+  {
+    "reply": "{\"a\":1, \"a\":2}",
+    "parsed": "{\"a\":2}"
+  },
+  {
+    "reply": "{\"a\":1e400}",
+    "parsed": "{\"a\":null}"
+  },
+  {
+    "reply": "{\"a\":12345678901234567890}",
+    "parsed": "{\"a\":12345678901234567000}"
+  },
+  {
+    "reply": "{\"a\":0.1000000000000000055511151231257827}",
+    "parsed": "{\"a\":0.1}"
+  },
+  {
+    "reply": "{\"a\":-0}",
+    "parsed": "{\"a\":0}"
+  },
+  {
+    "reply": "{\"a\":1E-7}",
+    "parsed": "{\"a\":1e-7}"
+  },
+  {
+    "reply": "{\"a\":\"\\ud83d\\ude00\"}",
+    "parsed": "{\"a\":\"😀\"}"
+  },
+  {
+    "reply": "{\"a\":\"\\ud83d\"}",
+    "parsed": "{\"a\":\"\\ud83d\"}"
+  },
+  {
+    "reply": "{\"a\":\"\u0000\"}",
+    "parsed": "\"{\\\"a\\\":\\\"\\u0000\\\"}\""
+  },
+  {
+    "reply": "{\"__proto__\": 1}",
+    "parsed": "{\"__proto__\":1}"
+  },
+  {
+    "reply": "{\"a\":\"b\",\n// a comment line\n\"c\":\"d\"}",
+    "parsed": "{\"a\":\"b\",\"c\":\"d\"}"
+  },
+  {
+    "reply": "{\"name\": \"O'Brien\", \"note\": 'single \"double\" inside'}",
+    "parsed": "{\"name\":\"O'Brien\",\"note\":\"single \\\"double\\\" inside\"}"
+  },
+  {
+    "reply": "{\"list\": [\"a\" \"b\" \"c\"]}",
+    "parsed": "{\"list\":[\"a\\\" \\\"b\\\" \\\"c\"]}"
+  },
+  {
+    "reply": "{\"a\": \"https://example.com/path?x=1&y=2\"",
+    "parsed": "{\"a\":\"https://example.com/path?x=1&y=2\"}"
+  },
+  {
+    "reply": "{\"a\": \"C:\\Users\\x\"}",
+    "parsed": "{\"a\":\"C:Usersx\"}"
+  },
+  {
+    "reply": "{\"a\": \"line\\nbreak\", \"b\": \"unterminated",
+    "parsed": "{\"a\":\"line\\nbreak\",\"b\":\"unterminated\"}"
+  },
+  {
+    "reply": "{\"a\":[{\"b\":\"c\"}, {\"b\":\"d\"}]  ,  \"e\": ",
+    "parsed": "{\"a\":[{\"b\":\"c\"},{\"b\":\"d\"}],\"e\":null}"
+  },
+  {
+    "reply": "[[[[",
+    "parsed": "[[[[]]]]"
+  },
+  {
+    "reply": "{\"a\":{\"b\":{\"c\":{",
+    "parsed": "{\"a\":{\"b\":{\"c\":{}}}}"
+  },
+  {
+    "reply": "{\"text\": \"He said, \\\"hi\\\" and left\", \"n\": 3",
+    "parsed": "{\"text\":\"He said, \\\"hi\\\" and left\",\"n\":3}"
+  },
+  {
+    "reply": "{\"a\": null, \"b\": [null, nul",
+    "parsed": "{\"a\":null,\"b\":[null,\"nul\"]}"
+  },
+  {
+    "reply": "{\"a\": True",
+    "parsed": "{\"a\":true}"
+  },
+  {
+    "reply": "{\"a\": \"x\"]",
+    "parsed": "{\"a\":\"x\"}"
+  },
+  {
+    "reply": "[\"x\"}",
+    "parsed": "[\"x\"]"
+  },
+  {
+    "reply": "{\"a\":\"\\u00e9\\u00",
+    "parsed": "{\"a\":\"é\"}"
+  },
+  {
+    "reply": "{\"a\":1}\n```",
+    "parsed": "{\"a\":1}"
+  },
+  {
+    "reply": "```\n[1,2,3]\n```",
+    "parsed": "[1,2,3]"
+  },
+  {
+    "reply": "```json\n```",
+    "parsed": "\"```json\\n```\""
+  },
+  {
+    "reply": "{\"a\": \"emoji 👍🏽 and CJK 漢字\"",
+    "parsed": "{\"a\":\"emoji 👍🏽 and CJK 漢字\"}"
+  },
+  {
+    "reply": "{\"a\": \"ends with backslash \\\\\"",
+    "parsed": "{\"a\":\"ends with backslash \\\\\"}"
+  },
+  {
+    "reply": "{ \"a\" : 1 , \"b\" : 2 , }",
+    "parsed": "{\"a\":1,\"b\":2}"
+  },
+  {
+    "reply": "{\"a\": [1,\n2,\n3\n]\n,}",
+    "parsed": "{\"a\":[1,2,3]}"
+  },
+  {
+    "reply": "{\"a\": 1}{\"b\": 2}",
+    "parsed": "\"{\\\"a\\\": 1}{\\\"b\\\": 2}\""
+  },
+  {
+    "reply": "[1,2][3,4]",
+    "parsed": "\"[1,2][3,4]\""
+  },
+  {
+    "reply": "{\"a\": \"\\/\"}",
+    "parsed": "{\"a\":\"/\"}"
+  },
+  {
+    "reply": "{\"a\":\"x\"\"y\"}",
+    "parsed": "{\"a\":\"x\\\"\\\"y\"}"
+  },
+  {
+    "reply": "{\"a\": \"multiple\" \"strings\"}",
+    "parsed": "{\"a\":\"multiple\\\" \\\"strings\"}"
+  }
+]
