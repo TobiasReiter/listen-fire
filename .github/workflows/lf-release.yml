@@ -7,6 +7,9 @@ name: lf-release
 # serve-module). Nothing runs on a push to a branch, and nothing is published
 # anywhere but that release.
 #
+# The tag's version must be crates/lf's Cargo version (`lf --version` prints
+# it); a tag that disagrees fails before anything is built.
+#
 # `workflow_dispatch` builds the same matrix against any ref and uploads the
 # archives as workflow artifacts only: how a change to this file is proved
 # before it is tagged.
@@ -52,6 +55,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: The tag names the crate's version
+        # `lf --version` prints crates/lf's Cargo version, so a release whose
+        # tag disagrees with it would ship a binary that misreports itself.
+        if: startsWith(github.ref, 'refs/tags/lf-v')
+        run: |
+          crate="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "lf") | .version')"
+          tag="${GITHUB_REF_NAME#lf-v}"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME names $tag, but crates/lf/Cargo.toml is $crate: set the crate's version and tag again"
+            exit 1
+          fi
       - name: Rust target
         run: rustup target add ${{ matrix.target }}
       - name: Zig (cross-linking musl)
@@ -73,6 +87,7 @@ jobs:
         if: "!matrix.zig && matrix.target == 'aarch64-apple-darwin'"
         run: |
           bin=target/${{ matrix.target }}/release/lf
+          "$bin" --version
           "$bin" init "$RUNNER_TEMP/starter"
           "$bin" check --dir "$RUNNER_TEMP/starter"
       - name: Archive

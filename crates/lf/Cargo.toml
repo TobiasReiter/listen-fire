@@ -1,6 +1,8 @@
 [package]
 name = "lf"
-version = "0.1.0"
+# The release version: a tag lf-v<version> must name it (lf-release.yml
+# refuses a tag that does not), and `lf --version` prints it.
+version = "0.11.0"
 edition = "2024"
 publish = false
 license = "Apache-2.0"

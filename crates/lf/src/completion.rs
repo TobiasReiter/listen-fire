@@ -16,7 +16,7 @@ use crate::secrets::load_secrets;
 
 const SUBCOMMANDS: &str = "init check upgrade run resume serve runs call cancel connect credential completion catalog";
 const CREDENTIAL_ACTIONS: &str = "add update delete list";
-const FLAGS: &str = "--dir --ephemeral --dry-run --event --webhook --body --install --header --port --reason --module --credential --url --redirect-port --no-browser --headless --public --no-reauthorize --help";
+const FLAGS: &str = "--dir --ephemeral --dry-run --event --webhook --body --install --header --port --reason --module --credential --url --redirect-port --no-browser --headless --public --no-reauthorize --help --version";
 const SHELLS: &str = "bash zsh fish";
 
 pub fn run(shell: Option<&str>, list: Option<&str>, dir: Option<&Path>) -> Result<i32, String> {

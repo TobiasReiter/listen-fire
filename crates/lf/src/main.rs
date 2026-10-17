@@ -91,6 +91,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
        lf --contract-secrets <secrets file | env>
        lf --contract-doors
        lf --project-schema
+       lf --version
   init      scaffold a starter project in the folder (default: the current one): lf.yaml, a movement, .gitignore
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
@@ -109,6 +110,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
   --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
+  --version  this lf's version (a release tag lf-v<version> is built from the crate at that version)
 {CREDENTIAL_USAGE}";
 
 struct Args {
@@ -136,6 +138,7 @@ struct Args {
     start_timeout: Option<std::time::Duration>,
     project_schema: bool,
     help: bool,
+    version: bool,
 }
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
@@ -163,6 +166,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         start_timeout: None,
         project_schema: false,
         help: false,
+        version: false,
     };
     let mut rest = argv.iter();
     while let Some(arg) = rest.next() {
@@ -196,6 +200,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
             "--project-schema" => args.project_schema = true,
             "-h" | "--help" => args.help = true,
+            "-V" | "--version" => args.version = true,
             flag if flag.starts_with("--dir=") => args.dir = PathBuf::from(&flag["--dir=".len()..]),
             flag if flag.starts_with('-') => return Err(format!("unknown option \"{flag}\"")),
             positional if args.command.is_none() => args.command = Some(positional.to_string()),
@@ -223,6 +228,10 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         return contract_doors::serve().await.map(|()| 0);
     }
     let mut out = std::io::stdout().lock();
+    if args.version {
+        writeln!(out, "lf {}", env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())?;
+        return Ok(0);
+    }
     if args.project_schema {
         let mut input = Vec::new();
         std::io::Read::read_to_end(&mut std::io::stdin(), &mut input).map_err(|e| e.to_string())?;
