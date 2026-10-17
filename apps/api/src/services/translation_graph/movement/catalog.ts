@@ -6,7 +6,7 @@
 //
 //   - `staticCatalogFromManifests` (M3) — construction-free: adapter
 //     existence + construction args from the static manifests, plugins from
-//     the transform registry, credentials/instance-schemas injected by
+//     the engine package's plugin declarations, credentials/instance-schemas injected by
 //     the caller (thin hardcoded fixtures for tests).
 //   - `movementCatalogForTeam` (M5) — the per-team catalog: credentials
 //     from `external_service_credentials` (keyed by an identifier-safe
@@ -35,7 +35,6 @@ import {
   entryPositionKeyOf,
   instanceSchemaKey,
   catalogSnapshotOf,
-  maybeAbsent,
   parseMovementExpression,
   parseTraversalPath,
   referencedConstructions,
@@ -51,7 +50,6 @@ import {
   type SchemaFieldType,
   type InstanceSchema,
   type LanguageVersion,
-  type PluginOutput,
   type PluginSpec,
   type ResolveFile,
 } from 'movement-lang';
@@ -67,9 +65,7 @@ import ExternalServiceType from '../../../generated/kysely/automations/ExternalS
 import {
   makeMetaPosition,
   positionLabel,
-  type ExpressionType,
   type Position,
-  type TransformOutputKind,
 } from 'movement-engine/services/translation_graph/types';
 import { connectMethodForType } from '../../credentials/connect_link';
 import { isLegacyApp } from '../../credentials/app_id';
@@ -77,8 +73,7 @@ import { isCredentialType } from '../adapters/credential_type';
 import { indexManifestsByName, listAdapterManifests } from '../adapters/registry';
 import { listRemoteAdapters } from '../adapters/remote/store';
 import { teamAdapterManifests } from '../adapters/team_manifests';
-import { registerBundledTransforms } from '../engine/transforms/register-bundled';
-import { getTransform, listTransforms, type TransformImpl } from '../engine/transforms/registry';
+import { bundledPluginNamed, bundledPluginSpecs, pluginSpecOf } from 'movement-engine/public/plugins';
 import { assembleMovementFileSources, resolverOverSources } from './files';
 import {
   adapterInstanceIsWarm,
@@ -237,155 +232,9 @@ const THIN_INSTANCE_SCHEMAS: Record<string, InstanceSchema> = {
 };
 
 /**
- * A transform's registry signature as the checker's plugin surface — ONE
- * projection, so the static catalog, the live one and the editor snapshot
- * cannot disagree about what a plugin accepts or what it does.
- *
- * `auto` params are what a `through [ … ]` stage is FED — the engine fills them
- * from the extract source — so they stay out of `args` and `requiredArgs`,
- * which are what a STAGE may write. They ride `fedArgs` instead, because a
- * plain call has no stage behind it and writes them itself.
- *
- * The effect row rides through verbatim, and so does the declared output —
- * absent stays absent either way, which is what keeps a plugin nobody has
- * described to `through [ … ]` stages. Whether invoking it may cost money
- * rides as `priced`, which the engine reads to refuse a priced plugin once the
- * run has spent its cap.
- */
-function pluginSpecOf(impl: TransformImpl): PluginSpec {
-  const { signature } = impl;
-  const authorParams = signature.params.filter((p) => !p.auto);
-  const requiredArgs = authorParams.filter((p) => p.required === true).map((p) => p.name);
-  // Two different facts, kept apart because they have different answers.
-  //
-  // An `auto` param is one parameter with two ways of being filled: inside a
-  // stage the engine feeds it from the `from [ … ]` source, and a plain call
-  // writes it itself. So it stays out of `args` (a stage may not write it) and
-  // rides `fedArgs` (a plain call must).
-  const fedArgs = signature.params
-    .filter((p) => p.auto === true)
-    .map((p) => ({ name: p.name, ...(p.required === true ? { required: true as const } : {}) }));
-  // `fedByExtraction` is the stronger fact: the plugin reads the fields the
-  // enclosing extract has produced and takes nothing of its own, so there is
-  // no call an author could write. A plugin with parameters is not this,
-  // whatever its scheduling dependency says — `dataDependency` says WHEN it
-  // runs, not what it runs on.
-  const fedByExtraction =
-    signature.dataDependency === 'extracted_context' && authorParams.length === 0;
-  const earlierOutputs = (signature.output?.previously ?? []).map((entry) => ({
-    before: entry.before,
-    output: pluginOutputOf(entry.output),
-  }));
-  // Every argument's declared type, the auto-fed ones included: a plain call
-  // writes those itself.
-  const argTypes = Object.fromEntries(
-    signature.params.map((p) => [p.name, fieldTypeOfExpressionType(p.type)]),
-  );
-  return {
-    args: authorParams.map((p) => p.name),
-    priced: impl.priced === true,
-    argTypes,
-    ...(requiredArgs.length ? { requiredArgs } : {}),
-    ...(signature.effects !== undefined ? { effects: signature.effects } : {}),
-    ...(fedArgs.length ? { fedArgs } : {}),
-    ...(fedByExtraction ? { fedByExtraction: true } : {}),
-    ...(signature.output !== undefined ? { output: pluginOutputOf(signature.output) } : {}),
-    ...(earlierOutputs.length > 0 ? { earlierOutputs } : {}),
-  };
-}
-
-/**
- * A declared plugin output as the checker's own type vocabulary. The signature
- * speaks `ExpressionType` + `optional`; the checker speaks `SchemaFieldType` +
- * `maybeAbsent`, which is the same two facts under the names the rest of the
- * language already uses. ONE projection, so what the engine hands back and what
- * the checker typed cannot disagree.
- */
-function pluginOutputOf(output: TransformOutputKind): PluginOutput {
-  switch (output.kind) {
-    case 'value':
-      return { kind: 'value', type: outputFieldType(output) };
-    case 'record':
-      return { kind: 'record', fields: outputFieldTypes(output.fields) };
-    case 'records':
-      return { kind: 'records', fields: outputFieldTypes(output.fields) };
-    default:
-      return neverAsAny(output);
-  }
-}
-
-function outputFieldTypes(
-  fields: Record<string, { type: ExpressionType; optional?: boolean }>,
-): Record<string, SchemaFieldType> {
-  const out: Record<string, SchemaFieldType> = {};
-  for (const [name, field] of Object.entries(fields)) out[name] = outputFieldType(field);
-  return out;
-}
-
-function outputFieldType(field: { type: ExpressionType; optional?: boolean }): SchemaFieldType {
-  const base = fieldTypeOfExpressionType(field.type);
-  if (field.optional !== true) return base;
-  // `maybeAbsent` widens to undefined only for an undefined input, which a
-  // projected base type never is.
-  return maybeAbsent(base) ?? base;
-}
-
-/**
- * `ExpressionType` → `SchemaFieldType`. Deliberately narrow: a plugin's inputs
- * and outputs are scalars, lists of them, and nothing else. A `record` inside one would be a
- * node, and a node needs a graph to belong to — a plugin output that wants one
- * is a `record` output at the top, whose fields are these.
- */
-function fieldTypeOfExpressionType(type: ExpressionType): SchemaFieldType {
-  switch (type.kind) {
-    case 'string':
-      return 'text';
-    case 'number':
-      return 'number';
-    case 'boolean':
-      return 'boolean';
-    case 'date':
-      return 'date';
-    case 'timestamp':
-      return 'datetime';
-    case 'file':
-      return 'file';
-    case 'enum':
-      return { kind: 'enum', options: [...type.values] };
-    case 'list':
-      return { kind: 'list', of: fieldTypeOfExpressionType(type.element) };
-    case 'json':
-    case 'record':
-      // Structured data nothing further describes — the data top type, which is
-      // exactly what `json` means. A caller passes it through unchanged.
-      return 'json';
-    default:
-      return neverAsAny(type);
-  }
-}
-
-/**
- * Every registered plugin's checker surface, keyed the way a program spells the
- * name. Movement identifiers can't carry dashes and registered transform names
- * do (`vc-url-retrieval`), so the underscore spelling is what a catalog holds.
- *
- * One projection of the live registry, so a caller that needs the real plugin
- * surface — the snapshot builder, a test checking the handbook's own examples —
- * cannot hand the checker a hand-maintained copy that has drifted.
- */
-export function registeredPluginSpecs(): Record<string, PluginSpec> {
-  registerBundledTransforms();
-  const plugins: Record<string, PluginSpec> = {};
-  for (const impl of listTransforms()) {
-    plugins[impl.signature.name.replace(/-/g, '_')] = pluginSpecOf(impl);
-  }
-  return plugins;
-}
-
-/**
  * A real `Catalog` over the host's static registries. Adapter existence
  * and construction arguments come from the manifests; plugins from the
- * transform registry. Credentials and the kg ontology are injected by
+ * engine package's plugin declarations. Credentials and the kg ontology are injected by
  * the caller (they are per-team data — see module header).
  */
 export function staticCatalogFromManifests(
@@ -398,10 +247,6 @@ export function staticCatalogFromManifests(
     instanceSchemas?: Record<string, InstanceSchema>;
   } = {},
 ): Catalog {
-  // The transform registry starts empty; the bundled plugins register on
-  // first use (idempotent).
-  registerBundledTransforms();
-
   const manifests = indexManifestsByName(listAdapterManifests());
 
   return {
@@ -420,10 +265,8 @@ export function staticCatalogFromManifests(
       return Object.keys(options.credentials ?? {});
     },
     plugin(name): PluginSpec | undefined {
-      // Movement identifiers can't contain dashes; registered transform
-      // names do (`vc-url-retrieval`). Accept the underscore spelling.
-      const impl = getTransform(name) ?? getTransform(name.replace(/_/g, '-'));
-      return impl ? pluginSpecOf(impl) : undefined;
+      const declaration = bundledPluginNamed(name);
+      return declaration ? pluginSpecOf(declaration) : undefined;
     },
     instantiate(adapterName): InstanceSchema | undefined {
       // STUB — construction arguments are ignored; see module header for
@@ -447,10 +290,9 @@ export function staticCatalogFromManifests(
  * credentials come along via its `credentialNames()`.
  */
 export function snapshotOverManifests(catalog: Catalog): CatalogSnapshot {
-  registerBundledTransforms();
   return catalogSnapshotOf(catalog, {
     adapters: listAdapterManifests().map((m) => m.adapterType),
-    plugins: Object.keys(registeredPluginSpecs()),
+    plugins: Object.keys(bundledPluginSpecs()),
   });
 }
 
@@ -689,7 +531,7 @@ function introspectionPairs(input: {
  *     the full-workspace sweep. Adapters whose required credential the
  *     team doesn't hold (or whose introspection throws) instantiate
  *     untyped — the checker stays silent for them, by design;
- *   - plugins: the framework-global transform registry.
+ *   - plugins: the engine package's plugin declarations.
  */
 /** Unwrap a raw string-literal construction-arg value (`'"Pipeline"'` →
  *  `Pipeline`). A non-string-literal raw passes through trimmed. */
@@ -786,7 +628,6 @@ async function assembleTeamCatalog(
   teamId: TeamId,
   options: TeamCatalogOptions,
 ): Promise<AssembledTeamCatalog> {
-  registerBundledTransforms();
   const notes: string[] = [];
   const gaps: CatalogGap[] = [];
 
@@ -1293,8 +1134,8 @@ async function assembleTeamCatalog(
       return Object.keys(credentialsByName);
     },
     plugin(name): PluginSpec | undefined {
-      const impl = getTransform(name) ?? getTransform(name.replace(/_/g, '-'));
-      return impl ? pluginSpecOf(impl) : undefined;
+      const declaration = bundledPluginNamed(name);
+      return declaration ? pluginSpecOf(declaration) : undefined;
     },
     instantiate(adapterName, args): InstanceSchema | undefined {
       const manifest = manifestBySlug.get(adapterName);
@@ -1654,7 +1495,7 @@ function runSnapshotOf({ catalog: live, manifests, credentialRows, fileSources }
     snapshot: buildCatalogSnapshot({
       adapters: [...adapters.values()],
       credentials,
-      plugins: registeredPluginSpecs(),
+      plugins: bundledPluginSpecs(),
       files: Object.fromEntries([...fileSources].map(([name, source]) => [name, { source }])),
       models: availableChatModels(),
     }),
@@ -1695,7 +1536,6 @@ export async function movementCatalogSnapshotForTeam(
     languageVersion?: LanguageVersion;
   } = {},
 ): Promise<TeamCatalogSnapshot> {
-  registerBundledTransforms();
   const notes: string[] = [];
 
   const manifests = await teamAdapterManifests(teamId, notes);
@@ -1719,7 +1559,7 @@ export async function movementCatalogSnapshotForTeam(
 
   const { credentials } = credentialsOf(credentialsByName);
 
-  const plugins = registeredPluginSpecs();
+  const plugins = bundledPluginSpecs();
 
   // Saved movement files — the import-path namespace. Carrying the
   // sources keeps the editor full-fidelity offline: imports resolve,

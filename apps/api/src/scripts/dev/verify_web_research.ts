@@ -190,7 +190,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
   }
 }
 `;
-import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
+import { bundledPluginSpecs } from 'movement-engine/public/plugins';
 
 /** The one extract in the program, whatever the surrounding AST looks like. */
 function findExtract(node: unknown): ExtractExpression | undefined {
@@ -221,7 +221,7 @@ async function runEndToEnd(userId: string | null): Promise<void> {
           world: BARE_HOST,
           llm: makeAnthropicLlmClient(),
           transformInvoker: registryTransformInvoker,
-          plugins: registeredPluginSpecs(),
+          plugins: bundledPluginSpecs(),
           // The only slots this program has: the `from` binding and the one
           // quoted argument.
           evalSlot: async (slot: ExprSlot) => {

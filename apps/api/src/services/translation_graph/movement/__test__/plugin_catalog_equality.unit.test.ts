@@ -16,7 +16,8 @@ import type { LanguageVersion, PluginSpec } from 'movement-lang';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 
 import { diagnoseMovementSource } from '../authoring';
-import { registeredPluginSpecs, staticCatalogFromManifests, staticCatalogSnapshot } from '../catalog';
+import { bundledPluginSpecs } from 'movement-engine/public/plugins';
+import { staticCatalogFromManifests, staticCatalogSnapshot } from '../catalog';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'plugin_catalog.json');
 
@@ -34,7 +35,7 @@ movement m() {
 function observe(): unknown {
   const catalog = staticCatalogFromManifests();
   const snapshot = staticCatalogSnapshot();
-  const specs = registeredPluginSpecs();
+  const specs = bundledPluginSpecs();
   const names = Object.keys(specs).sort();
 
   const liveCatalog = Object.fromEntries(

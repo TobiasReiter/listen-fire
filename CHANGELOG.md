@@ -1243,6 +1243,13 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf check` reports a file that does not parse at the column the parser names. It reported column 1
   for every such file.
 
+### ev2-plugins
+
+- The bundled plugins' specs are data in the engine package (`movement-engine/public/plugins`): each
+  one's parameters, declared output and effects, and whether it is priced. The hosted catalog reads
+  them from there; the product keeps only each plugin's implementation and its catalogue page text.
+  What the checkers see is unchanged (held against a recording taken before the move).
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

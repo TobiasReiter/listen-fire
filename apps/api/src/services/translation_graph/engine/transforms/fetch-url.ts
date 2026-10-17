@@ -12,113 +12,35 @@
 // plain scrape are the same work once something has chosen a URL.
 
 import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
-import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { runFields } from '../../../../lib/llm_usage';
 import { logger } from 'movement-engine/services/logger';
 import { emissionOf, fetchWithTimeout, normaliseUrl } from './fetch_resource';
 import { FETCH_URL_HANDBOOK_SECTION } from './fetch_url_handbook_section';
 import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
-
-// ── Signature ─────────────────────────────────────────────────────────────
-
-/**
- * `params.url` is required and author-supplied. It is normally a field an
- * earlier stage extracted (`fetch_url(url: website)`), which is what makes a
- * per-record stage load a per-record page. A required argument that resolves
- * absent skips the invocation at the stage boundary (see
- * `movement_engine/extraction.ts`), so a record whose website came back empty
- * simply gets no enrichment — this implementation never sees a blank url.
- *
- * `params.email` / `params.password` are the credentials a gated link
- * (DocSend, a data room, …) demands before it will show its content. They
- * reach only the gated-document path; a plain web page and a profile page
- * ignore both.
- */
-export const FETCH_URL_SIGNATURE: TransformSignature = {
-  name: 'fetch-url',
-  description:
-    'Fetch one named URL and hand back its content. Emits a single ephemeral Url record.',
-  params: [
-    {
-      name: 'url',
-      type: { kind: 'string' },
-      required: true,
-      description:
-        'The link to load. Normally a field an earlier stage extracted, so each record loads ' +
-        'its own page. A bare host is read as an https address.',
-    },
-    {
-      name: 'email',
-      type: { kind: 'string' },
-      description:
-        'The email to type into a link that is gated behind one (DocSend, a data room, …). ' +
-        'Usually @user_email — @actor_email if the link was shared with the original sender ' +
-        'rather than the team. Ignored by a link that has no gate.',
-    },
-    {
-      name: 'password',
-      type: { kind: 'string' },
-      description:
-        'The passcode to type into a gated link alongside the email. Ignored by a link that ' +
-        'has no gate.',
-    },
-  ],
-  // The url it loads comes from the fields the enclosing extract has produced,
-  // so it is a stage of an extraction and only makes sense as one.
-  dataDependency: 'extracted_context',
-  // What it does, declared: it fetches one page. No model is consulted —
-  // the author already said which link this is.
-  effects: { reads: ['the web'] },
-  additions: {
-    edges: {
-      fetchedUrl: {
-        target: {
-          kind: 'record',
-          fields: {
-            name: { kind: 'string' },
-            url: { kind: 'string' },
-            file: { kind: 'file' },
-            text: { kind: 'string' },
-          },
-        },
-      },
-    },
-  },
-  // Called plainly, what it hands back is the page's text — and nothing, when
-  // the load failed or the page was empty. One value: the other three things on
-  // the edge (the name, the url, the file) are what an EXTRACTOR reads, and a
-  // caller who wanted the url already has it, because they passed it.
-  output: {
-    kind: 'value',
-    type: { kind: 'string' },
-    optional: true,
-    description: "The page's text. Nothing when the load failed or the page was empty.",
-  },
-};
+import { implementing } from './registry';
+import { FETCH_URL_PLUGIN } from 'movement-engine/public/plugins';
 
 export const FETCH_URL_PLUGIN_MANIFEST: PluginManifest = {
-  pluginName: FETCH_URL_SIGNATURE.name,
-  importName: importIdentifier(FETCH_URL_SIGNATURE.name),
+  pluginName: FETCH_URL_PLUGIN.signature.name,
+  importName: importIdentifier(FETCH_URL_PLUGIN.signature.name),
   displayName: 'Fetch a page',
   description:
     'Loads the one link you give it — a company site, a shared document — and ' +
     'hands its content to the rest of the extraction. Point it at a field a ' +
     'record already carries and each record loads its own page.',
-  params: FETCH_URL_SIGNATURE.params,
+  params: FETCH_URL_PLUGIN.signature.params,
   contextAdditions:
     'Adds one fetched page to the record it runs on — the link, a name, the ' +
     'downloaded file, and the extracted text.',
-  additions: FETCH_URL_SIGNATURE.additions,
+  additions: FETCH_URL_PLUGIN.signature.additions,
   handbookSection: FETCH_URL_HANDBOOK_SECTION,
 };
 
 // ── Public run ────────────────────────────────────────────────────────────
 
 export const fetchUrlImpl: TransformImpl = {
-  signature: FETCH_URL_SIGNATURE,
-  // Every fetch, search and model call it makes is paid for.
-  priced: true,
+  ...implementing(FETCH_URL_PLUGIN),
   run: async (input): Promise<TransformOutput> => {
     if (input.kind !== 'context-dependent') {
       throw new Error(`fetch-url: expected context-dependent input, got ${input.kind}`);

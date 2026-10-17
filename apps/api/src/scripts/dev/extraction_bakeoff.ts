@@ -85,7 +85,7 @@ import {
   type ExpectedNode,
   type Fixture,
 } from './_fixtures/extraction_bakeoff';
-import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
+import { bundledPluginSpecs } from 'movement-engine/public/plugins';
 
 // ── The candidates ─────────────────────────────────────────────────────────
 
@@ -568,7 +568,7 @@ async function runOne(
         world: BARE_HOST,
         llm,
         transformInvoker: stubInvoker(fixture),
-        plugins: registeredPluginSpecs(),
+        plugins: bundledPluginSpecs(),
         evalSlot: async () => ({ value: fixture.source, provenance: NO_PROVENANCE }),
         trace,
       },

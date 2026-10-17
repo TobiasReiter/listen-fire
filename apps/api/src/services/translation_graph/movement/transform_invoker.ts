@@ -11,6 +11,7 @@ import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from 'move
 import { DocumentService } from '../../document';
 import { logger } from 'movement-engine/services/logger';
 import { documentStoreFileRef } from 'movement-engine/services/translation_graph/engine/files/document_store';
+import { registerBundledTransforms } from '../engine/transforms/register-bundled';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
 import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
 
@@ -18,6 +19,9 @@ import { makeEphemeralPosition } from 'movement-engine/services/translation_grap
  *  program writes `vc_url_retrieval` for a transform registered as
  *  `vc-url-retrieval`. */
 function transformFor(plugin: string): TransformImpl | undefined {
+  // Idempotent, and the invoker is the one consumer that needs the bodies: the
+  // catalog reads the declarations, which need no registration.
+  registerBundledTransforms();
   return getTransform(plugin) ?? getTransform(plugin.replace(/_/g, '-'));
 }
 

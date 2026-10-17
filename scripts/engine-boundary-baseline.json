@@ -1,5 +1,5 @@
 {
-  "total": 813,
+  "total": 807,
   "byModule": {
     "adapters/webhook/configSchema": 2,
     "lib/anthropic": 3,
@@ -65,7 +65,7 @@
     "services/translation_graph/triggers/listen_config": 5,
     "services/translation_graph/triggers/trigger_event": 1,
     "services/translation_graph/triggers/types": 35,
-    "services/translation_graph/types": 101,
+    "services/translation_graph/types": 95,
     "services/translation_graph/uniqueness": 5,
     "services/webhook_sync/remote_inbound": 3,
     "services/write_locks/write_locks": 4

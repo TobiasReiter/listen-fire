@@ -419,6 +419,8 @@ answer: PricedAnswer<{
 
 `through` stages and plugin calls. What the engine knows of a plugin comes from the snapshot; invoking it is the host's.
 
+- The bundled plugins are declared as data in the engine package (`movement-engine/public/plugins`: each one's signature and whether it is priced). A host builds the snapshot's `plugins` from those declarations and answers `invoke` for the ones it implements. The hosted product implements all of them, and fails as its plugins load if its implementations and the declarations differ; `lf` implements none yet, lists none in its snapshot, and refuses an `invoke` naming the plugin.
+
 #### `llm.transforms.invoke`
 
 ```ts

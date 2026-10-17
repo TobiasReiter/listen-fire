@@ -26,7 +26,7 @@ import {
   importIdentifier,
   instanceSchemaFromDescriptors,
 } from 'movement-engine/services/translation_graph/movement/schema_projection';
-import { registeredPluginSpecs } from '../catalog';
+import { bundledPluginSpecs } from 'movement-engine/public/plugins';
 import {
   adapterNameResolver,
   naturalName,
@@ -1335,7 +1335,7 @@ describe('adapterNameResolver over the KG introspection', () => {
   });
 });
 
-// ── registeredPluginSpecs — required-argument projection ────────────────────
+// ── bundledPluginSpecs — required-argument projection ────────────────────
 //
 // `PluginSpec.requiredArgs` is projected from `TransformParam.required`
 // (types.ts) — the checker's REFUSE-a-missing-required-argument gate reads
@@ -1344,8 +1344,8 @@ describe('adapterNameResolver over the KG introspection', () => {
 // AUTHOR arg projects, a required AUTO arg (engine-injected, never in the
 // author-facing surface at all) does not.
 
-describe('registeredPluginSpecs — required-argument projection', () => {
-  const specs = registeredPluginSpecs();
+describe('bundledPluginSpecs — required-argument projection', () => {
+  const specs = bundledPluginSpecs();
 
   it('projects a required, author-supplied param into requiredArgs (fetch_url.url)', () => {
     expect(specs.fetch_url?.args).toEqual(expect.arrayContaining(['url', 'email', 'password']));
@@ -1365,14 +1365,14 @@ describe('registeredPluginSpecs — required-argument projection', () => {
   });
 });
 
-// ── registeredPluginSpecs — what a plain call gets back ─────────────────────
+// ── bundledPluginSpecs — what a plain call gets back ─────────────────────
 //
 // The plugin's own signature is the single source: the checker types
 // `page = fetch_url(url: …)` from the same declaration the engine hands the
 // value back against, so the two cannot disagree about what came out.
 
-describe('registeredPluginSpecs — declared output', () => {
-  const specs = registeredPluginSpecs();
+describe('bundledPluginSpecs — declared output', () => {
+  const specs = bundledPluginSpecs();
 
   it('a page fetch hands back the text, and may hand back nothing', () => {
     expect(specs.fetch_url?.output).toEqual({

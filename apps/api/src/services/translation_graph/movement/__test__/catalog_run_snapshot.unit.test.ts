@@ -48,15 +48,6 @@ jest.mock('../../adapters/registry', () => ({
 
 jest.mock('../../adapters/remote/store', () => ({ listRemoteAdapters: async () => [] }));
 
-jest.mock('../../engine/transforms/register-bundled', () => ({
-  registerBundledTransforms: () => {},
-}));
-
-jest.mock('../../engine/transforms/registry', () => ({
-  getTransform: () => undefined,
-  listTransforms: () => [],
-}));
-
 jest.mock('../../adapters/resolve', () => ({ resolveAdapter: jest.fn() }));
 
 jest.mock('../store', () => {

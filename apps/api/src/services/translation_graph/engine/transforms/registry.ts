@@ -25,6 +25,7 @@
 //   (#transform — transforms add ephemeral nodes to the source graph)
 
 import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { PluginDeclaration } from 'movement-engine/public/plugins';
 import type { CostEnvelope } from 'movement-engine/lib/run_cost';
 import type {
   EphemeralOriginRef,
@@ -152,6 +153,16 @@ export type TransformImpl = {
    */
   priced?: true;
 };
+
+/**
+ * The signature and price of a bundled plugin's implementation, taken from its
+ * declaration in the engine package (`movement-engine/public/plugins`): what a
+ * plugin accepts and costs is data every host reads, and this host only
+ * supplies the body.
+ */
+export function implementing(declaration: PluginDeclaration): Pick<TransformImpl, 'signature' | 'priced'> {
+  return { signature: declaration.signature, ...(declaration.priced ? { priced: true as const } : {}) };
+}
 
 // ── PluginManifest ─────────────────────────────────────────────────────────
 

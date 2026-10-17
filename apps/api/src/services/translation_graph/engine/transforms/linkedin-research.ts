@@ -27,7 +27,6 @@ import type { ResolvedField } from './extracted_fields';
 import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
 import type { Anchors, SearchHit } from './search_hygiene';
 import type { ProfileIdentity } from './linkedin_identity';
-import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { services } from '../../../../adapters/registry';
 import { MINUTE, SECOND } from '../../../../constants';
@@ -56,89 +55,24 @@ import {
 } from './linkedin_identity';
 import { LINKEDIN_RESEARCH_HANDBOOK_SECTION } from './linkedin_research_handbook_section';
 import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
-
-// ── Signature ─────────────────────────────────────────────────────────────
-
-export const LINKEDIN_RESEARCH_SIGNATURE: TransformSignature = {
-  name: 'linkedin-research',
-  description:
-    "From a LinkedIn profile address, research what that person is currently doing — their role, their organisation, and their recent public activity — and attach a summary, a confidence, and the sources it rests on.",
-  params: [
-    {
-      name: 'url',
-      type: { kind: 'string' },
-      required: true,
-      description:
-        'The LinkedIn profile address of the person to research. Normally a field an earlier ' +
-        'stage extracted, so each person is researched from their own address.',
-    },
-  ],
-  // The address comes from the fields the enclosing extract has produced, and
-  // the record's other fields are the extra search terms, so this only makes
-  // sense as a stage of an extraction.
-  dataDependency: 'extracted_context',
-  // Searches, fetches pages, and asks two models — the planner and the one
-  // that writes the answer.
-  effects: { reads: ['the web'], ai: true },
-  additions: {
-    properties: {
-      activity_summary: { kind: 'string' },
-      activity_confidence: { kind: 'string' },
-      current_role: { kind: 'string' },
-      current_organisation: { kind: 'string' },
-      activity_sources: { kind: 'string' },
-    },
-  },
-  // What the person is currently doing, read by name. Every field is optional:
-  // a profile that could not be read confidently attaches an outcome and
-  // nothing else.
-  output: {
-    kind: 'record',
-    fields: {
-      activity_summary: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'What they are currently doing, in prose.',
-      },
-      activity_confidence: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'How sure the reading is.',
-      },
-      current_role: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'Their role, as stated.',
-      },
-      current_organisation: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'The organisation they are at.',
-      },
-      activity_sources: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'The addresses the reading rests on, one per line.',
-      },
-    },
-  },
-};
+import { implementing } from './registry';
+import { LINKEDIN_RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 
 export const LINKEDIN_RESEARCH_PLUGIN_MANIFEST: PluginManifest = {
-  pluginName: LINKEDIN_RESEARCH_SIGNATURE.name,
-  importName: importIdentifier(LINKEDIN_RESEARCH_SIGNATURE.name),
+  pluginName: LINKEDIN_RESEARCH_PLUGIN.signature.name,
+  importName: importIdentifier(LINKEDIN_RESEARCH_PLUGIN.signature.name),
   displayName: 'LinkedIn activity',
   description:
     'Takes a person’s LinkedIn address and researches what they are currently ' +
     'doing — the role and organisation their profile shows, plus recent public ' +
     'activity found on the web — and writes it up with a confidence and its sources.',
-  params: LINKEDIN_RESEARCH_SIGNATURE.params,
+  params: LINKEDIN_RESEARCH_PLUGIN.signature.params,
   contextAdditions:
     'Adds five fields to the record it runs on: a written summary of what the ' +
     'person appears to be doing, how confident that reading is, the role and ' +
     'organisation it read, and the addresses the summary cites. Adds nothing ' +
     'at all when no public signal consistent with the profile exists.',
-  additions: LINKEDIN_RESEARCH_SIGNATURE.additions,
+  additions: LINKEDIN_RESEARCH_PLUGIN.signature.additions,
   handbookSection: LINKEDIN_RESEARCH_HANDBOOK_SECTION,
 };
 
@@ -282,9 +216,7 @@ A bracketed number is a position in the "sources" list YOU build, counting from 
 // ── Public run ────────────────────────────────────────────────────────────
 
 export const linkedinResearchImpl: TransformImpl = {
-  signature: LINKEDIN_RESEARCH_SIGNATURE,
-  // Every fetch, search and model call it makes is paid for.
-  priced: true,
+  ...implementing(LINKEDIN_RESEARCH_PLUGIN),
   run: async (input): Promise<TransformOutput> => {
     if (input.kind !== 'context-dependent') {
       throw new Error(`linkedin-research: expected context-dependent input, got ${input.kind}`);
