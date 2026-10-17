@@ -36,8 +36,8 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { CatalogGap } from './catalog';
 import type { MovementValidityStatus } from './store';
 
-import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
-import { RUST_ENGINE_FROM_VERSION } from 'movement-engine/services/movement_engine/rust_engine';
+import { listUnsupportedConstructs } from 'movement-engine/public/run-support';
+import { RUST_ENGINE_FROM_VERSION } from 'movement-engine/public/run-support';
 import { movementCatalogForTeam } from './catalog';
 import { stepTimer, type StepTimer } from './timing';
 

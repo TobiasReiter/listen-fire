@@ -1,6 +1,6 @@
 import { PdfStream } from '.';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { PlaywrightService } from '../../services/playwright';
 import { Crawler, FetchedDocument, Screenshot } from '../../services/crawler';
 

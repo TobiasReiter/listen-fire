@@ -2,11 +2,11 @@
 // Vertex the SDK speaks the model's `:predict` method, one text per instance.
 
 import type { ModelHost } from '../host';
-import type { Resolved } from 'movement-engine/lib/models/map';
+import type { Resolved } from 'movement-engine/public/models';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
 import { geminiClient } from '../providers/gemini';
-import { GEMINI_EMBEDDING_MODELS } from 'movement-engine/lib/models/embedding/range';
+import { GEMINI_EMBEDDING_MODELS } from 'movement-engine/public/model-calls';
 
 /**
  * `gemini-embedding-001` truncates a vector to `outputDimensionality` WITHOUT

@@ -30,19 +30,19 @@ import { parseTraversalPath } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
-import type { Adapter, EdgesFromResult } from 'movement-engine/services/translation_graph/adapter';
+import type { SchemaTypeDescriptor, SourcePosition } from 'movement-engine/public/catalog';
+import type { Adapter, EdgesFromResult } from 'movement-engine/public/adapter';
 import type { AdapterIntrospection } from 'module-kit/adapter/name_resolution';
 
 import { selectMember } from './narrowing';
-import { ADAPTER_META_TYPE_ID, makeMetaPosition, positionLabel } from 'movement-engine/services/translation_graph/types';
+import { ADAPTER_META_TYPE_ID, makeMetaPosition, positionLabel } from 'movement-engine/public/catalog';
 import { resolveAdapter } from '../adapters/resolve';
 import { getAdapterManifest } from '../adapters/registry';
 import { getRemoteAdapter, rowToManifest } from '../adapters/remote/store';
 import {
   instanceSchemaFromDescriptors,
   type AdapterSchemaProjection,
-} from 'movement-engine/services/translation_graph/movement/schema_projection';
+} from 'movement-engine/public/catalog';
 
 
 /**

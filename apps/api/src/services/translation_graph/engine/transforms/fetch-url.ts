@@ -7,7 +7,7 @@ import type { PluginManifest, TransformImpl } from './registry';
 
 import { FETCH_URL_HANDBOOK_SECTION } from './fetch_url_handbook_section';
 import { fetchUrlPlugin } from '@lf/web';
-import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { importIdentifier } from 'movement-engine/public/catalog';
 import { FETCH_URL_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';
 

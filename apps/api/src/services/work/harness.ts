@@ -1,7 +1,7 @@
 // The test-harness doors answer a delivery only once its rows ran, so the dev
 // loop and the eval harness see settled runs in the response. A production
 // door never waits.
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { drainUntilIdle } from './drain';
 import { awaitTeamWorkSettled } from './store';
 

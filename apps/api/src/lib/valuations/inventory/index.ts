@@ -19,8 +19,8 @@ import {
 } from './data';
 import { logHoldings } from './messages';
 import { handleError } from '../../errors';
-import { logger } from 'movement-engine/services/logger';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { logger } from 'movement-engine/public/log';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { AssetHolding, Holdings, InvesteeHoldings } from './holdings';
 import {
   TransactionFlow,

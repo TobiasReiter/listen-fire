@@ -4,7 +4,7 @@
 // Kept in its own module so the prose imports nothing: the plugin's own
 // module pulls in the search, fetch and model chain, and the handbook must not.
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/public/handbook';
 
 export const LINKEDIN_RESEARCH_HANDBOOK_SECTION: HandbookSection = {
   title: 'LinkedIn activity — what a person is up to',

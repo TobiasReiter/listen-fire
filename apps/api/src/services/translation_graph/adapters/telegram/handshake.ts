@@ -33,7 +33,7 @@ import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/
 import { encryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb, getQb, globalQb } from '../../../../lib/kysely';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 /**
  * Typed, schema-scoped clients off an explicit transaction. `withSchema`

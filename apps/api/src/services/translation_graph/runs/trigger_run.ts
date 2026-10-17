@@ -12,19 +12,19 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 
 import type { EvaluationResult } from '../engine/types';
-import type { MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import type { MovementRunResult } from 'movement-engine/public/movement-engine';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 import type { WorkHandler } from '../../work/kinds';
 
-import { isWriteEffect, type MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import { isWriteEffect, type MovementTraceEntry } from 'movement-engine/public/run-support';
 import { SECOND } from '../../../constants';
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import { costMicrodollarsToUsd } from '../../../lib/llm_usage';
 import { mq } from '../../../lib/message_queue';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import {
   startOpsRun,
   addOpsRunMessage,

@@ -4,7 +4,7 @@ import type { UserId } from '../generated/kysely/core/User';
 import { getCoreQb, getQb } from '../lib/kysely';
 import { sendSlackNotification } from '../lib/slack';
 import { sendEmail } from '../email/send';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 type EventType = 'pipeline_run' | 'query_input';
 

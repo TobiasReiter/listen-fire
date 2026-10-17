@@ -2,11 +2,11 @@
 // the map decides which vendor hears the audio.
 
 import type { ModelHost } from '../host';
-import type { TranscriptionModelName } from 'movement-engine/lib/models/registry';
+import type { TranscriptionModelName } from 'movement-engine/public/models';
 
-import { assertRunBudget } from 'movement-engine/lib/run_spend';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
+import { assertRunBudget } from 'movement-engine/public/models';
+import { neverAsAny } from 'movement-engine/public/utils';
+import { assertCallable, resolveModel } from 'movement-engine/public/models';
 import { geminiTranscribe } from './gemini';
 import { openAiTranscribe } from './openai';
 

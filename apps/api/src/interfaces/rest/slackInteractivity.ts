@@ -23,7 +23,7 @@ import { Router } from 'express';
 
 import type { Request, Response } from 'express';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { verifySlackEventsRequest } from './slackEvents';
 import { answerAskByToken, type AskDoorOutcome } from '../../services/translation_graph/adapters/ask/answer_door';
 import { parseAskAction, parseAskLink } from '../../services/translation_graph/adapters/ask/answer_link';

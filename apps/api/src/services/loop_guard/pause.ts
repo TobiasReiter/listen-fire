@@ -13,7 +13,7 @@ import type { TriggerId } from '../../generated/kysely/automations/Trigger';
 import type { GuardSignal } from './types';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { guardKeys, resetWindow } from './store';
 import { resolveThresholds } from './thresholds';
 

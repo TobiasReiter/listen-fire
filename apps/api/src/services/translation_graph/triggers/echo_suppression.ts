@@ -23,10 +23,10 @@
 
 import { SUPPRESS_SELF_KEY } from 'movement-lang';
 
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { Adapter } from 'movement-engine/public/adapter';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 /**
  * Read the opt-in `suppress_self` flag off a persisted trigger config. The flag

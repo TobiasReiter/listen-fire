@@ -21,7 +21,7 @@
 
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
+import type { DiscriminableEvent } from 'movement-engine/public/adapter';
 import { initProject, loadProject } from './project';
 import {
   callCallback,
@@ -43,7 +43,7 @@ import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';
 import { upgradeProject } from './upgrade';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel|connect|credential> [options]
   lf init [dir]

@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getQb } from '../kysely';
 import { OpsEventId } from '../../generated/kysely/public/OpsEvent';
 import { renderPushPayload, PushPayload } from './render';

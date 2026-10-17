@@ -20,7 +20,7 @@
 
 import { currentContext } from '../../services/context';
 import { services } from '../../adapters/registry';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { extractDocumentTextTool } from '../agent/tools/extract_document_text';
 
 const EXTRACTABLE_EXTENSIONS = ['.pdf', '.pptx', '.xlsx'];

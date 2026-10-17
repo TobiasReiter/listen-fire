@@ -10,16 +10,16 @@
 // records: it only emits what the engine and the deploy check already know.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { Adapter, AdapterManifest, EdgesFromResult, EventType } from 'movement-engine/services/translation_graph/adapter';
+import type { Adapter, AdapterManifest, EdgesFromResult, EventType } from 'movement-engine/public/adapter';
 import type {
   SchemaEntryPoint,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
   SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
 import { uniformWalk } from 'module-kit/adapter/hop';
-import { META_RECORD_TYPE, positionData } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE, positionData } from 'movement-engine/public/catalog';
 import { BaseAdapter } from 'module-kit/adapter/base';
 import { SYSTEM_HANDBOOK_SECTION } from './handbook_section';
 import {

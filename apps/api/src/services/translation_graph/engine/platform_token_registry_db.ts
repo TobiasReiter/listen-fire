@@ -3,7 +3,7 @@
 // production implementation, backed by `public.platform_owned_token`.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Actor } from 'movement-engine/services/translation_graph/mutation_context';
+import type { Actor } from 'movement-engine/public/adapter';
 import type { PlatformTokenRegistry } from './platform_token_registry';
 
 import { getAutomationsQb } from '../../../lib/kysely';

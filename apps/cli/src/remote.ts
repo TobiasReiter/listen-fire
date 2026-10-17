@@ -7,11 +7,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { triggerTypeSchema } from 'engine-contracts';
-import { createRemoteAdapter, type RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
-import type { DocumentStore } from 'movement-engine/services/translation_graph/engine/files/document_store';
+import { createRemoteAdapter, type RemoteAdapter } from 'movement-engine/public/modules';
+import type { DocumentStore } from 'movement-engine/public/files';
 import type { RunningExternal } from './externals';
 import { clientFromFields } from 'movement-engine/public/secrets';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { bindingOf, installOf, secretsOf, withCredential, type Credential } from './secrets';
 
 export function remoteAdapterOf(input: {

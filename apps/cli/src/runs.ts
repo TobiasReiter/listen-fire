@@ -6,10 +6,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CatalogSnapshot, InstanceSchema } from 'movement-lang';
-import { fireCallbackBody, runMovement, resumeMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { fireCallbackBody, runMovement, resumeMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/public/movement-engine';
 import type { AnyParkedScopeState } from 'engine-contracts';
-import { runFailureCause, RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
-import { withRunLease, type HeldRunLease } from 'movement-engine/services/run_host/lease';
+import { runFailureCause, RunLeaseLost } from 'movement-engine/public/run-support';
+import { withRunLease, type HeldRunLease } from 'movement-engine/public/run-host';
 import {
   armTimerWake,
   clearIfQuiescent,
@@ -17,7 +17,7 @@ import {
   runQuiescent,
   settleIfCancelRequested,
   type RunHost,
-} from 'movement-engine/services/run_host/rules';
+} from 'movement-engine/public/run-host';
 import {
   CallbackBodyPayload,
   callbackAwaitKeeper,
@@ -26,14 +26,14 @@ import {
   runCallbackBody,
   type CallbackBodyOutcome,
   type CallbackCallOutcome,
-} from 'movement-engine/services/run_host/callbacks';
-import { afterStep, drainDueTimers, drainRun, nextTimerWake, wakeAwaits, type StepLeaf, type StepOutcome } from 'movement-engine/services/run_host/drain';
-import type { ClaimedWork } from 'movement-engine/services/run_host/store';
-import { eventMatchesTriggerScope } from 'movement-engine/services/translation_graph/triggers/listen_config';
-import { triggerEventOf } from 'movement-engine/services/translation_graph/triggers/trigger_event';
-import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+} from 'movement-engine/public/run-host';
+import { afterStep, drainDueTimers, drainRun, nextTimerWake, wakeAwaits, type StepLeaf, type StepOutcome } from 'movement-engine/public/run-host';
+import type { ClaimedWork } from 'movement-engine/public/run-host';
+import { eventMatchesTriggerScope } from 'movement-engine/public/inbound';
+import { triggerEventOf } from 'movement-engine/public/inbound';
+import type { DiscriminableEvent, EventType } from 'movement-engine/public/adapter';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
+import type { CapturedWrite } from 'movement-engine/public/adapter';
 import { localDocumentStore, type LocalDocumentStore } from './documents';
 import {
   credentialFor,
@@ -43,7 +43,7 @@ import {
   type External,
   type RunningExternal,
 } from './externals';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { LOCAL_TENANT, localHost, tenant } from './host';
 import { localRunRecords } from './parks';
 import { refuseBelowLf, type Project } from './project';

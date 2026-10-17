@@ -20,10 +20,10 @@ import { sql } from 'kysely';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
 import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { dispatchTriggerByIdEvent } from './router';
 
 function jsonb(value: unknown): unknown {

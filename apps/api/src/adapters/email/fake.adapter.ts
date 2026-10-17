@@ -1,4 +1,4 @@
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { OutboundEmailMessager, SendArgs } from './interface';
 
 const FAKE_CHANNELS_URL = process.env.FAKE_CHANNELS_URL || 'http://localhost:5556';

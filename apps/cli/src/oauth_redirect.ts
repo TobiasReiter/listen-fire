@@ -23,7 +23,7 @@ import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { createOAuth2Connector, type OAuth2ClientApp, type OAuth2Declaration, type OAuth2Grant } from 'movement-engine/public/secrets';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import type { Prompter } from './prompt';
 
 export const LOOPBACK_CALLBACK_PATH = '/callback';

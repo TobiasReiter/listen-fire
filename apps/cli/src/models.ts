@@ -9,23 +9,23 @@
 // charged to its run, so the run's cost cap sees what its model calls spent.
 
 import type { WirePluginResultShape } from 'engine-contracts';
-import type { Costed, EngineHost } from 'movement-engine/services/movement_engine/host';
-import type { TransformInvocationResult } from 'movement-engine/services/movement_engine/extraction';
-import type { ChatCall } from 'movement-engine/lib/models/chat';
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { Costed, EngineHost } from 'movement-engine/public/host';
+import type { TransformInvocationResult } from 'movement-engine/public/model-calls';
+import type { ChatCall } from 'movement-engine/public/models';
+import type { ChatModelName } from 'movement-engine/public/models';
 
-import { anthropicClient, type LlmUsage } from 'movement-engine/lib/anthropic';
-import { costMicrodollars } from 'movement-engine/lib/models/pricing';
-import { costSourceKey } from 'movement-engine/lib/run_cost';
-import { reportRunCost } from 'movement-engine/lib/run_spend';
-import { models } from 'movement-engine/lib/models/registry';
-import { anthropicKeyedChatProvider, type AnthropicKey } from 'movement-engine/lib/models/providers/anthropic';
-import { metered, refusingPastBudget } from 'movement-engine/services/translation_graph/movement/metered';
+import { anthropicClient, type LlmUsage } from 'movement-engine/public/anthropic';
+import { costMicrodollars } from 'movement-engine/public/models';
+import { costSourceKey } from 'movement-engine/public/models';
+import { reportRunCost } from 'movement-engine/public/models';
+import { models } from 'movement-engine/public/models';
+import { anthropicKeyedChatProvider, type AnthropicKey } from 'movement-engine/public/anthropic';
+import { metered, refusingPastBudget } from 'movement-engine/public/models';
 import {
   makeAnthropicExtractCallClient,
   makeAnthropicLlmClient,
-} from 'movement-engine/services/translation_graph/movement/llm_clients';
-import { arbitrateWithoutJudge } from 'movement-engine/services/translation_graph/uniqueness';
+} from 'movement-engine/public/models';
+import { arbitrateWithoutJudge } from 'movement-engine/public/model-calls';
 import { MODEL_CREDENTIAL, type Credential } from './secrets';
 
 /** One call of a plugin a plugin external serves; undefined when none does. */

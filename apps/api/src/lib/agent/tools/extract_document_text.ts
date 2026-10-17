@@ -1,5 +1,5 @@
 import { DocumentService } from '../../../services/document';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { RawTextService } from '../../../services/raw_text';
 import { DocumentWithContentOutput, EmptyOutput, Tool } from './types';
 import { getPptxText, getXlsxContent } from 'file-text';

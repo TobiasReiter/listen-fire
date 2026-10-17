@@ -5,8 +5,8 @@ import { backOff } from 'exponential-backoff';
 import type { ChartResultArray } from 'yahoo-finance2/esm/src/modules/chart';
 
 import { SECOND } from '../../constants';
-import { logger } from 'movement-engine/services/logger';
-import { Queue } from 'movement-engine/lib/utils/queue';
+import { logger } from 'movement-engine/public/log';
+import { Queue } from 'movement-engine/public/utils';
 
 const yahooFinance = new YahooFinance();
 

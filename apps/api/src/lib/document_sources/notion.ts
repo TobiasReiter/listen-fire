@@ -1,7 +1,7 @@
 import { htmlToText } from 'html-to-text';
 
 import { Crawler, Screenshot } from '../../services/crawler';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { PlaywrightService } from '../../services/playwright';
 
 class NotionCrawler extends Crawler {

@@ -37,9 +37,9 @@
 //     (`perSiteStructuralSchema`) still lands as response-validation
 //     and is independent of this entity-guide path.
 
-import type { ActionNode, ExpressionType, SchemaFieldDescriptor, TGFieldMapping } from 'movement-engine/services/translation_graph/types';
-import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
-import type { TraversalStep } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
+import type { ActionNode, ExpressionType, SchemaFieldDescriptor, TGFieldMapping } from 'movement-engine/public/catalog';
+import type { Expression } from 'movement-engine/public/catalog';
+import type { TraversalStep } from 'movement-engine/public/output-v3';
 import type { FieldShape } from './schema_synthesis';
 
 import { listElementExpression, type ListElement } from '#shared/expression/types';

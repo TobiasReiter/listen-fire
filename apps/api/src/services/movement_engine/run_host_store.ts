@@ -20,10 +20,10 @@ import { hostname } from 'node:os';
 
 import { sql, type ExpressionBuilder } from 'kysely';
 import { z } from 'zod';
-import { RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
+import { RunLeaseLost } from 'movement-engine/public/run-support';
 
 import type { ParkReason } from 'engine-contracts';
-import type { ClaimedWork, CorrelatedAwait, LeafRow, RunHostStore } from 'movement-engine/services/run_host/store';
+import type { ClaimedWork, CorrelatedAwait, LeafRow, RunHostStore } from 'movement-engine/public/run-host';
 import type AutomationsSchema from '../../generated/kysely/automations/AutomationsSchema';
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { JoinPendingFrameAddress } from '../../generated/kysely/automations/JoinPending';

@@ -30,9 +30,9 @@ import {
   type PushAuth,
   type PushStore,
 } from 'movement-engine/public/inbound';
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
-import { authHeader } from 'movement-engine/services/translation_graph/protocol/client';
-import { queueAwaitWake } from 'movement-engine/services/run_host/rules';
+import type { DiscriminableEvent } from 'movement-engine/public/adapter';
+import { authHeader } from 'movement-engine/public/adapter';
+import { queueAwaitWake } from 'movement-engine/public/run-host';
 import { type RunningExternal } from './externals';
 import { LOCAL_TENANT } from './host';
 import { remoteAdapterOf } from './remote';

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { ConnectMethod } from '../../../services/credentials/connect_link';
-import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { SchemaTypeDescriptor } from 'movement-engine/public/catalog';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
@@ -11,7 +11,7 @@ import { userProcedure as sharedUserProcedure } from '../procedures';
 import { services } from '../../../adapters/registry';
 import { decryptToken, encryptToken } from '../../../lib/credentials';
 import { claimPendingCredentials } from '../../../lib/pendingCredentials';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { bindFlowToUser, extractStateFromUrl } from '../../../lib/oauthFlows';
 import { slackCredsParser } from '../../../adapters/slack/webApi/apiClient';
 import { affinityCredsParser } from '@lf/affinity/api_client';
@@ -50,7 +50,7 @@ import {
   schemaRefSchema,
   adapterTypeForRef,
   credentialsIdFromRef,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import { TeamId } from '../../../generated/kysely/core/Team';
 import { UserId } from '../../../generated/kysely/core/User';
 import { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';

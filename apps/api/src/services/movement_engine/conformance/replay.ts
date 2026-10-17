@@ -19,9 +19,9 @@ import {
   type ReplayVerdict,
 } from 'engine-contracts/conformance';
 
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import type { EngineHost } from 'movement-engine/services/movement_engine/host';
-import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { neverAsAny } from 'movement-engine/public/utils';
+import type { EngineHost } from 'movement-engine/public/host';
+import { fireCallbackBody, resumeMovement, runMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/public/movement-engine';
 import { startHostDouble, httpHost } from './http_host_double';
 import { recordedError } from './recorder';
 import { hostServing, settle } from './replay_host';

@@ -9,7 +9,7 @@ import { ImageService } from './images';
 import { sendSlackNotification } from '../lib/slack';
 import { handleError } from '../lib/errors';
 import { aiCaptureContent, reportAIResult, getScrollTiles } from '../lib/document_sources/ai_crawler';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 type Screenshot = { width: number; height: number; data: Buffer };
 

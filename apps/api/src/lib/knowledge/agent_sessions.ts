@@ -1,4 +1,4 @@
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 // Active-agent abort registry + per-conversation session tracking (extracted
 // from the retired query_agent.ts; used by the unified web-chat view + shutdown).

@@ -1,6 +1,6 @@
 import { initTRPC } from '@trpc/server';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { UnmountedProduct } from './product_gate';
 
 /**

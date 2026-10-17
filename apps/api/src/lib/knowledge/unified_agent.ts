@@ -26,7 +26,7 @@
 import { z } from 'zod';
 
 import type { Kysely } from 'kysely';
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatModelName } from 'movement-engine/public/models';
 import type { ResourceChangeEvent } from '../message_queue/queues/resourceChanges';
 import type { AgentUpdate } from '../openai/types';
 import type { TeamId } from '../../generated/kysely/core/Team';
@@ -41,7 +41,7 @@ import {
 } from '../anthropic';
 import { AgentResponseSchema } from '../openai/db_agent_schema';
 import { currentContext } from '../../services/context';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { mq } from '../message_queue';
 import { getAutomationsQb, getKnowledgeQb, getQb } from '../kysely';
 import {
@@ -49,7 +49,7 @@ import {
   adapterRequiredCredentialType,
 } from '../../services/translation_graph/adapters/registry';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import { parseJson } from 'movement-engine/lib/utils/parse_json';
+import { parseJson } from 'movement-engine/public/utils';
 import { getLibraryShelf, readBook } from './library';
 import { getMovementDoctrine } from './movement_handbook';
 import { executeCypher, getSchema, stripCypherComments, ParseError, TranspileError } from './cypher';

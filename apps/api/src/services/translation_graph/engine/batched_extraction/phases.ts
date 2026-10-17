@@ -38,7 +38,7 @@ import type {
   TransformDispatchResult,
 } from './batcher';
 import type { EnrichmentBinding } from '../evaluator/batcher';
-import type { Resource } from 'movement-engine/services/translation_graph/adapter';
+import type { Resource } from 'movement-engine/public/adapter';
 
 import { ENTITY_DENSITY_OPUS_THRESHOLD, selectModel } from './schema_synthesis';
 import { bundleHandleFor } from './bundle';

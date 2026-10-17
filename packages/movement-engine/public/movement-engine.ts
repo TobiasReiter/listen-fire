@@ -8,6 +8,8 @@ export {
   resumeMovement,
   runFailureCause,
   runMovement,
+  fireCallbackBody,
+  settleRaceFrame,
   type CancelGate,
   type MovementRunResult,
   type MovementWriteRecord,

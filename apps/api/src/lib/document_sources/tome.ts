@@ -3,7 +3,7 @@ import { PdfStream } from '.';
 import { Page } from 'playwright';
 
 import { Crawler, FetchedDocument, Screenshot } from '../../services/crawler';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { PlaywrightService } from '../../services/playwright';
 
 class TomeCrawler extends Crawler {

@@ -11,7 +11,7 @@ import {
   type WorkKind,
   type WorkRow,
 } from './kinds';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { claimDueWork, completeWork, deferWork, heartbeatWork, releaseWork } from './store';
 
 // One process is one owner: owner is only informational (the lease token fences),

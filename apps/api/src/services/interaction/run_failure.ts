@@ -8,8 +8,8 @@
 // touch them.
 
 import { sql } from 'kysely';
-import { failRun, settleIfCancelRequested } from 'movement-engine/services/run_host/rules';
-import { logger } from 'movement-engine/services/logger';
+import { failRun, settleIfCancelRequested } from 'movement-engine/public/run-host';
+import { logger } from 'movement-engine/public/log';
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 

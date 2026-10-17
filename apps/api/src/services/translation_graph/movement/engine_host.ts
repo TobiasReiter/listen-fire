@@ -8,20 +8,20 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TenantId } from 'engine-contracts';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
-import type { ExtractCallLlmClient } from 'movement-engine/services/movement_engine/extraction_call';
+import type { MovementTraceEntry } from 'movement-engine/public/run-support';
+import type { ExtractCallLlmClient } from 'movement-engine/public/model-calls';
 import type {
   EngineHost,
   HostExtractCallClient,
   HostLlmClient,
   HostTransformInvoker,
   ResolveFileText,
-} from 'movement-engine/services/movement_engine/host';
-import type { CancelGate } from 'movement-engine/services/movement_engine/run';
-import type { ActingUser } from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/host';
+import type { CancelGate } from 'movement-engine/public/movement-engine';
+import type { ActingUser } from 'movement-engine/public/adapter';
 import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 import type { LlmClient } from '../engine/batched_extraction';
-import type { DryRunWriteSink } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { DryRunWriteSink } from 'movement-engine/public/adapter';
 import type { TriggerRunRecorder } from '../runs/trigger_run';
 
 import { getAutomationsQb } from '../../../lib/kysely';
@@ -38,10 +38,10 @@ import {
   openSegmentWith,
   SegmentDirectory,
   type ActingUserLookup,
-} from 'movement-engine/services/movement_engine/host_kit';
+} from 'movement-engine/public/host';
 import { makeRecorderParkSink } from '../../movement_engine/park_sink';
 import { postgresRunHostStore } from '../../movement_engine/run_host_store';
-import { parkSources } from 'movement-engine/services/run_host/rules';
+import { parkSources } from 'movement-engine/public/run-host';
 import { notifyWork } from '../../work/drain';
 import { PostgresWriteLocks } from '../../write_locks/postgres';
 import {
@@ -49,13 +49,13 @@ import {
   segmentWriteLocks,
   WRITE_LOCK_TIMEOUT_ENV_VAR,
   type WriteLocks,
-} from 'movement-engine/services/write_locks/write_locks';
+} from 'movement-engine/public/write-locks';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import { resolveAdapter } from '../adapters/resolve';
 import { meteredArbitration } from '../engine/entity_match';
-import { adapterTable, type LiveAdapterResolver } from 'movement-engine/services/translation_graph/engine/adapter_table';
-import { hostSegments, segmentScopedCalls } from 'movement-engine/services/translation_graph/segment_scope';
-import { metered, refusingPastBudget } from 'movement-engine/services/translation_graph/movement/metered';
+import { adapterTable, type LiveAdapterResolver } from 'movement-engine/public/host';
+import { hostSegments, segmentScopedCalls } from 'movement-engine/public/run-support';
+import { metered, refusingPastBudget } from 'movement-engine/public/models';
 import { renderFileArtifactFor } from './file_render';
 import { withFileOwners } from '../engine/files/retrieve';
 import { teamOfTenant } from './tenant';

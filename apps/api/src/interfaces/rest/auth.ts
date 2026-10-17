@@ -13,7 +13,7 @@ import { getEnvVar, requireEnv } from '../../lib/utils/environment';
 import { UserService } from '../../services/user';
 import { MagicLinkTokenService } from '../../services/magicLinkToken';
 import { magicLinkEmail } from '../../email/magicLinkEmail';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { services } from '../../adapters/registry';
 import { AUTH_COOKIE, IMPERSONATE_COOKIE, isProd } from '../../constants';
 import { clearAuthCookies, setAuthCookies } from './auth_cookies';

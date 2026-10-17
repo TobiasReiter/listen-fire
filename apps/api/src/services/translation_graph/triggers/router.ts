@@ -11,10 +11,10 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { EvaluationResult } from '../engine/types';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
 import { handleError } from '../../../lib/errors';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { resolveAdapter } from '../adapters/resolve';
 import {
   shouldDropAsNativeEcho,
@@ -30,10 +30,10 @@ import { consultEchoSuppression } from './echo_suppression';
 import { consultActorGate } from './actor_gate';
 import { markTriggerEventSuppressed } from './event_store';
 import * as loopGuard from '../../loop_guard';
-import { isWriteEffect } from 'movement-engine/services/movement_engine/expression';
+import { isWriteEffect } from 'movement-engine/public/run-support';
 import { notifyBreach } from '../../loop_guard/notify';
 import { resolveThresholds } from '../../loop_guard/thresholds';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import {
   movementForTrigger,
   runMovementFiring,

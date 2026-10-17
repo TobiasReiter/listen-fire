@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { OAuth2Client } from 'google-auth-library';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import {
   createOAuth2Connector,
   createSecretsFamily,

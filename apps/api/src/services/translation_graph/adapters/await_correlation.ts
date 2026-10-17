@@ -11,7 +11,7 @@
 // event-driven (Slack) wakes a thread's parks by `correlationKey` when an
 // inbound reply arrives.
 
-import type { AwaitKeeper as RunHostAwaitKeeper } from 'movement-engine/services/run_host/store';
+import type { AwaitKeeper as RunHostAwaitKeeper } from 'movement-engine/public/run-host';
 
 /** The run host's keeper of an adapter's record-backed awaits, plus what the
  *  product shows of them. */

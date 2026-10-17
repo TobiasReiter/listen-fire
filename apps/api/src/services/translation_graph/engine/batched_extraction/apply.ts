@@ -6,7 +6,7 @@
 // extraction time (C2). What remains is the handle to the target adapter that
 // in-batch dedup (W6-D1) needs for `getDedupRules`.
 
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
+import type { Adapter } from 'movement-engine/public/adapter';
 
 export interface ApplyTarget {
   /** Adapter that owns the target side of the TG (KG / Attio / etc.).

@@ -2,8 +2,8 @@
 // its MODEL_MAP and environment pick the vendor and its credentials. The
 // routing lives in packages/model-providers; this binds it to the process.
 
-import type { ChatCall, ChatProvider } from 'movement-engine/lib/models/chat';
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatCall, ChatProvider } from 'movement-engine/public/models';
+import type { ChatModelName } from 'movement-engine/public/models';
 
 import { chatCallFor as chatCallForEnv } from 'model-providers/chat';
 import { hostedEnv } from './host';

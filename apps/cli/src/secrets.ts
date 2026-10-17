@@ -57,7 +57,7 @@ import {
 } from 'movement-engine/public/secrets';
 import type { Project } from './project';
 import { scanMovements } from './sources';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 /** Where a credential's fields came from. */
 export interface CredentialOrigin {

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 
-import { mutationContextSchema } from 'movement-engine/services/translation_graph/mutation_context';
+import { mutationContextSchema } from 'movement-engine/public/adapter';
 
 // ── RecordMutationEvent: post-commit, record-level event ───────────────────
 // Coalesced from per-property evidence writes within a database transaction.

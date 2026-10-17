@@ -19,11 +19,11 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { MovementId } from '../../../../generated/kysely/automations/Movement';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
+import type { DiscriminableEvent } from 'movement-engine/public/adapter';
 import type { PollSource } from '../../poll_source';
 
 import { getAutomationsQb } from '../../../../lib/kysely';
-import { eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
+import { eventConfigList } from 'movement-engine/public/inbound';
 import {
   readStoredSystemEventsFromDb,
   webBaseUrl,

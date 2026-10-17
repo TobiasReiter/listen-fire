@@ -18,7 +18,7 @@ import {
   documentStoreFileRef,
   teamDocumentKeyPrefix,
   type DocumentStore,
-} from 'movement-engine/services/translation_graph/engine/files/document_store';
+} from 'movement-engine/public/files';
 
 const HANDLE_PREFIX = 'lf-files:';
 const EXPOSED = 'exposed';

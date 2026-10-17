@@ -31,13 +31,13 @@
 
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { formatUsd, RUN_COST_CAP_ENV_VAR } from 'movement-engine/lib/run_cost';
-import { logger } from 'movement-engine/services/logger';
+import { formatUsd, RUN_COST_CAP_ENV_VAR } from 'movement-engine/public/models';
+import { logger } from 'movement-engine/public/log';
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { MovementId } from '../../generated/kysely/automations/Movement';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { RunLimitPause } from 'movement-engine/services/movement_engine/run';
+import type { RunLimitPause } from 'movement-engine/public/movement-engine';
 
 import { recordSystemEvent, webBaseUrl } from '../translation_graph/adapters/system/events';
 import { RUN_PAUSED } from '../translation_graph/adapters/system/types';

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DROPBOX_OAUTH2 } from '@lf/dropbox/manifest';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import {
   createOAuth2Connector,
   createSecretsFamily,

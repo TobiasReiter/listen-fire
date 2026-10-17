@@ -13,7 +13,7 @@
 // needs to poll does so internally and delivers via its webhook — the framework
 // never drives a remote PollSource over the wire.
 
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
+import type { DiscriminableEvent } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 export interface PollSource {

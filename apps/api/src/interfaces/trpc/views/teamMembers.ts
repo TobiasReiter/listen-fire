@@ -26,7 +26,7 @@ import { trpc } from '../trpc';
 import { UserService } from '../../../services/user';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { userProcedure as sharedUserProcedure } from '../procedures';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 /** Throw unless the acting user holds write access on the team. */
 async function requireWriteAccess(teamId: TeamId, userId: UserId): Promise<void> {

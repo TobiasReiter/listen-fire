@@ -10,7 +10,7 @@
 // The secret NEVER enters the stored manifest: it goes straight into the
 // encrypted credential row; only the resulting FK is persisted on the install.
 
-import { fetchRemoteManifest } from 'movement-engine/services/translation_graph/adapters/remote';
+import { fetchRemoteManifest } from 'movement-engine/public/modules';
 
 import { MANIFEST_PROTOCOL_VERSION } from 'engine-contracts';
 

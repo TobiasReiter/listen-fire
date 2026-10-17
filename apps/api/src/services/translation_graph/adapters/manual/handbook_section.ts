@@ -2,7 +2,7 @@
 // handbook as the `system:manual` chapter, bound by the same prose contract as
 // every hand-written chapter.
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/public/handbook';
 
 export const MANUAL_HANDBOOK_SECTION: HandbookSection = {
   title: 'Run now — ad-hoc runs, text, and files (manual)',

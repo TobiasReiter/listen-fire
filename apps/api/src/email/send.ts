@@ -13,7 +13,7 @@
 import type { SendArgs } from '../adapters/email/interface';
 
 import { services } from '../adapters/registry';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 /** Send through the seam. Returns whether the provider accepted the message. */
 async function sendEmail(kind: string, args: SendArgs): Promise<boolean> {

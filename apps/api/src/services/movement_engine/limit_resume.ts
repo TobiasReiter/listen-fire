@@ -2,8 +2,8 @@
 // lift the pause, reset the run's usage, and resume every limit-suspended flow
 // together through the run-host core's drain.
 
-import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
-import { drainRun } from 'movement-engine/services/run_host/drain';
+import { MovementEngineError } from 'movement-engine/public/run-support';
+import { drainRun } from 'movement-engine/public/run-host';
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import type { HeldRunLease } from './run_lease';

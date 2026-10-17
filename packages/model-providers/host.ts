@@ -2,7 +2,7 @@
 // process: the environment that carries keys and the model map, and the two
 // things only a host can answer (where usage is recorded, how text is counted).
 
-import type { Resolved } from 'movement-engine/lib/models/map';
+import type { Resolved } from 'movement-engine/public/models';
 
 export interface UsageRecord {
   resolved: Resolved;

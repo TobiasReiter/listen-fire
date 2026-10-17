@@ -1,4 +1,4 @@
-import type { EngineClaim } from 'movement-engine/lib/handbook_section';
+import type { EngineClaim } from 'movement-engine/public/handbook';
 
 /** The hand-written chapters — a closed set, so a new one has to be
  *  registered before it can be referenced. */

@@ -3,10 +3,10 @@
 // wake, the callbacks a run mints, and record bindings. And what lf keeps
 // about a run beyond its live state (its run records).
 
-import type { CancelGate } from 'movement-engine/services/movement_engine/run';
-import type { EngineHost } from 'movement-engine/services/movement_engine/host';
-import { callbackSink, callbackUrl } from 'movement-engine/services/run_host/callbacks';
-import { parkSources, queueAwaitWake, runParkSink, type RunHost, type RunRecords } from 'movement-engine/services/run_host/rules';
+import type { CancelGate } from 'movement-engine/public/movement-engine';
+import type { EngineHost } from 'movement-engine/public/host';
+import { callbackSink, callbackUrl } from 'movement-engine/public/run-host';
+import { parkSources, queueAwaitWake, runParkSink, type RunHost, type RunRecords } from 'movement-engine/public/run-host';
 import type { State } from './state';
 
 /** What lf keeps about a run beyond its live state: its row (status and an

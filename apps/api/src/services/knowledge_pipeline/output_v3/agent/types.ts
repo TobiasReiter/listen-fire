@@ -93,7 +93,7 @@ interface ValidationResult {
 
 // Tool result — every mutation returns this
 interface ToolResult {
-  config: import('movement-engine/services/knowledge_pipeline/output_v3/schemas').OutputV3Config;
+  config: import('movement-engine/public/output-v3').OutputV3Config;
   errors: ValidationError[];
   warnings: ValidationWarning[];
   nodeId?: string;

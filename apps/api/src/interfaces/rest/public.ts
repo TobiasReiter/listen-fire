@@ -6,7 +6,7 @@ import { DocumentService } from '../../services/document';
 import { getIconForUrl } from '../../services/icons';
 import { extractDistinctQueryParams } from './utils';
 import { services } from '../../adapters/registry';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { verifyDocumentSignature } from '../../lib/document_link';
 
 const iconHandler: RequestHandler = async (req, res) => {

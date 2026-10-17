@@ -14,9 +14,9 @@
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { EvaluationResult } from '../engine/types';
 import type { RecordMutationEvent } from './record_mutation_event';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { findTriggersByKind } from '../storage/tg_table';
 import { movementForTrigger, runMovementFiring } from '../movement/execute';
 import { runModeGate } from './run_mode';

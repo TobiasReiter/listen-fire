@@ -1,6 +1,6 @@
 import type { OpsEventInput } from '../ops/types';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { emitOpsEvent } from '../ops/emit';
 
 /** Emit a journey feed event without ever throwing into the caller. A lost

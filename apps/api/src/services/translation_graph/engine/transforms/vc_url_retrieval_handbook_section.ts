@@ -5,7 +5,7 @@
 // precedent) so the prose imports nothing: the plugin's own module pulls in
 // the scraper and model chain, and the handbook must not.
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/public/handbook';
 
 export const VC_URL_RETRIEVAL_HANDBOOK_SECTION: HandbookSection = {
   title: 'URL retrieval — the links a message carries',

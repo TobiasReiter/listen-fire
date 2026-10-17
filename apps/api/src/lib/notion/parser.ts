@@ -9,7 +9,7 @@ import {
 import { NotionTokenService } from '../../services/notion_token';
 import { currentContext } from '../../services/context';
 import { DocumentService } from '../../services/document';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { signDocumentUrl } from '../document_link';
 
 const DATE_REGEX = /\d{4}-\d{2}/;

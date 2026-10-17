@@ -1,6 +1,6 @@
 import { type Request, type Response } from 'express';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { sendSlackNotification } from '../../lib/slack';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 import { dispatchWhatsappMessage } from '../../services/whatsapp/dispatch';

@@ -2,7 +2,7 @@
 // lib/anthropic), routed by this deployment's MODEL_MAP and environment and
 // billed to the ambient llm-usage context.
 
-import { anthropicClient } from 'movement-engine/lib/anthropic';
+import { anthropicClient } from 'movement-engine/public/anthropic';
 import { chatCallFor } from '../models/chat';
 import { recordLlmUsage, runFields } from '../llm_usage';
 
@@ -25,7 +25,7 @@ export {
   meterAnthropicUsage,
   MAX_CHAT_CONTINUATIONS,
   StructuredOutputError,
-} from 'movement-engine/lib/anthropic';
+} from 'movement-engine/public/anthropic';
 export type {
   AnthropicChatOptions,
   AnthropicChatStructuredOptions,
@@ -44,4 +44,4 @@ export type {
   WebSearcher,
   WebSearchResult,
   WebToolEvent,
-} from 'movement-engine/lib/anthropic';
+} from 'movement-engine/public/anthropic';

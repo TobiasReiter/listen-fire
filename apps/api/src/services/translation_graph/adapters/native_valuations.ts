@@ -37,8 +37,8 @@ import type {
   ResolveEntityInput,
   ResolveEntityResult,
   ExternalRecordRef,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { TriggerEvent, TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
+} from 'movement-engine/public/adapter';
+import type { TriggerEvent, TriggerType } from 'movement-engine/public/inbound';
 import type { EdgeSequencing, Expression } from '#shared/expression/types';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
 
@@ -64,12 +64,12 @@ import {
   type SchemaReferenceDescriptor,
   type SchemaTypeDescriptor,
   type SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
-import { writeParentLinks, type ParentLink, type ParentAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { logger } from 'movement-engine/services/logger';
+} from 'movement-engine/public/catalog';
+import { writeParentLinks, type ParentLink, type ParentAssociation } from 'movement-engine/public/adapter';
+import { logger } from 'movement-engine/public/log';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { apiBaseUrl } from '../../../lib/api_base_url';
-import { describeError } from 'movement-engine/lib/utils/error';
+import { describeError } from 'movement-engine/public/utils';
 import { decryptToken } from '../../../lib/credentials';
 
 export const NATIVE_VALUATIONS_ADAPTER_TYPE = 'native-valuations';

@@ -6,7 +6,7 @@
 import type { PluginManifest, TransformImpl } from '../registry';
 
 import { research as researchIn, researchPlugin } from '@lf/web/research';
-import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { importIdentifier } from 'movement-engine/public/catalog';
 import { RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 import { hosted, legacyImpl } from '../hosted_tools';
 import { RESEARCH_HANDBOOK_SECTION } from './research_handbook_section';

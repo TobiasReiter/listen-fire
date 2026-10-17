@@ -17,7 +17,7 @@
 import { userInfo } from 'node:os';
 import type { WireCredentialDeclarationShape } from 'engine-contracts';
 import { storeGrant } from 'movement-engine/public/secrets';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { CLIENT_ID_FIELD, CLIENT_SECRET_FIELD, findExternal, readManifest, REDIRECT_PORT_FIELD } from './connect';
 import { authorizeAtProvider, type RedirectMode } from './oauth_redirect';
 import type { Project } from './project';

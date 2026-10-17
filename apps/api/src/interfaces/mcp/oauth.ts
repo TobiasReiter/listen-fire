@@ -7,7 +7,7 @@ import { getCoreQb } from '../../lib/kysely';
 import { ApiKeyService } from '../../services/api_key';
 import { recordUserMilestone } from '../../lib/journey';
 import { sessionJwtAudience } from '../../lib/middleware/authentication/session_jwt_audience';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getRedisPool, redisConfigured } from '../../redisPool';
 import { getOrigin } from './origin';
 

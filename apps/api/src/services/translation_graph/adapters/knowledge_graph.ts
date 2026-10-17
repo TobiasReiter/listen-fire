@@ -19,7 +19,7 @@
 
 import { z } from 'zod';
 
-import type { EdgesFromResult } from 'movement-engine/services/translation_graph/adapter';
+import type { EdgesFromResult } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { NodeId } from '../../../generated/kysely/knowledge/Node';
 import type { ResourceId } from '../../../generated/kysely/knowledge/Resource';
@@ -53,7 +53,7 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
 import { hydrateTargets, typeAddressedPositions, uniformWalk } from 'module-kit/adapter/hop';
 import { KNOWLEDGE_GRAPH_HANDBOOK_SECTION } from './knowledge_graph_handbook_section';
@@ -76,7 +76,7 @@ import {
   deregisterKnowledgeWebhook,
   registerKnowledgeWebhook,
 } from './knowledge_graph_webhook';
-import { RESOURCES_REFERENCE_FIELD_ID, writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
+import { RESOURCES_REFERENCE_FIELD_ID, writeParentLinks } from 'movement-engine/public/adapter';
 import { recordMutationEventSchema } from '../triggers/record_mutation_event';
 import {
   ADAPTER_META_TYPE_ID,
@@ -90,7 +90,7 @@ import {
   type SchemaFieldKind,
   type SchemaTypeDescriptor,
   type SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import {
   createKgRecord,
   deleteKgRecord,
@@ -1591,7 +1591,7 @@ export class KnowledgeGraphAdapter implements Adapter {
   //     is NOT this-change authorship by the sync → `false`, fires normally.
   //   - no recognisable provenance → `null` (can't tell; don't suppress).
   async didWeAuthor(input: {
-    event: import('movement-engine/services/translation_graph/triggers/types').TriggerEvent;
+    event: import('movement-engine/public/inbound').TriggerEvent;
   }): Promise<boolean | null> {
     const parsed = recordMutationEventSchema
       .pick({ context: true })

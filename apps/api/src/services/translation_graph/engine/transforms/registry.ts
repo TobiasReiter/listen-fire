@@ -24,16 +24,16 @@
 //
 //   (#transform — transforms add ephemeral nodes to the source graph)
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/public/handbook';
 import type { PluginDeclaration } from 'movement-engine/public/plugins';
-import type { CostEnvelope } from 'movement-engine/lib/run_cost';
+import type { CostEnvelope } from 'movement-engine/public/models';
 import type {
   EphemeralOriginRef,
   SourcePosition,
   TransformAdditions,
   TransformParam,
   TransformSignature,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
 // ── TransformInput / TransformOutput ───────────────────────────────────────
 

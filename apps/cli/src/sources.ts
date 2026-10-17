@@ -20,11 +20,11 @@ import {
 import { pluginSpecsOfManifest } from 'module-kit';
 import { z } from 'zod';
 import { triggerTypeSchema } from 'engine-contracts';
-import { collectFileListeners, type FileListener } from 'movement-engine/services/translation_graph/movement/file_listeners';
+import { collectFileListeners, type FileListener } from 'movement-engine/public/run-support';
 import {
   buildCatalogSnapshot,
   type CatalogAdapterInput,
-} from 'movement-engine/services/translation_graph/movement/catalog_snapshot';
+} from 'movement-engine/public/catalog';
 import type { RunningExternal } from './externals';
 import type { Project } from './project';
 import type { Credential } from './secrets';

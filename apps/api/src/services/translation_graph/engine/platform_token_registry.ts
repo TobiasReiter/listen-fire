@@ -9,7 +9,7 @@
 // performance optimization, not a correctness mechanism.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { Actor } from 'movement-engine/services/translation_graph/mutation_context';
+import type { Actor } from 'movement-engine/public/adapter';
 
 /**
  * Registry of API-token IDs Listen-Fire itself owns when writing to external

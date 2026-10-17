@@ -6,8 +6,8 @@
 
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { AwaitKeeper } from 'movement-engine/services/run_host/store';
-import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
+import type { AwaitKeeper } from 'movement-engine/public/run-host';
+import type { CallbackSink } from 'movement-engine/public/host';
 
 import { callbackAwaitKeeper as coreCallbackAwaitKeeper, callbackSink } from 'movement-engine/public/run-host';
 import { postgresRunHostStore } from './run_host_store';

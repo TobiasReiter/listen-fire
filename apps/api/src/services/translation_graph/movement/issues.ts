@@ -21,7 +21,7 @@ import type { MovementId } from '../../../generated/kysely/automations/Movement'
 
 import { sendSlackNotification } from '../../../lib/slack';
 import { getAutomationsQb } from '../../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 /** Alert once when an open issue's count reaches this many failures. */
 export const ISSUE_COUNT_ALERT_THRESHOLD = 10;

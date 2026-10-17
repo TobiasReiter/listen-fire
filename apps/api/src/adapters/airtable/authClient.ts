@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector } from 'movement-engine/public/secrets';
 import { airtableOAuth2 } from '@lf/airtable/oauth';
 

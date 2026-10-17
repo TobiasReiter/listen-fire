@@ -42,16 +42,16 @@ import {
   type FileTextReader as PackageFileTextReader,
   type SheetAnalyzer,
 } from 'file-text';
-import type { FileUnreadable } from 'movement-engine/services/movement_engine/extraction';
-import type { FileTextResolution } from 'movement-engine/services/movement_engine/expression';
-import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
+import type { FileUnreadable } from 'movement-engine/public/model-calls';
+import type { FileTextResolution } from 'movement-engine/public/run-support';
+import type { FileRef } from 'movement-engine/public/adapter';
 import type { RawTextStore } from './raw_text_store';
 
 import { services } from '../../../adapters/registry';
 import { anthropicChat } from '../../../lib/anthropic';
 import { transcribe } from '../../../lib/models/transcription';
-import { logger } from 'movement-engine/services/logger';
-import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
+import { logger } from 'movement-engine/public/log';
+import { FileOutsideTeamError } from 'movement-engine/public/files';
 import { streamFileRef, type StreamFileRefOptions } from '../engine/files/retrieve';
 
 // The format readers and the rules around them live in `packages/file-text`;

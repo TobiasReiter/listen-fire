@@ -19,12 +19,12 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { CapturedWrite } from 'movement-engine/public/adapter';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
 import { anthropicChat } from '../../../lib/anthropic';
-import { runCostCapFromEnv } from 'movement-engine/lib/run_spend';
-import { logger } from 'movement-engine/services/logger';
-import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { runCostCapFromEnv } from 'movement-engine/public/models';
+import { logger } from 'movement-engine/public/log';
+import { runMovement } from 'movement-engine/public/movement-engine';
 import { resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
 import { loadTriggerById } from '../storage/tg_table';
@@ -32,7 +32,7 @@ import { runCatalogSnapshotForTeam } from './catalog';
 import { productionEngineHost } from './engine_host';
 import { tenantOfTeam } from './tenant';
 import { inMemoryRawTextStore } from './raw_text_store';
-import { InMemoryWriteLocks } from 'movement-engine/services/write_locks/write_locks';
+import { InMemoryWriteLocks } from 'movement-engine/public/write-locks';
 import { getMovementRow } from './store';
 
 /** A source field the synthetic payload should be keyed by — pulled from the

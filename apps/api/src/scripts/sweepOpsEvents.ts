@@ -1,5 +1,5 @@
 import { sweepOpsEvents } from '../lib/ops/retention';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 async function main() {
   const deleted = await sweepOpsEvents();

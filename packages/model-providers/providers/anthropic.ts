@@ -2,7 +2,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 
-import type { ChatProvider } from 'movement-engine/lib/models/chat';
+import type { ChatProvider } from 'movement-engine/public/models';
 
 // Built at first use, not at import: a host that routes every name elsewhere
 // need not hold a key, nor install the SDK.

@@ -12,7 +12,7 @@
 
 import type { AskFamily, AskRecord } from './store';
 
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 /** The control-kind each family renders as, in the vocabulary the shared
  *  link-page + web controls already switch on (Check → yes/no, Choose → one

@@ -9,7 +9,7 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { UserId } from '../../../generated/kysely/core/User';
-import type { ActingUser } from 'movement-engine/services/translation_graph/adapter';
+import type { ActingUser } from 'movement-engine/public/adapter';
 
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { normalizeWhatsappPhone } from './acting_user/phone';

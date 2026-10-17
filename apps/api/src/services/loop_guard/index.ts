@@ -28,7 +28,7 @@
 
 import type { GuardDecision } from './types';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { guardKeys, incrementAndSum } from './store';
 import { guardEnabled, guardMode, resolveThresholds } from './thresholds';
 

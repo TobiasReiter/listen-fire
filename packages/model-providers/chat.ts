@@ -2,13 +2,13 @@
 // its MODEL_MAP and environment pick the vendor and its credentials. The seam
 // itself (`ChatProvider`, `ChatCall`) lives with the shared client.
 
-import type { ChatCall, ChatProvider } from 'movement-engine/lib/models/chat';
-import type { Provider } from 'movement-engine/lib/models/map';
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatCall, ChatProvider } from 'movement-engine/public/models';
+import type { Provider } from 'movement-engine/public/models';
+import type { ChatModelName } from 'movement-engine/public/models';
 
-import { assertRunBudget } from 'movement-engine/lib/run_spend';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
+import { assertRunBudget } from 'movement-engine/public/models';
+import { neverAsAny } from 'movement-engine/public/utils';
+import { assertCallable, resolveModel } from 'movement-engine/public/models';
 import { anthropicChatProvider } from './providers/anthropic';
 import { geminiChatProvider } from './providers/gemini';
 import { openAiChatProvider } from './providers/openai';

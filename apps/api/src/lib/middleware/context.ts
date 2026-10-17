@@ -1,7 +1,7 @@
 import { RequestHandler } from 'express';
 
 import { Context } from '../../services/context';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 /**
  * The client closing its own connection mid-request — a browser navigating

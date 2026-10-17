@@ -14,8 +14,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { BindingEndpoint, EncodedEndpoint } from 'movement-engine/services/movement_engine/host';
-import { RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
+import type { BindingEndpoint, EncodedEndpoint } from 'movement-engine/public/host';
+import { RunLeaseLost } from 'movement-engine/public/run-support';
 import type {
   CallbackClaim,
   CallbackRecord,
@@ -23,14 +23,14 @@ import type {
   ClaimedWork,
   LeafRow as CoreLeafRow,
   RunHostStore,
-} from 'movement-engine/services/run_host/store';
-import { callbackBodyWork, callbackRefusal, isCallbackId, newCallbackId } from 'movement-engine/services/run_host/callbacks';
+} from 'movement-engine/public/run-host';
+import { callbackBodyWork, callbackRefusal, isCallbackId, newCallbackId } from 'movement-engine/public/run-host';
 import { CALLBACK_PARAM_TYPES, CORE_PARK_REASONS } from 'engine-contracts';
 import {
   asEncoded,
   encodeEndpoint,
   orderEndpoints,
-} from 'movement-engine/services/translation_graph/movement/binding_endpoint';
+} from 'movement-engine/public/catalog';
 import type { Project } from './project';
 
 const RunStatus = z.enum(['running', 'completed', 'parked', 'failed']);

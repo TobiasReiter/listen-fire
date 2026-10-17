@@ -10,9 +10,9 @@
 // This keeps every DB concern OUT of the pure interpreter (which takes the sink
 // as an injected dependency, exactly like `resolveAdapter`/`writeSink`).
 
-import { runParkSink } from 'movement-engine/services/run_host/rules';
+import { runParkSink } from 'movement-engine/public/run-host';
 
-import type { ParkSink } from 'movement-engine/services/movement_engine/run';
+import type { ParkSink } from 'movement-engine/public/movement-engine';
 import type { TriggerRunRecorder } from '../translation_graph/runs/trigger_run';
 
 import { markRunLimitPaused } from './limit_pause';

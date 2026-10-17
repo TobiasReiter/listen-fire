@@ -12,7 +12,7 @@ import { performance } from 'node:perf_hooks';
 
 import type { WorkerRegistry } from './registry';
 
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { mounts } from '../products';
 import { claimLoopTick } from '../lib/worker';
 import {
@@ -29,7 +29,7 @@ import {
   type WorkNotifier,
 } from '../services/work/drain';
 import { MODES_VAR as SYSTEM_AUTH_MODES_VAR, systemAuthConfig } from '../services/system_auth';
-import { assertEngineConfigured } from 'movement-engine/services/movement_engine/rust_engine';
+import { assertEngineConfigured } from 'movement-engine/public/movement-engine';
 import { recordRunEnginesOnRows } from '../services/movement_engine/run_engine_record';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';

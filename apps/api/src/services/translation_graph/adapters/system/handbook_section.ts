@@ -2,7 +2,7 @@
 // automation handbook as the `system:system` chapter, bound by the same prose
 // contract as every hand-written chapter.
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { HandbookSection } from 'movement-engine/public/handbook';
 
 export const SYSTEM_HANDBOOK_SECTION: HandbookSection = {
   title: 'Platform events — when an automation fails (system)',

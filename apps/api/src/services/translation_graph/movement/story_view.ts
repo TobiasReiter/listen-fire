@@ -39,7 +39,7 @@ import {
 } from 'movement-lang';
 import { LRUCache } from 'lru-cache';
 
-import type { BrandIcon } from 'movement-engine/services/translation_graph/adapter';
+import type { BrandIcon } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type {
   StoryView,

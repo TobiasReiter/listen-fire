@@ -12,7 +12,7 @@ import type { InboundDoor } from '../../../../lib/middleware/authentication/door
 import type { ResolvedIdentity } from '../../../principal/core_provider';
 
 import { handleError } from '../../../../lib/errors';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getEnvVar } from '../../../../lib/utils/environment';
 import { judgeMailgunEvent } from 'movement-engine/public/inbound';
 import { verifyInboundEmailRequest } from './inbound_door';

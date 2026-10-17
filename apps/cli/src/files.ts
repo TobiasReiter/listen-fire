@@ -4,7 +4,7 @@
 
 import type { Readable } from 'node:stream';
 import type { FileRef, PricedAnswer } from 'engine-contracts';
-import type { FileTextResolution } from 'movement-engine/services/movement_engine/expression';
+import type { FileTextResolution } from 'movement-engine/public/run-support';
 
 const TEXT_TYPES = /^(text\/|application\/(json|xml|yaml|x-yaml|csv)|application\/[\w.+-]+\+(json|xml))/;
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'xml', 'yaml', 'yml', 'html', 'log']);

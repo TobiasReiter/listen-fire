@@ -36,10 +36,10 @@ import type {
   PositionSchema,
   WritableRootSchema,
 } from 'movement-lang';
-import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { SchemaTypeDescriptor } from 'movement-engine/public/catalog';
 
 import { landingSynthesizerFor } from '../adapters/packages';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 
 /**
  * What a set of authored literals MEANS for a given written type — the one

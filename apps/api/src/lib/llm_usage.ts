@@ -2,16 +2,16 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { sql } from 'kysely';
 
-import type { Resolved } from 'movement-engine/lib/models/map';
+import type { Resolved } from 'movement-engine/public/models';
 import type { TeamId } from '../generated/kysely/core/Team';
 import type { DealflowPipelineId } from '../generated/kysely/public/DealflowPipeline';
 import type { AgentConversationId } from '../generated/kysely/public/AgentConversation';
 import type { TriggerRunId } from '../generated/kysely/automations/TriggerRun';
 
-import { isInsideSpendMeter, reportRunCost } from 'movement-engine/lib/run_spend';
+import { isInsideSpendMeter, reportRunCost } from 'movement-engine/public/models';
 import { costMicrodollars } from 'movement-engine/public/models';
-import { models } from 'movement-engine/lib/models/registry';
-import { logger } from 'movement-engine/services/logger';
+import { models } from 'movement-engine/public/models';
+import { logger } from 'movement-engine/public/log';
 import { getQb } from './kysely';
 
 // -- Context --

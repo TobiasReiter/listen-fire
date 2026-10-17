@@ -1,11 +1,11 @@
 // Embeddings on OpenAI.
 
 import type { ModelHost } from '../host';
-import type { Resolved } from 'movement-engine/lib/models/map';
+import type { Resolved } from 'movement-engine/public/models';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
 import { openAiClient } from '../providers/openai';
-import { OPENAI_EMBEDDING_DIMENSIONS } from 'movement-engine/lib/models/embedding/range';
+import { OPENAI_EMBEDDING_DIMENSIONS } from 'movement-engine/public/model-calls';
 
 export async function openAiEmbed(
   resolved: Resolved,

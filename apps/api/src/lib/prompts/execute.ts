@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-import { parseJson, parseJsonReply } from 'movement-engine/lib/utils/parse_json';
+import { parseJson, parseJsonReply } from 'movement-engine/public/utils';
 import { anthropicChat, anthropicChatStructured } from '../anthropic';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { DefinitionArgs, PromptDefinition } from './definition';
 
 type DefaultToString<T> = unknown extends T ? string : T;

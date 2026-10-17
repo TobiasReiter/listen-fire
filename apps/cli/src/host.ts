@@ -8,21 +8,21 @@
 
 import { userInfo } from 'node:os';
 import { tenantIdOf, type ActingPrincipal, type TenantId } from 'engine-contracts';
-import type { EngineHost } from 'movement-engine/services/movement_engine/host';
-import type { RunHost } from 'movement-engine/services/run_host/rules';
-import { adapterTable } from 'movement-engine/services/translation_graph/engine/adapter_table';
-import type { DryRunWriteSink } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
-import { redeemFileRef } from 'movement-engine/services/translation_graph/engine/files/redeem';
-import { withFileOwners } from 'movement-engine/services/translation_graph/engine/files/file_owners';
-import { hostSegments, segmentScopedCalls } from 'movement-engine/services/translation_graph/segment_scope';
+import type { EngineHost } from 'movement-engine/public/host';
+import type { RunHost } from 'movement-engine/public/run-host';
+import { adapterTable } from 'movement-engine/public/host';
+import type { DryRunWriteSink } from 'movement-engine/public/adapter';
+import { redeemFileRef } from 'movement-engine/public/files';
+import { withFileOwners } from 'movement-engine/public/files';
+import { hostSegments, segmentScopedCalls } from 'movement-engine/public/run-support';
 import {
   closeSegmentWith,
   openSegmentWith,
   RANDOM_IDS,
   SegmentDirectory,
   WALL_CLOCK,
-} from 'movement-engine/services/movement_engine/host_kit';
-import { InMemoryWriteLocks, segmentWriteLocks } from 'movement-engine/services/write_locks/write_locks';
+} from 'movement-engine/public/host';
+import { InMemoryWriteLocks, segmentWriteLocks } from 'movement-engine/public/write-locks';
 import type { LocalDocumentStore } from './documents';
 import { credentialFor, type RunningExternal } from './externals';
 import { localFileText } from './files';

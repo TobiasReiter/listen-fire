@@ -21,7 +21,7 @@
 
 import { z } from 'zod';
 
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 const portfolioLensSchema = z
   .enum(['investment', 'holdings'])

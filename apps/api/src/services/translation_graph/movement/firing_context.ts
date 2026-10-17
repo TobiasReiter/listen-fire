@@ -18,7 +18,7 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import { Context, unsafeCurrentContext } from '../../context';
 import { runInSystemContext } from '../../context/utils';
 import { userPrincipal } from '../../principal';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 
 /**
