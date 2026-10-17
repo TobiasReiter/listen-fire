@@ -239,7 +239,7 @@ fn work_claim(claim: &str) -> Result<(String, i64)> {
 }
 
 pub struct Store {
-    db: Connection,
+    pub(crate) db: Connection,
 }
 
 impl Store {
@@ -262,7 +262,7 @@ impl Store {
     }
 
     /// One write transaction, taken before its first read.
-    fn transaction<T>(&self, body: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+    pub(crate) fn transaction<T>(&self, body: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         self.db.execute_batch("begin immediate")?;
         match body(&self.db) {
             Ok(value) => {
@@ -277,7 +277,7 @@ impl Store {
     }
 
     /// Whether the run is leased under `fence`, and the lease has not lapsed.
-    fn holds(db: &Connection, run_id: &str, fence: &str) -> Result<bool> {
+    pub(crate) fn holds(db: &Connection, run_id: &str, fence: &str) -> Result<bool> {
         Ok(db
             .query_row("select 1 from run where id = ? and lease_token = ? and lease_until > ?", params![run_id, fence, iso(0)], |_| Ok(()))
             .optional()?

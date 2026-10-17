@@ -29,9 +29,12 @@ serde_yaml = "0.9"
 # Objects in insertion order (src/json.rs).
 indexmap = "2"
 # Single-threaded: one host process, one thread, every wait an await.
-tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "io-std", "net", "time"] }
-hyper = { version = "1", features = ["client", "http1"] }
+tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "io-std", "net", "time", "signal"] }
+hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+# The inbound doors' signature schemes, and a callback id's base64url.
+hmac = "0.13"
+base64 = "0.22"
 http-body-util = "0.1"
 bytes = "1"
 # SQLite linked in, so the binary needs no system library.

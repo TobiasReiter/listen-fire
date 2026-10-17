@@ -11,6 +11,8 @@
 //! refused because the lease is gone answers the error `RunLeaseLost`
 //! (code -32001, `data: { name, runId }`), which the client rethrows as the
 //! core's `RunLeaseLost`. Requests are answered one at a time, in order.
+//! The callback family and the run records (`callbacks.*`, `runs.*`) are
+//! crate::callbacks's.
 
 use std::path::Path;
 
@@ -293,6 +295,11 @@ fn dispatch(store: &Store, method: &str, p: &Params) -> Result<Js, Failure> {
         }
         "sources.get" => Ok(opt(store.get_source(p.str("teamId")?, p.str("hash")?)?.as_deref())),
 
-        _ => Err(Failure::Unknown),
+        other => match crate::callbacks::rpc(store, other, p.0) {
+            None => Err(Failure::Unknown),
+            Some(Ok(result)) => Ok(result),
+            Some(Err(crate::callbacks::RpcFailure::Store(error))) => Err(Failure::Store(error)),
+            Some(Err(crate::callbacks::RpcFailure::Params(message))) => Err(Failure::Params(message)),
+        },
     }
 }

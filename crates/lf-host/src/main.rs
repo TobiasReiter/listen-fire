@@ -13,6 +13,7 @@
 //!
 //! Single-threaded: one tokio thread, every wait an await.
 
+mod callbacks;
 mod catalog;
 mod check;
 mod contract_store;
