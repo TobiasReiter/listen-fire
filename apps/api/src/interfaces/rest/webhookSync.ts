@@ -42,7 +42,10 @@ webhookSyncRouter.post(
     const signatureHeader =
       providerKey === 'SLACK'
         ? buildSlackSignatureHeader(req)
-        : providerKey === 'AFFINITY'
+        : providerKey === 'INBOUND_WHATSAPP'
+          ? // Meta's own header; no other header is accepted for this provider.
+            ((req.headers['x-hub-signature-256'] as string) ?? '')
+          : providerKey === 'AFFINITY'
           ? ((req.headers['x-affinity-webhook-signature'] as string) ??
             (req.headers['x-affinity-signature'] as string) ??
             (req.headers['x-signature'] as string) ??

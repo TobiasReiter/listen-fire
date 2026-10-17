@@ -270,7 +270,7 @@ export const whatsappProvider: WebhookProvider = {
   // Meta signs the raw body with the App Secret using HMAC-SHA256, delivered as
   // `X-Hub-Signature-256: sha256=<hex>`.
   verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean {
-    if (!signatureHeader) return false;
+    if (!signatureHeader || !secret) return false;
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
     const got = signatureHeader.replace(/^sha256=/, '');
     try {

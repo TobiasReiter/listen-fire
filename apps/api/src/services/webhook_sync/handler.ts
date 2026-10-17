@@ -145,7 +145,7 @@ async function handleInboundWebhook(options: {
   const isHarnessTeam = isTestHarnessTeam(subscription.team_id);
   if (
     !isHarnessTeam &&
-    !door.verifySignature(rawBody, signatureHeader, subscription.webhook_secret)
+    !door.verifySignature(rawBody, signatureHeader, signingSecretFor(providerKey, subscription))
   ) {
     logger.warn(`Webhook signature verification failed for subscription ${subscriptionId}`);
     return { ok: false, eventsProcessed: 0, error: 'signature_invalid' };
@@ -304,6 +304,17 @@ type SubscriptionRow = {
   webhook_secret: string;
   inbound_checkpoint: unknown;
 };
+
+/** Meta signs every WhatsApp delivery with the Meta app's secret, not with a
+ *  secret minted per subscription — and the platform's one WhatsApp app is the
+ *  only one there is (WhatsApp takes no credential). Empty means "no secret to
+ *  verify against", which `whatsappProvider.verifySignature` refuses: an HMAC
+ *  keyed with '' is one anybody can compute. */
+function signingSecretFor(providerKey: string, subscription: SubscriptionRow): string {
+  return providerKey === 'INBOUND_WHATSAPP'
+    ? (process.env.WHATSAPP_WEBHOOK_SECRET ?? '')
+    : subscription.webhook_secret;
+}
 
 /** What a delivery is read with, once its subscription has named it: how its
  *  signature is checked, and (after the check) whom it is for and the adapter
