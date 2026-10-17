@@ -1391,6 +1391,20 @@ or with a move-up warning (`MOV_MATCH_MISS_CONTINUES`, `MOV_HANDLE_UPDATED_IN_PL
 Review and lists the diagnostics, and behaves exactly as before. Read each warning, edit what
 assumed the old behaviour, and upgrade with `upgradeAutomation`, acknowledging it.
 
+### lfr-store
+
+- `lf-host` keeps run state in Postgres when `--store postgres://…` (or lf.yaml's `store:`) says so.
+  It uses the hosted product's own tables (`automations.trigger_run`, `parked_run`, `work`, …), so
+  the database needs the hosted schema applied; lf-host refuses a database without those tables.
+  The default stays the SQLite file `.lf/state.db`.
+- `lf-host drain [--until-idle] [--max-seconds N]` is a worker over the work queue: it claims due
+  rows one at a time, runs them and exits when nothing is due or the time is up. Any number of
+  workers can drain one Postgres store at once, and every run's work is done once.
+- A Postgres store's rows belong to one team (`--team <uuid>`, else a fixed uuid for lf). A worker
+  claims only its team's work.
+- Thin for now: connections are plain (no TLS), and a run's trace count covers only the current
+  process, because the hosted schema has no trace table.
+
 ### Language version 4, Luminous Owl: what breaks
 
 Each item applies only to an automation on Luminous Owl (4). Versions 1 to 3 keep their old

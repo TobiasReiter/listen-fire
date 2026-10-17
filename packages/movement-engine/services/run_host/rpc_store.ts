@@ -5,15 +5,19 @@
 // `lf-host --contract-store <state.db>` (crates/lf-host) first.
 //
 // A method is `<family>.<method>` as `RunHostStore` names it, its params the
-// method's one input object, its result the method's answer. The server's
+// method's one input object, its result the method's answer; the callback
+// family is `callbacks.<method>` as `CallbackStore` names it, and the run
+// records `records.<method>` as `RunRecords` does. The server's
 // `RunLeaseLost` error (data.name) is rethrown as the core's `RunLeaseLost`,
 // so the rules over the store see the one refusal they handle.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { z } from 'zod';
+import { CALLBACK_PARAM_TYPES } from 'engine-contracts';
 import { RunLeaseLost } from '../movement_engine/errors';
-import type { ClaimedWork, RunHostStore } from './store';
+import type { RunRecords } from './rules';
+import type { CallbackClaim, CallbackStore, ClaimedWork, RunHostStore } from './store';
 
 // The error branch first: `result: z.unknown()` also accepts a reply without one.
 const Reply = z.union([
@@ -38,6 +42,24 @@ const Leaf = z.object({
 const Claimed = z.object({ reason: z.string(), state: z.unknown() }).nullable();
 const Correlated = z.object({ runId: z.string(), teamId: z.string(), address: z.string() });
 const Work = z.object({ id: z.string(), kind: z.string(), key: z.string(), payload: z.unknown(), claim: z.string() });
+const Callback = z.object({
+  id: z.string(),
+  teamId: z.string(),
+  runId: z.string(),
+  address: z.string(),
+  params: z.array(z.object({ name: z.string(), type: z.enum(CALLBACK_PARAM_TYPES) })),
+  state: z.unknown(),
+  calls: z.array(z.object({ at: z.string(), values: z.record(z.string(), z.unknown()), bodyStartedAt: z.string().optional() })),
+  singleUse: z.boolean(),
+  expiresAt: z.string().nullable(),
+  status: z.enum(['live', 'fired', 'revoked']),
+});
+const Claim: z.ZodType<CallbackClaim> = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('recorded'), callback: Callback, callIndex: z.number() }),
+  z.object({ kind: z.literal('not_found') }),
+  z.object({ kind: z.literal('closed'), callback: Callback }),
+  z.object({ kind: z.literal('expired'), callback: Callback }),
+]);
 
 /** The work claim the server reads: no more than it needs, whatever the caller spreads in. */
 function claimOf(work: ClaimedWork & { dueAt?: string }): Record<string, unknown> {
@@ -46,6 +68,9 @@ function claimOf(work: ClaimedWork & { dueAt?: string }): Record<string, unknown
 
 export class RpcStoreBackend {
   readonly store: RunHostStore;
+  readonly callbacks: CallbackStore;
+  /** The run records the server keeps beside its families. */
+  readonly runs: RunRecords;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextId = 1;
@@ -62,6 +87,8 @@ export class RpcStoreBackend {
       this.waiting.clear();
     });
     this.store = this.families();
+    this.callbacks = this.callbackFamily();
+    this.runs = this.runRecords();
   }
 
   /** One call; its result read by `schema`. */
@@ -80,6 +107,21 @@ export class RpcStoreBackend {
   /** A run row the backend can park against (the contract's `newRun`). */
   async startRun(input: { id: string; file: string; movement: string; startedAt: string; input: string }): Promise<void> {
     await this.call('runs.start', input, Nothing);
+  }
+
+  /** An operator asks to cancel the run (the records contract's `requestCancel`). */
+  async requestCancel(input: { runId: string; reason: string | null }): Promise<void> {
+    await this.call('runs.requestCancel', input, Nothing);
+  }
+
+  /** The run's status as the server's run record holds it (`runStatus`). */
+  runStatus(runId: string): Promise<string> {
+    return this.call('runs.status', { runId }, z.string());
+  }
+
+  /** Mark the run completed (`completeRun`). */
+  async completeRun(runId: string): Promise<void> {
+    await this.call('runs.complete', { runId }, Nothing);
   }
 
   /** End the process: its stdin closes, and it exits once it has answered. */
@@ -110,6 +152,33 @@ export class RpcStoreBackend {
     } else {
       waiter.reject(new Error(reply.error.message));
     }
+  }
+
+  private callbackFamily(): CallbackStore {
+    const call = this.call.bind(this);
+    return {
+      mint: (input) => call('callbacks.mint', input, z.object({ id: z.string() })),
+      get: (input) => call('callbacks.get', input, Callback.nullable()),
+      record: (input) => call('callbacks.record', input, Claim),
+      markBodyStarted: (input) => call('callbacks.markBodyStarted', input, z.boolean()),
+      landed: (input) => call('callbacks.landed', input, z.array(z.string())),
+      revokeRun: async (input) => {
+        await call('callbacks.revokeRun', input, Nothing);
+      },
+    };
+  }
+
+  private runRecords(): RunRecords {
+    const call = this.call.bind(this);
+    return {
+      cancelRequest: (input) => call('records.cancelRequest', input, z.object({ reason: z.string().nullable() }).nullable()),
+      markFailed: async (input) => {
+        await call('records.markFailed', input, Nothing);
+      },
+      closeRun: async (input) => {
+        await call('records.closeRun', input, Nothing);
+      },
+    };
   }
 
   private families(): RunHostStore {

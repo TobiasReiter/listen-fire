@@ -8,23 +8,31 @@
 //!   lf-host resume [<run-id>]                step a parked run, or drain due work and every parked run
 //!   lf-host upgrade [--check] [--all]        rewrite the movement files into the current language version
 //!   lf-host runs                             the runs, most recent first
+//!   lf-host drain [--until-idle] [--max-seconds N]  a worker over the work queue (scale from zero)
 //!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
-//!   lf-host --contract-store <state.db>      the run host's backend over stdio JSON-RPC
+//!   lf-host --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
+//!
+//! `run`, `resume`, `runs` and `drain` keep run state where `--store <spec>`
+//! (or lf.yaml's `store:`) says: a SQLite file, `.lf/state.db` by default,
+//! or a Postgres database (`postgres://…`) with the hosted product's schema.
 //!   lf-host --project-schema                 one schema projection, stdin to stdout (a parity probe)
 //!
 //! Single-threaded: one tokio thread, every wait an await.
 
 mod anthropic;
+mod backend;
 mod catalog;
 mod check;
 mod contract_store;
 mod documents;
+mod drain;
 mod externals;
 mod file_ref;
 mod json;
 mod llm_calls;
 mod models;
 mod park_files;
+mod pg_store;
 mod project;
 mod protocol;
 mod remote;
@@ -43,10 +51,11 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs> [--dir <project folder>] [--ephemeral]
+const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
        lf-host run --event <file.json> [--dry-run]
        lf-host resume [<run-id>]
-       lf-host --contract-store <state.db>
+       lf-host drain [--until-idle] [--max-seconds <n>]
+       lf-host --contract-store <state.db|postgres://…> [--team <uuid>]
        lf-host --project-schema
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
@@ -54,6 +63,9 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs> [--dir <proj
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   runs      the runs in the state file, most recent first (as `lf runs`)
+  drain     claim due work rows one at a time and run them; with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
+  --store   where run state is kept: a SQLite file (default .lf/state.db, or lf.yaml's `store:`) or a Postgres database with the hosted schema
+  --team    the tenant (a uuid) of a Postgres store's rows
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
 not yet here (the TypeScript lf has them): init, serve, call, cancel, run --webhook";
@@ -72,7 +84,11 @@ struct Args {
     webhook: Option<String>,
     check_only: bool,
     all: bool,
-    contract_store: Option<PathBuf>,
+    contract_store: Option<String>,
+    store: Option<String>,
+    team: Option<String>,
+    until_idle: bool,
+    max_seconds: Option<u64>,
     project_schema: bool,
     help: bool,
 }
@@ -89,6 +105,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         check_only: false,
         all: false,
         contract_store: None,
+        store: None,
+        team: None,
+        until_idle: false,
+        max_seconds: None,
         project_schema: false,
         help: false,
     };
@@ -103,7 +123,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--all" => args.all = true,
             "--ephemeral" => args.ephemeral = true,
             "--dry-run" => args.dry_run = true,
-            "--contract-store" => args.contract_store = Some(PathBuf::from(value("--contract-store")?)),
+            "--contract-store" => args.contract_store = Some(value("--contract-store")?),
+            "--store" => args.store = Some(value("--store")?),
+            "--team" => args.team = Some(value("--team")?),
+            "--until-idle" => args.until_idle = true,
+            "--max-seconds" => {
+                let raw = value("--max-seconds")?;
+                args.max_seconds = Some(raw.parse().map_err(|_| format!("--max-seconds {raw}: a whole number of seconds"))?);
+            }
             "--project-schema" => args.project_schema = true,
             "-h" | "--help" => args.help = true,
             flag if flag.starts_with("--dir=") => args.dir = PathBuf::from(&flag["--dir=".len()..]),
@@ -117,8 +144,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 
 async fn run(argv: Vec<String>) -> Result<i32, String> {
     let args = parse_args(&argv)?;
-    if let Some(path) = args.contract_store {
-        return contract_store::serve(&path).await.map(|()| 0);
+    if let Some(spec) = &args.contract_store {
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+        return contract_store::serve(&backend::StoreSpec::parse(spec, &cwd, args.team.as_deref())?).await.map(|()| 0);
     }
     let mut out = std::io::stdout().lock();
     if args.project_schema {
@@ -127,7 +155,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         writeln!(out, "{}", schema::probe(&json::Js::parse(&input)?)?.to_json()).map_err(|e| e.to_string())?;
         return Ok(0);
     }
-    let Some(command) = args.command.filter(|_| !args.help) else {
+    let Some(command) = args.command.clone().filter(|_| !args.help) else {
         writeln!(out, "{USAGE}").map_err(|e| e.to_string())?;
         return Ok(if args.help { 0 } else { 2 });
     };
@@ -155,13 +183,21 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 eprintln!("lf run needs --event <file> or --webhook <external> --body <file>");
                 return Ok(2);
             };
-            let session = runs::open_session(project::load_project(&args.dir)?, args.ephemeral).await?;
+            let project = project::load_project(&args.dir)?;
+            let store = store_of(&args, &project)?;
+            if args.ephemeral && matches!(store, backend::StoreSpec::Postgres { .. }) {
+                eprintln!("lf-host: --ephemeral keeps its run state in a temporary file; it does not take a Postgres --store");
+                return Ok(2);
+            }
+            let session = runs::open_session(project, args.ephemeral, &store).await?;
             let (external, event) = runs::read_event_file(event_file)?;
             let outcomes = session.fire_event(&external, &event, args.dry_run).await?;
             runs::report(&outcomes, &mut out)
         }
         "resume" => {
-            let session = runs::open_session(project::load_project(&args.dir)?, false).await?;
+            let project = project::load_project(&args.dir)?;
+            let store = store_of(&args, &project)?;
+            let session = runs::open_session(project, false, &store).await?;
             let outcomes = match args.rest.first() {
                 Some(run_id) => vec![session.resume_run(run_id).await?],
                 // As the TypeScript lf: a work row that fails is retried later, unlogged.
@@ -174,11 +210,17 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         }
         "runs" => {
             let project = project::load_project(&args.dir)?;
-            let store = store::Store::open(&project.lf_dir.join("state.db")).map_err(|e| e.to_string())?;
+            let store = backend::open_store(&store_of(&args, &project)?)?;
             for run in store.runs(50).map_err(|e| e.to_string())? {
                 writeln!(out, "{} {} {}:{} {}", run.id, run.started_at, run.file, run.movement, run.status).map_err(|e| e.to_string())?;
             }
             Ok(0)
+        }
+        "drain" => {
+            let project = project::load_project(&args.dir)?;
+            let store = store_of(&args, &project)?;
+            let session = runs::open_session(project, false, &store).await?;
+            drain::drain(&session, &drain::DrainOptions { until_idle: args.until_idle, max_seconds: args.max_seconds }, &mut out).await
         }
         other if NOT_YET.contains(&other) => {
             eprintln!("lf-host: `{other}` is not in lf-host yet; use the TypeScript lf for it");
@@ -189,6 +231,11 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             Ok(2)
         }
     }
+}
+
+/// Where a command keeps its run state: `--store`, else lf.yaml's `store:`, else `.lf/state.db`.
+fn store_of(args: &Args, project: &project::Project) -> Result<backend::StoreSpec, String> {
+    backend::StoreSpec::of_command(args.store.as_deref(), project.store.as_deref(), &project.root, &project.lf_dir, args.team.as_deref())
 }
 
 fn main() {

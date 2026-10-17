@@ -25,7 +25,8 @@ use crate::run_host::{
 use crate::secrets::{Credentials, load_secrets, missing_credentials};
 use crate::segment::{Ended, Entry, SegmentHost, SegmentHostParts, SegmentInput, run_segment};
 use crate::sources::{MovementFile, scan_movements};
-use crate::store::{Store, iso};
+use crate::backend::{RunHostStore, StoreSpec, open_store};
+use crate::store::iso;
 use crate::wire_results;
 
 /// How long a work row's claim lasts (`LEASE_TTL_MS`).
@@ -37,7 +38,7 @@ const FAILED_RETRY_MS: i64 = 30_000;
 
 pub struct Session {
     pub project: Project,
-    pub store: Store,
+    pub store: Box<dyn RunHostStore>,
     credentials: Credentials,
     running: Vec<RunningExternal>,
     documents: Documents,
@@ -84,7 +85,9 @@ fn due_clock_offset() -> Result<i64, String> {
     }
 }
 
-pub async fn open_session(project: Project, ephemeral: bool) -> Result<Session, String> {
+/// `store`: where the run state is kept; an ephemeral session keeps its own
+/// in a temporary state file instead.
+pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) -> Result<Session, String> {
     let env: Vec<(String, String)> = std::env::vars().collect();
     let credentials = load_secrets(&project, &env)?;
     let files = scan_movements(&project)?;
@@ -95,14 +98,13 @@ pub async fn open_session(project: Project, ephemeral: bool) -> Result<Session, 
     let externals = scan_externals(&project)?;
     let running = start_externals(&project, &externals, &credentials, LOCAL_TENANT).await?;
     let due_offset_ms = due_clock_offset()?;
-    let (state_path, ephemeral_dir) = if ephemeral {
+    let (store, ephemeral_dir) = if ephemeral {
         let dir = std::env::temp_dir().join(format!("lf-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        (dir.join("state.db"), Some(dir))
+        (open_store(&StoreSpec::Sqlite(dir.join("state.db")))?, Some(dir))
     } else {
-        (project.lf_dir.join("state.db"), None)
+        (open_store(store)?, None)
     };
-    let store = Store::open(&state_path).map_err(|e| format!("{}: {e}", state_path.display()))?;
     let documents = Documents::new(&project.lf_dir);
     let mut schemas = IndexMap::new();
     for r in running.iter().filter(|r| !r.is_plugin()) {
@@ -223,13 +225,13 @@ impl Session {
         self.store.start_run(run_id, &file.name, &facts.movement_name, &fired_at, &facts.to_js().to_json()).map_err(|e| e.to_string())?;
         let tally = RefCell::new(Tally::default());
         let captured = RefCell::new(Vec::new());
-        let held = with_run_lease(&self.store, run_id, async |lease: &Lease| -> Result<bool, String> {
+        let held = with_run_lease(&*self.store, run_id, async |lease: &Lease| -> Result<bool, String> {
             let fence = Some(lease.token.as_str());
             let outcome = self
                 .record_segment(run_id, &facts, Some(&lease.token), &tally, dry_run.then_some(&captured), Entry::Run, None)
                 .await?;
-            if let Settled::Continue = after_step(&self.store, run_id, fence, &outcome)? {
-                clear_if_quiescent(&self.store, run_id, fence)?;
+            if let Settled::Continue = after_step(&*self.store, run_id, fence, &outcome)? {
+                clear_if_quiescent(&*self.store, run_id, fence)?;
             }
             Ok(outcome == StepOutcome::LeaseLost)
         })
@@ -264,7 +266,7 @@ impl Session {
             segment_id: segment_id.clone(),
             run_id: run_id.to_string(),
             fence: fence.map(str::to_string),
-            store: &self.store,
+            store: &*self.store,
             adapters: SegmentAdapters::new(&segment_id, &externals),
             documents: &self.documents,
             user: self.user.clone(),
@@ -306,8 +308,8 @@ impl Session {
             return Ok(StepOutcome::Parked { address: Some(address), deferred_race_frames: ran.deferred_race_frames });
         }
         let complete = match completing {
-            None => run_quiescent(&self.store, run_id)?,
-            Some(leaf) => run_complete_without(&self.store, run_id, leaf)?,
+            None => run_quiescent(&*self.store, run_id)?,
+            Some(leaf) => run_complete_without(&*self.store, run_id, leaf)?,
         };
         self.store.settle_run(run_id, if complete { "completed" } else { "parked" }, &outcome, &at).map_err(|e| e.to_string())?;
         Ok(StepOutcome::Completed { deferred_race_frames: ran.deferred_race_frames })
@@ -341,8 +343,8 @@ impl Session {
                 outcome.error = Some(error.unwrap_or_else(|| "failed".into()));
             }
             "parked" | "running" => {
-                if let Some(wake_at) = next_timer_wake(&self.store, run_id)? {
-                    arm_timer_wake(&self.store, run_id, &wake_at)?;
+                if let Some(wake_at) = next_timer_wake(&*self.store, run_id)? {
+                    arm_timer_wake(&*self.store, run_id, &wake_at)?;
                 }
                 outcome.status = "parked".into();
             }
@@ -358,15 +360,15 @@ impl Session {
         if self.store.run(run_id).map_err(|e| e.to_string())?.is_none() {
             return Err(format!("no run {run_id}"));
         }
-        let held = with_run_lease(&self.store, run_id, async |lease: &Lease| -> Result<Option<(Tally, bool)>, String> {
+        let held = with_run_lease(&*self.store, run_id, async |lease: &Lease| -> Result<Option<(Tally, bool)>, String> {
             let Some(stepper) = self.parked_stepper(run_id, lease)? else { return Ok(None) };
             let lease_lost = match &drain {
                 Drain::EveryParkedLeaf => {
                     let leaves: Vec<String> = self.store.leaves(run_id, true, None, None).map_err(|e| e.to_string())?.into_iter().map(|l| l.address).collect();
-                    drain_run(&self.store, run_id, &leaves, None, lease, &stepper).await?
+                    drain_run(&*self.store, run_id, &leaves, None, lease, &stepper).await?
                 }
-                Drain::DueTimers => drain_due_timers(&self.store, run_id, &self.due_by(), lease, &stepper).await?,
-                Drain::Leaves(addresses) => drain_run(&self.store, run_id, addresses, None, lease, &stepper).await?,
+                Drain::DueTimers => drain_due_timers(&*self.store, run_id, &self.due_by(), lease, &stepper).await?,
+                Drain::Leaves(addresses) => drain_run(&*self.store, run_id, addresses, None, lease, &stepper).await?,
             };
             Ok(Some((*stepper.tally.borrow(), lease_lost)))
         })
@@ -406,7 +408,7 @@ impl Session {
     /// `lf resume` with no run: drain the due work, then step every leaf
     /// still parked, now.
     pub async fn resume_all(&self, log: &mut impl Write) -> Result<Vec<RunOutcome>, String> {
-        let mut outcomes = self.drain_work(log).await?;
+        let (_, mut outcomes) = self.drain_work(100, log).await?;
         let parked: Vec<String> = self.store.runs(1000).map_err(|e| e.to_string())?.into_iter().filter(|r| r.status == "parked").map(|r| r.id).collect();
         for run_id in parked {
             match self.drive_parked_run(&run_id, Drain::EveryParkedLeaf).await? {
@@ -418,12 +420,14 @@ impl Session {
         Ok(outcomes)
     }
 
-    /// Drain the work queue once: every due row is leased, done, and
-    /// completed (or released for a retry when its run is held elsewhere or
-    /// it failed).
-    pub async fn drain_work(&self, log: &mut impl Write) -> Result<Vec<RunOutcome>, String> {
+    /// Drain the work queue once: up to `limit` due rows are leased, done,
+    /// and completed (or released for a retry when their run is held
+    /// elsewhere or they failed). How many rows were claimed, and what the
+    /// runs they stepped came to.
+    pub async fn drain_work(&self, limit: i64, log: &mut impl Write) -> Result<(usize, Vec<RunOutcome>), String> {
         let mut outcomes = Vec::new();
-        let due = self.store.claim_due(100, WORK_LEASE_MS, Some(&self.due_by())).map_err(|e| e.to_string())?;
+        let due = self.store.claim_due(limit, WORK_LEASE_MS, Some(&self.due_by())).map_err(|e| e.to_string())?;
+        let claimed_rows = due.len();
         for claimed in due {
             match self.do_work(&claimed.kind, &claimed.payload).await {
                 Ok((busy, done)) => {
@@ -440,7 +444,7 @@ impl Session {
                 }
             }
         }
-        Ok(outcomes)
+        Ok((claimed_rows, outcomes))
     }
 
     async fn do_work(&self, kind: &str, payload: &Js) -> Result<(bool, Vec<RunOutcome>), String> {

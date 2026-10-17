@@ -135,6 +135,8 @@ pub enum StoreError {
     /// A value outside what the families take.
     Invalid(String),
     Db(rusqlite::Error),
+    /// Another backend's failure (crate::pg_store), in its own words.
+    Backend(String),
 }
 
 impl From<rusqlite::Error> for StoreError {
@@ -150,6 +152,7 @@ impl std::fmt::Display for StoreError {
             StoreError::LeaseLost { .. } => f.write_str("run lease lost; another instance may hold the run"),
             StoreError::Invalid(message) => f.write_str(message),
             StoreError::Db(error) => write!(f, "{error}"),
+            StoreError::Backend(message) => f.write_str(message),
         }
     }
 }

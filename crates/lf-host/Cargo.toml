@@ -36,6 +36,11 @@ http-body-util = "0.1"
 bytes = "1"
 # SQLite linked in, so the binary needs no system library.
 rusqlite = { version = "0.32", features = ["bundled"] }
+# The run host's Postgres backend (src/pg_store.rs): the hosted product's
+# automations tables. Every value crosses as text, so no type features.
+tokio-postgres = "0.7"
+# A callback id's random bytes (`newCallbackId`).
+getrandom = "0.4"
 uuid = { version = "1", features = ["v4"] }
 # A park's library text is named by its sha-256 (`parkSources`).
 sha2 = "0.11"

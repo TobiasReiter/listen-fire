@@ -25,10 +25,12 @@ use crate::json::{Js, Obj};
 use crate::obj;
 use crate::remote::{ADAPTER_METHODS, SegmentAdapters};
 use crate::run_host::{arm_timer_wake, cancel_subtrees, queue_await_wake, save_source, settle_if_cancel_requested};
-use crate::store::{Store, StoreError};
+use crate::backend::RunHostStore;
+use crate::store::StoreError;
 use crate::wire::{Hv, Wire, js_of_json, json_of_js};
 
-/// The one tenant a local project is (`LOCAL_TENANT`).
+/// The one tenant a local project's files are (`LOCAL_TENANT`); its run
+/// state's tenant is its store's (`RunHostStore::tenant`).
 pub const TEAM: &str = "local";
 
 /// The host methods this host serves, by path: the engine asks an optional
@@ -136,7 +138,7 @@ pub struct SegmentHost<'s> {
     pub segment_id: String,
     pub run_id: String,
     pub fence: Option<String>,
-    pub store: &'s Store,
+    pub store: &'s dyn RunHostStore,
     pub adapters: SegmentAdapters<'s>,
     pub documents: &'s Documents,
     /// The acting user every event acts as (`localIdentity`).
@@ -187,7 +189,7 @@ pub struct SegmentHostParts<'s> {
     pub segment_id: String,
     pub run_id: String,
     pub fence: Option<String>,
-    pub store: &'s Store,
+    pub store: &'s dyn RunHostStore,
     pub adapters: SegmentAdapters<'s>,
     pub documents: &'s Documents,
     pub user: Js,
@@ -586,7 +588,7 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
             let key = text(args, "correlationKey", "park.sink.commitAwaitPark")?;
             park(host, || {
                 store.put_leaf(run_id, address, "await", None, &state, fence).map_err(store_failure)?;
-                store.correlate(run_id, TEAM, address, adapter_type, key).map_err(store_failure)
+                store.correlate(run_id, store.tenant(), address, adapter_type, key).map_err(store_failure)
             })
         }
         "park.sink.commitSuspension" => {
@@ -651,15 +653,15 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
         "park.wake" => {
             let adapter_type = text(args, "adapterType", "park.wake")?;
             let key = text(args, "correlationKey", "park.wake")?;
-            queue_await_wake(store, adapter_type, TEAM, key).map(|()| None).map_err(rules_failure)
+            queue_await_wake(store, adapter_type, store.tenant(), key).map(|()| None).map_err(rules_failure)
         }
         "park.sources.save" => {
             let source = text(args, "source", "park.sources.save")?;
-            save_source(store, TEAM, source).map(|hash| Some(json!({ "hash": hash }))).map_err(rules_failure)
+            save_source(store, store.tenant(), source).map(|hash| Some(json!({ "hash": hash }))).map_err(rules_failure)
         }
         "park.sources.load" => {
             let hash = text(args, "hash", "park.sources.load")?;
-            match store.get_source(TEAM, hash) {
+            match store.get_source(store.tenant(), hash) {
                 Ok(Some(source)) => Ok(Some(json!({ "source": source }))),
                 Ok(None) => Ok(Some(json!({}))),
                 Err(error) => Err(store_failure(error)),
