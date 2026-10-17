@@ -855,9 +855,18 @@ async fn invoke_plugin(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
         return Ok(Err(failure(format!("plugin \"{plugin}\" cannot run: no plugin external in this project serves it"))));
     };
     let params = json!({ "name": plugin, "config": crate::wire::json_of_js(&config), "extractedContext": crate::wire::json_of_js(&extracted) });
-    let answer = match crate::externals::rpc(running, externals.credentials, externals.tenant, "invokePlugin", params).await {
+    let (answer, spent) = crate::protocol::spending(crate::externals::rpc(running, externals.credentials, externals.tenant, "invokePlugin", params)).await;
+    // What the answer's `cost` says it spent rides the engine's own cost
+    // lines; on a failure there are none to ride, so it goes to the run's
+    // account directly.
+    let mut lines: Vec<Js> =
+        spent.iter().map(|(label, micro)| Js::Obj(obj! { "source" => Js::Str(format!("adapter:{label}")), "microdollars" => Js::Num(serde_json::Number::from_f64(*micro).unwrap_or(0.into())) })).collect();
+    let answer = match answer {
         Ok(answer) => answer,
-        Err(message) => return Ok(Err(failure(message))),
+        Err(message) => {
+            charge_run(host, &spent).map_err(Fault)?;
+            return Ok(Err(failure(message)));
+        }
     };
     let Js::Obj(answered) = &answer else {
         return Ok(Err(failure(format!("plugin \"{plugin}\": invokePlugin answered something other than an object"))));
@@ -869,8 +878,10 @@ async fn invoke_plugin(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
         }
     }
     if let Some(Js::Num(microdollars)) = answered.get("costMicrodollars") {
-        let line = obj! { "source" => Js::Str(format!("plugin:{plugin}")), "microdollars" => Js::Num(microdollars.clone()) };
-        out.insert("cost".into(), Js::Arr(vec![Js::Obj(line)]));
+        lines.insert(0, Js::Obj(obj! { "source" => Js::Str(format!("plugin:{plugin}")), "microdollars" => Js::Num(microdollars.clone()) }));
+    }
+    if !lines.is_empty() {
+        out.insert("cost".into(), Js::Arr(lines));
     }
     host.charge(out.get("cost"));
     Ok(Ok(Some(host.wire.borrow().write(&Hv::of_js(&Js::Obj(out))))))
@@ -937,7 +948,9 @@ async fn adapters_call(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
     if args.get("filesIn").is_some() && files_in != Some("resources") {
         return Err(Fault(format!("adapters.call {method} filesIn is \"resources\" or absent")));
     }
-    match host.adapters.call(&instance, &method, &call_args).await {
+    let (called, spent) = crate::protocol::spending(host.adapters.call(&instance, &method, &call_args)).await;
+    charge_run(host, &spent).map_err(Fault)?;
+    match called {
         Err(failed) => {
             let message = failed.message().to_string();
             let mut errors = host.host_errors.borrow_mut();
@@ -961,6 +974,17 @@ async fn adapters_call(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
             Ok(Ok(Some(json!({ "result": wire.write(&value) }))))
         }
     }
+}
+
+/// What an adapter call's answers said they spent on paid services, added
+/// to the run's account (counted by its cost cap from the next segment on):
+/// the engine's ledger has no line for an adapter call.
+fn charge_run(host: &SegmentHost<'_>, spent: &[(String, f64)]) -> Result<(), String> {
+    let total: f64 = spent.iter().map(|(_, micro)| micro).sum();
+    if total > 0.0 {
+        host.store.add_run_spend(&host.run_id, total).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// `relatedResourcesWithFiles`: a `_resources` reference's records, each

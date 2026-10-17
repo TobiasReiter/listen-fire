@@ -22,6 +22,49 @@ use tokio::net::TcpStream;
 pub const PROTOCOL_VERSION: &str = "2";
 /// The header naming the calling team (`ADAPTER_TEAM_HEADER`).
 pub const ADAPTER_TEAM_HEADER: &str = "x-listen-fire-team";
+/// The error code a module answers when the provider refused the request's
+/// credential (`CREDENTIAL_REFUSED_CODE`): refreshed and retried once.
+pub const CREDENTIAL_REFUSED_CODE: &str = "credential_refused";
+
+/// What a request carries beside its params: the connection's credential,
+/// every declared credential held for it, and the install's settings.
+#[derive(Default)]
+pub struct Carried {
+    pub credential: Option<serde_json::Value>,
+    pub credentials: Option<serde_json::Value>,
+    pub settings: Option<serde_json::Value>,
+}
+
+tokio::task_local! {
+    /// Where the `cost` lines of answers are collected, while a run's call
+    /// is served (`spending`).
+    static SPEND: std::rc::Rc<std::cell::RefCell<Vec<(String, f64)>>>;
+}
+
+/// Run `call`, collecting what the answers it receives say they spent (an
+/// answer's `cost`: label and microdollars). Outside this, a cost is dropped:
+/// nothing runs on a run's behalf there.
+pub async fn spending<T>(call: impl std::future::Future<Output = T>) -> (T, Vec<(String, f64)>) {
+    let lines = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let out = SPEND.scope(lines.clone(), call).await;
+    let spent = lines.borrow().clone();
+    (out, spent)
+}
+
+fn record_cost(envelope: &Js) {
+    let lines: Vec<(String, f64)> = envelope
+        .get("cost")
+        .and_then(Js::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|line| Some((line.get("label")?.as_str()?.to_string(), match line.get("microdollars")? { Js::Num(n) => n.as_f64()?, _ => return None })))
+        .filter(|(_, micro)| micro.is_finite() && *micro >= 0.0)
+        .collect();
+    if lines.is_empty() {
+        return;
+    }
+    let _ = SPEND.try_with(|spend| spend.borrow_mut().extend(lines));
+}
 
 pub struct Call<'a> {
     pub base_url: &'a str,
@@ -112,13 +155,13 @@ fn target_of(base_url: &str) -> Result<Target, String> {
 /// declared credential it carries it (the request's `credential`), and the
 /// answer's `credentialUpdate` comes back beside the result — read on a
 /// failed answer too, since a rotated refresh token must be stored either way.
-pub async fn post_rpc_carrying(call: Call<'_>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
+pub async fn post_rpc_carrying(call: Call<'_>, carried: Carried) -> (Result<Js, RpcError>, Option<Js>) {
     let mut update = None;
-    let answer = post(call, credential, &mut update).await;
+    let answer = post(call, carried, &mut update).await;
     (answer, update)
 }
 
-async fn post(call: Call<'_>, credential: Option<serde_json::Value>, update: &mut Option<Js>) -> Result<Js, RpcError> {
+async fn post(call: Call<'_>, carried: Carried, update: &mut Option<Js>) -> Result<Js, RpcError> {
     let target = target_of(call.base_url).map_err(RpcError::Unreachable)?;
     let unreachable = |e: &dyn std::fmt::Display| {
         RpcError::Unreachable(format!("Remote adapter at {} could not be reached for method \"{}\": {e}", call.base_url, call.method))
@@ -134,8 +177,10 @@ async fn post(call: Call<'_>, credential: Option<serde_json::Value>, update: &mu
         "cacheScopeId": call.cache_scope_id,
         "params": call.params,
     });
-    if let Some(credential) = credential {
-        body["credential"] = credential;
+    for (key, value) in [("credential", carried.credential), ("credentials", carried.credentials), ("settings", carried.settings)] {
+        if let Some(value) = value {
+            body[key] = value;
+        }
     }
     let mut request = Request::post(&target.path)
         .header("host", format!("{}:{}", target.host, target.port))
@@ -155,6 +200,7 @@ async fn post(call: Call<'_>, credential: Option<serde_json::Value>, update: &mu
         RpcError::Shape(format!("Remote adapter \"{}\" answered \"{}\" with a body that is not JSON: {e}", call.base_url, call.method))
     })?;
     *update = envelope.get("credentialUpdate").cloned();
+    record_cost(&envelope);
     match envelope.get("ok") {
         Some(Js::Bool(true)) => Ok(envelope.get("result").cloned().unwrap_or(Js::Null)),
         Some(Js::Bool(false)) => {

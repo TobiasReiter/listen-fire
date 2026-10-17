@@ -299,7 +299,13 @@ impl<'s> SegmentAdapters<'s> {
         let ext = self.externals;
         let running = self.running(instance);
         let credential: Option<&Credential> = instance.credential.map(|i| &ext.credentials[i]);
-        let target = Target { external: &running.external, base_url: &running.base_url, declarations: &running.credential_declarations, methods: &running.methods };
+        let target = Target {
+            external: &running.external,
+            base_url: &running.base_url,
+            declarations: &running.credential_declarations,
+            methods: &running.methods,
+            settings: &running.settings,
+        };
         let sending = Sending { tenant: ext.tenant, method, cache_scope_id: &instance.cache_scope, params: json_of_js(&params) };
         // The install's server secret signs a call made as a user credential.
         let signer = signer_of(ext.credentials, &running.external.manifest.name, credential);

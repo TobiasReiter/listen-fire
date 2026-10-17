@@ -106,6 +106,60 @@ impl Meter {
     }
 }
 
+// ── The models door ─────────────────────────────────────────────────────────
+
+/// One call through the host's models door (protocol.ts `HostModelRequest`),
+/// made by the models slot's module for a module that asked: the reply's
+/// text (and, for a `schema` request, the reply read as JSON in `data`), and
+/// its cost as `{ microdollars, label }` lines, for the module to report on
+/// its own answer. No budget: the run that pays is charged through that answer.
+pub async fn host_model_call(body: &Js, credentials: &Credentials) -> Result<Js, String> {
+    let text = |name: &str| body.get(name).and_then(Js::as_str).map(str::to_string);
+    let (Some(label), Some(system), Some(user)) = (text("label"), text("system"), text("userMessage")) else {
+        return Err("a models door request is { label, system, userMessage, model?, effort?, schema? }".into());
+    };
+    let model = text("model").unwrap_or_else(|| "sonnet".into());
+    let wire_model = models::wire_model(&model).ok_or_else(|| format!("model {model} is not a model a call names"))?;
+    // A schema is asked for in words and the reply read as JSON (the
+    // TypeScript host forces a tool call instead).
+    let system = match body.get("schema") {
+        Some(schema) => format!("{system}\n\nAnswer with one JSON value matching this JSON schema, and nothing else:\n{}", schema.to_json()),
+        None => system,
+    };
+    let request = ModelRequest {
+        label,
+        system,
+        user: UserMessage::Text(user),
+        wire_model,
+        effort: text("effort"),
+        max_tokens: None,
+        budget: None,
+        reports_usage: false,
+    };
+    let meter = Meter::new(None);
+    let answered = answer(&request, credentials, &meter).await;
+    let cost = Js::Arr(
+        meter
+            .by_source
+            .borrow()
+            .iter()
+            .map(|(source, microdollars)| Js::Obj(obj! { "microdollars" => Js::Num((*microdollars).into()), "label" => Js::str(source.strip_prefix("model:").map(|m| format!("anthropic/{m}")).as_deref().unwrap_or(source)) }))
+            .collect(),
+    );
+    let mut reply = match answered {
+        Ok(reply) => reply,
+        Err(ChatError::BudgetSpent) => return Err(BUDGET_SPENT.into()),
+        Err(ChatError::Failed(message)) => return Err(message),
+    };
+    let mut out = Obj::new();
+    out.insert("text".into(), reply.swap_remove("rawText").unwrap_or(Js::str("")));
+    if body.get("schema").is_some() {
+        out.insert("data".into(), reply.swap_remove("parsedJson").unwrap_or(Js::Null));
+    }
+    out.insert("cost".into(), cost);
+    Ok(Js::Obj(out))
+}
+
 // ── The request ─────────────────────────────────────────────────────────────
 
 struct ModelRequest {
@@ -422,6 +476,15 @@ mod tests {
             panic!("expected a run failure")
         };
         assert!(message.starts_with("a model call needs a provider key"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn the_models_door_answers_the_text_the_data_and_the_cost_as_labelled_lines() {
+        let (url, _) = fake_anthropic(vec![Scripted::Stream(stream_of(&[("text", "{\"city\":\"Paris\"}")], "end_turn", (1000, 500)))]).await;
+        let body = Js::parse(br#"{"label":"affinity.formatLocation","system":"s","userMessage":"u","model":"claude-sonnet-5","schema":{"type":"object"}}"#).unwrap();
+        let answer = host_model_call(&body, &credentials(&url)).await.unwrap();
+        assert_eq!(answer.get("data").and_then(|d| d.get("city")).and_then(Js::as_str), Some("Paris"));
+        assert_eq!(answer.get("cost").unwrap().to_json(), r#"[{"microdollars":7000,"label":"anthropic/claude-sonnet-5"}]"#);
     }
 
     #[tokio::test]

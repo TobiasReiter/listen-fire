@@ -208,6 +208,24 @@ async fn set_up(project: &Project, external: &External, credentials: &Credential
     };
     let facts = read_manifest(project, external, Some(&provisional)).await?;
 
+    // The module's declared settings (its construction arguments), sent on each call.
+    for setting in facts.answer.get("settings").and_then(Js::as_array).into_iter().flatten() {
+        let Some(field) = setting.get("name").and_then(Js::as_str) else { continue };
+        let label = setting.get("label").and_then(Js::as_str).unwrap_or(field);
+        let ask = Ask {
+            secret: setting.get("secret") == Some(&Js::Bool(true)),
+            optional: setting.get("optional") == Some(&Js::Bool(true)),
+            default: None,
+        };
+        let now = current(&fields, field);
+        let answer = prompter.ask(&format!("{label} (setting \"{field}\")"), Ask { default: now.as_deref(), ..ask }).await?;
+        if answer.is_empty() {
+            fields.retain(|(k, _)| k != field);
+        } else {
+            put(&mut fields, field, answer);
+        }
+    }
+
     if let Some(field) = inbound_secret_field(external, &facts.answer) {
         let generated = hex(&random_bytes(24)?);
         let default = current(&fields, &field).unwrap_or(generated);
