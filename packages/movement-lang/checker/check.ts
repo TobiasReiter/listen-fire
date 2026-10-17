@@ -3310,8 +3310,10 @@ function recordSurface(type: PositionTypeRef): SuppliedSurface | undefined {
  * in the order the content gave them.
  */
 function extractedRecordType(node: ExtractNodeType): Extract<PositionTypeRef, { kind: 'local' }> {
-  const reads: Record<string, FieldType | undefined> = {};
-  const fields: Record<string, SchemaFieldType> = {};
+  // Without a prototype: a field or node named `__proto__` (an ordinary name
+  // from version 5) is held as its own key, not read off Object.prototype.
+  const reads: Record<string, FieldType | undefined> = Object.create(null);
+  const fields: Record<string, SchemaFieldType> = Object.create(null);
   for (const [name, field] of node.properties) {
     fields[name] = field.explicit ?? 'text';
     reads[name] = readsAsPresentText(field)
@@ -3320,7 +3322,7 @@ function extractedRecordType(node: ExtractNodeType): Extract<PositionTypeRef, { 
         ? maybeAbsent(field.explicit)
         : undefined;
   }
-  const edges: Record<string, LocalEdge> = {};
+  const edges: Record<string, LocalEdge> = Object.create(null);
   for (const [name, child] of node.children) {
     edges[name] = {
       schema: { target: name, readable: true, sequenced: 'document' },
