@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_public_redirect_is_written_only_where_a_command_waits() {
-        let dir = std::env::temp_dir().join(format!("lf-host-oauth-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("lf-oauth-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("oauth")).unwrap();
         assert_eq!(deliver_public_redirect(&dir, "code=x").0, 400);
         assert_eq!(deliver_public_redirect(&dir, "code=x&state=nobody").0, 404);

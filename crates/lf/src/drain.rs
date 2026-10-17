@@ -1,4 +1,4 @@
-//! `lf-host drain`: a worker over the work queue, the scale-from-zero shape
+//! `lf drain`: a worker over the work queue, the scale-from-zero shape
 //! of the run host (plans/cloud-native-2026-10-06/10_run_host.md): start,
 //! claim due work rows one at a time under their lease, run what each one
 //! asks (a timer's resume, an await's wake, a queued event), and exit.

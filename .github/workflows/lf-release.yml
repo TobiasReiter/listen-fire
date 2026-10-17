@@ -65,9 +65,9 @@ jobs:
       - name: Build lf
         run: |
           if [ "${{ matrix.zig }}" = "true" ]; then
-            cargo zigbuild --release --locked -p lf-host --target ${{ matrix.target }}
+            cargo zigbuild --release --locked -p lf --target ${{ matrix.target }}
           else
-            cargo build --release --locked -p lf-host --target ${{ matrix.target }}
+            cargo build --release --locked -p lf --target ${{ matrix.target }}
           fi
       - name: Smoke test (a binary that runs on this runner)
         if: "!matrix.zig && matrix.target == 'aarch64-apple-darwin'"

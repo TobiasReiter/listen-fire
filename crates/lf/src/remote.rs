@@ -1,7 +1,7 @@
 //! The host's adapters for one segment: the instances `adapters.resolve`
 //! hands the engine an id for, and each `adapters.call` dispatched into one —
 //! a port of movement-engine's `engine/adapter_table.ts` over its remote
-//! adapter (`adapters/remote/index.ts`), since every external lf-host reaches
+//! adapter (`adapters/remote/index.ts`), since every external lf reaches
 //! is a process speaking adapter protocol 2. The same rewriting the
 //! TypeScript remote adapter does: a position's files in the wire's spelling,
 //! a written file exposed at a URL the external fetches, a file read back
@@ -777,7 +777,7 @@ fn rebuild_with_files(value: &Hv, wired: &mut impl Iterator<Item = Js>) -> Js {
 /// A plain `GET`: the body and its content type.
 async fn http_get(url: &str) -> Result<(Vec<u8>, Option<String>), String> {
     use http_body_util::{BodyExt, Empty};
-    let rest = url.strip_prefix("http://").ok_or_else(|| format!("{url}: lf-host fetches files over plain http only"))?;
+    let rest = url.strip_prefix("http://").ok_or_else(|| format!("{url}: lf fetches files over plain http only"))?;
     let (authority, path) = rest.find('/').map(|at| (&rest[..at], &rest[at..])).unwrap_or((rest, "/"));
     let (host, port) = authority.rsplit_once(':').map(|(h, p)| (h, p.parse::<u16>().unwrap_or(80))).unwrap_or((authority, 80));
     let stream = tokio::net::TcpStream::connect((host, port)).await.map_err(|e| format!("{url}: {e}"))?;

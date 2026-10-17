@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/lf-host", "crates/movement-checker", "crates/movement-engine", "crates/movement-parser"]
+members = ["crates/lf", "crates/movement-checker", "crates/movement-engine", "crates/movement-parser"]
 
 # The committed WASM artifact is built with this profile; the CI check
 # rebuilds it and compares bytes, so changing it means rebuilding and

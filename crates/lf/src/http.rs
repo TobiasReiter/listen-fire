@@ -1,4 +1,4 @@
-//! The loopback HTTP server this host's listeners share (`lf-host serve`,
+//! The loopback HTTP server this host's listeners share (`lf serve`,
 //! the inbound contract bridge, the exposed-file listener): HTTP/1.1 over
 //! hyper, each connection a task on this thread's LocalSet, each request
 //! read whole (up to a limit) and handed to the listener's handler as plain

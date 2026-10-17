@@ -18,7 +18,7 @@
 //!   lf's runs     lf.trigger_run (below)
 //!
 //! Held to the hosted backend's meaning by the run host's contract suite
-//! (`lf-host --contract-store postgres://…`). Leases and expiry are judged
+//! (`lf --contract-store postgres://…`). Leases and expiry are judged
 //! by the database's clock, as the hosted backend judges them.
 //!
 //! One store is one tenant's: lf's runs, and the work rows it enqueues and
@@ -193,7 +193,7 @@ impl PgStore {
         let (sent, connected) = std::sync::mpsc::channel();
         let url = url.to_string();
         std::thread::Builder::new()
-            .name("lf-host postgres".into())
+            .name("lf postgres".into())
             .spawn(move || {
                 let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                     Ok(runtime) => runtime,
@@ -220,7 +220,7 @@ impl PgStore {
         Ok(PgStore {
             client,
             tenant: tenant.to_string(),
-            owner: format!("lf-host:{}:{}", std::process::id(), &uuid::Uuid::new_v4().to_string()[..8]),
+            owner: format!("lf:{}:{}", std::process::id(), &uuid::Uuid::new_v4().to_string()[..8]),
         })
     }
 

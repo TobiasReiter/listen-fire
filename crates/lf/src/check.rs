@@ -1,4 +1,4 @@
-//! `lf-host check`: every diagnostic the project's files have, by the Rust
+//! `lf check`: every diagnostic the project's files have, by the Rust
 //! checker natively (the same `check_source` the engine artifact's
 //! `check_program` export runs), against the catalog the externals answer.
 //! Output and exit code are the TypeScript `lf check`'s (apps/cli/src/main.rs).

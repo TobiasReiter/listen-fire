@@ -450,7 +450,7 @@ fn bundled_module(module: &str) -> Option<String> {
 /// module kit's `serve-module` as the TypeScript lf finds it
 /// (`require.resolve('module-kit/bin/serve-module.cjs')`): the project's
 /// node_modules (its `.bin` shim, or the package's script under node), then
-/// the workspace lf-host was built in.
+/// the workspace lf was built in.
 fn serve_module_command(project: &Project, external: &str) -> Result<Vec<String>, String> {
     if let Some(command) = std::env::var("LF_SERVE_MODULE").ok().filter(|c| !c.is_empty()) {
         return Ok(vec![command]);

@@ -1,4 +1,4 @@
-//! `lf-host --contract-doors`: lf's inbound doors (crate::doors over the
+//! `lf --contract-doors`: lf's inbound doors (crate::doors over the
 //! inbound core) served over HTTP on a loopback port, the world they read
 //! arranged over stdin/stdout JSON-RPC, so the TypeScript inbound contract
 //! suite (movement-engine `services/inbound/contract.ts`) holds them to the

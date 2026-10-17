@@ -138,7 +138,7 @@ struct Target {
 
 fn target_of(base_url: &str) -> Result<Target, String> {
     let Some(rest) = base_url.strip_prefix("http://") else {
-        return Err(format!("{base_url}: lf-host reaches externals over plain http only"));
+        return Err(format!("{base_url}: lf reaches externals over plain http only"));
     };
     let (authority, path) = match rest.find('/') {
         Some(at) => (&rest[..at], &rest[at..]),

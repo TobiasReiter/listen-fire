@@ -11,7 +11,7 @@ ENV RUSTUP_TOOLCHAIN=1.99.0-x86_64-unknown-linux-gnu
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates crates
-RUN cargo build --release --locked -p lf-host \
+RUN cargo build --release --locked -p lf \
   && cp target/release/lf /lf
 
 # The built-in modules run under node (serve-module): install only the module

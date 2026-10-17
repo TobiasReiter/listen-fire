@@ -58,7 +58,7 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 
 ### r-retire
 
-- The Rust binary is now `lf` (Cargo bin `lf`, from package `lf-host`; usage text, release workflow, container image and docs follow). The TypeScript `lf` is gone: `apps/cli` is only the test harness that drives the built binary (`LF_BIN`, default `target/debug/lf`). Tests that compared the two were dropped.
+- The Rust binary is now `lf` (Cargo package and bin `lf`, in `crates/lf`; usage text, release workflow, container image and docs follow). The TypeScript `lf` is gone: `apps/cli` is only the test harness that drives the built binary (`LF_BIN`, default `target/debug/lf`). Tests that compared the two were dropped.
 
 ### r-boundary
 
@@ -66,7 +66,7 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 - 39 engine-only test suites moved from apps/api into packages/movement-engine (`pnpm test` there); the rest still need the platform and stay.
 ### r-deploy
 
-- A container image for the Rust `lf` (`deploy/lf/`): `lf-host serve` for the webhook and callback doors and `lf-host drain --until-idle --max-seconds N` for workers, on the Postgres store (`LF_STORE_URL`, TLS). A compose file for a local trial and a page on scale-from-zero platforms. `serve` listens on the address `LF_BIND` names (default loopback).
+- A container image for the Rust `lf` (`deploy/lf/`): `lf serve` for the webhook and callback doors and `lf drain --until-idle --max-seconds N` for workers, on the Postgres store (`LF_STORE_URL`, TLS). A compose file for a local trial and a page on scale-from-zero platforms. `serve` listens on the address `LF_BIND` names (default loopback).
 ### r-slots
 
 - Core services are modules filling slots. lf.yaml's `core:` names the module per slot (`models` @lf/anthropic, `judge` @lf/judge, `store` @lf/sqlite-store or @lf/postgres-store, `files` @lf/local-files; each slot defaults to the first). `lf connect <core module>` asks its settings and runs its setup: @lf/postgres-store creates and migrates its own `lf` schema and no longer touches the hosted product's tables, and now keeps pull cursors. lf.yaml's `store:` is refused with the way over (`core: { store: … }`); `--store` still names a store outright. The deploy image reads the store's settings from `LF_SECRET__POSTGRES_STORE__*` and runs the setup as a one-shot service.
@@ -81,7 +81,7 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 
 ### lfr-upgrade
 
-- `lf-host upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.
+- `lf upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.
 
 ### r-docs
 

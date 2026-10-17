@@ -887,7 +887,7 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
                 Err(crate::llm_calls::Failed::Run(message)) => Err(failure(message)),
             }
         }
-        // Families lf-host does not serve yet: the run fails naming them.
+        // Families lf does not serve yet: the run fails naming them.
         "park.bindings.record" | "park.bindings.findBoundCounterpart" | "park.bindings.delete" => {
             Err(failure(format!("{label}: lf keeps no record bindings yet")))
         }
@@ -1095,7 +1095,7 @@ fn local_file_text(host: &SegmentHost<'_>, file: &Obj) -> Js {
     let bytes = match owner_of(file.get("source")) {
         Some(Owner::Document { object_uri }) if host.documents.owns(&object_uri, TEAM) => host.documents.open(&object_uri),
         Some(Owner::Document { object_uri }) => Err(format!("the file {object_uri} is not a stored document of this project")),
-        Some(Owner::Adapter { adapter_type, .. }) => Err(format!("a file '{adapter_type}' owns is not read by lf-host yet")),
+        Some(Owner::Adapter { adapter_type, .. }) => Err(format!("a file '{adapter_type}' owns is not read by lf yet")),
         None => Err("a file with no owner has no bytes".into()),
     };
     let bytes = match bytes {

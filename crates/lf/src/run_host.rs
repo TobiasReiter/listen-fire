@@ -6,9 +6,7 @@
 //! deferred races settled once at the end), and the per-run lease every
 //! entry into a run holds.
 //!
-//! Callback-backed awaits (the TypeScript lf's `callbackAwaitKeeper`) are
-//! not kept here: lf-host serves no callbacks yet, so none of its runs park
-//! on one.
+//! Callback-backed awaits are kept by crate::callbacks, not here.
 
 use std::cell::Cell;
 use std::future::Future;

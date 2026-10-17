@@ -1,4 +1,4 @@
-//! `lf-host upgrade`: the project's movement files rewritten into the language
+//! `lf upgrade`: the project's movement files rewritten into the language
 //! version the project's engine runs, by the Rust checker's own fixes (the
 //! TypeScript `lf upgrade`, apps/cli/src/upgrade.ts, over the shared loop in
 //! packages/movement-lang/checker/upgrade.ts). Check, take the fixes that do

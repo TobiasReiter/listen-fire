@@ -1,4 +1,4 @@
-//! `lf-host --contract-store <state.db|postgres://…>`: the run host's backend
+//! `lf --contract-store <state.db|postgres://…>`: the run host's backend
 //! families (crate::backend) served over stdin/stdout, one JSON-RPC 2.0 message per
 //! line, so the TypeScript contract suite drives this store through its
 //! `RpcStoreBackend` (movement-engine `services/run_host/rpc_store.ts`) and

@@ -1,4 +1,4 @@
-//! `lf-host serve`: the inbound doors and the work queue, as `lf serve` has
+//! `lf serve`: the inbound doors and the work queue, as `lf serve` has
 //! them (apps/cli/src/serve.ts). A provider's delivery at
 //! `/api/public/webhook-sync/<provider>/<install>` is verified and read by
 //! its external and its events queued, `/hooks/<external>/<install>` being

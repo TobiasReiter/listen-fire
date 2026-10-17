@@ -284,7 +284,7 @@ impl Provider {
             .header("accept", "application/json")
             .header("x-api-key", &self.key.api_key)
             .header("anthropic-version", API_VERSION)
-            .header("user-agent", concat!("lf-host/", env!("CARGO_PKG_VERSION")))
+            .header("user-agent", concat!("lf/", env!("CARGO_PKG_VERSION")))
             .body(Full::new(Bytes::from(body.to_string())))
             .map_err(|e| connection_error(&e))?;
         let (status, content_type, bytes) = if target.tls {
@@ -674,7 +674,7 @@ pub mod tests {
 
     /// Reaches the real provider over TLS with a key that cannot be valid: the
     /// provider's 401 proves the handshake and the request. Run by hand
-    /// (`cargo test -p lf-host https -- --ignored`); it needs the network.
+    /// (`cargo test -p lf https -- --ignored`); it needs the network.
     #[tokio::test]
     #[ignore]
     async fn https_reaches_the_provider() {

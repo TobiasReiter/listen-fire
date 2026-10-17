@@ -246,7 +246,7 @@ pub struct Store {
 }
 
 /// What a run has spent, and what it had spent when last resumed from its
-/// cost cap, in microdollars (lf-host's cost cap reads the difference).
+/// cost cap, in microdollars (the cost cap reads the difference).
 const SPEND_COLUMNS: &[&str] = &["spent_microdollars", "cost_cap_baseline_microdollars"];
 
 impl Store {
@@ -265,8 +265,7 @@ impl Store {
                 db.execute_batch(&format!("alter table run add column {column} text"))?;
             }
         }
-        // lf-host's own: the TypeScript lf keeps no run spend (it has no
-        // cost cap), and reads its rows by name, so the columns are invisible to it.
+        // Added to a state file written before the cost cap kept run spend.
         for column in SPEND_COLUMNS {
             if !columns.iter().any(|c| c == column) {
                 db.execute_batch(&format!("alter table run add column {column} real not null default 0"))?;
