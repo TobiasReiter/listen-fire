@@ -1166,6 +1166,10 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
 
+### ev1-judge
+
+- The entity identity judge (which candidate record is the one being written) moved into the engine package with its prompts as files; the hosted platform wires it to its model and Jev clients and decides exactly as before (replayed against recorded cases).
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
