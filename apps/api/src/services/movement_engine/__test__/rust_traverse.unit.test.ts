@@ -863,7 +863,7 @@ describe('traversal blocks in the Rust engine', () => {
   it('runs an ORDER BY over more than 64 records whose keys mix numbers and text whole, landing them where V8 lands them', async () => {
     // Numbers at even places, their texts at odd: a comparator no total
     // order agrees with, so V8's TimSort alone decides the order, here as in
-    // the TypeScript engine (crates/movement-engine/tests/oracle/mixed_sort.json).
+    // the TypeScript engine, frozen in crates/movement-engine/tests/frozen/mixed_sort.jsonl.
     const rows: Row[] = Array.from({ length: 65 }, (_, i) => ({
       id: `m-${i}`,
       fields: { name: `co ${i}`, revenue: i % 2 === 0 ? i : `${i}` },

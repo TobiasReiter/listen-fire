@@ -1085,12 +1085,12 @@ pinned by its test. What is still the TypeScript's behaviour, on purpose:
 
 - **ORDER BY and `SORT` over mixed key kinds** land where JavaScript lands
   them: crate::order_limit runs V8's ArrayTimSort step for step (galloping
-  and the shared `minGallop` included). tests/oracle/mixed_sort.json (400
-  seeded key lists, 1 to 2,000 keys; tests/tail_oracle.rs).
+  and the shared `minGallop` included). tests/frozen/mixed_sort.jsonl (400
+  seeded key lists, 1 to 2,000 keys; tests/mixed_sort_frozen.rs).
 - **A fractional `EXTRACTION_FILE_CHARS`**: the shim passes the number as
   written; the text is cut where `slice` truncates it, and the marker prints
-  the number itself (`first 2.5 of …`). tests/oracle/file_bound.json
-  (tests/tail_oracle.rs).
+  the number itself (`first 2.5 of …`). tests/frozen/file_bound.jsonl
+  (tests/file_bound_frozen.rs).
 - **Extraction call-site numbering**: a site is numbered when its region is
   planned, as the TypeScript numbers it, so the order is the order the host
   answers (the tree's order wherever the host answers in the order asked).

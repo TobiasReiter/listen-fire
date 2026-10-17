@@ -1,0 +1,495 @@
+{"ceiling":4,"chars":4.0,"content":"a中ß1\n[… truncated: first 4 of 5 characters]","setting":"4","text":"a中ß1.","truncatedFrom":5}
+{"ceiling":5.5,"chars":5.5,"content":" b.a\n\n[… truncated: first 5.5 of 12 characters]","setting":"0.55e1","text":" b.a\nßß\n.1bé","truncatedFrom":12}
+{"ceiling":1,"chars":1.0,"content":" \n[… truncated: first 1 of 2 characters]","setting":"1","text":" 1","truncatedFrom":2}
+{"ceiling":2.355,"chars":2.355,"content":"中a\n[… truncated: first 2.355 of 12 characters]","setting":"2.355","text":"中aaa1é中\nßb .","truncatedFrom":12}
+{"ceiling":3,"chars":3.0,"content":"b中a\n[… truncated: first 3 of 7 characters]","setting":"3","text":"b中aba中1","truncatedFrom":7}
+{"ceiling":4,"chars":4.0,"content":"b中1\n\n[… truncated: first 4 of 13 characters]","setting":"4","text":"b中1\nßßaéß.aé中","truncatedFrom":13}
+{"ceiling":8,"chars":8.0,"content":"1ß1bab11","setting":"0x8","text":"1ß1bab11","truncatedFrom":null}
+{"ceiling":1.5,"chars":1.5,"content":"1\n[… truncated: first 1.5 of 8 characters]","setting":" 1.5 ","text":"1.\n.ß1b.","truncatedFrom":8}
+{"ceiling":7.541,"chars":7.0,"content":"aé.ß ß1","setting":"7.541","text":"aé.ß ß1","truncatedFrom":null}
+{"ceiling":7.92,"chars":4.0,"content":"中.\na","setting":"7.92","text":"中.\na","truncatedFrom":null}
+{"ceiling":8,"chars":1.0,"content":"中","setting":"0x8","text":"中","truncatedFrom":null}
+{"ceiling":7.5,"chars":5.0,"content":"1éé..","setting":"0.75e1","text":"1éé..","truncatedFrom":null}
+{"ceiling":8,"chars":5.0,"content":".é 11","setting":"0x8","text":".é 11","truncatedFrom":null}
+{"ceiling":9.25,"chars":1.0,"content":"b","setting":"9.25","text":"b","truncatedFrom":null}
+{"ceiling":3.424,"chars":3.424,"content":"中..\n[… truncated: first 3.424 of 9 characters]","setting":"3.424","text":"中..11aß \n","truncatedFrom":9}
+{"ceiling":8,"chars":3.0,"content":"..a","setting":"0x8","text":"..a","truncatedFrom":null}
+{"ceiling":11.5,"chars":1.0,"content":" ","setting":"1.15e1","text":" ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"中.a中b.中a","setting":"0x8","text":"中.a中b.中a","truncatedFrom":null}
+{"ceiling":3.75,"chars":3.75,"content":"ßb \n[… truncated: first 3.75 of 15 characters]","setting":"3.75","text":"ßb 1\n.中1中b1中a\n ","truncatedFrom":15}
+{"ceiling":2.5,"chars":1.0,"content":"b","setting":"0.25e1","text":"b","truncatedFrom":null}
+{"ceiling":8,"chars":1.0,"content":"中","setting":"8","text":"中","truncatedFrom":null}
+{"ceiling":6.19,"chars":6.19,"content":"ßbé\n..\n[… truncated: first 6.19 of 11 characters]","setting":"6.190","text":"ßbé\n..中 éaß","truncatedFrom":11}
+{"ceiling":4.571,"chars":3.0,"content":" ßé","setting":"4.571","text":" ßé","truncatedFrom":null}
+{"ceiling":9.1,"chars":9.1,"content":"b1ßb中中1bb\n[… truncated: first 9.1 of 15 characters]","setting":"9.1","text":"b1ßb中中1bbbßßé  ","truncatedFrom":15}
+{"ceiling":10,"chars":2.0,"content":"é\n","setting":"10","text":"é\n","truncatedFrom":null}
+{"ceiling":11.5,"chars":4.0,"content":"é\n a","setting":"1.15e1","text":"é\n a","truncatedFrom":null}
+{"ceiling":6.5,"chars":6.5,"content":"b\n.ba1\n[… truncated: first 6.5 of 8 characters]","setting":" 6.5 ","text":"b\n.ba1a ","truncatedFrom":8}
+{"ceiling":5.5,"chars":5.5,"content":" a\nßa\n[… truncated: first 5.5 of 12 characters]","setting":" 5.5 ","text":" a\nßa\nß.中é\n1","truncatedFrom":12}
+{"ceiling":2.000000001,"chars":2.000000001,"content":"ßé\n[… truncated: first 2.000000001 of 15 characters]","setting":"2.000000001","text":"ßé中 .ab\nééa1b1\n","truncatedFrom":15}
+{"ceiling":8,"chars":8.0,"content":".bßßé中a \n[… truncated: first 8 of 10 characters]","setting":"8","text":".bßßé中a ß ","truncatedFrom":10}
+{"ceiling":10.5,"chars":10.5,"content":".ß1é\néßßba\n[… truncated: first 10.5 of 13 characters]","setting":" 10.5 ","text":".ß1é\néßßbabé\n","truncatedFrom":13}
+{"ceiling":1.5,"chars":1.5,"content":"1\n[… truncated: first 1.5 of 15 characters]","setting":" 1.5 ","text":"1a. 中中é\n\n1  .éß","truncatedFrom":15}
+{"ceiling":11.764,"chars":1.0,"content":"a","setting":"11.764","text":"a","truncatedFrom":null}
+{"ceiling":3.683,"chars":0.0,"content":"","setting":"3.683","text":"","truncatedFrom":null}
+{"ceiling":6.5,"chars":1.0,"content":" ","setting":" 6.5 ","text":" ","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.5,"content":"1a\n[… truncated: first 2.5 of 10 characters]","setting":"0.25e1","text":"1a11\nß11b1","truncatedFrom":10}
+{"ceiling":2.000000001,"chars":2.000000001,"content":"éb\n[… truncated: first 2.000000001 of 12 characters]","setting":"2.000000001","text":"ébb  ß1.中中1中","truncatedFrom":12}
+{"ceiling":3,"chars":3.0,"content":"中 1\n[… truncated: first 3 of 12 characters]","setting":"3","text":"中 1é\nßa\n中中\na","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":" bß b\nßß","setting":"0x8","text":" bß b\nßß","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.0,"content":"éß","setting":" 2.5 ","text":"éß","truncatedFrom":null}
+{"ceiling":1.5,"chars":1.5,"content":"中\n[… truncated: first 1.5 of 9 characters]","setting":"0.15e1","text":"中a\n中é\nß1b","truncatedFrom":9}
+{"ceiling":8,"chars":8.0,"content":"éa..a. a\n[… truncated: first 8 of 14 characters]","setting":"8","text":"éa..a. a\nb \n.b","truncatedFrom":14}
+{"ceiling":8,"chars":0.0,"content":"","setting":"0x8","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":2.0,"content":"bb","setting":"0x8","text":"bb","truncatedFrom":null}
+{"ceiling":6.999,"chars":2.0,"content":"中b","setting":"6.999","text":"中b","truncatedFrom":null}
+{"ceiling":9.5,"chars":1.0,"content":"1","setting":" 9.5 ","text":"1","truncatedFrom":null}
+{"ceiling":6.5,"chars":6.5,"content":"aßa\n\nb\n[… truncated: first 6.5 of 15 characters]","setting":" 6.5 ","text":"aßa\n\nb1éa\n中a\n中ß","truncatedFrom":15}
+{"ceiling":2.5,"chars":2.0,"content":"a\n","setting":" 2.5 ","text":"a\n","truncatedFrom":null}
+{"ceiling":5.434,"chars":5.434,"content":" é\n ß\n[… truncated: first 5.434 of 9 characters]","setting":"5.434","text":" é\n ß..中 ","truncatedFrom":9}
+{"ceiling":3.1,"chars":3.1,"content":"1é\n\n[… truncated: first 3.1 of 9 characters]","setting":"3.1","text":"1é\néß  éa","truncatedFrom":9}
+{"ceiling":8,"chars":2.0,"content":".é","setting":"0x8","text":".é","truncatedFrom":null}
+{"ceiling":3.5,"chars":3.5,"content":"ba1\n[… truncated: first 3.5 of 10 characters]","setting":"0.35e1","text":"ba11ba1é1b","truncatedFrom":10}
+{"ceiling":10.5,"chars":6.0,"content":"ß中béßa","setting":"1.05e1","text":"ß中béßa","truncatedFrom":null}
+{"ceiling":10.000000001,"chars":4.0,"content":"bbß ","setting":"10.000000001","text":"bbß ","truncatedFrom":null}
+{"ceiling":10.5,"chars":1.0,"content":"é","setting":"10.5","text":"é","truncatedFrom":null}
+{"ceiling":11.25,"chars":10.0,"content":"béé. 1中éé1","setting":"11.25","text":"béé. 1中éé1","truncatedFrom":null}
+{"ceiling":11.421,"chars":11.421,"content":"éb \n1é1 a中 \n[… truncated: first 11.421 of 12 characters]","setting":"11.421","text":"éb \n1é1 a中 .","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":"bßé 中1.中\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"bßé 中1.中中é1a","truncatedFrom":12}
+{"ceiling":2.5,"chars":2.5,"content":"1ß\n[… truncated: first 2.5 of 9 characters]","setting":"0.25e1","text":"1ß\n.中\naab","truncatedFrom":9}
+{"ceiling":2,"chars":2.0,"content":"ßa\n[… truncated: first 2 of 14 characters]","setting":"2","text":"ßaß中中中é\na\n1\nßß","truncatedFrom":14}
+{"ceiling":2.694,"chars":2.694,"content":" 中\n[… truncated: first 2.694 of 9 characters]","setting":"2.694","text":" 中ßß1a11中","truncatedFrom":9}
+{"ceiling":7.5,"chars":5.0,"content":".\nb.ß","setting":"0.75e1","text":".\nb.ß","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 6 characters]","setting":" 0.5 ","text":"1  é é","truncatedFrom":6}
+{"ceiling":5.5,"chars":5.5,"content":" ß1\n\n\n[… truncated: first 5.5 of 7 characters]","setting":" 5.5 ","text":" ß1\n\nbb","truncatedFrom":7}
+{"ceiling":9.5,"chars":7.0,"content":"\nbb\na1中","setting":" 9.5 ","text":"\nbb\na1中","truncatedFrom":null}
+{"ceiling":8,"chars":2.0,"content":"b.","setting":"0x8","text":"b.","truncatedFrom":null}
+{"ceiling":7,"chars":4.0,"content":"bb .","setting":"7","text":"bb .","truncatedFrom":null}
+{"ceiling":3.75,"chars":3.75,"content":"1a \n[… truncated: first 3.75 of 12 characters]","setting":"3.75","text":"1a baéß中b. ß","truncatedFrom":12}
+{"ceiling":8,"chars":2.0,"content":".\n","setting":"0x8","text":".\n","truncatedFrom":null}
+{"ceiling":5.5,"chars":0.0,"content":"","setting":" 5.5 ","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":".1a中aß.b\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":".1a中aß.b .\né","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":" ß1ß bßa\n[… truncated: first 8 of 11 characters]","setting":"0x8","text":" ß1ß bßaa中a","truncatedFrom":11}
+{"ceiling":8,"chars":8.0,"content":"\n中中中\n1 1","setting":"0x8","text":"\n中中中\n1 1","truncatedFrom":null}
+{"ceiling":6,"chars":6.0,"content":"ß ..b.\n[… truncated: first 6 of 11 characters]","setting":"6","text":"ß ..b...b中中","truncatedFrom":11}
+{"ceiling":8,"chars":0.0,"content":"","setting":"0x8","text":"","truncatedFrom":null}
+{"ceiling":5.5,"chars":5.5,"content":"1 中éé\n[… truncated: first 5.5 of 6 characters]","setting":" 5.5 ","text":"1 中ééé","truncatedFrom":6}
+{"ceiling":6.565,"chars":6.565,"content":"1\nab.中\n[… truncated: first 6.565 of 9 characters]","setting":"6.565","text":"1\nab.中.aa","truncatedFrom":9}
+{"ceiling":4,"chars":4.0,"content":"a\n中 \n[… truncated: first 4 of 10 characters]","setting":"4","text":"a\n中 b\nb\n.中","truncatedFrom":10}
+{"ceiling":8,"chars":8.0,"content":"b中ß\nß\n.é\n[… truncated: first 8 of 9 characters]","setting":"0x8","text":"b中ß\nß\n.éb","truncatedFrom":9}
+{"ceiling":8,"chars":3.0,"content":"a ß","setting":"0x8","text":"a ß","truncatedFrom":null}
+{"ceiling":8,"chars":5.0,"content":" \na.a","setting":"0x8","text":" \na.a","truncatedFrom":null}
+{"ceiling":10.999,"chars":5.0,"content":".中 bé","setting":"10.999","text":".中 bé","truncatedFrom":null}
+{"ceiling":8.5,"chars":8.5,"content":"b\n\nab aé\n[… truncated: first 8.5 of 12 characters]","setting":" 8.5 ","text":"b\n\nab aé 中1中","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":"a.aééb中1\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":"a.aééb中1中 ","truncatedFrom":10}
+{"ceiling":7,"chars":7.0,"content":" bb11..\n[… truncated: first 7 of 8 characters]","setting":"7","text":" bb11..a","truncatedFrom":8}
+{"ceiling":3.5,"chars":3.5,"content":"1b \n[… truncated: first 3.5 of 10 characters]","setting":"0.35e1","text":"1b ß中a1é中b","truncatedFrom":10}
+{"ceiling":4,"chars":4.0,"content":"a\n\n中\n[… truncated: first 4 of 12 characters]","setting":"4","text":"a\n\n中ba..a\n b","truncatedFrom":12}
+{"ceiling":8,"chars":7.0,"content":" 1éß1中1","setting":"0x8","text":" 1éß1中1","truncatedFrom":null}
+{"ceiling":5.5,"chars":5.5,"content":"\n1\nß \n[… truncated: first 5.5 of 14 characters]","setting":"0.55e1","text":"\n1\nß b b\n.ßßßa","truncatedFrom":14}
+{"ceiling":3.000000001,"chars":2.0,"content":"aß","setting":"3.000000001","text":"aß","truncatedFrom":null}
+{"ceiling":1e-9,"chars":1e-9,"content":"\n[… truncated: first 1e-9 of 2 characters]","setting":"1e-9","text":"\n1","truncatedFrom":2}
+{"ceiling":0.736,"chars":0.736,"content":"\n[… truncated: first 0.736 of 1 characters]","setting":"0.736","text":"1","truncatedFrom":1}
+{"ceiling":8.5,"chars":3.0,"content":"é\n.","setting":" 8.5 ","text":"é\n.","truncatedFrom":null}
+{"ceiling":7.756,"chars":7.756,"content":" \n.é éa\n[… truncated: first 7.756 of 14 characters]","setting":"7.756","text":" \n.é éa 中1 b1b","truncatedFrom":14}
+{"ceiling":8,"chars":7.0,"content":".ß\n中.11","setting":"8","text":".ß\n中.11","truncatedFrom":null}
+{"ceiling":2.571,"chars":2.571,"content":"a.\n[… truncated: first 2.571 of 12 characters]","setting":"2.571","text":"a.\n.\n éa \n .","truncatedFrom":12}
+{"ceiling":0.25,"chars":0.25,"content":"\n[… truncated: first 0.25 of 1 characters]","setting":"0.25","text":" ","truncatedFrom":1}
+{"ceiling":11.5,"chars":5.0,"content":"\néé. ","setting":"1.15e1","text":"\néé. ","truncatedFrom":null}
+{"ceiling":10.5,"chars":3.0,"content":"\n.1","setting":"1.05e1","text":"\n.1","truncatedFrom":null}
+{"ceiling":5.5,"chars":5.5,"content":"a é. \n[… truncated: first 5.5 of 8 characters]","setting":" 5.5 ","text":"a é. baa","truncatedFrom":8}
+{"ceiling":7.5,"chars":7.5,"content":"...ß11\n\n[… truncated: first 7.5 of 9 characters]","setting":"0.75e1","text":"...ß11\nb ","truncatedFrom":9}
+{"ceiling":5.999,"chars":5.999,"content":"1.中中1\n[… truncated: first 5.999 of 15 characters]","setting":"5.999","text":"1.中中1\n.. b中ßa b","truncatedFrom":15}
+{"ceiling":8,"chars":3.0,"content":" éa","setting":"0x8","text":" éa","truncatedFrom":null}
+{"ceiling":2,"chars":2.0,"content":"é \n[… truncated: first 2 of 15 characters]","setting":"2","text":"é  a\n \n.\n aéß  ","truncatedFrom":15}
+{"ceiling":6.5,"chars":6.5,"content":"ßéa中ß \n[… truncated: first 6.5 of 10 characters]","setting":"0.65e1","text":"ßéa中ß é\nß\n","truncatedFrom":10}
+{"ceiling":3.536,"chars":3.536,"content":"a\né\n[… truncated: first 3.536 of 4 characters]","setting":"3.536","text":"a\né1","truncatedFrom":4}
+{"ceiling":8,"chars":1.0,"content":" ","setting":"0x8","text":" ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":" 中.中ßa b\n[… truncated: first 8 of 9 characters]","setting":"0x8","text":" 中.中ßa bé","truncatedFrom":9}
+{"ceiling":5.5,"chars":4.0,"content":" .\n\n","setting":"0.55e1","text":" .\n\n","truncatedFrom":null}
+{"ceiling":7,"chars":7.0,"content":" 1.1a中 \n[… truncated: first 7 of 8 characters]","setting":"7","text":" 1.1a中 a","truncatedFrom":8}
+{"ceiling":4.5,"chars":4.5,"content":"ß \n\n\n[… truncated: first 4.5 of 9 characters]","setting":"4.5","text":"ß \n\néé.b中","truncatedFrom":9}
+{"ceiling":5.494,"chars":5.494,"content":"é中ß中ß\n[… truncated: first 5.494 of 14 characters]","setting":"5.494","text":"é中ß中ßß11ß1 bb中","truncatedFrom":14}
+{"ceiling":3.5,"chars":3.5,"content":"中中 \n[… truncated: first 3.5 of 7 characters]","setting":"0.35e1","text":"中中 bß.a","truncatedFrom":7}
+{"ceiling":4,"chars":4.0,"content":"é中 1\n[… truncated: first 4 of 8 characters]","setting":"4","text":"é中 1 \n\n1","truncatedFrom":8}
+{"ceiling":8,"chars":8.0,"content":"ßé\né中中11\n[… truncated: first 8 of 15 characters]","setting":"0x8","text":"ßé\né中中11.11\n\n\n.","truncatedFrom":15}
+{"ceiling":1,"chars":1.0,"content":"a\n[… truncated: first 1 of 11 characters]","setting":"1","text":"a1  é中éé\na中","truncatedFrom":11}
+{"ceiling":2.5,"chars":2.5,"content":"ß1\n[… truncated: first 2.5 of 10 characters]","setting":" 2.5 ","text":"ß1.1 b\néé\n","truncatedFrom":10}
+{"ceiling":11.25,"chars":11.25,"content":" 中.ab ..ßé中\n[… truncated: first 11.25 of 14 characters]","setting":"11.25","text":" 中.ab ..ßé中中a ","truncatedFrom":14}
+{"ceiling":2.5,"chars":2.5,"content":" 1\n[… truncated: first 2.5 of 13 characters]","setting":"0.25e1","text":" 1é 1\nßß.11中 ","truncatedFrom":13}
+{"ceiling":5.5,"chars":2.0,"content":"éa","setting":" 5.5 ","text":"éa","truncatedFrom":null}
+{"ceiling":9.5,"chars":6.0,"content":"\nb1 ß.","setting":"0.95e1","text":"\nb1 ß.","truncatedFrom":null}
+{"ceiling":2,"chars":2.0,"content":"中é\n[… truncated: first 2 of 6 characters]","setting":"2","text":"中éb.ß1","truncatedFrom":6}
+{"ceiling":3.43,"chars":3.43,"content":"1ß.\n[… truncated: first 3.43 of 13 characters]","setting":"3.430","text":"1ß.b. .1ß中a中1","truncatedFrom":13}
+{"ceiling":0.946,"chars":0.946,"content":"\n[… truncated: first 0.946 of 9 characters]","setting":"0.946","text":"\nbß é中\n\na","truncatedFrom":9}
+{"ceiling":4,"chars":0.0,"content":"","setting":"4","text":"","truncatedFrom":null}
+{"ceiling":7.5,"chars":7.5,"content":"1b\n.ßéé\n[… truncated: first 7.5 of 9 characters]","setting":"7.5","text":"1b\n.ßéébé","truncatedFrom":9}
+{"ceiling":3.5,"chars":0.0,"content":"","setting":"0.35e1","text":"","truncatedFrom":null}
+{"ceiling":9.5,"chars":3.0,"content":"\n中a","setting":"0.95e1","text":"\n中a","truncatedFrom":null}
+{"ceiling":8,"chars":1.0,"content":"ß","setting":"0x8","text":"ß","truncatedFrom":null}
+{"ceiling":3.1,"chars":3.1,"content":"é中b\n[… truncated: first 3.1 of 6 characters]","setting":"3.1","text":"é中béb中","truncatedFrom":6}
+{"ceiling":8,"chars":5.0,"content":"中\nß.b","setting":"0x8","text":"中\nß.b","truncatedFrom":null}
+{"ceiling":6,"chars":6.0,"content":"é中ßßab\n[… truncated: first 6 of 12 characters]","setting":"6","text":"é中ßßab1\né1..","truncatedFrom":12}
+{"ceiling":10.5,"chars":5.0,"content":"béaa\n","setting":"1.05e1","text":"béaa\n","truncatedFrom":null}
+{"ceiling":9,"chars":9.0,"content":"\naba \n11b\n[… truncated: first 9 of 13 characters]","setting":"9","text":"\naba \n11ba中b1","truncatedFrom":13}
+{"ceiling":3.000000001,"chars":3.000000001,"content":"中a1\n[… truncated: first 3.000000001 of 12 characters]","setting":"3.000000001","text":"中a1.1ßßé .aß","truncatedFrom":12}
+{"ceiling":11.5,"chars":10.0,"content":"ß1. 1\n1béb","setting":"1.15e1","text":"ß1. 1\n1béb","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.5,"content":"1a\n[… truncated: first 2.5 of 9 characters]","setting":"2.5","text":"1a.ßb\nb11","truncatedFrom":9}
+{"ceiling":4.5,"chars":4.5,"content":"a1\n\n\n[… truncated: first 4.5 of 14 characters]","setting":"0.45e1","text":"a1\n\n\na中é é\n1\nb","truncatedFrom":14}
+{"ceiling":8,"chars":4.0,"content":"a.ab","setting":"0x8","text":"a.ab","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"b中aé中中中b\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"b中aé中中中ba\nb\n","truncatedFrom":12}
+{"ceiling":3.5,"chars":3.5,"content":"b1 \n[… truncated: first 3.5 of 12 characters]","setting":"0.35e1","text":"b1  ß aaß中é ","truncatedFrom":12}
+{"ceiling":2.999,"chars":2.999,"content":"ß \n[… truncated: first 2.999 of 10 characters]","setting":"2.999","text":"ß 1ßß中\n 1b","truncatedFrom":10}
+{"ceiling":6.5,"chars":6.5,"content":"éß.éß1\n[… truncated: first 6.5 of 7 characters]","setting":"0.65e1","text":"éß.éß1ß","truncatedFrom":7}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 4 characters]","setting":"0.05e1","text":"\n1中中","truncatedFrom":4}
+{"ceiling":4.999,"chars":4.999,"content":"a1\n1\n[… truncated: first 4.999 of 8 characters]","setting":"4.999","text":"a1\n1中 b.","truncatedFrom":8}
+{"ceiling":7.5,"chars":4.0,"content":"éé中中","setting":" 7.5 ","text":"éé中中","truncatedFrom":null}
+{"ceiling":2.436,"chars":2.436,"content":"\n.\n[… truncated: first 2.436 of 13 characters]","setting":"2.436","text":"\n.. \n. \n.bbaé","truncatedFrom":13}
+{"ceiling":8.432,"chars":1.0,"content":"1","setting":"8.432","text":"1","truncatedFrom":null}
+{"ceiling":1.5,"chars":1.5,"content":"b\n[… truncated: first 1.5 of 5 characters]","setting":"1.5","text":"bb .\n","truncatedFrom":5}
+{"ceiling":7.5,"chars":7.5,"content":"aéß中ß中ß\n[… truncated: first 7.5 of 10 characters]","setting":"0.75e1","text":"aéß中ß中ß1 \n","truncatedFrom":10}
+{"ceiling":7.188,"chars":7.188,"content":"b 1ß\n11\n[… truncated: first 7.188 of 9 characters]","setting":"7.188","text":"b 1ß\n111é","truncatedFrom":9}
+{"ceiling":8,"chars":8.0,"content":".bé\n1éb1\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":".bé\n1éb1 11é","truncatedFrom":12}
+{"ceiling":1,"chars":1.0,"content":"ß\n[… truncated: first 1 of 9 characters]","setting":"1","text":"ßaß\nßß1bß","truncatedFrom":9}
+{"ceiling":11.25,"chars":4.0,"content":"é a中","setting":"11.25","text":"é a中","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"\n  ..中中ß\n[… truncated: first 8 of 14 characters]","setting":"8","text":"\n  ..中中ß.ß中ßab","truncatedFrom":14}
+{"ceiling":8,"chars":8.0,"content":"中\n.aé1中中\n[… truncated: first 8 of 9 characters]","setting":"0x8","text":"中\n.aé1中中ß","truncatedFrom":9}
+{"ceiling":8,"chars":2.0,"content":"..","setting":"0x8","text":"..","truncatedFrom":null}
+{"ceiling":8,"chars":6.0,"content":".éb.a1","setting":"0x8","text":".éb.a1","truncatedFrom":null}
+{"ceiling":8.999,"chars":7.0,"content":" 中ß..ß.","setting":"8.999","text":" 中ß..ß.","truncatedFrom":null}
+{"ceiling":8,"chars":5.0,"content":"1é.中 ","setting":"0x8","text":"1é.中 ","truncatedFrom":null}
+{"ceiling":11.5,"chars":5.0,"content":"1   中","setting":"1.15e1","text":"1   中","truncatedFrom":null}
+{"ceiling":7,"chars":1.0,"content":"ß","setting":"7","text":"ß","truncatedFrom":null}
+{"ceiling":4.257,"chars":0.0,"content":"","setting":"4.257","text":"","truncatedFrom":null}
+{"ceiling":2.293,"chars":2.293,"content":"bb\n[… truncated: first 2.293 of 7 characters]","setting":"2.293","text":"bb b ..","truncatedFrom":7}
+{"ceiling":10.5,"chars":7.0,"content":"b中1a1b ","setting":"1.05e1","text":"b中1a1b ","truncatedFrom":null}
+{"ceiling":6.998,"chars":6.998,"content":"ba éa.\n[… truncated: first 6.998 of 7 characters]","setting":"6.998","text":"ba éa.中","truncatedFrom":7}
+{"ceiling":11,"chars":5.0,"content":". .1a","setting":"11","text":". .1a","truncatedFrom":null}
+{"ceiling":11.597,"chars":7.0,"content":"ßbbébéß","setting":"11.597","text":"ßbbébéß","truncatedFrom":null}
+{"ceiling":6.5,"chars":6.5,"content":".bßa\n\n\n[… truncated: first 6.5 of 8 characters]","setting":" 6.5 ","text":".bßa\n\na.","truncatedFrom":8}
+{"ceiling":2.672,"chars":2.672,"content":"a \n[… truncated: first 2.672 of 3 characters]","setting":"2.672","text":"a  ","truncatedFrom":3}
+{"ceiling":2,"chars":2.0,"content":"中a\n[… truncated: first 2 of 9 characters]","setting":"2","text":"中a.中éß1a中","truncatedFrom":9}
+{"ceiling":8,"chars":1.0,"content":"b","setting":"8","text":"b","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.5,"content":"bb\n[… truncated: first 2.5 of 9 characters]","setting":"0.25e1","text":"bb\n\n11\n\n\n","truncatedFrom":9}
+{"ceiling":8,"chars":4.0,"content":"béé1","setting":"0x8","text":"béé1","truncatedFrom":null}
+{"ceiling":3.5,"chars":1.0,"content":" ","setting":" 3.5 ","text":" ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"ß  ß.中 \n\n[… truncated: first 8 of 11 characters]","setting":"0x8","text":"ß  ß.中 \n1aß","truncatedFrom":11}
+{"ceiling":11.5,"chars":2.0,"content":"ßa","setting":"1.15e1","text":"ßa","truncatedFrom":null}
+{"ceiling":3,"chars":3.0,"content":".ß1\n[… truncated: first 3 of 5 characters]","setting":"3","text":".ß1ß\n","truncatedFrom":5}
+{"ceiling":8,"chars":4.0,"content":"中1bß","setting":"0x8","text":"中1bß","truncatedFrom":null}
+{"ceiling":8.999,"chars":0.0,"content":"","setting":"8.999","text":"","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 11 characters]","setting":" 0.5 ","text":"é1\néa 中.1a1","truncatedFrom":11}
+{"ceiling":9,"chars":9.0,"content":"b .aa中 b\n\n[… truncated: first 9 of 11 characters]","setting":"9","text":"b .aa中 b\n.ß","truncatedFrom":11}
+{"ceiling":0.999,"chars":0.999,"content":"\n[… truncated: first 0.999 of 13 characters]","setting":"0.999","text":"中ßaabß\nß1 .. ","truncatedFrom":13}
+{"ceiling":2.815,"chars":2.815,"content":"a.\n[… truncated: first 2.815 of 8 characters]","setting":"2.815","text":"a.b..11a","truncatedFrom":8}
+{"ceiling":11.5,"chars":10.0,"content":"bßß1.中é. a","setting":" 11.5 ","text":"bßß1.中é. a","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 11 characters]","setting":"0.05e1","text":"béa bß中中éé.","truncatedFrom":11}
+{"ceiling":10,"chars":9.0,"content":"éab\n中a\n\n\n","setting":"10","text":"éab\n中a\n\n\n","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":".1ßaéa\n.","setting":"0x8","text":".1ßaéa\n.","truncatedFrom":null}
+{"ceiling":1.1,"chars":1.1,"content":"é\n[… truncated: first 1.1 of 12 characters]","setting":"1.1","text":"éa中éß中ßb中ß\né","truncatedFrom":12}
+{"ceiling":8,"chars":6.0,"content":" 中ß中ß ","setting":"0x8","text":" 中ß中ß ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"中b中 1\n1 \n[… truncated: first 8 of 15 characters]","setting":"0x8","text":"中b中 1\n1 ß\néßa.a","truncatedFrom":15}
+{"ceiling":0.999,"chars":0.999,"content":"\n[… truncated: first 0.999 of 12 characters]","setting":"0.999","text":"\nß a中ß.\né中b ","truncatedFrom":12}
+{"ceiling":8,"chars":1.0,"content":" ","setting":"0x8","text":" ","truncatedFrom":null}
+{"ceiling":10.579,"chars":6.0,"content":"baßb.a","setting":"10.579","text":"baßb.a","truncatedFrom":null}
+{"ceiling":4.5,"chars":4.5,"content":"ß中é\n\n[… truncated: first 4.5 of 9 characters]","setting":" 4.5 ","text":"ß中é\n\n\n\n.é","truncatedFrom":9}
+{"ceiling":5.5,"chars":0.0,"content":"","setting":"0.55e1","text":"","truncatedFrom":null}
+{"ceiling":6,"chars":6.0,"content":"bé中\néb\n[… truncated: first 6 of 9 characters]","setting":"6","text":"bé中\néb1 b","truncatedFrom":9}
+{"ceiling":6.25,"chars":0.0,"content":"","setting":"6.25","text":"","truncatedFrom":null}
+{"ceiling":6.411,"chars":6.411,"content":"1中ß中 b\n[… truncated: first 6.411 of 10 characters]","setting":"6.411","text":"1中ß中 b中 a.","truncatedFrom":10}
+{"ceiling":7.5,"chars":0.0,"content":"","setting":" 7.5 ","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":7.0,"content":".a\n ß中 ","setting":"8","text":".a\n ß中 ","truncatedFrom":null}
+{"ceiling":4,"chars":0.0,"content":"","setting":"4","text":"","truncatedFrom":null}
+{"ceiling":6.5,"chars":3.0,"content":"ß \n","setting":" 6.5 ","text":"ß \n","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"1\nßß.中\n1\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"1\nßß.中\n1a中ß ","truncatedFrom":12}
+{"ceiling":1,"chars":1.0,"content":"ß\n[… truncated: first 1 of 4 characters]","setting":"1","text":"ßé1.","truncatedFrom":4}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 9 characters]","setting":"0.05e1","text":"中1bb.bß\n\n","truncatedFrom":9}
+{"ceiling":6.5,"chars":6.5,"content":".ß中\n中b\n[… truncated: first 6.5 of 7 characters]","setting":" 6.5 ","text":".ß中\n中bß","truncatedFrom":7}
+{"ceiling":7.999,"chars":7.999,"content":"  a中é .\n[… truncated: first 7.999 of 11 characters]","setting":"7.999","text":"  a中é .bß..","truncatedFrom":11}
+{"ceiling":1,"chars":1.0,"content":".\n[… truncated: first 1 of 2 characters]","setting":"1","text":"..","truncatedFrom":2}
+{"ceiling":5.257,"chars":1.0,"content":"é","setting":"5.257","text":"é","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"éa .aaß1\n[… truncated: first 8 of 11 characters]","setting":"0x8","text":"éa .aaß1é中a","truncatedFrom":11}
+{"ceiling":8,"chars":8.0,"content":"\n .é a \n","setting":"0x8","text":"\n .é a \n","truncatedFrom":null}
+{"ceiling":10.1,"chars":10.1,"content":"aa\naßa中a 1\n[… truncated: first 10.1 of 11 characters]","setting":"10.1","text":"aa\naßa中a 1é","truncatedFrom":11}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 14 characters]","setting":"0.5","text":"éa   1é b.é中\n1","truncatedFrom":14}
+{"ceiling":9,"chars":4.0,"content":"1\nb中","setting":"9","text":"1\nb中","truncatedFrom":null}
+{"ceiling":1.5,"chars":1.5,"content":"1\n[… truncated: first 1.5 of 3 characters]","setting":"1.5","text":"1\n中","truncatedFrom":3}
+{"ceiling":2,"chars":0.0,"content":"","setting":"2","text":"","truncatedFrom":null}
+{"ceiling":1,"chars":1.0,"content":"ß\n[… truncated: first 1 of 4 characters]","setting":"1","text":"ßß1\n","truncatedFrom":4}
+{"ceiling":5,"chars":0.0,"content":"","setting":"5","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"a..ß ßa.\n[… truncated: first 8 of 15 characters]","setting":"0x8","text":"a..ß ßa.. 1aßba","truncatedFrom":15}
+{"ceiling":9.5,"chars":8.0,"content":"\né\n\nb..1","setting":"0.95e1","text":"\né\n\nb..1","truncatedFrom":null}
+{"ceiling":2,"chars":1.0,"content":"b","setting":"2","text":"b","truncatedFrom":null}
+{"ceiling":5.5,"chars":5.5,"content":" ß1éb\n[… truncated: first 5.5 of 7 characters]","setting":" 5.5 ","text":" ß1éb中ß","truncatedFrom":7}
+{"ceiling":3.5,"chars":3.5,"content":"中1中\n[… truncated: first 3.5 of 14 characters]","setting":" 3.5 ","text":"中1中1b  .bbéabb","truncatedFrom":14}
+{"ceiling":8.5,"chars":8.5,"content":".1中中中aßé\n[… truncated: first 8.5 of 9 characters]","setting":"0.85e1","text":".1中中中aßé.","truncatedFrom":9}
+{"ceiling":2.5,"chars":2.5,"content":"ßß\n[… truncated: first 2.5 of 4 characters]","setting":" 2.5 ","text":"ßß\n ","truncatedFrom":4}
+{"ceiling":10.1,"chars":10.0,"content":"  中éa1.ßb ","setting":"10.1","text":"  中éa1.ßb ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"éa中中.aéa\n[… truncated: first 8 of 14 characters]","setting":"0x8","text":"éa中中.aéa\n11aé.","truncatedFrom":14}
+{"ceiling":10.733,"chars":7.0,"content":".\n é1é中","setting":"10.733","text":".\n é1é中","truncatedFrom":null}
+{"ceiling":8,"chars":3.0,"content":" ß\n","setting":"0x8","text":" ß\n","truncatedFrom":null}
+{"ceiling":9,"chars":3.0,"content":"ß  ","setting":"9","text":"ß  ","truncatedFrom":null}
+{"ceiling":8,"chars":2.0,"content":"\nb","setting":"0x8","text":"\nb","truncatedFrom":null}
+{"ceiling":3.5,"chars":0.0,"content":"","setting":"0.35e1","text":"","truncatedFrom":null}
+{"ceiling":3.5,"chars":3.5,"content":"é1ß\n[… truncated: first 3.5 of 7 characters]","setting":" 3.5 ","text":"é1ß éé.","truncatedFrom":7}
+{"ceiling":2.5,"chars":2.5,"content":"\nb\n[… truncated: first 2.5 of 7 characters]","setting":"0.25e1","text":"\nbß中aßa","truncatedFrom":7}
+{"ceiling":0.999,"chars":0.999,"content":"\n[… truncated: first 0.999 of 13 characters]","setting":"0.999","text":"é 1\n\nß\n.baß\n ","truncatedFrom":13}
+{"ceiling":7.5,"chars":7.5,"content":"\néb\n.bß\n[… truncated: first 7.5 of 15 characters]","setting":" 7.5 ","text":"\néb\n.bß.ß中 ß1é1","truncatedFrom":15}
+{"ceiling":1,"chars":1.0,"content":"ß\n[… truncated: first 1 of 8 characters]","setting":"1","text":"ß1aßa\nbb","truncatedFrom":8}
+{"ceiling":7.5,"chars":6.0,"content":"中ßba\nb","setting":" 7.5 ","text":"中ßba\nb","truncatedFrom":null}
+{"ceiling":7.5,"chars":0.0,"content":"","setting":" 7.5 ","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":1.0,"content":"ß","setting":"0x8","text":"ß","truncatedFrom":null}
+{"ceiling":8.25,"chars":3.0,"content":"aaß","setting":"8.25","text":"aaß","truncatedFrom":null}
+{"ceiling":9.5,"chars":7.0,"content":"a中.\nß1a","setting":" 9.5 ","text":"a中.\nß1a","truncatedFrom":null}
+{"ceiling":5,"chars":5.0,"content":" a\n 1\n[… truncated: first 5 of 6 characters]","setting":"5","text":" a\n 1a","truncatedFrom":6}
+{"ceiling":10.5,"chars":10.5,"content":"中bé\n11\n1.a\n[… truncated: first 10.5 of 12 characters]","setting":"1.05e1","text":"中bé\n11\n1.abé","truncatedFrom":12}
+{"ceiling":9.25,"chars":9.25,"content":" 中中 \n\nb\n1\n[… truncated: first 9.25 of 10 characters]","setting":"9.25","text":" 中中 \n\nb\n1ß","truncatedFrom":10}
+{"ceiling":5.328,"chars":5.328,"content":"ß..éß\n[… truncated: first 5.328 of 14 characters]","setting":"5.328","text":"ß..éßßé\n.ßéßéb","truncatedFrom":14}
+{"ceiling":3.5,"chars":3.5,"content":"éa.\n[… truncated: first 3.5 of 12 characters]","setting":" 3.5 ","text":"éa.\nßé.ß ß11","truncatedFrom":12}
+{"ceiling":3,"chars":3.0,"content":"1\n1\n[… truncated: first 3 of 13 characters]","setting":"3","text":"1\n1a.a1ßbß  ß","truncatedFrom":13}
+{"ceiling":4.5,"chars":4.5,"content":"1éab\n[… truncated: first 4.5 of 8 characters]","setting":" 4.5 ","text":"1éab\n  中","truncatedFrom":8}
+{"ceiling":10,"chars":4.0,"content":".éßb","setting":"10","text":".éßb","truncatedFrom":null}
+{"ceiling":2.1,"chars":2.1,"content":".a\n[… truncated: first 2.1 of 12 characters]","setting":"2.1","text":".a中baé11b1\n1","truncatedFrom":12}
+{"ceiling":11.5,"chars":7.0,"content":"b éßßéa","setting":"1.15e1","text":"b éßßéa","truncatedFrom":null}
+{"ceiling":10.5,"chars":10.5,"content":"é aß 中a中1b\n[… truncated: first 10.5 of 14 characters]","setting":" 10.5 ","text":"é aß 中a中1bébaa","truncatedFrom":14}
+{"ceiling":3.5,"chars":3.5,"content":"中 b\n[… truncated: first 3.5 of 7 characters]","setting":"0.35e1","text":"中 b1ß. ","truncatedFrom":7}
+{"ceiling":10,"chars":4.0,"content":".中. ","setting":"10","text":".中. ","truncatedFrom":null}
+{"ceiling":3,"chars":3.0,"content":"中 a\n[… truncated: first 3 of 7 characters]","setting":"3","text":"中 aa. .","truncatedFrom":7}
+{"ceiling":6,"chars":6.0,"content":"\n1b..b\n[… truncated: first 6 of 14 characters]","setting":"6","text":"\n1b..ba\n中ß1.ß1","truncatedFrom":14}
+{"ceiling":6.5,"chars":6.0,"content":"ßb 1中1","setting":"0.65e1","text":"ßb 1中1","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.5,"content":"1.\n[… truncated: first 2.5 of 4 characters]","setting":"0.25e1","text":"1.ßé","truncatedFrom":4}
+{"ceiling":8,"chars":8.0,"content":"..1.ba1é\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":"..1.ba1éb\n","truncatedFrom":10}
+{"ceiling":10,"chars":1.0,"content":" ","setting":"10","text":" ","truncatedFrom":null}
+{"ceiling":8,"chars":1.0,"content":"é","setting":"0x8","text":"é","truncatedFrom":null}
+{"ceiling":10.449,"chars":10.449,"content":"b.é1éb.\n.1\n[… truncated: first 10.449 of 11 characters]","setting":"10.449","text":"b.é1éb.\n.1ß","truncatedFrom":11}
+{"ceiling":11.5,"chars":7.0,"content":" \n ..中b","setting":"1.15e1","text":" \n ..中b","truncatedFrom":null}
+{"ceiling":6.5,"chars":6.5,"content":"b中ßé \n\n[… truncated: first 6.5 of 9 characters]","setting":" 6.5 ","text":"b中ßé \nß1.","truncatedFrom":9}
+{"ceiling":2.5,"chars":2.5,"content":"1é\n[… truncated: first 2.5 of 15 characters]","setting":" 2.5 ","text":"1éßab.\n11éß.ß1中","truncatedFrom":15}
+{"ceiling":11.211,"chars":9.0,"content":"a中é中aa \n ","setting":"11.211","text":"a中é中aa \n ","truncatedFrom":null}
+{"ceiling":3.866,"chars":3.866,"content":"aaa\n[… truncated: first 3.866 of 5 characters]","setting":"3.866","text":"aaaa\n","truncatedFrom":5}
+{"ceiling":8.5,"chars":7.0,"content":"b中1é\n \n","setting":"0.85e1","text":"b中1é\n \n","truncatedFrom":null}
+{"ceiling":8,"chars":5.0,"content":"\nß\n\na","setting":"0x8","text":"\nß\n\na","truncatedFrom":null}
+{"ceiling":9.5,"chars":0.0,"content":"","setting":" 9.5 ","text":"","truncatedFrom":null}
+{"ceiling":5.5,"chars":5.0,"content":"aßbé ","setting":"5.5","text":"aßbé ","truncatedFrom":null}
+{"ceiling":2,"chars":2.0,"content":"  \n[… truncated: first 2 of 4 characters]","setting":"2","text":"  ..","truncatedFrom":4}
+{"ceiling":1.1,"chars":1.1,"content":"中\n[… truncated: first 1.1 of 13 characters]","setting":"1.1","text":"中 .\né1a \nb  中","truncatedFrom":13}
+{"ceiling":3.1,"chars":3.1,"content":"  b\n[… truncated: first 3.1 of 5 characters]","setting":"3.1","text":"  b中é","truncatedFrom":5}
+{"ceiling":3.596,"chars":3.596,"content":"\n \n\n[… truncated: first 3.596 of 9 characters]","setting":"3.596","text":"\n \naßéa1\n","truncatedFrom":9}
+{"ceiling":2,"chars":2.0,"content":"ßß","setting":"2","text":"ßß","truncatedFrom":null}
+{"ceiling":8,"chars":0.0,"content":"","setting":"0x8","text":"","truncatedFrom":null}
+{"ceiling":1.1,"chars":1.1,"content":"中\n[… truncated: first 1.1 of 12 characters]","setting":"1.1","text":"中1\n 中..\néb\n1","truncatedFrom":12}
+{"ceiling":3.5,"chars":2.0,"content":" é","setting":" 3.5 ","text":" é","truncatedFrom":null}
+{"ceiling":10.25,"chars":8.0,"content":"bé..中 bé","setting":"10.25","text":"bé..中 bé","truncatedFrom":null}
+{"ceiling":9.5,"chars":1.0,"content":"1","setting":"9.5","text":"1","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.5,"content":"1\n\n[… truncated: first 2.5 of 8 characters]","setting":"0.25e1","text":"1\n1中ßa\n\n","truncatedFrom":8}
+{"ceiling":7,"chars":7.0,"content":".\n 中.éé\n[… truncated: first 7 of 13 characters]","setting":"7","text":".\n 中.éé中ßa\n 1","truncatedFrom":13}
+{"ceiling":9.5,"chars":1.0,"content":"b","setting":"0.95e1","text":"b","truncatedFrom":null}
+{"ceiling":8,"chars":2.0,"content":"中1","setting":"0x8","text":"中1","truncatedFrom":null}
+{"ceiling":1e-9,"chars":1e-9,"content":"\n[… truncated: first 1e-9 of 13 characters]","setting":"1e-9","text":"é1bß中\n中.ßé\n ß","truncatedFrom":13}
+{"ceiling":4.5,"chars":4.5,"content":"éa1a\n[… truncated: first 4.5 of 10 characters]","setting":"0.45e1","text":"éa1a  b \nb","truncatedFrom":10}
+{"ceiling":8,"chars":8.0,"content":"中baé a中\n\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"中baé a中\n   é","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":"éébéßabß\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"éébéßabßb\na中","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":"a.ßa.ß1中\n[… truncated: first 8 of 14 characters]","setting":"0x8","text":"a.ßa.ß1中b.中b\n.","truncatedFrom":14}
+{"ceiling":3.5,"chars":3.5,"content":"ß\n中\n[… truncated: first 3.5 of 13 characters]","setting":"0.35e1","text":"ß\n中中b 1éß\n .中","truncatedFrom":13}
+{"ceiling":11.5,"chars":5.0,"content":"b\n中1 ","setting":"11.5","text":"b\n中1 ","truncatedFrom":null}
+{"ceiling":8.5,"chars":6.0,"content":" .a11b","setting":" 8.5 ","text":" .a11b","truncatedFrom":null}
+{"ceiling":8,"chars":3.0,"content":"b1中","setting":"0x8","text":"b1中","truncatedFrom":null}
+{"ceiling":10.25,"chars":10.25,"content":"ébééa1é1b中\n[… truncated: first 10.25 of 13 characters]","setting":"10.25","text":"ébééa1é1b中.aa","truncatedFrom":13}
+{"ceiling":11.5,"chars":7.0,"content":"b1\n中bß ","setting":"1.15e1","text":"b1\n中bß ","truncatedFrom":null}
+{"ceiling":6,"chars":6.0,"content":" 1.bb1\n[… truncated: first 6 of 9 characters]","setting":"6","text":" 1.bb1ßßé","truncatedFrom":9}
+{"ceiling":8,"chars":0.0,"content":"","setting":"0x8","text":"","truncatedFrom":null}
+{"ceiling":6,"chars":6.0,"content":"é1\n 11\n[… truncated: first 6 of 13 characters]","setting":"6","text":"é1\n 11é1éb  1","truncatedFrom":13}
+{"ceiling":8.863,"chars":3.0,"content":"\n中中","setting":"8.863","text":"\n中中","truncatedFrom":null}
+{"ceiling":1,"chars":1.0,"content":"a","setting":"1","text":"a","truncatedFrom":null}
+{"ceiling":8.000000001,"chars":4.0,"content":"1é中ß","setting":"8.000000001","text":"1é中ß","truncatedFrom":null}
+{"ceiling":4,"chars":4.0,"content":"a.ß.\n[… truncated: first 4 of 14 characters]","setting":"4","text":"a.ß.  bé中é.1.ß","truncatedFrom":14}
+{"ceiling":8,"chars":5.0,"content":"bß1é中","setting":"0x8","text":"bß1é中","truncatedFrom":null}
+{"ceiling":4,"chars":4.0,"content":"中1b\n\n[… truncated: first 4 of 10 characters]","setting":"4","text":"中1b\n\néß中 .","truncatedFrom":10}
+{"ceiling":11.5,"chars":5.0,"content":" 1éé ","setting":" 11.5 ","text":" 1éé ","truncatedFrom":null}
+{"ceiling":7.5,"chars":7.5,"content":".ßéa ..\n[… truncated: first 7.5 of 10 characters]","setting":" 7.5 ","text":".ßéa ..a中1","truncatedFrom":10}
+{"ceiling":8,"chars":8.0,"content":"a1éa1中 .\n[… truncated: first 8 of 11 characters]","setting":"0x8","text":"a1éa1中 .é \n","truncatedFrom":11}
+{"ceiling":11.635,"chars":6.0,"content":".1中a1a","setting":"11.635","text":".1中a1a","truncatedFrom":null}
+{"ceiling":8.5,"chars":2.0,"content":"中.","setting":"0.85e1","text":"中.","truncatedFrom":null}
+{"ceiling":9.5,"chars":3.0,"content":"é.\n","setting":" 9.5 ","text":"é.\n","truncatedFrom":null}
+{"ceiling":4,"chars":4.0,"content":"bé.ß\n[… truncated: first 4 of 7 characters]","setting":"4","text":"bé.ß1b.","truncatedFrom":7}
+{"ceiling":3.75,"chars":3.75,"content":"ß1.\n[… truncated: first 3.75 of 13 characters]","setting":"3.75","text":"ß1.\nßßb1.ß1é\n","truncatedFrom":13}
+{"ceiling":0.8,"chars":0.8,"content":"\n[… truncated: first 0.8 of 15 characters]","setting":"0.800","text":"bbb 1ßß1ß中中ßß中中","truncatedFrom":15}
+{"ceiling":9.753,"chars":9.753,"content":"中é中éébß1\n\n[… truncated: first 9.753 of 14 characters]","setting":"9.753","text":"中é中éébß1\n.é. .","truncatedFrom":14}
+{"ceiling":10.000000001,"chars":9.0,"content":"  a中a中a中a","setting":"10.000000001","text":"  a中a中a中a","truncatedFrom":null}
+{"ceiling":1.213,"chars":1.213,"content":"a\n[… truncated: first 1.213 of 5 characters]","setting":"1.213","text":"a. éé","truncatedFrom":5}
+{"ceiling":9,"chars":9.0,"content":" 中ßßab\n ß\n[… truncated: first 9 of 11 characters]","setting":"9","text":" 中ßßab\n ß中b","truncatedFrom":11}
+{"ceiling":9.25,"chars":0.0,"content":"","setting":"9.25","text":"","truncatedFrom":null}
+{"ceiling":3.999,"chars":3.999,"content":"1a \n[… truncated: first 3.999 of 12 characters]","setting":"3.999","text":"1a .中ßß\nb\n é","truncatedFrom":12}
+{"ceiling":7.999,"chars":7.999,"content":"bb1b1éé\n[… truncated: first 7.999 of 9 characters]","setting":"7.999","text":"bb1b1ééaa","truncatedFrom":9}
+{"ceiling":11,"chars":9.0,"content":"1中a中ß \n..","setting":"11","text":"1中a中ß \n..","truncatedFrom":null}
+{"ceiling":10,"chars":3.0,"content":"é. ","setting":"10","text":"é. ","truncatedFrom":null}
+{"ceiling":11,"chars":4.0,"content":"ßabé","setting":"11","text":"ßabé","truncatedFrom":null}
+{"ceiling":1,"chars":1.0,"content":".\n[… truncated: first 1 of 5 characters]","setting":"1","text":".111ß","truncatedFrom":5}
+{"ceiling":8,"chars":8.0,"content":".\n b中中中a\n[… truncated: first 8 of 13 characters]","setting":"0x8","text":".\n b中中中abé.aa","truncatedFrom":13}
+{"ceiling":6.5,"chars":2.0,"content":"é1","setting":"0.65e1","text":"é1","truncatedFrom":null}
+{"ceiling":9,"chars":1.0,"content":"é","setting":"9","text":"é","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":" 中1\nß\n\n \n[… truncated: first 8 of 11 characters]","setting":"0x8","text":" 中1\nß\n\n  1b","truncatedFrom":11}
+{"ceiling":4.259,"chars":4.259,"content":"ß é1\n[… truncated: first 4.259 of 9 characters]","setting":"4.259","text":"ß é1abb中\n","truncatedFrom":9}
+{"ceiling":10,"chars":2.0,"content":"1 ","setting":"10","text":"1 ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"aßß 11é \n[… truncated: first 8 of 11 characters]","setting":"0x8","text":"aßß 11é  1ß","truncatedFrom":11}
+{"ceiling":8,"chars":8.0,"content":"..1éßaßa\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"..1éßaßa中\n é","truncatedFrom":12}
+{"ceiling":10.5,"chars":10.0,"content":"中. a..\n\n\nb","setting":" 10.5 ","text":"中. a..\n\n\nb","truncatedFrom":null}
+{"ceiling":9.5,"chars":5.0,"content":"é éa.","setting":" 9.5 ","text":"é éa.","truncatedFrom":null}
+{"ceiling":6.75,"chars":6.75,"content":"中ßbß1b\n[… truncated: first 6.75 of 14 characters]","setting":"6.75","text":"中ßbß1b1ébbaa1é","truncatedFrom":14}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 12 characters]","setting":"0.05e1","text":"a ßaßßß中.1a ","truncatedFrom":12}
+{"ceiling":8,"chars":8.0,"content":" \na.\n .a\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":" \na.\n .a1ß","truncatedFrom":10}
+{"ceiling":10.25,"chars":10.25,"content":"中1ß中ß1bßb\n\n[… truncated: first 10.25 of 14 characters]","setting":"10.25","text":"中1ß中ß1bßb\n1ß a","truncatedFrom":14}
+{"ceiling":5.000000001,"chars":5.000000001,"content":"a中ß.ß\n[… truncated: first 5.000000001 of 9 characters]","setting":"5.000000001","text":"a中ß.ßé\n\n1","truncatedFrom":9}
+{"ceiling":7.1,"chars":3.0,"content":"\n.1","setting":"7.1","text":"\n.1","truncatedFrom":null}
+{"ceiling":10.1,"chars":4.0,"content":"1 ab","setting":"10.1","text":"1 ab","truncatedFrom":null}
+{"ceiling":3.5,"chars":3.5,"content":"a.中\n[… truncated: first 3.5 of 12 characters]","setting":" 3.5 ","text":"a.中.b.. b\nß中","truncatedFrom":12}
+{"ceiling":10,"chars":10.0,"content":"b .ßßbbß中中\n[… truncated: first 10 of 11 characters]","setting":"10","text":"b .ßßbbß中中b","truncatedFrom":11}
+{"ceiling":8,"chars":8.0,"content":"\n ab1中中ß\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":"\n ab1中中ß11","truncatedFrom":10}
+{"ceiling":8.5,"chars":5.0,"content":"b ba中","setting":"8.5","text":"b ba中","truncatedFrom":null}
+{"ceiling":6.543,"chars":6.543,"content":"中\n.a中中\n[… truncated: first 6.543 of 13 characters]","setting":"6.543","text":"中\n.a中中é1 1中éß","truncatedFrom":13}
+{"ceiling":4,"chars":4.0,"content":"\n\nßb\n[… truncated: first 4 of 7 characters]","setting":"4","text":"\n\nßb.中ß","truncatedFrom":7}
+{"ceiling":11.5,"chars":11.5,"content":"中aßba1a中\n \n\n[… truncated: first 11.5 of 14 characters]","setting":"1.15e1","text":"中aßba1a中\n \n   ","truncatedFrom":14}
+{"ceiling":10.5,"chars":10.5,"content":"éb\nß\n..1éß\n[… truncated: first 10.5 of 15 characters]","setting":" 10.5 ","text":"éb\nß\n..1éß1中a\n中","truncatedFrom":15}
+{"ceiling":7.5,"chars":2.0,"content":"éß","setting":"0.75e1","text":"éß","truncatedFrom":null}
+{"ceiling":8,"chars":1.0,"content":"a","setting":"0x8","text":"a","truncatedFrom":null}
+{"ceiling":7.5,"chars":1.0,"content":"\n","setting":"7.5","text":"\n","truncatedFrom":null}
+{"ceiling":3.32,"chars":3.32,"content":" 中\n\n[… truncated: first 3.32 of 4 characters]","setting":"3.320","text":" 中\nb","truncatedFrom":4}
+{"ceiling":3.5,"chars":3.5,"content":"a.b\n[… truncated: first 3.5 of 11 characters]","setting":"0.35e1","text":"a.b.\n 1..b ","truncatedFrom":11}
+{"ceiling":6,"chars":2.0,"content":"1 ","setting":"6","text":"1 ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"bé1 éaaa\n[… truncated: first 8 of 9 characters]","setting":"0x8","text":"bé1 éaaab","truncatedFrom":9}
+{"ceiling":2.000000001,"chars":2.000000001,"content":"中a\n[… truncated: first 2.000000001 of 3 characters]","setting":"2.000000001","text":"中a ","truncatedFrom":3}
+{"ceiling":8,"chars":8.0,"content":"11  中\nbb\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"11  中\nbb\nb\n中","truncatedFrom":12}
+{"ceiling":11.791,"chars":9.0,"content":"b\n1\nb1é中中","setting":"11.791","text":"b\n1\nb1é中中","truncatedFrom":null}
+{"ceiling":8.5,"chars":7.0,"content":"é.\n \nb ","setting":" 8.5 ","text":"é.\n \nb ","truncatedFrom":null}
+{"ceiling":0.75,"chars":0.75,"content":"\n[… truncated: first 0.75 of 14 characters]","setting":"0.75","text":"bß.bb1é1 中aaaé","truncatedFrom":14}
+{"ceiling":4,"chars":4.0,"content":"1a中b\n[… truncated: first 4 of 12 characters]","setting":"4","text":"1a中b.ßéßß中a\n","truncatedFrom":12}
+{"ceiling":9.5,"chars":9.5,"content":"\n éb1b1\né\n[… truncated: first 9.5 of 11 characters]","setting":"9.5","text":"\n éb1b1\néba","truncatedFrom":11}
+{"ceiling":3,"chars":3.0,"content":"\n\nb\n[… truncated: first 3 of 5 characters]","setting":"3","text":"\n\nb\n1","truncatedFrom":5}
+{"ceiling":8,"chars":6.0,"content":"1a ab\n","setting":"8","text":"1a ab\n","truncatedFrom":null}
+{"ceiling":5,"chars":4.0,"content":"中baé","setting":"5","text":"中baé","truncatedFrom":null}
+{"ceiling":5.83,"chars":5.83,"content":"中bé\n \n[… truncated: first 5.83 of 15 characters]","setting":"5.830","text":"中bé\n 中11.ab\nßbb","truncatedFrom":15}
+{"ceiling":7.5,"chars":7.0,"content":"éé.abb\n","setting":" 7.5 ","text":"éé.abb\n","truncatedFrom":null}
+{"ceiling":10.5,"chars":3.0,"content":"中\n1","setting":"10.5","text":"中\n1","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"..ß\n ba1\n[… truncated: first 8 of 14 characters]","setting":"0x8","text":"..ß\n ba1.é1.\n.","truncatedFrom":14}
+{"ceiling":2.5,"chars":2.5,"content":"..\n[… truncated: first 2.5 of 11 characters]","setting":" 2.5 ","text":"..ß 1ß中 .\n ","truncatedFrom":11}
+{"ceiling":1.624,"chars":1.624,"content":"a\n[… truncated: first 1.624 of 5 characters]","setting":"1.624","text":"a ßbb","truncatedFrom":5}
+{"ceiling":8,"chars":8.0,"content":".é1é.\n中é\n[… truncated: first 8 of 14 characters]","setting":"0x8","text":".é1é.\n中é1b\nb\na","truncatedFrom":14}
+{"ceiling":8,"chars":5.0,"content":" .中ba","setting":"8","text":" .中ba","truncatedFrom":null}
+{"ceiling":2.5,"chars":2.0,"content":"ß ","setting":" 2.5 ","text":"ß ","truncatedFrom":null}
+{"ceiling":10,"chars":3.0,"content":"é..","setting":"10","text":"é..","truncatedFrom":null}
+{"ceiling":2.281,"chars":2.281,"content":"a\n\n[… truncated: first 2.281 of 8 characters]","setting":"2.281","text":"a\nb\né.bb","truncatedFrom":8}
+{"ceiling":8,"chars":8.0,"content":".中 \nß\naé\n[… truncated: first 8 of 9 characters]","setting":"0x8","text":".中 \nß\naéé","truncatedFrom":9}
+{"ceiling":2.25,"chars":2.25,"content":"1\n\n[… truncated: first 2.25 of 7 characters]","setting":"2.25","text":"1\n\n\n中aa","truncatedFrom":7}
+{"ceiling":11,"chars":0.0,"content":"","setting":"11","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":7.0,"content":".\n.ßb \n","setting":"0x8","text":".\n.ßb \n","truncatedFrom":null}
+{"ceiling":6,"chars":4.0,"content":"abéa","setting":"6","text":"abéa","truncatedFrom":null}
+{"ceiling":10.5,"chars":10.5,"content":"1.\n.中1ß.ß1\n[… truncated: first 10.5 of 13 characters]","setting":"1.05e1","text":"1.\n.中1ß.ß1a1.","truncatedFrom":13}
+{"ceiling":5.178,"chars":5.178,"content":"b\n 1\n\n[… truncated: first 5.178 of 13 characters]","setting":"5.178","text":"b\n 1\n.ß中é ßéb","truncatedFrom":13}
+{"ceiling":2.5,"chars":2.5,"content":"ß\n\n[… truncated: first 2.5 of 10 characters]","setting":"0.25e1","text":"ß\n\na.\n b中.","truncatedFrom":10}
+{"ceiling":2.5,"chars":2.0,"content":"éé","setting":"2.5","text":"éé","truncatedFrom":null}
+{"ceiling":2,"chars":2.0,"content":"é.\n[… truncated: first 2 of 5 characters]","setting":"2","text":"é.\n .","truncatedFrom":5}
+{"ceiling":11.5,"chars":11.0,"content":"1 \n...b\n\n中a","setting":"1.15e1","text":"1 \n...b\n\n中a","truncatedFrom":null}
+{"ceiling":10.000000001,"chars":7.0,"content":"中bb. 1é","setting":"10.000000001","text":"中bb. 1é","truncatedFrom":null}
+{"ceiling":11.17,"chars":11.17,"content":" é. a中\nß11é\n[… truncated: first 11.17 of 14 characters]","setting":"11.170","text":" é. a中\nß11éaéa","truncatedFrom":14}
+{"ceiling":4.5,"chars":4.5,"content":"中ba \n[… truncated: first 4.5 of 8 characters]","setting":"0.45e1","text":"中ba é b ","truncatedFrom":8}
+{"ceiling":8,"chars":8.0,"content":"a ßbaßéß\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":"a ßbaßéß 1","truncatedFrom":10}
+{"ceiling":5,"chars":5.0,"content":"a\né1\n\n[… truncated: first 5 of 6 characters]","setting":"5","text":"a\né1\na","truncatedFrom":6}
+{"ceiling":3.5,"chars":3.5,"content":"é\nß\n[… truncated: first 3.5 of 10 characters]","setting":" 3.5 ","text":"é\nß中中b\na\n中","truncatedFrom":10}
+{"ceiling":11.75,"chars":11.0,"content":"é \n\n1\n1 中1.","setting":"11.75","text":"é \n\n1\n1 中1.","truncatedFrom":null}
+{"ceiling":4.5,"chars":4.5,"content":"bß1中\n[… truncated: first 4.5 of 11 characters]","setting":" 4.5 ","text":"bß1中ab中  bß","truncatedFrom":11}
+{"ceiling":1,"chars":1.0,"content":"\n\n[… truncated: first 1 of 14 characters]","setting":"1","text":"\n 中.aab中b\n中1\n1","truncatedFrom":14}
+{"ceiling":10.5,"chars":10.5,"content":"éab\nb\né\né\n\n[… truncated: first 10.5 of 11 characters]","setting":"1.05e1","text":"éab\nb\né\né\n1","truncatedFrom":11}
+{"ceiling":3.5,"chars":3.5,"content":"中中é\n[… truncated: first 3.5 of 4 characters]","setting":"0.35e1","text":"中中é ","truncatedFrom":4}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 8 characters]","setting":" 0.5 ","text":"ß. \n\nß 1","truncatedFrom":8}
+{"ceiling":7.999,"chars":0.0,"content":"","setting":"7.999","text":"","truncatedFrom":null}
+{"ceiling":11,"chars":11.0,"content":".中1中abéßß .\n[… truncated: first 11 of 14 characters]","setting":"11","text":".中1中abéßß .中é ","truncatedFrom":14}
+{"ceiling":6.5,"chars":1.0,"content":"b","setting":" 6.5 ","text":"b","truncatedFrom":null}
+{"ceiling":9.5,"chars":9.0,"content":"中éé.\n aa ","setting":" 9.5 ","text":"中éé.\n aa ","truncatedFrom":null}
+{"ceiling":0.1,"chars":0.0,"content":"","setting":"0.1","text":"","truncatedFrom":null}
+{"ceiling":10.437,"chars":10.437,"content":"bßé \n  b1中\n[… truncated: first 10.437 of 15 characters]","setting":"10.437","text":"bßé \n  b1中b\n\n ß","truncatedFrom":15}
+{"ceiling":8,"chars":8.0,"content":"b\n1中\na中é\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":"b\n1中\na中é\nb","truncatedFrom":10}
+{"ceiling":8,"chars":3.0,"content":"中b1","setting":"0x8","text":"中b1","truncatedFrom":null}
+{"ceiling":9.999,"chars":5.0,"content":"\nßß中ß","setting":"9.999","text":"\nßß中ß","truncatedFrom":null}
+{"ceiling":2.5,"chars":0.0,"content":"","setting":" 2.5 ","text":"","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 15 characters]","setting":"0.05e1","text":"中b1béa a\n中bßé\n.","truncatedFrom":15}
+{"ceiling":4.5,"chars":4.5,"content":"中bé.\n[… truncated: first 4.5 of 7 characters]","setting":" 4.5 ","text":"中bé.  a","truncatedFrom":7}
+{"ceiling":8.75,"chars":0.0,"content":"","setting":"8.75","text":"","truncatedFrom":null}
+{"ceiling":2.1,"chars":2.1,"content":"éß\n[… truncated: first 2.1 of 10 characters]","setting":"2.1","text":"éßß1 1\n中 .","truncatedFrom":10}
+{"ceiling":6.1,"chars":6.1,"content":"bb.ß. \n[… truncated: first 6.1 of 9 characters]","setting":"6.1","text":"bb.ß. \né中","truncatedFrom":9}
+{"ceiling":3.5,"chars":3.5,"content":"  b\n[… truncated: first 3.5 of 15 characters]","setting":" 3.5 ","text":"  b\né 中中 bßb中 a","truncatedFrom":15}
+{"ceiling":8,"chars":5.0,"content":"a中...","setting":"0x8","text":"a中...","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 3 characters]","setting":" 0.5 ","text":"\naé","truncatedFrom":3}
+{"ceiling":3,"chars":3.0,"content":"ß\nß\n[… truncated: first 3 of 8 characters]","setting":"3","text":"ß\nßb éßß","truncatedFrom":8}
+{"ceiling":8,"chars":8.0,"content":"1\n1 b1\n1\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"1\n1 b1\n1ßéß1","truncatedFrom":12}
+{"ceiling":4.5,"chars":4.5,"content":"a 中\n\n[… truncated: first 4.5 of 10 characters]","setting":" 4.5 ","text":"a 中\n中.éé.ß","truncatedFrom":10}
+{"ceiling":8,"chars":8.0,"content":".中.é.ßéb\n[… truncated: first 8 of 11 characters]","setting":"8","text":".中.é.ßéb中中.","truncatedFrom":11}
+{"ceiling":9.5,"chars":0.0,"content":"","setting":" 9.5 ","text":"","truncatedFrom":null}
+{"ceiling":10.5,"chars":9.0,"content":"1ß中ß\na1a中","setting":" 10.5 ","text":"1ß中ß\na1a中","truncatedFrom":null}
+{"ceiling":9.5,"chars":3.0,"content":"éaß","setting":"0.95e1","text":"éaß","truncatedFrom":null}
+{"ceiling":1.5,"chars":1.5,"content":".\n[… truncated: first 1.5 of 4 characters]","setting":"1.5","text":".  .","truncatedFrom":4}
+{"ceiling":3.5,"chars":3.0,"content":"aaa","setting":" 3.5 ","text":"aaa","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 1 characters]","setting":"0.05e1","text":"ß","truncatedFrom":1}
+{"ceiling":4,"chars":4.0,"content":"ßéß中\n[… truncated: first 4 of 7 characters]","setting":"4","text":"ßéß中ß 中","truncatedFrom":7}
+{"ceiling":8.5,"chars":8.5,"content":"中 \naéaß.\n[… truncated: first 8.5 of 15 characters]","setting":" 8.5 ","text":"中 \naéaß.ß.1ßaa\n","truncatedFrom":15}
+{"ceiling":3.5,"chars":3.5,"content":"ßß\n\n[… truncated: first 3.5 of 10 characters]","setting":"3.5","text":"ßß\nß baßa1","truncatedFrom":10}
+{"ceiling":5.75,"chars":5.75,"content":"a\n 中.\n[… truncated: first 5.75 of 13 characters]","setting":"5.75","text":"a\n 中..bßbb中ß中","truncatedFrom":13}
+{"ceiling":0.795,"chars":0.795,"content":"\n[… truncated: first 0.795 of 1 characters]","setting":"0.795","text":".","truncatedFrom":1}
+{"ceiling":8.5,"chars":8.5,"content":"baéb中中bß\n[… truncated: first 8.5 of 9 characters]","setting":"0.85e1","text":"baéb中中bßb","truncatedFrom":9}
+{"ceiling":1.000000001,"chars":1.000000001,"content":"中\n[… truncated: first 1.000000001 of 6 characters]","setting":"1.000000001","text":"中11中.中","truncatedFrom":6}
+{"ceiling":6.5,"chars":6.5,"content":"1b1\na \n[… truncated: first 6.5 of 9 characters]","setting":" 6.5 ","text":"1b1\na  1é","truncatedFrom":9}
+{"ceiling":8,"chars":0.0,"content":"","setting":"0x8","text":"","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"aé\n. \nb.\n[… truncated: first 8 of 12 characters]","setting":"0x8","text":"aé\n. \nb. a.中","truncatedFrom":12}
+{"ceiling":4.5,"chars":2.0,"content":"b中","setting":"0.45e1","text":"b中","truncatedFrom":null}
+{"ceiling":9.1,"chars":5.0,"content":"é1中ß ","setting":"9.1","text":"é1中ß ","truncatedFrom":null}
+{"ceiling":0.77,"chars":0.77,"content":"\n[… truncated: first 0.77 of 11 characters]","setting":"0.77","text":".b\nß ß b中ab","truncatedFrom":11}
+{"ceiling":8.5,"chars":8.5,"content":"b ß\n \n中\n\n[… truncated: first 8.5 of 15 characters]","setting":"0.85e1","text":"b ß\n \n中\n1bé ß 中","truncatedFrom":15}
+{"ceiling":4.448,"chars":2.0,"content":" a","setting":"4.448","text":" a","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"ß1ß..1中1\n[… truncated: first 8 of 10 characters]","setting":"0x8","text":"ß1ß..1中1 ß","truncatedFrom":10}
+{"ceiling":11.5,"chars":11.5,"content":"éb\nébé1..中é\n[… truncated: first 11.5 of 13 characters]","setting":"1.15e1","text":"éb\nébé1..中é\n ","truncatedFrom":13}
+{"ceiling":2.831,"chars":2.831,"content":"中1\n[… truncated: first 2.831 of 5 characters]","setting":"2.831","text":"中1中1é","truncatedFrom":5}
+{"ceiling":2.5,"chars":2.5,"content":".\n\n[… truncated: first 2.5 of 10 characters]","setting":" 2.5 ","text":".\nßßß1ßbaé","truncatedFrom":10}
+{"ceiling":8.5,"chars":7.0,"content":"中1\né.ab","setting":" 8.5 ","text":"中1\né.ab","truncatedFrom":null}
+{"ceiling":3.5,"chars":3.5,"content":"éa中\n[… truncated: first 3.5 of 15 characters]","setting":" 3.5 ","text":"éa中..é中éb1bb.1\n","truncatedFrom":15}
+{"ceiling":8.686,"chars":8.686,"content":"é\nabßb\nb\n[… truncated: first 8.686 of 11 characters]","setting":"8.686","text":"é\nabßb\nb\na中","truncatedFrom":11}
+{"ceiling":6.25,"chars":6.25,"content":"ß b中éß\n[… truncated: first 6.25 of 7 characters]","setting":"6.25","text":"ß b中éß.","truncatedFrom":7}
+{"ceiling":4.5,"chars":1.0,"content":"é","setting":" 4.5 ","text":"é","truncatedFrom":null}
+{"ceiling":9.1,"chars":2.0,"content":"é中","setting":"9.1","text":"é中","truncatedFrom":null}
+{"ceiling":8.5,"chars":6.0,"content":"béb中b\n","setting":" 8.5 ","text":"béb中b\n","truncatedFrom":null}
+{"ceiling":2.453,"chars":1.0,"content":"中","setting":"2.453","text":"中","truncatedFrom":null}
+{"ceiling":6.5,"chars":5.0,"content":"a1\n1ß","setting":"6.5","text":"a1\n1ß","truncatedFrom":null}
+{"ceiling":10,"chars":5.0,"content":"ßaé  ","setting":"10","text":"ßaé  ","truncatedFrom":null}
+{"ceiling":7.5,"chars":7.5,"content":"é.bb\n\nß\n[… truncated: first 7.5 of 14 characters]","setting":"0.75e1","text":"é.bb\n\nß.b中1.a中","truncatedFrom":14}
+{"ceiling":7.5,"chars":1.0,"content":" ","setting":"0.75e1","text":" ","truncatedFrom":null}
+{"ceiling":6.942,"chars":2.0,"content":"bé","setting":"6.942","text":"bé","truncatedFrom":null}
+{"ceiling":3.5,"chars":3.5,"content":"1\n中\n[… truncated: first 3.5 of 15 characters]","setting":" 3.5 ","text":"1\n中1 中aé中é é1ß.","truncatedFrom":15}
+{"ceiling":8,"chars":5.0,"content":"1.中\n ","setting":"0x8","text":"1.中\n ","truncatedFrom":null}
+{"ceiling":8,"chars":3.0,"content":"aé中","setting":"0x8","text":"aé中","truncatedFrom":null}
+{"ceiling":1.1,"chars":1.1,"content":"ß\n[… truncated: first 1.1 of 5 characters]","setting":"1.1","text":"ß中b1.","truncatedFrom":5}
+{"ceiling":4,"chars":4.0,"content":"ßé.é\n[… truncated: first 4 of 5 characters]","setting":"4","text":"ßé.éé","truncatedFrom":5}
+{"ceiling":8,"chars":3.0,"content":"1\né","setting":"0x8","text":"1\né","truncatedFrom":null}
+{"ceiling":11,"chars":11.0,"content":"\néßéab1.éßé\n[… truncated: first 11 of 12 characters]","setting":"11","text":"\néßéab1.éßéé","truncatedFrom":12}
+{"ceiling":7.75,"chars":5.0,"content":" aßé ","setting":"7.75","text":" aßé ","truncatedFrom":null}
+{"ceiling":11.5,"chars":3.0,"content":"é\nß","setting":" 11.5 ","text":"é\nß","truncatedFrom":null}
+{"ceiling":10.12,"chars":2.0,"content":" .","setting":"10.12","text":" .","truncatedFrom":null}
+{"ceiling":5.1,"chars":4.0,"content":"中ßa\n","setting":"5.1","text":"中ßa\n","truncatedFrom":null}
+{"ceiling":3.75,"chars":1.0,"content":"b","setting":"3.75","text":"b","truncatedFrom":null}
+{"ceiling":0.5,"chars":0.5,"content":"\n[… truncated: first 0.5 of 7 characters]","setting":"0.5","text":"中ßéaaé1","truncatedFrom":7}
+{"ceiling":10.829,"chars":10.0,"content":"é b\n.1b\n\né","setting":"10.829","text":"é b\n.1b\n\né","truncatedFrom":null}
+{"ceiling":8.752,"chars":3.0,"content":"éß1","setting":"8.752","text":"éß1","truncatedFrom":null}
+{"ceiling":11.5,"chars":11.5,"content":"\néé.é中baébß\n[… truncated: first 11.5 of 14 characters]","setting":" 11.5 ","text":"\néé.é中baébß中 b","truncatedFrom":14}
+{"ceiling":7,"chars":2.0,"content":".1","setting":"7","text":".1","truncatedFrom":null}
+{"ceiling":4,"chars":4.0,"content":"bß a\n[… truncated: first 4 of 14 characters]","setting":"4","text":"bß aé中éßbba中.1","truncatedFrom":14}
+{"ceiling":6.1,"chars":6.1,"content":"\nb\néa.\n[… truncated: first 6.1 of 12 characters]","setting":"6.1","text":"\nb\néa. .ébßb","truncatedFrom":12}
+{"ceiling":8,"chars":3.0,"content":"1. ","setting":"0x8","text":"1. ","truncatedFrom":null}
+{"ceiling":8,"chars":8.0,"content":"中bßb\nb  \n[… truncated: first 8 of 13 characters]","setting":"0x8","text":"中bßb\nb  1\n.1a","truncatedFrom":13}
+{"ceiling":10.5,"chars":2.0,"content":".a","setting":" 10.5 ","text":".a","truncatedFrom":null}
+{"ceiling":11,"chars":1.0,"content":"a","setting":"11","text":"a","truncatedFrom":null}
+{"ceiling":7,"chars":4.0,"content":" 中é.","setting":"7","text":" 中é.","truncatedFrom":null}
+{"ceiling":3.5,"chars":3.5,"content":"b中\n\n[… truncated: first 3.5 of 10 characters]","setting":" 3.5 ","text":"b中\n1é\nb\nb.","truncatedFrom":10}
+{"ceiling":9.5,"chars":9.5,"content":"\néa b中11ß\n[… truncated: first 9.5 of 13 characters]","setting":"0.95e1","text":"\néa b中11ß .éb","truncatedFrom":13}
+{"ceiling":10.5,"chars":2.0,"content":"ßé","setting":" 10.5 ","text":"ßé","truncatedFrom":null}
+{"ceiling":11.5,"chars":1.0,"content":".","setting":" 11.5 ","text":".","truncatedFrom":null}
+{"ceiling":2.324,"chars":2.324,"content":"\n.\n[… truncated: first 2.324 of 15 characters]","setting":"2.324","text":"\n.1\n aß.é1ß  1b","truncatedFrom":15}
+{"ceiling":7.5,"chars":5.0,"content":" .ß.1","setting":"0.75e1","text":" .ß.1","truncatedFrom":null}
+{"ceiling":7.5,"chars":7.5,"content":"\n中1\n\néß\n[… truncated: first 7.5 of 14 characters]","setting":" 7.5 ","text":"\n中1\n\néßß中ßa\n b","truncatedFrom":14}
+{"ceiling":11.000000001,"chars":11.000000001,"content":" aa\n中中abé中.\n[… truncated: first 11.000000001 of 15 characters]","setting":"11.000000001","text":" aa\n中中abé中.ab\nß","truncatedFrom":15}
