@@ -50,9 +50,18 @@ export const CallbackBodyPayload = z.object({
   callIndex: z.number().int().nonnegative(),
 });
 
+/** A recorded call's body, as the work row that runs it. */
+export interface CallbackBodyWork {
+  kind: typeof CALLBACK_BODY_WORK_KIND;
+  key: string;
+  teamId: string;
+  payload: z.infer<typeof CallbackBodyPayload>;
+  dueAt: string;
+}
+
 /** One recorded call's body as a work row, keyed by the call, so a call is
  *  queued once however often this is reached. */
-export function callbackBodyWork(input: { callbackId: string; teamId: string; callIndex: number; dueAt: string }) {
+export function callbackBodyWork(input: { callbackId: string; teamId: string; callIndex: number; dueAt: string }): CallbackBodyWork {
   const payload: z.infer<typeof CallbackBodyPayload> = { callbackId: input.callbackId, teamId: input.teamId, callIndex: input.callIndex };
   return {
     kind: CALLBACK_BODY_WORK_KIND,

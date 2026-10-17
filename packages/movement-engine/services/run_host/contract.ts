@@ -680,7 +680,8 @@ export interface RecordsContractBackend extends ContractBackend {
   runs: RunRecords;
   /** An operator asks to cancel the run, as the product's cancel door does. */
   requestCancel(input: { runId: string; reason: string | null }): Promise<void>;
-  /** The run's status as its record holds it. */
+  /** The run's status as its record holds it (each product names a
+   *  completed run its own way; a failed one is `failed` in both). */
   runStatus(runId: string): Promise<string>;
   /** Mark the run completed, as the product does when a run settles. */
   completeRun(runId: string): Promise<void>;
@@ -963,9 +964,11 @@ export const cancelContractCases: RecordsContractCase[] = [
 
       const done = await backend.newRun();
       await backend.completeRun(done);
+      const completed = await backend.runStatus(done);
+      assert.notEqual(completed, 'failed');
       await backend.requestCancel({ runId: done, reason: 'too late' });
       await settleIfCancelRequested(host, { runId: done });
-      assert.equal(await backend.runStatus(done), 'completed');
+      assert.equal(await backend.runStatus(done), completed);
     },
   },
 ];

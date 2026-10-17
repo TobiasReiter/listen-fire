@@ -16,8 +16,11 @@
 //
 // TTL is LAZY (the plan's ruling): expiry is a predicate on the claim, not a
 // sweeper. A janitor would be hygiene only, and correctness never waits on one.
-
-import { randomBytes } from 'node:crypto';
+//
+// This file is the run host core's callback family (movement-engine
+// run_host/store.ts `CallbackStore`) served from Postgres: `postgresCallbackStore`
+// at the end. The rules over it (validation, the refusal rule, the id) are the
+// core's (run_host/callbacks.ts), shared with lf's SQLite backend.
 
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
@@ -27,21 +30,29 @@ import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun
 import type { CallbackId } from '../../generated/kysely/automations/Callback';
 import type AutomationsSchema from '../../generated/kysely/automations/AutomationsSchema';
 import type { AnyParkedScopeState } from 'engine-contracts';
+import type {
+  CallbackClaim as CoreCallbackClaim,
+  CallbackRecord as CoreCallbackRecord,
+  CallbackStore,
+} from 'movement-engine/services/run_host/store';
 
+import {
+  callbackBodyWork,
+  callbackRefusal as coreCallbackRefusal,
+  isCallbackId,
+  newCallbackId,
+} from 'movement-engine/services/run_host/callbacks';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { apiBaseUrl } from '../../lib/api_base_url';
+import { enqueueWork } from '../work/store';
 
 // ── The id namespace ───────────────────────────────────────────────────────
 
-/** Every door's ONE recognition test. Compared, never parsed. */
-export const CALLBACK_ID_PREFIX = 'cb_';
-
-export function isCallbackId(value: string): boolean {
-  return value.startsWith(CALLBACK_ID_PREFIX);
-}
+// Every door's one recognition test, and the id's shape, are the core's.
+export { CALLBACK_ID_PREFIX, isCallbackId } from 'movement-engine/services/run_host/callbacks';
 
 function mintCallbackId(): CallbackId {
-  return (CALLBACK_ID_PREFIX + randomBytes(24).toString('base64url')) as CallbackId;
+  return newCallbackId() as CallbackId;
 }
 
 function callbackBaseUrl(): string {
@@ -188,7 +199,8 @@ export interface MintCallbackInput {
   runId: TriggerRunId;
   address: string;
   params: CallbackParamSpec[];
-  state: AnyParkedScopeState;
+  /** The captured closure, stored as the engine handed it. */
+  state: unknown;
   /** `once` — defaults TRUE. The DEFAULT is the engine's, deliberately not the
    *  AST's (chunk 1), so it lives here and nowhere else. */
   singleUse?: boolean;
@@ -376,11 +388,53 @@ export function callbackRefusal(
   callback: CallbackRecord,
   opts: { for: 'a new call' | 'a recorded call'; now: Date },
 ): 'closed' | 'expired' | null {
-  if (callback.status === 'revoked') return 'closed';
-  if (opts.for === 'a recorded call') return null;
-  if (callback.status === 'fired') return 'closed';
-  if (callback.expiresAt !== null && callback.expiresAt <= opts.now) return 'expired';
-  return null;
+  return coreCallbackRefusal(
+    { status: callback.status, expiresAt: callback.expiresAt?.toISOString() ?? null },
+    { for: opts.for, now: opts.now.toISOString() },
+  );
+}
+
+/**
+ * Claim a call and queue its body's `fire_callback` row in one transaction:
+ * once a call is on the ledger, its body is durable work, whatever the
+ * process does next. A refusal queues nothing.
+ */
+export async function claimCallbackFireWithBody(input: {
+  id: string;
+  values: Record<string, unknown>;
+  bodyDueAt: Date;
+}): Promise<CallbackClaim> {
+  return getAutomationsQb(['callback'])
+    .transaction()
+    .execute(async (trx) => {
+      const claimed = await claimCallbackFire({ id: input.id, values: input.values }, { db: trx });
+      if (claimed.kind === 'recorded') {
+        await enqueueCallbackBody(
+          { callback: claimed.callback, callIndex: claimed.callback.calls.length - 1 },
+          { dueAt: input.bodyDueAt, db: trx },
+        );
+      }
+      return claimed;
+    });
+}
+
+/** One recorded call's body as a work row (the core's key and payload), so a
+ *  call is queued once however often this is reached; an earlier due time
+ *  wins. */
+export async function enqueueCallbackBody(
+  input: { callback: Pick<CallbackRecord, 'id' | 'teamId'>; callIndex: number },
+  opts: { dueAt: Date; db?: CallbackDb },
+): Promise<void> {
+  const work = callbackBodyWork({
+    callbackId: input.callback.id,
+    teamId: input.callback.teamId,
+    callIndex: input.callIndex,
+    dueAt: opts.dueAt.toISOString(),
+  });
+  await enqueueWork(
+    { kind: work.kind, key: work.key, teamId: work.teamId, payload: work.payload, dueAt: opts.dueAt },
+    opts.db !== undefined ? { db: opts.db } : {},
+  );
 }
 
 // ── Revocation (the run's lifecycle drives it; there is no sweeper) ────────
@@ -412,96 +466,78 @@ export async function revokeCallbacksForRuns(runIds: TriggerRunId[]): Promise<nu
 
 // ── Fire-time parameter validation (loud, never a silent default) ─────────
 
-export type CallbackValueCoercion =
-  | { ok: true; values: Record<string, unknown> }
-  | { ok: false; message: string };
+// The core's, shared with lf: every declared parameter present and coercible,
+// no undeclared key.
+export { coerceCallbackValues, type CallbackValueCoercion } from 'movement-engine/services/run_host/callbacks';
 
-/**
- * Validate a fire's supplied values against the stored signature. Every declared
- * parameter must be present and coercible to its declared type; an UNDECLARED
- * key is a mismatch too — "the platform sent something where the callback
- * expects nothing" is exactly as wrong as the reverse, and a silent drop is the
- * bug class this language refuses (silent degradation is the absence of a
- * guarantee, not a weaker one).
- */
-export function coerceCallbackValues(
-  params: CallbackParamSpec[],
-  raw: Record<string, unknown>,
-): CallbackValueCoercion {
-  const declared = new Set(params.map((p) => p.name));
-  const extra = Object.keys(raw).filter((k) => !declared.has(k));
-  if (extra.length > 0) {
-    return {
-      ok: false,
-      message:
-        params.length === 0
-          ? `this callback takes no values, but ${extra.map((e) => `'${e}'`).join(', ')} was sent`
-          : `'${extra.join("', '")}' is not a parameter of this callback — it takes: ${params
-              .map((p) => `${p.name} (${p.type})`)
-              .join(', ')}`,
-    };
-  }
+// ── The core's callback family, over Postgres ──────────────────────────────
 
-  const values: Record<string, unknown> = {};
-  for (const param of params) {
-    if (!Object.prototype.hasOwnProperty.call(raw, param.name) || raw[param.name] === undefined) {
-      return {
-        ok: false,
-        message: `missing '${param.name}' — this callback expects ${params
-          .map((p) => `${p.name} (${p.type})`)
-          .join(', ')}`,
-      };
-    }
-    const coerced = coerceOne(param, raw[param.name]);
-    if ('error' in coerced) return { ok: false, message: coerced.error };
-    values[param.name] = coerced.value;
-  }
-  return { ok: true, values };
+function coreRecordOf(record: CallbackRecord): CoreCallbackRecord {
+  return {
+    id: record.id,
+    teamId: record.teamId,
+    runId: record.runId,
+    address: record.address,
+    params: record.params,
+    state: record.state,
+    calls: record.calls,
+    singleUse: record.singleUse,
+    expiresAt: record.expiresAt?.toISOString() ?? null,
+    status: record.status,
+  };
 }
 
-function coerceOne(
-  param: CallbackParamSpec,
-  raw: unknown,
-): { value: unknown } | { error: string } {
-  const bad = (saw: string): { error: string } => ({
-    error: `'${param.name}' expects ${param.type}, but ${saw}`,
-  });
-  switch (param.type) {
-    case 'text':
-      return typeof raw === 'string' ? { value: raw } : { value: String(raw) };
-    case 'number': {
-      const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
-      return Number.isFinite(n) ? { value: n } : bad(`'${String(raw)}' is not a number`);
-    }
-    case 'boolean': {
-      if (typeof raw === 'boolean') return { value: raw };
-      const s = String(raw).trim().toLowerCase();
-      if (['true', 'yes', '1'].includes(s)) return { value: true };
-      if (['false', 'no', '0'].includes(s)) return { value: false };
-      return bad(`'${String(raw)}' is not true or false`);
-    }
-    case 'date':
-    case 'datetime': {
-      const parsed = raw instanceof Date ? raw : new Date(String(raw));
-      if (Number.isNaN(parsed.getTime())) return bad(`'${String(raw)}' is not a date`);
-      return {
-        value: param.type === 'date'
-          ? parsed.toISOString().slice(0, 10)
-          : parsed.toISOString(),
-      };
-    }
-    case 'json': {
-      if (typeof raw !== 'string') return { value: raw };
-      try {
-        return { value: JSON.parse(raw) };
-      } catch {
-        return bad(`'${raw}' is not valid JSON`);
-      }
-    }
-    case 'file':
-      // A file parameter is a handle the CALLING SYSTEM owns — passed through
-      // opaquely, never invented here. The confirm page says so rather than
-      // pretending a browser can supply one.
-      return { value: raw };
+function coreClaimOf(claim: CallbackClaim): CoreCallbackClaim {
+  switch (claim.kind) {
+    case 'recorded':
+      return { kind: 'recorded', callback: coreRecordOf(claim.callback), callIndex: claim.callback.calls.length - 1 };
+    case 'not_found':
+      return claim;
+    case 'closed':
+    case 'expired':
+      return { kind: claim.kind, callback: coreRecordOf(claim.callback) };
   }
 }
+
+/** The plain text the core hands in, as the row's branded ids. */
+const teamIdOf = (id: string) => id as TeamId;
+const runIdOf = (id: string) => id as TriggerRunId;
+
+export const postgresCallbackStore: CallbackStore = {
+  async mint({ teamId, runId, address, params, state, singleUse, expiresAt }) {
+    const record = await mintCallback({
+      teamId: teamIdOf(teamId),
+      runId: runIdOf(runId),
+      address,
+      params,
+      state,
+      singleUse,
+      ...(expiresAt !== undefined ? { expiresAt: new Date(expiresAt) } : {}),
+    });
+    return { id: record.id };
+  },
+  async get({ id }) {
+    const record = await getCallback(id);
+    return record === null ? null : coreRecordOf(record);
+  },
+  async record({ id, values, bodyDueAt }) {
+    return coreClaimOf(await claimCallbackFireWithBody({ id, values, bodyDueAt: new Date(bodyDueAt) }));
+  },
+  markBodyStarted: ({ id, callIndex, fence }) =>
+    markCallbackBodyStarted({ id, callIndex, ...(fence !== undefined ? { lease: { token: fence } } : {}) }),
+  async landed({ ids }) {
+    const callbackIds = ids.filter(isCallbackId) as CallbackId[];
+    if (callbackIds.length === 0) return [];
+    const rows = await getAutomationsQb(['callback'])
+      .selectFrom('callback')
+      .where('id', 'in', callbackIds)
+      .where(sql<boolean>`EXISTS (SELECT 1 FROM jsonb_array_elements(calls) AS call WHERE call ? 'bodyStartedAt')`)
+      .select('id')
+      .execute();
+    const landed = new Set<string>(rows.map((r) => r.id));
+    return ids.filter((id) => landed.has(id));
+  },
+  async revokeRun({ runId }) {
+    await revokeRunCallbacks(runIdOf(runId));
+  },
+};
