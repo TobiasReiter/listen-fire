@@ -12,6 +12,7 @@ import {
   callbackContractCases,
   cancelContractCases,
   runHostContractCases,
+  type RecordsContractBackend,
 } from 'movement-engine/services/run_host/contract';
 import { RpcStoreBackend } from 'movement-engine/services/run_host/rpc_store';
 import { lfHostBinary } from '../lf_host';
@@ -21,21 +22,22 @@ for (const contractCase of [...runHostContractCases, ...callbackContractCases, .
   test(contractCase.name, async () => {
     const { team, clear } = freshTeam();
     const backend = new RpcStoreBackend(lfHostBinary(), ['--contract-store', POSTGRES_URL, '--team', team]);
+    const records: RecordsContractBackend = {
+      store: backend.store,
+      callbacks: backend.callbacks,
+      runs: backend.runs,
+      teamId: team,
+      newRun: async () => {
+        const id = randomUUID();
+        await backend.startRun({ id, file: 'f', movement: 'm', startedAt: new Date().toISOString(), input: '{}' });
+        return id;
+      },
+      requestCancel: (input) => backend.requestCancel(input),
+      runStatus: (runId) => backend.runStatus(runId),
+      completeRun: (runId) => backend.completeRun(runId),
+    };
     try {
-      await contractCase.run({
-        store: backend.store,
-        callbacks: backend.callbacks,
-        runs: backend.runs,
-        teamId: team,
-        newRun: async () => {
-          const id = randomUUID();
-          await backend.startRun({ id, file: 'f', movement: 'm', startedAt: new Date().toISOString(), input: '{}' });
-          return id;
-        },
-        requestCancel: (input) => backend.requestCancel(input),
-        runStatus: (runId) => backend.runStatus(runId),
-        completeRun: (runId) => backend.completeRun(runId),
-      });
+      await contractCase.run(records);
     } finally {
       await backend.close();
       clear();
