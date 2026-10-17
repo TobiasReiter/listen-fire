@@ -101,6 +101,7 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|serve|c
   cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
   --store   where run state is kept: a SQLite file (default .lf/state.db, or lf.yaml's `store:`) or a Postgres database with the hosted schema
   --team    the tenant (a uuid) of a Postgres store's rows
+  --start-timeout  seconds a started external has to print `listening <port>` (default 30, or lf.yaml's `startTimeout`)
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
   --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
@@ -133,6 +134,7 @@ struct Args {
     team: Option<String>,
     until_idle: bool,
     max_seconds: Option<u64>,
+    start_timeout: Option<std::time::Duration>,
     project_schema: bool,
     help: bool,
 }
@@ -159,6 +161,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         team: None,
         until_idle: false,
         max_seconds: None,
+        start_timeout: None,
         project_schema: false,
         help: false,
     };
@@ -186,6 +189,11 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--max-seconds" => {
                 let raw = value("--max-seconds")?;
                 args.max_seconds = Some(raw.parse().map_err(|_| format!("--max-seconds {raw}: a whole number of seconds"))?);
+            }
+            "--start-timeout" => {
+                let raw = value("--start-timeout")?;
+                let seconds = raw.parse().map_err(|_| format!("--start-timeout {raw}: a number of seconds"))?;
+                args.start_timeout = Some(project::start_timeout_of(seconds, "--start-timeout")?);
             }
             "--project-schema" => args.project_schema = true,
             "-h" | "--help" => args.help = true,
@@ -226,9 +234,16 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         writeln!(out, "{}", USAGE.replace("{CREDENTIAL_USAGE}", credential_cmd::USAGE)).map_err(|e| e.to_string())?;
         return Ok(if args.help { 0 } else { 2 });
     };
+    let load = || -> Result<project::Project, String> {
+        let mut project = project::load_project(&args.dir)?;
+        if let Some(waited) = args.start_timeout {
+            project.start_timeout = waited;
+        }
+        Ok(project)
+    };
     match command.as_str() {
-        "check" => check::run(&project::load_project(&args.dir)?, &mut out).await,
-        "catalog" => match check::open_checking(&project::load_project(&args.dir)?).await? {
+        "check" => check::run(&load()?, &mut out).await,
+        "catalog" => match check::open_checking(&load()?).await? {
             check::Opened::Ready(checking) => {
                 writeln!(out, "{}", checking.catalog.to_json()).map_err(|e| e.to_string())?;
                 Ok(0)
@@ -240,10 +255,10 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 Ok(1)
             }
         },
-        "upgrade" => upgrade::run(&project::load_project(&args.dir)?, upgrade::UpgradeOptions { check_only: args.check_only, all: args.all }, &mut out).await,
+        "upgrade" => upgrade::run(&load()?, upgrade::UpgradeOptions { check_only: args.check_only, all: args.all }, &mut out).await,
         "run" => {
             if let (Some(external), Some(body)) = (&args.webhook, &args.body) {
-                let project = project::load_project(&args.dir)?;
+                let project = load()?;
                 let store = store_of(&args, &project)?;
                 let session = runs::open_session(project, args.ephemeral, &store).await?;
                 let delivery = serve::WebhookFile { external, install: args.install.as_deref(), body, headers: &args.headers };
@@ -253,7 +268,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 eprintln!("lf run needs --event <file> or --webhook <external> --body <file>");
                 return Ok(2);
             };
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             let store = store_of(&args, &project)?;
             if args.ephemeral && matches!(store, backend::StoreSpec::Postgres { .. }) {
                 eprintln!("lf-host: --ephemeral keeps its run state in a temporary file; it does not take a Postgres --store");
@@ -265,7 +280,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             runs::report(&outcomes, &mut out)
         }
         "resume" => {
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             let store = store_of(&args, &project)?;
             let session = runs::open_session(project, false, &store).await?;
             let outcomes = match args.rest.first() {
@@ -279,7 +294,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             runs::report(&outcomes, &mut out)
         }
         "runs" => {
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             let store = backend::open_store(&store_of(&args, &project)?)?;
             for run in store.runs(50).map_err(|e| e.to_string())? {
                 writeln!(out, "{} {} {}:{} {}", run.id, run.started_at, run.file, run.movement, run.status).map_err(|e| e.to_string())?;
@@ -287,23 +302,23 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             Ok(0)
         }
         "drain" => {
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             let store = store_of(&args, &project)?;
             let session = runs::open_session(project, false, &store).await?;
             drain::drain(&session, &drain::DrainOptions { until_idle: args.until_idle, max_seconds: args.max_seconds }, &mut out).await
         }
         "serve" => {
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             let store = store_of(&args, &project)?;
             serve::run(project, args.ephemeral, &store, args.port.as_deref()).await
         }
         "call" => {
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             let store = store_of(&args, &project)?;
             serve::call_command(project, &store, args.rest.first().map(String::as_str), args.body.as_deref(), &mut out).await
         }
         "cancel" => {
-            let project = project::load_project(&args.dir)?;
+            let project = load()?;
             serve::cancel_command(&store_of(&args, &project)?, args.rest.first().map(String::as_str), args.reason.as_deref(), &mut out).await
         }
         other if NOT_YET.contains(&other) => {

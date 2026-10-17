@@ -7,9 +7,8 @@
 //! external serves a package of plugins instead of an adapter.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -360,7 +359,7 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
     let served: Vec<String>;
     let command_line = match &external.manifest.module {
         Some(module) => {
-            served = vec![std::env::var("LF_SERVE_MODULE").ok().filter(|c| !c.is_empty()).unwrap_or_else(|| "serve-module".into()), module.clone()];
+            served = [serve_module_command(project, name)?, vec![module.clone()]].concat();
             Some(served.as_slice())
         }
         None => external.manifest.command.as_deref(),
@@ -387,7 +386,8 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         .map_err(|e| format!("external \"{name}\": {command} could not be started ({e})"))?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let mut lines = BufReader::new(stdout).lines();
-    let port = tokio::time::timeout(Duration::from_secs(10), async {
+    let waited = project.start_timeout;
+    let port = tokio::time::timeout(waited, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(port) = listening_port(&line) {
                 return Ok(port);
@@ -396,10 +396,47 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         Err(format!("external \"{name}\" exited before listening"))
     })
     .await
-    .map_err(|_| format!("external \"{name}\" did not print \"listening <port>\" within 10s"))??;
+    .map_err(|_| {
+        format!(
+            "external \"{name}\" did not print \"listening <port>\" within {}s (lf.yaml's `startTimeout`, or --start-timeout, waits longer)",
+            waited.as_secs()
+        )
+    })??;
     // Keep reading what it prints, so a full pipe never blocks it.
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
     Ok((format!("http://127.0.0.1:{port}/"), Some(child)))
+}
+
+/// How a `module` external is served: `LF_SERVE_MODULE` when set, else the
+/// module kit's `serve-module` as the TypeScript lf finds it
+/// (`require.resolve('module-kit/bin/serve-module.cjs')`): the project's
+/// node_modules (its `.bin` shim, or the package's script under node), then
+/// the workspace lf-host was built in.
+fn serve_module_command(project: &Project, external: &str) -> Result<Vec<String>, String> {
+    if let Some(command) = std::env::var("LF_SERVE_MODULE").ok().filter(|c| !c.is_empty()) {
+        return Ok(vec![command]);
+    }
+    let script = |base: &Path| -> Option<Vec<String>> {
+        let shim = base.join("node_modules/.bin/serve-module");
+        if shim.is_file() {
+            return Some(vec![shim.display().to_string()]);
+        }
+        ["node_modules/module-kit/bin/serve-module.cjs", "packages/module-kit/bin/serve-module.cjs"]
+            .iter()
+            .map(|relative| base.join(relative))
+            .find(|path| path.is_file())
+            .map(|path| vec!["node".to_string(), path.display().to_string()])
+    };
+    let from_binary = std::env::current_exe().ok().and_then(|exe| exe.canonicalize().ok());
+    let bases = project.root.ancestors().chain(from_binary.iter().flat_map(|exe| exe.ancestors().skip(1)));
+    for base in bases {
+        if let Some(command) = script(base) {
+            return Ok(command);
+        }
+    }
+    Err(format!(
+        "external \"{external}\" is a module, and lf found no serve-module to serve it: add module-kit to the project (its node_modules), or set LF_SERVE_MODULE to the command that serves a module"
+    ))
 }
 
 /// The port in a line `listening <port>…`.
@@ -411,6 +448,40 @@ fn listening_port(line: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serve_module_is_found_in_the_projects_node_modules_then_the_workspace() {
+        if std::env::var_os("LF_SERVE_MODULE").is_some() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("lf-serve-module-{}", uuid::Uuid::new_v4()));
+        let script = root.join("node_modules/module-kit/bin/serve-module.cjs");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&script, "").unwrap();
+        let mut project = test_project(&root);
+        assert_eq!(serve_module_command(&project, "m").unwrap(), vec!["node".to_string(), script.display().to_string()]);
+        // No copy in the project: the workspace this binary was built in has one.
+        std::fs::remove_file(&script).unwrap();
+        project.root = root.join("elsewhere");
+        let found = serve_module_command(&project, "m").unwrap();
+        assert!(found.last().unwrap().ends_with("serve-module.cjs") || found[0].ends_with("serve-module"), "{found:?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn test_project(root: &Path) -> Project {
+        Project {
+            root: root.to_path_buf(),
+            lf_dir: root.join(".lf"),
+            engine: String::new(),
+            language_version: 5,
+            movements_dir: root.join("movements"),
+            externals_dir: root.join("externals"),
+            user: (None, None),
+            store: None,
+            public_url: None,
+            start_timeout: crate::project::DEFAULT_START_TIMEOUT,
+        }
+    }
 
     #[test]
     fn the_port_is_read_off_the_listening_line() {

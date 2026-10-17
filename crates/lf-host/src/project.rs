@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use movement_parser::version::{CURRENT_LANGUAGE_VERSION, since};
 use serde::Deserialize;
@@ -33,6 +34,9 @@ struct ProjectFile {
     store: Option<String>,
     #[serde(rename = "publicUrl")]
     public_url: Option<String>,
+    /// Seconds a started external has to print `listening <port>`.
+    #[serde(rename = "startTimeout")]
+    start_timeout: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -66,6 +70,22 @@ pub struct Project {
     pub store: Option<String>,
     /// Where lf is reached from outside (`publicUrl`), when lf.yaml names it.
     pub public_url: Option<String>,
+    /// How long a started external (a module's serve-module included) has to
+    /// print `listening <port>`: lf.yaml's `startTimeout`, unless
+    /// `--start-timeout` names another.
+    pub start_timeout: Duration,
+}
+
+/// A started external's wait when lf.yaml names none: a module's first start
+/// compiles its TypeScript, which can take a while on a cold cache.
+pub const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `startTimeout` / `--start-timeout`: a positive number of seconds.
+pub fn start_timeout_of(seconds: f64, from: &str) -> Result<Duration, String> {
+    if !(seconds.is_finite() && seconds > 0.0) {
+        return Err(format!("{from}: a positive number of seconds, e.g. 30"));
+    }
+    Ok(Duration::from_secs_f64(seconds))
 }
 
 /// The language version an engine version runs. Every engine this release
@@ -135,6 +155,10 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
     {
         return Err(format!("{}: publicUrl: an http(s) URL, e.g. https://lf.example.com", path.display()));
     }
+    let start_timeout = match file.start_timeout {
+        None => DEFAULT_START_TIMEOUT,
+        Some(seconds) => start_timeout_of(seconds, &format!("{}: startTimeout", path.display()))?,
+    };
     let language_version = language_version_of_engine(&file.engine)?;
     refuse_below_lf(language_version, &path.display().to_string(), "run `lf upgrade`")?;
     let lf_dir = dir.join(".lf");
@@ -148,6 +172,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         user: (file.user.name, file.user.email),
         store: file.store,
         public_url: file.public_url,
+        start_timeout,
         root: dir,
     })
 }
