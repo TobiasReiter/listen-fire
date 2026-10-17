@@ -133,23 +133,37 @@ function requestKey(request: HttpRequestRecord): string {
 
 /**
  * Answer from `recorded`, matching each request exactly (method, path,
- * content type, auth and body, after `normalise`); a request the recording
- * does not have answers 599, so the implementation under test fails where it
+ * content type, auth and body, after `normalise`), each recorded answer once;
+ * a request the recording does not have answers 599, so the implementation under test fails where it
  * diverged rather than later.
  */
-export async function replayingHttpServer(recorded: readonly HttpExchange[], normalise: BodyNormaliser = identity): Promise<HttpExchangeServer> {
+export async function replayingHttpServer(
+  recorded: readonly HttpExchange[],
+  options: {
+    normalise?: BodyNormaliser;
+    /** Answer a request asked more often than recorded with its last
+     *  recorded answer, for a transport whose client repeats a read (it is
+     *  still kept among `requests()`, so a test says which repeats it allows). */
+    repeatReads?: boolean;
+  } = {},
+): Promise<HttpExchangeServer> {
+  const normalise = options.normalise ?? identity;
+  const last = new Map<string, HttpExchange>();
   const answers = new Map<string, HttpExchange[]>();
   for (const exchange of recorded) {
     const key = requestKey(requestOf(exchange));
     answers.set(key, [...(answers.get(key) ?? []), exchange]);
+    last.set(key, exchange);
   }
   const requests: HttpRequestRecord[] = [];
   const server = createServer((req, res) => {
     void (async () => {
       const record = normalise((await received(req)).record);
       requests.push(record);
-      const answer = (answers.get(requestKey(record)) ?? []).shift();
+      const key = requestKey(record);
+      const answer = (answers.get(key) ?? []).shift() ?? (options.repeatReads === true ? last.get(key) : undefined);
       if (answer === undefined) {
+        if (process.env.PARITY_DEBUG === '1') console.error('not in the recording', JSON.stringify(record));
         res.writeHead(599, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: false, description: `not in the recording: ${record.method} ${record.path}` }));
         return;

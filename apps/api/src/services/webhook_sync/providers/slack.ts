@@ -20,87 +20,13 @@
 
 import crypto from "node:crypto";
 
-import { z } from 'zod';
+import { parseSlackDeliveries, slackEnvelope } from '@lf/slack/inbound';
 
 import type {
   WebhookProvider,
   WebhookEvent,
   WebhookRegistration,
 } from './interface';
-
-/**
- * Slack file attachment subset. Only the fields the SlackAdapter's
- * `getResources` actually reads — anything else passes through verbatim
- * on `rawPayload`. Kept loose (`.passthrough()`) so future Slack file
- * fields don't reject otherwise-valid payloads.
- */
-const slackFileSchema = z
-  .object({
-    id: z.string().optional(),
-    name: z.string().optional(),
-    title: z.string().optional(),
-    mimetype: z.string().optional(),
-    url_private: z.string().optional(),
-    url_private_download: z.string().optional(),
-    size: z.number().optional(),
-  })
-  .passthrough();
-
-/**
- * Inner Slack event (the `event_callback.event` field). Slack delivers
- * many event subtypes — `message`, `app_mention`, `reaction_added`, … —
- * but only `message` matters for the wave-1 dealflow path. We accept any
- * `type` and forward the payload; downstream filters on the trigger entry
- * decide what to act on.
- */
-const slackInnerEventSchema = z
-  .object({
-    type: z.string(),
-    user: z.string().optional(),
-    channel: z.string().optional(),
-    ts: z.string().optional(),
-    event_ts: z.string().optional(),
-    thread_ts: z.string().optional(),
-    text: z.string().optional(),
-    files: z.array(slackFileSchema).optional(),
-    // `reaction_added` fields: the emoji name, the reacted item (a message —
-    // its channel + ts), and the reacted message's author. `channel` is nested
-    // under `item` for reactions (not at the top level like messages).
-    reaction: z.string().optional(),
-    item: z
-      .object({
-        type: z.string().optional(),
-        channel: z.string().optional(),
-        ts: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-    item_user: z.string().optional(),
-  })
-  .passthrough();
-
-/**
- * Slack envelope. Slack sends three envelope flavours:
- *
- *   • `url_verification` — one-shot setup challenge. The provider parses
- *     it but emits no events; the REST handler is responsible for
- *     responding with the challenge token. parseEvents returns [].
- *   • `event_callback` — the real payload; wraps a single `event` object.
- *   • `app_rate_limited` — informational; we drop on the floor.
- *
- * `.passthrough()` so unknown envelope fields don't break parsing.
- */
-const slackEnvelopeSchema = z
-  .object({
-    type: z.string(),
-    event_id: z.string().optional(),
-    event_time: z.number().optional(),
-    team_id: z.string().optional(),
-    api_app_id: z.string().optional(),
-    challenge: z.string().optional(),
-    event: slackInnerEventSchema.optional(),
-  })
-  .passthrough();
 
 /**
  * Object id Slack events normalise to. The framework's source-side
@@ -123,57 +49,24 @@ function slackEventTypeToEventType(innerType: string): string {
 }
 
 /**
- * Pure per-delivery parser — the same normalization the retired provider
- * `parseEvents` seam ran. The SlackAdapter's `preprocessInbound` is the sole
- * runtime consumer; exported so the parse stays testable in isolation.
+ * Pure per-delivery parser, over the module's (@lf/slack inbound.ts), as the
+ * webhook layer's event — what the shared app's door (`slack_events.ts`)
+ * dispatches on.
  */
 export function parseSlackEvents(body: unknown): WebhookEvent[] {
-  const parsed = slackEnvelopeSchema.safeParse(body);
-  if (!parsed.success) return [];
-
-  // `url_verification` / `app_rate_limited` / any other non-event_callback
-  // envelope → no events to dispatch. The REST handler short-circuits
-  // url_verification with the challenge response before invoking this,
-  // but returning [] here means the handler reports `eventsProcessed: 0`
-  // and a 200 OK either way.
-  if (parsed.data.type !== 'event_callback' || !parsed.data.event) {
-    return [];
-  }
-
-  const inner = parsed.data.event;
-  // Record id = message `ts`. Slack's `ts` is the stable identifier for
-  // any message (and what the SlackAdapter's BaseAdapter linked-object
-  // match keys on). Fall back to event_id / event_ts if absent so we
-  // never emit an event with an empty recordId.
-  const recordId = inner.ts ?? inner.event_ts ?? parsed.data.event_id ?? '';
-
-  return [
-    {
-      eventType: slackEventTypeToEventType(inner.type),
-      recordId,
-      objectId: SLACK_OBJECT_ID,
-      // The envelope `event_id` (Ev…) is Slack's per-delivery idempotency key:
-      // stable across the retries Slack fires when it doesn't get a 200 within
-      // 3s, so the receipt store dedupes redeliveries instead of running twice.
-      idempotencyKey: parsed.data.event_id,
-      // Slack doesn't surface a server-asserted actor in the framework's
-      // `(adapterType, actor)` echo-recognition shape — `event.user` is
-      // the Slack user id, not an authentication actor. Leave undefined;
-      // the framework falls back to no-op detection.
-      actor: undefined,
-      // Forward the inner event verbatim. The SlackAdapter expects to
-      // read `text` / `user` / `channel` / `ts` / `files` directly off
-      // the source position's `data`, so the inner event (not the
-      // envelope) is what becomes that `data`.
-      rawPayload: inner,
-      // Slack events don't surface field-level change granularity (a
-      // message edit fires `message_changed` as a separate event with
-      // the new message in `event.message`); no `changedFields`
-      // pruning is possible. Leaving undefined falls through to "always
-      // traverse" in event-mode TG execution.
-      changedFields: undefined,
-    },
-  ];
+  return parseSlackDeliveries(body).map((delivery) => ({
+    eventType: slackEventTypeToEventType(delivery.eventType),
+    recordId: delivery.recordId,
+    objectId: SLACK_OBJECT_ID,
+    // Slack's per-delivery idempotency key: stable across Slack's retries.
+    idempotencyKey: delivery.idempotencyKey,
+    // `event.user` is the Slack user id, not an authentication actor.
+    actor: undefined,
+    // The inner event, verbatim: what the adapter reads off a position.
+    rawPayload: delivery.event,
+    // No field-level change granularity in Slack events.
+    changedFields: undefined,
+  }));
 }
 
 const slackProvider: WebhookProvider = {
@@ -208,4 +101,4 @@ export { slackProvider };
 
 // Exported for the REST handler so it can branch on Slack's
 // `url_verification` envelope without re-parsing.
-export const slackEnvelopeSchemaForRest = slackEnvelopeSchema;
+export const slackEnvelopeSchemaForRest = slackEnvelope;

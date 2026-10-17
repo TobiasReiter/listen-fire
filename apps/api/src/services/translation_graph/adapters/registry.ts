@@ -16,7 +16,8 @@ import {
   NATIVE_VALUATIONS_MANIFEST,
   createNativeValuationsAdapter,
 } from './native_valuations';
-import { SLACK_ADAPTER_TYPE, SLACK_MANIFEST, createSlackAdapter } from './slack';
+import { SLACK_ADAPTER_TYPE } from '@lf/slack/types';
+import { SLACK_MANIFEST } from '@lf/slack/manifest';
 import { TELEGRAM_ADAPTER_TYPE } from '@lf/telegram/types';
 import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
 import { EMAIL_ADAPTER_TYPE, EMAIL_MANIFEST, createEmailAdapter } from './email';
@@ -86,7 +87,11 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   [AFFINITY_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
     createAffinityAdapter({ teamId, credentialsId }),
   [NATIVE_VALUATIONS_ADAPTER_TYPE]: createNativeValuationsAdapter,
-  [SLACK_ADAPTER_TYPE]: createSlackAdapter,
+  // A module (@lf/slack); its BUILTIN_MODULES line picks module or legacy.
+  [SLACK_ADAPTER_TYPE]: builtinAdapterFactory(SLACK_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createSlackAdapter }: typeof import('./slack') = require('./slack');
+    return createSlackAdapter({ teamId, credentialsId });
+  }),
   // Telegram adapter — source (inbound messages + media) AND target (send a
   // message). Bot-token credential; inbound arrives by webhook
   // (preprocessInbound); outbound is the unified telegram:message, created

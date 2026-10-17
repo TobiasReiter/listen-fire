@@ -11,7 +11,7 @@
 // where the channel — and thus the roster — is known. This compose step is
 // therefore deliberately roster-free and channel-blind.
 
-import type { FieldFunctionDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { FieldFunctionDescriptor } from 'movement-engine/public/catalog';
 
 /** Advertised on the message `text` fields (post-message + thread-reply). */
 export const SLACK_MESSAGE_FUNCTION: FieldFunctionDescriptor = {
@@ -75,20 +75,33 @@ function buildUserMessage(instructions: string, data: unknown[]): string {
   return lines.join('\n');
 }
 
+/** The model a Slack message is composed with. */
+export const SLACK_COMPOSE_MODEL = 'claude-sonnet-5';
+
+/** One chat turn with a model, as the host runs it (its routing, its
+ *  metering): the reply's text. */
+export type SlackComposeChat = (input: {
+  model: typeof SLACK_COMPOSE_MODEL;
+  temperature: number;
+  label: string;
+  system: string;
+  userMessage: string;
+}) => Promise<string>;
+
 /**
- * Run the SLACK_MESSAGE compose. Returns mrkdwn carrying `@[Name]` mention
- * tokens (resolved to `<@id>` at the write boundary). Roster-free.
+ * Run the SLACK_MESSAGE compose over the host's `chat`. Returns mrkdwn
+ * carrying `@[Name]` mention tokens (resolved to `<@id>` at the write
+ * boundary). Roster-free.
  */
-export async function composeSlackMessage(args: {
-  instructions: string;
-  data: unknown[];
-}): Promise<string> {
-  // Lazy-require to dodge the chat wrapper's transitive Prisma dependency in
-  // unit tests (same reason as engine/expression.ts:callLLM).
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { anthropicChat }: typeof import('../../../../lib/anthropic') = require('../../../../lib/anthropic');
-  const text = await anthropicChat({
-    model: 'claude-sonnet-5',
+export async function composeSlackMessage(
+  chat: SlackComposeChat,
+  args: {
+    instructions: string;
+    data: unknown[];
+  },
+): Promise<string> {
+  const text = await chat({
+    model: SLACK_COMPOSE_MODEL,
     temperature: 0,
     label: 'slack_message_compose',
     system: SLACK_SYSTEM_PROMPT,

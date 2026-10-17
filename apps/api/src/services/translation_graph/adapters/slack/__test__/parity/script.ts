@@ -169,7 +169,8 @@ export async function runSlackParityScript(subject: SlackParitySubject): Promise
   if (reaction !== undefined) await walk('Reaction', reaction);
 
   // ── The actor ──
-  const event = (payload: unknown) => ({ payload, actor: undefined }) as never;
+  // A delivered event as the engine hands it to the actor gate.
+  const event = (payload: unknown) => ({ pipelineInputId: 'pi-parity', adapterType: 'slack', triggerType: 'webhook', payload }) as never;
   for (const [name, raw] of [['message', MESSAGE_EVENT], ['reaction', REACTION_EVENT]] as const) {
     const payload = (await adapter.preprocessInbound?.({ raw }))?.events[0]?.payload;
     await step(`getActorCandidates ${name}`, async () => (await adapter.getActorCandidates?.({ event: event(payload) })) ?? null);
@@ -193,7 +194,7 @@ export async function runSlackParityScript(subject: SlackParitySubject): Promise
     );
   }
   await step('invokeFieldFunction unknown', async () =>
-    (await adapter.invokeFieldFunction?.({ recordType: 'Message', fieldId: 'Message', functionName: 'NOPE', args: {} } as never)) ?? null,
+    (await adapter.invokeFieldFunction?.({ recordType: 'Message', fieldId: 'Message', functionName: 'NOPE', args: { instructions: 'x', data: [] } } as never)) ?? null,
   );
 
   // ── Sends ──

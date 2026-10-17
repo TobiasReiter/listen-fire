@@ -1,0 +1,32 @@
+{
+  "name": "@lf/slack",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "Slack (a workspace: channels, history, threads, users, files, reactions; posts, replies and reactions; the awaited Replies) as a module. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "scripts": {
+    "code:type-check": "tsc --pretty --noEmit && node ../../scripts/check-module-boundary.cjs",
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
+    "bench": "node --require ../../packages/module-kit/node_modules/tsx/dist/cjs/index.cjs bench/hosted_bench.ts"
+  },
+  "main": "index.ts",
+  "types": "index.ts",
+  "type": "commonjs",
+  "dependencies": {
+    "#shared": "workspace:@listen-fire/shared@*",
+    "@slack/web-api": "7.11.0",
+    "engine-contracts": "workspace:*",
+    "module-kit": "workspace:*",
+    "movement-engine": "workspace:*",
+    "movement-lang": "workspace:*",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.14",
+    "@types/node": "20.16.5",
+    "typescript": "5.5.4"
+  }
+}

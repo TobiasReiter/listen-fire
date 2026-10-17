@@ -35,6 +35,7 @@ import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/p
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
+import { SLACK_MANIFEST } from '@lf/slack/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -43,6 +44,7 @@ import { postgresSecrets } from '../../credentials/secrets_postgres';
 import { credentialTypeOf } from './credential_type';
 import { builtInBotToken } from './telegram/shared_bot';
 import { telegramIdentities } from './telegram/identities';
+import { teamIdSchema } from '../../../lib/team_id';
 
 export type BuiltinLine = 'legacy' | 'module';
 
@@ -77,6 +79,9 @@ export type BuiltinModuleLine =
 
 /** The table a lookup reads: `BUILTIN_MODULES`, or a test's own. */
 export type BuiltinModuleTable = Readonly<Record<string, BuiltinModuleLine>>;
+
+/** Built once, on the Slack line's first use. */
+let platformSlackModule: AdapterModuleDefinition | undefined;
 
 /**
  * Every built-in that becomes a module (plan 22 #1), by adapter type or
@@ -120,7 +125,24 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
       identities: telegramIdentities,
     },
   },
-  slack: { kind: 'adapter', line: 'legacy' },
+  slack: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: SLACK_MANIFEST,
+    // The platform's own definition: its model for the composition function,
+    // its redemption of a file any owner holds.
+    load: () => {
+      if (platformSlackModule === undefined) {
+        const { slackModuleWith }: typeof import('@lf/slack') = require('@lf/slack');
+        const { platformSlackChat, platformSlackFile }: typeof import('./slack') = require('./slack');
+        platformSlackModule = slackModuleWith({
+          chat: platformSlackChat,
+          readFile: (ref, ctx) => platformSlackFile(ref, teamIdSchema.parse(ctx.config.tenant)),
+        });
+      }
+      return platformSlackModule;
+    },
+  },
   // The bundled plugins (Henry 2026-10-17: plugins are modules too).
   'fetch-url': { kind: 'plugin', line: 'legacy' },
   'web-research': { kind: 'plugin', line: 'legacy' },
