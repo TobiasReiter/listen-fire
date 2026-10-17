@@ -10,6 +10,12 @@
   "exports": {
     "./package.json": "./package.json",
     "./public/*": "./public/*.ts",
+    "./lib/anthropic": {
+      "movement-engine-internals": "./lib/anthropic/index.ts"
+    },
+    "./services/translation_graph/adapters/remote": {
+      "movement-engine-internals": "./services/translation_graph/adapters/remote/index.ts"
+    },
     "./*": {
       "movement-engine-internals": "./*.ts"
     }
