@@ -1299,6 +1299,26 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - Not in `lf-host` yet: `serve` and the inbound doors, callbacks, `cancel`, model calls, credential
   refresh, and `run --webhook`. The TypeScript `lf` is unchanged and still has them all.
 
+### ev3-kit
+
+- A built-in integration can now be a module: written once with the module kit
+  (`packages/module-kit`, `defineModule`), loaded in process by the platform and served as a
+  protocol-2 process by `serve-module` everywhere else. A module reaches no part of the hosted
+  product, no database and no recording layer; a check in each module's type-check holds that.
+- Dealroom is the first: `@lf/dealroom` (`modules/dealroom`). Nothing changes for a team using it:
+  the same requests, the same answers and the same polled events, held by a recording of the old
+  adapter replayed against the module both ways. Switching back is one line (`BUILTIN_MODULES`).
+- Plugins are modules too. A plugin module declares its plugins as one package, imported by tag
+  (``import { `@lf/web` as web } from plugins``) and called through the protocol's new
+  `invokePlugin`. The six bundled plugins are still the platform's own for now.
+- `lf`: an `lf-external.yaml` may name a `module` instead of a command or a URL, and a plugin
+  external is now served (its plugins checked and called). `lf-host` does the same, except a module
+  that needs a declared credential, which it checks but cannot run yet.
+- Adapter protocol 2 (no version bump): a manifest may declare `plugins`, paired with
+  `invokePlugin`; the install manifest file keeps a module's declarations. When a module declares a
+  signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
+  signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
