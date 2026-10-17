@@ -116,6 +116,10 @@ Listen-Fire sends your secret on every call. Your manifest picks how:
 - Check the header on every request; answer HTTP 401 when it is missing or wrong.
 - The secret is entered at install time and stored encrypted. It never goes in
   the manifest.
+- The secret belongs to the INSTALL: every call to your server carries it,
+  whichever user the call acts as. Who the call acts as at your provider
+  rides separately, as the request's `credential`
+  ([Credentials](#credentials)).
 - Every call to your server carries `x-listen-fire-team: <team id>`, the UUID of
   the team whose install is calling. A server that serves several teams learns
   from it which one. It is not a credential: authenticate by the secret.
@@ -714,7 +718,25 @@ Declare the credential your module needs to reach its provider:
   header on the token call; `body` sends them in the form), `pkce`, and
   `authorizeParams` (extra query parameters for the authorize page).
 
-The host sends the install's resolved credential on every request, beside
+Your server's secret belongs to the install; a declared credential belongs to
+the CONNECTION. One install serves many users: a movement connects once per
+account, naming the credential each connection acts as,
+
+```
+hs_alice = connect hubspot using alice_hubspot
+hs_bob = connect hubspot using bob_hubspot
+```
+
+and every call made through `hs_alice` is signed with the install's secret
+and carries Alice's credential, every call through `hs_bob` Bob's. The host
+binds each stored credential to one module and one of its declared
+credentials (the platform's credential row; lf's `module:` + `credential:`
+secrets entry), and refuses at check a connection naming a credential bound
+to another module, or to a credential the module does not declare. The OAuth
+app you register at your provider (its client id and secret) belongs to the
+install too, and stays with the host, which refreshes with it.
+
+The host sends the connection's credential on every request, beside
 `params`:
 
 ```json
@@ -731,7 +753,9 @@ The host sends the install's resolved credential on every request, beside
 - The fields sent are the ones the declaration names, plus `access_token`,
   `refresh_token` and `expires_at` for an `oauth2` one. Anything else the host
   keeps beside them (its client secret, say) is never sent.
-- A request carries one credential: the first one the manifest declares.
+- A request carries one credential: the one the connection names, under the
+  declared credential it fills. A connection that names none (a module that
+  declares none) carries none.
 - The host sends a credential only to an installed module that declares it,
   and only over loopback or HTTPS.
 - Never log it, echo it in an error, or store it beyond the call.
@@ -744,7 +768,8 @@ rotated the refresh token), say so beside the result:
 ```
 
 - Only the fields you name change; the host merges them over the stored ones
-  and writes them back.
+  and writes them back to the credential the call carried (Alice's update
+  lands on Alice's credential, never Bob's).
 - Name only fields your declaration names (and the three token fields of an
   `oauth2` credential). An update naming any other field is refused, and the
   call fails.
@@ -754,8 +779,8 @@ rotated the refresh token), say so beside the result:
 Refreshing:
 
 - The host refreshes an `oauth2` credential itself, with the standard
-  refresh-token grant at `tokenUrl`, before a call when `expires_at` is near
-  and once more when a call fails as unauthorized.
+  refresh-token grant at `tokenUrl` and the install's OAuth app, before a call
+  when `expires_at` is near and once more when a call fails as unauthorized.
 - A provider whose refresh is not the standard grant implements
   `refreshCredential`: `{}` → `{ fields }`, the changed fields. The credential
   to refresh is the request's `credential`.

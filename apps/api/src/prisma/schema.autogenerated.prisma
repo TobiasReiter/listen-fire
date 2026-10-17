@@ -190,6 +190,7 @@ model ExternalServiceCredentials {
   updatedAt            DateTime                         @default(now()) @map("updated_at")
   identifier           String?
   appId                String?                          @map("app_id")
+  declaredCredential   String?                          @map("declared_credential")
   connectTokens        ConnectToken[]
   googleGrantedItems   GoogleGrantedItem[]
   remoteAdapters       RemoteAdapter[]

@@ -225,6 +225,21 @@ impl Checker<'_> {
                 format!("'{name}' is a {} credential — '{adapter}' needs a {adapter} credential", served.join(", ")),
                 slot.span,
             );
+            return;
+        }
+        let filled = self.catalog.credential(&imported).and_then(|c| c.credential);
+        let declared = self.catalog.adapter(adapter).and_then(|a| a.declared_credentials.clone());
+        if let (Some(filled), Some(declared)) = (filled, declared)
+            && !declared.contains(&filled)
+        {
+            self.report(
+                codes::CRED_WRONG_ADAPTER,
+                format!(
+                    "'{name}' is {adapter}'s '{filled}' credential, which '{adapter}' does not declare — {}",
+                    declared_credentials_phrase(adapter, &declared)
+                ),
+                slot.span,
+            );
         }
     }
 
@@ -308,4 +323,14 @@ pub fn is_value_param_type(checker: &Checker<'_>, type_: &ParamTypeRef, scope: S
         return true;
     }
     checker.declared_type_in(&reference.graph, scope).is_some()
+}
+
+/// What a module declares, for a credential that fills none of it
+/// (check.ts `declaredCredentialsPhrase`).
+fn declared_credentials_phrase(adapter: &str, declared: &[String]) -> String {
+    if declared.is_empty() {
+        return format!("'{adapter}' takes no credential of its own");
+    }
+    let names: Vec<String> = declared.iter().map(|d| format!("'{d}'")).collect();
+    format!("connect it using a {} credential of {adapter}", names.join(" or "))
 }

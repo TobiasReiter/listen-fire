@@ -20,7 +20,7 @@ use crate::project::Project;
 use crate::credential_calls::{Sending, Target, send};
 use crate::oauth2::{Declaration, declarations_of};
 use crate::protocol::shape_error;
-use crate::secrets::{Credentials, credential_for};
+use crate::secrets::{Credentials, credential_for, signer_of};
 
 pub const EXTERNAL_MANIFEST: &str = "lf-external.yaml";
 
@@ -197,7 +197,8 @@ pub async fn rpc(running: &RunningExternal, credentials: &Credentials, tenant: &
 
 async fn call(target: &Target<'_>, credentials: &Credentials, tenant: &str, method: &str, params: serde_json::Value) -> Result<Js, String> {
     let credential = credential_for(credentials, &target.external.manifest.name);
-    Ok(send(target, credentials, credential, credential, Sending { tenant, method, cache_scope_id: "<none>", params }).await?)
+    let signer = signer_of(credentials, &target.external.manifest.name, credential);
+    Ok(send(target, credentials, credential, signer, Sending { tenant, method, cache_scope_id: "<none>", params }).await?)
 }
 
 /// Start (or reach) every external and read its manifest.

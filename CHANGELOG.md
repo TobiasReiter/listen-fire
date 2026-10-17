@@ -1610,6 +1610,29 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   generated secret, so none is affected.
 - Outside the platform (lf, a module served as a process), Slack's `SLACK_MESSAGE` composition needs
   a model the host does not give a module yet, so it refuses by name; write the text instead.
+### ev4-conncreds
+
+- A separately run module's server secret belongs to its install; the provider credential belongs
+  to the connection. `connect hs_alice using alice_hubspot` and `connect hs_bob using bob_hubspot`
+  against one install: every call is signed with the install's server secret and carries the
+  credential the connection names, refreshed by the host with the install's OAuth app, and a
+  rotated token is written back to that same credential (compare-and-swap on the platform's
+  row, lf's entry).
+- Platform: a remote install can hold the host's OAuth app per declared credential (stored with
+  its secret, never in the manifest). A provider credential is a `REMOTE` credential bound to its
+  module (`app_id`) and to the declared credential it fills (new nullable column
+  `external_service_credentials.declared_credential`; existing rows are untouched and read as
+  before). Before this, `using` on a remote module could name only the install's own credential,
+  and no module was sent a declared credential, so no saved movement depended on the old meaning;
+  a run naming the install's own credential still means "no provider credential".
+- Both checkers: a connection naming a credential bound to another module is refused
+  (`MOV_CRED_WRONG_ADAPTER`, as before), and so, now, is one bound to a credential the module does
+  not declare. The catalog snapshot carries the binding (`credentials.<name>.credential`,
+  `adapters.<name>.declaredCredentials`); install secrets are never offered to `using`.
+- lf: a module that declares a credential is connected with `using` (as on the platform); one
+  that declares none is connected as itself once its install entry holds the server secret. A
+  hand-written `external:` entry works as before. lf-host checks the same bindings; it refuses to
+  run a connection with a user credential (it does not send declared credentials yet).
 
 ## [v0.11.0] - 2026-10-12
 

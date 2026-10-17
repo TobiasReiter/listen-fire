@@ -20,7 +20,7 @@ import type { RemoteAdapter } from 'movement-engine/services/translation_graph/a
 import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
 import type { InstanceSchema } from 'movement-lang';
 import type { Project } from './project';
-import { withCredential, type Credential } from './secrets';
+import { bindingOf, installOf, withCredential, type Credential } from './secrets';
 
 const ExternalManifest = z.object({
   name: z.string().min(1),
@@ -158,7 +158,9 @@ export async function startExternals(input: {
       running.set(external.manifest.name, shell);
       const raw = await rpc({
         running: shell,
-        credential: credentialFor(input.credentials, external.manifest.name),
+        // Signed with the install's server secret: the manifest is the
+        // install's, whoever later connects.
+        credential: installOf(input.credentials, external.manifest.name),
         method: 'manifest',
         params: {},
         tenant: input.tenant,
@@ -188,9 +190,13 @@ export async function startExternals(input: {
   return running;
 }
 
-/** The first credential the secrets name for this external. */
+/** The credential a connection that names none acts as: the first entry
+ *  for this external that a `using` could name — never its install, whose
+ *  secret signs calls but is no account at the provider. */
 export function credentialFor(credentials: Map<string, Credential>, external: string): Credential | undefined {
-  for (const credential of credentials.values()) if (credential.external === external) return credential;
+  for (const credential of credentials.values()) {
+    if (credential.external === external && bindingOf(credential).kind !== 'install') return credential;
+  }
   return undefined;
 }
 

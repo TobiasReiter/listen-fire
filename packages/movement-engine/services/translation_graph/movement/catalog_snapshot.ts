@@ -29,6 +29,7 @@ export type CatalogManifest = Pick<
   AdapterManifest,
   | 'adapterType'
   | 'requiredCredentialType'
+  | 'declaredCredentials'
   | 'positionArgs'
   | 'supportedTriggers'
   | 'triggerConfig'
@@ -134,14 +135,15 @@ export function triggerConfigVocabulary(
  * dropping position args is exactly the bug this consolidation killed.
  */
 export function constructionArgsOf(
-  manifest: Pick<CatalogManifest, 'requiredCredentialType' | 'positionArgs'>,
+  manifest: Pick<CatalogManifest, 'requiredCredentialType' | 'declaredCredentials' | 'positionArgs'>,
 ): ConstructionArg[] {
   // A `credentials` slot exists ONLY for adapters that actually authenticate —
-  // those that declare a `requiredCredentialType`. Credential-free built-ins
-  // (email, manual, cron, kg) take no credential: advertising a slot would be
-  // a lie the author reaches for (and a no-op). When present, it is required.
+  // those that declare a `requiredCredentialType`, or a module that declares
+  // credentials. Credential-free built-ins (email, manual, cron, kg) take no
+  // credential: advertising a slot would be a lie the author reaches for (and
+  // a no-op). When present, it is required.
   return [
-    ...(manifest.requiredCredentialType
+    ...(needsCredential(manifest)
       ? [{ name: 'credentials', kind: 'credential' as const, required: true }]
       : []),
     ...(manifest.positionArgs ?? []).map((pa) => ({
@@ -152,6 +154,12 @@ export function constructionArgsOf(
       ...(pa.label !== undefined ? { label: pa.label } : {}),
     })),
   ];
+}
+
+/** Whether a construction of this adapter names a credential: a built-in
+ *  that needs a credential type, or a module that declares credentials. */
+export function needsCredential(manifest: Pick<CatalogManifest, 'requiredCredentialType' | 'declaredCredentials'>): boolean {
+  return manifest.requiredCredentialType !== undefined || (manifest.declaredCredentials ?? []).length > 0;
 }
 
 /** One adapter, as the catalog builder takes it. */
@@ -186,6 +194,7 @@ export function adapterSnapshotOf(input: CatalogAdapterInput): AdapterSnapshot {
     .map((b) => ({ kind: b.actionKind, label: b.label }));
   return {
     constructionArgs: input.constructionArgs ?? constructionArgsOf(manifest),
+    ...(manifest.declaredCredentials !== undefined ? { declaredCredentials: [...manifest.declaredCredentials] } : {}),
     ...triggerConfigVocabulary(manifest),
     ...(connectActions.length > 0 ? { connectActions } : {}),
     ...(input.connect !== undefined ? { connect: input.connect } : {}),

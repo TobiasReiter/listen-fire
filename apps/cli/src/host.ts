@@ -86,7 +86,7 @@ export function localHost(parts: LocalHostParts & { runId: string; fence?: strin
       if (credentialsId !== undefined && credential === undefined) {
         throw new Error(`no credential "${credentialsId}" in the secrets file`);
       }
-      return remoteAdapterOf({ running, credential, documents: parts.documents, tenant: teamId });
+      return remoteAdapterOf({ running, credential, secrets: credentials, documents: parts.documents, tenant: teamId });
     },
     ...segmentScopedCalls,
     ...(parts.writeSink !== undefined ? { writeSink: parts.writeSink } : {}),
@@ -95,7 +95,7 @@ export function localHost(parts: LocalHostParts & { runId: string; fence?: strin
   const models = modelCalls(credentials, ({ plugin, config, extractedContext }) => {
     const running = pluginExternalFor(externals, plugin);
     if (running === undefined) return undefined;
-    const adapter = remoteAdapterOf({ running, credential: credentialFor(credentials, running.external.manifest.name), documents: parts.documents, tenant: LOCAL_TENANT });
+    const adapter = remoteAdapterOf({ running, credential: credentialFor(credentials, running.external.manifest.name), secrets: credentials, documents: parts.documents, tenant: LOCAL_TENANT });
     return adapter.invokePlugin({ name: plugin, config, extractedContext });
   });
 

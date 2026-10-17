@@ -119,13 +119,13 @@ test('an adapter module external: @lf/dealroom, connected and walked with its de
     writeFileSync(
       join(dir, 'movements/found.mvt'),
       `import { acme_crm, \`@lf/dealroom\` as dealroom } from adapters
-import { acme } from credentials
+import { acme, dr } from credentials
 
 crm = connect acme_crm using acme
-dr = connect dealroom
+dr_api = connect dealroom using dr
 
 function found(company: <crm-[:Company]->>) {
-  names = Text.join(dr-[c:Companies WHERE c.Website == "vaultwise.de" ORDER BY c.Name]->.Name, ", ")
+  names = Text.join(dr_api-[c:Companies WHERE c.Website == "vaultwise.de" ORDER BY c.Name]->.Name, ", ")
   write crm-[:Company]-> { Name: "Found \${names}" }
 }
 

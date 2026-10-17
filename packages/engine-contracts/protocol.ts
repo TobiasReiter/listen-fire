@@ -41,7 +41,9 @@ export const WireManifestProtocolVersion = z.literal(MANIFEST_PROTOCOL_VERSION, 
 export const WireCredentialFields = z.record(z.string(), z.string());
 
 /** The resolved credential a request carries to a module that declares one
- *  (`credentials` on the manifest): the install's credential of that name. */
+ *  (`credentials` on the manifest): the credential the CONNECTION names
+ *  (`connect hs_alice using alice_hubspot`), under the declared name it fills.
+ *  The install's own server secret is the request's auth header, never this. */
 export const WireCredential = z.object({
   name: z.string().min(1),
   fields: WireCredentialFields,

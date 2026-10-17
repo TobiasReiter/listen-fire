@@ -30,6 +30,8 @@ export default interface ExternalServiceCredentialsTable {
   identifier: ColumnType<string | null, string | null, string | null>;
 
   app_id: ColumnType<string | null, string | null, string | null>;
+
+  declared_credential: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export type ExternalServiceCredentials = Selectable<ExternalServiceCredentialsTable>;

@@ -27,7 +27,7 @@ use crate::json::Js;
 use crate::obj;
 use crate::run_host::queue_await_wake;
 use crate::runs::{RunOutcome, Session};
-use crate::secrets::{Credential, credential_for};
+use crate::secrets::{Credential, install_of};
 use crate::backend::RunHostStore;
 use crate::store::{Store, StoreError};
 
@@ -351,7 +351,7 @@ impl Store {
 pub fn hook_target(session: &Session, external: &str, install: Option<&str>) -> Option<(String, String)> {
     let running = session.running().iter().find(|r| r.external.manifest.name == external)?;
     let setup = served_of(running).inbound?;
-    let subscription = install.map(str::to_string).or_else(|| credential_for(session.credentials(), external).map(|c| c.name.clone())).unwrap_or_default();
+    let subscription = install.map(str::to_string).or_else(|| install_of(session.credentials(), external).map(|c| c.name.clone())).unwrap_or_default();
     Some((setup.declaration.provider_key, subscription))
 }
 

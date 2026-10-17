@@ -34,6 +34,9 @@ export interface MintRemoteCredentialInput {
   secret: string;
   /** Re-provision (rotate) an existing same-name credential instead of erroring. */
   replaceExisting?: boolean;
+  /** The host's OAuth app at the provider, per declared `oauth2` credential.
+   *  Kept with the install's secret; the host refreshes with it. */
+  oauthClients?: RemoteAdapterCredentialPayload['oauthClients'];
 }
 
 /**
@@ -43,7 +46,10 @@ export interface MintRemoteCredentialInput {
 export async function mintRemoteCredential(
   input: MintRemoteCredentialInput,
 ): Promise<{ credentialsId: string }> {
-  const payload: RemoteAdapterCredentialPayload = { secret: input.secret };
+  const payload: RemoteAdapterCredentialPayload = {
+    secret: input.secret,
+    ...(input.oauthClients !== undefined ? { oauthClients: input.oauthClients } : {}),
+  };
   const credentialsId = await persistCredential({
     teamId: input.teamId,
     userId: (input.userId ?? null) as UserId,
@@ -51,6 +57,45 @@ export async function mintRemoteCredential(
     name: input.displayName,
     appId: input.adapterType,
     credentials: payload,
+    replaceExisting: input.replaceExisting ?? false,
+  });
+  return { credentialsId };
+}
+
+export interface MintRemoteModuleCredentialInput {
+  teamId: TeamId;
+  userId?: UserId | null;
+  /** The module's slug: the credential belongs to it alone (`app_id`). */
+  adapterType: string;
+  /** The credential it fills among those the module's manifest declares. */
+  declaredCredential: string;
+  /** The name a movement imports it by (`import { alice_hubspot } from credentials`). */
+  name: string;
+  /** The declared credential's fields (an OAuth one's `access_token`,
+   *  `refresh_token`, `expires_at`). Stored flat, as the secrets store reads
+   *  and writes them. */
+  fields: Record<string, string>;
+  replaceExisting?: boolean;
+}
+
+/**
+ * Mint one user's PROVIDER credential for a remote module — what a
+ * connection names with `using` (`connect hs_alice using alice_hubspot`).
+ * Distinct from the install's server secret: that one signs every call; this
+ * one is carried in each call as the request's `credential`, refreshed by the
+ * host, and a rotated token is written back to this row.
+ */
+export async function mintRemoteModuleCredential(
+  input: MintRemoteModuleCredentialInput,
+): Promise<{ credentialsId: string }> {
+  const credentialsId = await persistCredential({
+    teamId: input.teamId,
+    userId: (input.userId ?? null) as UserId,
+    type: ExternalServiceType.REMOTE,
+    name: input.name,
+    appId: input.adapterType,
+    declaredCredential: input.declaredCredential,
+    credentials: input.fields,
     replaceExisting: input.replaceExisting ?? false,
   });
   return { credentialsId };

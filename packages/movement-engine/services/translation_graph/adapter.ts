@@ -224,6 +224,13 @@ export interface AdapterManifest {
    */
   requiredCredentialType?: string;
   /**
+   * The credentials a module declares it needs, by name (its protocol
+   * manifest's `credentials`). A connection to it names one credential that
+   * fills one of these — the provider credential, never the install's own
+   * server secret. Absent ⇒ the module declares none.
+   */
+  declaredCredentials?: readonly string[];
+  /**
    * `recordType` of the adapter's `meta` root — the signal that the adapter
    * supports a one-off meta-rooted fan-out ("sync everything now" → the Manual
    * source). Mirrors `Adapter.metaRecordType`; omitted by adapters with no meta

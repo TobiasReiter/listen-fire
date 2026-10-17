@@ -206,9 +206,19 @@ pub fn apply_environment(credentials: &mut Credentials, env: &[(String, String)]
     Ok(())
 }
 
-/// The first credential the secrets name for this external.
+/// The credential a connection that names none acts as (externals.ts
+/// `credentialFor`): never the install, whose secret signs calls.
 pub fn credential_for<'a>(credentials: &'a Credentials, external: &str) -> Option<&'a Credential> {
-    credentials.iter().find(|c| c.external == external)
+    credentials.iter().find(|c| c.external == external && c.binding != Binding::Install)
+}
+
+/// The entry whose secret signs a call made as `credential` (remote.ts): a
+/// hand-written entry signs for itself; otherwise the install does.
+pub fn signer_of<'a>(credentials: &'a Credentials, external: &str, credential: Option<&'a Credential>) -> Option<&'a Credential> {
+    match credential {
+        Some(c) if c.binding == Binding::Legacy => Some(c),
+        _ => install_of(credentials, external).or(credential),
+    }
 }
 
 /// The install of `external` (secrets.ts `installOf`): its `module:`-only

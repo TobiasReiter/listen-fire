@@ -19,7 +19,7 @@ import type { UserId } from '../../../../generated/kysely/core/User';
 
 import { mintRemoteCredential } from '../../../credentials/remote_credential';
 import { loadRemoteAdapterSecret } from '../resolve';
-import { RemoteAdapterManifestFile, RemoteAdapterManifestInput } from './manifest';
+import { RemoteAdapterManifestFile, RemoteAdapterManifestInput, type RemoteAdapterCredentialPayload } from './manifest';
 import { remoteSlugRefusal } from './slugs';
 import { upsertRemoteAdapter } from './store';
 
@@ -32,6 +32,9 @@ export interface InstallRemoteAdapterInput {
   /** The adapter's auth secret. When present, minted into a REMOTE credential
    *  and linked; when absent, the install lands with a null credential FK. */
   secret?: string;
+  /** The host's OAuth app at the provider, per declared `oauth2` credential;
+   *  stored with the secret, never in the manifest. */
+  oauthClients?: RemoteAdapterCredentialPayload['oauthClients'];
 }
 
 /**
@@ -57,6 +60,7 @@ export async function installRemoteAdapterFromManifest(
       adapterType: input.manifest.adapterType,
       displayName: input.manifest.displayName ?? input.manifest.adapterType,
       secret: input.secret,
+      ...(input.oauthClients !== undefined ? { oauthClients: input.oauthClients } : {}),
       // Re-provision on re-install (rotation) rather than colliding on the
       // (team, name) unique.
       replaceExisting: true,

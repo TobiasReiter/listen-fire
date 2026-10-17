@@ -69,6 +69,15 @@ export interface AdapterSpec {
    */
   constructionArgs: ConstructionArg[];
   /**
+   * The credentials a module declares it needs, by name (its manifest's
+   * `credentials`). A connection's credential that fills one of a module's
+   * declared credentials must fill one of THESE: a credential made for a
+   * declaration the module does not have would be sent where it means
+   * nothing. Absent ⇒ the adapter declares none by name (a built-in), and
+   * only the credential's adapter is checked.
+   */
+  declaredCredentials?: string[];
+  /**
    * Whether this adapter declares ANY trigger surface at all — projected from
    * the manifest's `supportedTriggers`, which is a construction-free fact: it
    * needs no credential, no introspection, and no describe() call.
@@ -292,6 +301,9 @@ export interface CredentialSpec {
    *  is a type error unless 'slack' is in this set. A credential *type* may serve
    *  several adapters (e.g. a Google credential serves sheets + drive). */
   adapters: string[];
+  /** The module credential this one fills (a name in its adapter's
+   *  `declaredCredentials`). Absent ⇒ not a module's declared credential. */
+  credential?: string;
 }
 
 /**
@@ -1993,7 +2005,7 @@ export function modelsMember(models: readonly string[] | undefined): Pick<Catalo
 
 export function mockCatalog(spec: {
   adapters?: Record<string, AdapterSpec & { schema?: InstanceSchema }>;
-  credentials?: Record<string, { adapter: string } | { adapters: string[] }>;
+  credentials?: Record<string, { adapter: string } | CredentialSpec>;
   plugins?: Record<string, PluginSpec>;
   instantiate?: Catalog['instantiate'];
   constructionArgOptions?: Catalog['constructionArgOptions'];
@@ -2016,7 +2028,7 @@ export function mockCatalog(spec: {
     credential(name) {
       const c = spec.credentials?.[name];
       if (!c) return undefined;
-      return { adapters: 'adapters' in c ? c.adapters : [c.adapter] };
+      return 'adapters' in c ? c : { adapters: [c.adapter] };
     },
     credentialNames: () => Object.keys(spec.credentials ?? {}),
     plugin: name => spec.plugins?.[name],

@@ -136,6 +136,12 @@ export type RemoteAdapterManifestInput = z.infer<typeof RemoteAdapterManifestInp
  */
 export const RemoteAdapterCredentialPayload = z.object({
   secret: z.string().min(1),
+  /** The host's OAuth app at the provider, per declared `oauth2` credential:
+   *  the host refreshes a connection's token with it, and it never leaves the
+   *  host. Absent on every install stored before it existed. */
+  oauthClients: z
+    .record(z.string(), z.object({ clientId: z.string().min(1), clientSecret: z.string().optional() }))
+    .optional(),
 });
 
 export type RemoteAdapterCredentialPayload = z.infer<typeof RemoteAdapterCredentialPayload>;
@@ -146,9 +152,12 @@ export type RemoteAdapterCredentialPayload = z.infer<typeof RemoteAdapterCredent
  * truth (`methods[]`), the agent catalog view, schemaShape, connect
  * advertising — sees remote installs exactly like built-ins:
  *
- *   - no `requiredCredentialType`: the install carries its own credential FK,
- *     so constructions are credential-free (`my_adapter()`) and the catalog
- *     advertises `requiresCredential: false` — installed IS connected;
+ *   - no `requiredCredentialType`: the install carries its own server secret
+ *     (the credential FK), so a module that declares no credential constructs
+ *     credential-free (`connect my_adapter`) — installed IS connected;
+ *   - `declaredCredentials` when the module declares credentials: then each
+ *     connection names the provider credential it acts as
+ *     (`connect hs_alice using alice_hubspot`), never the server secret;
  *   - `introspectedSchema: true`: a remote schema is by definition fetched
  *     over the wire, never static.
  */
@@ -168,6 +177,9 @@ export function remoteAdapterManifest(file: RemoteAdapterManifestFile): AdapterM
       : {}),
     ...(file.listenConfig !== undefined ? { listenConfig: file.listenConfig } : {}),
     methods: file.methods,
+    ...((file.credentials ?? []).length > 0
+      ? { declaredCredentials: (file.credentials ?? []).map((declared) => declared.name) }
+      : {}),
     introspectedSchema: true,
   };
 }

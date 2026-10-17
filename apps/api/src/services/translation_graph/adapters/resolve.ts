@@ -32,12 +32,14 @@ import {
 } from './registry';
 import { getRemoteAdapter, rowToManifest } from './remote/store';
 import { hostedDocumentStore } from '../engine/files/retrieve';
-import { RemoteAdapterCredentialPayload } from './remote/manifest';
+import { RemoteAdapterCredentialPayload, type RemoteAdapterManifestFile } from './remote/manifest';
 import {
   createRemoteAdapter,
   type RemoteAdapterConfig,
+  type RemoteCredentialBinding,
   type RemoteManifest,
 } from 'movement-engine/services/translation_graph/adapters/remote';
+import { createSecretsFamily } from 'movement-engine/public/secrets';
 
 /**
  * Resolve an adapter for the given type. Local-first (static registry, no DB),
@@ -78,14 +80,6 @@ export async function resolveAdapter(input: {
       `Unknown adapter type: ${input.adapterType} (slug: ${slug}). Registered: ${listAdapterTypes().join(', ')} (and no remote_adapter install for this team).`,
     );
   }
-  // Stopgap until remote adapters get per-run credentials: an install serves
-  // only the credential it was installed with. A run naming any other would
-  // otherwise silently act on the install's account instead of the named one.
-  if (input.credentialsId !== undefined && input.credentialsId !== row.credentials_id) {
-    throw new Error(
-      `Remote adapter "${input.adapterType}" serves only its own installed credential; a run cannot name a different credential for it.`,
-    );
-  }
   if (!row.credentials_id) {
     throw new Error(
       `Remote adapter "${input.adapterType}" has no credential configured (credentials_id is null).`,
@@ -93,17 +87,36 @@ export async function resolveAdapter(input: {
   }
 
   const manifestFile = rowToManifest(row);
-  // The credential must belong to THIS adapter: its app_id is bound to the
-  // install's slug at mint time, so a secret provisioned for another remote
-  // adapter can never be used to drive this one.
-  const secret = await loadRemoteAdapterSecret(row.credentials_id, input.teamId, row.adapter_type);
+  // The install's server secret signs every call. The credential must belong
+  // to THIS adapter: its app_id is bound to the install's slug at mint time,
+  // so a secret provisioned for another remote adapter can never drive this one.
+  const install = await loadRemoteInstallPayload(row.credentials_id, input.teamId, row.adapter_type);
+
+  // The connection's credential, when it names one other than the install's
+  // own: the provider credential the calls act as (`connect hs_alice using
+  // alice_hubspot`). Naming the install's own row is how a connection read
+  // before modules declared credentials, so it still means "no provider
+  // credential".
+  const providerCredentialsId =
+    input.credentialsId !== undefined && input.credentialsId !== row.credentials_id ? input.credentialsId : undefined;
+  const credential =
+    providerCredentialsId !== undefined
+      ? await providerCredentialBinding({
+          credentialsId: providerCredentialsId,
+          teamId: input.teamId,
+          manifest: manifestFile,
+          install,
+        })
+      : undefined;
 
   const config: RemoteAdapterConfig = {
     adapterType: manifestFile.adapterType,
     teamId: input.teamId,
     baseUrl: manifestFile.baseUrl,
     authStrategy: manifestFile.authStrategy,
-    credentialsId: row.credentials_id,
+    // What a file handle re-resolves this instance by: the connection's own
+    // credential, so a redeemed handle acts as the same account.
+    credentialsId: providerCredentialsId ?? row.credentials_id,
   };
 
   const manifest: RemoteManifest = {
@@ -113,6 +126,7 @@ export async function resolveAdapter(input: {
     // Validated structurally by the manifest-file schema — no boundary `as`.
     runtimeCapabilities: manifestFile.runtimeCapabilities,
     methods: manifestFile.methods,
+    ...(manifestFile.credentials !== undefined ? { credentials: manifestFile.credentials } : {}),
   };
 
   // One cache scope per resolved instance = per evaluation / role (P2). Minting
@@ -121,7 +135,63 @@ export async function resolveAdapter(input: {
   // of work, and a new evaluation gets a fresh scope.
   const cacheScopeId = randomUUID();
 
-  return createRemoteAdapter({ config, secret, cacheScopeId, manifest, documents: hostedDocumentStore });
+  return createRemoteAdapter({
+    config,
+    secret: install.secret,
+    cacheScopeId,
+    manifest,
+    documents: hostedDocumentStore,
+    ...(credential !== undefined ? { credential } : {}),
+  });
+}
+
+/**
+ * A connection's provider credential, as the remote adapter sends it: a
+ * `REMOTE` row minted for this module (`app_id` = its slug) and for one of the
+ * credentials its manifest declares (`declared_credential`). Refreshed by the
+ * host with the install's OAuth app, and a rotated token written back to this
+ * same row (compare-and-swap) through the platform's secrets store. The
+ * checker refuses a connection naming any other credential; this refuses it
+ * again at run time, before anything is sent.
+ */
+async function providerCredentialBinding(input: {
+  credentialsId: string;
+  teamId: TeamId;
+  manifest: RemoteAdapterManifestFile;
+  install: RemoteAdapterCredentialPayload;
+}): Promise<RemoteCredentialBinding> {
+  const { credentialsId, manifest } = input;
+  const row = await getAutomationsQb(['external_service_credentials'])
+    .selectFrom('external_service_credentials')
+    .where('id', '=', credentialsId as ExternalServiceCredentialsId)
+    .where('team_id', '=', input.teamId)
+    .select(['app_id', 'declared_credential'])
+    .executeTakeFirst();
+  if (!row) {
+    throw new Error(`Remote adapter "${manifest.adapterType}": the connection's credential ${credentialsId} does not exist on this team.`);
+  }
+  const declared = (manifest.credentials ?? []).map((credential) => credential.name);
+  if (row.app_id !== manifest.adapterType || row.declared_credential === null) {
+    throw new Error(
+      `Remote adapter "${manifest.adapterType}": the connection's credential ${credentialsId} is not a ${manifest.adapterType} credential; it is not sent.`,
+    );
+  }
+  if (!declared.includes(row.declared_credential)) {
+    throw new Error(
+      `Remote adapter "${manifest.adapterType}": the connection's credential ${credentialsId} fills "${row.declared_credential}", which the module does not declare (it declares ${declared.length > 0 ? declared.map((d) => `"${d}"`).join(', ') : 'none'}); it is not sent.`,
+    );
+  }
+  const client = input.install.oauthClients?.[row.declared_credential];
+  // Lazy for the reason `loadRemoteInstallPayload` imports the cipher lazily.
+  const { postgresSecrets } = await import('../../credentials/secrets_postgres');
+  return {
+    name: row.declared_credential,
+    secrets: createSecretsFamily({ backend: postgresSecrets({ teamId: input.teamId }) }),
+    ref: credentialsId,
+    ...(client !== undefined
+      ? { client: { clientId: client.clientId, ...(client.clientSecret !== undefined ? { clientSecret: client.clientSecret } : {}) } }
+      : {}),
+  };
 }
 
 /**
@@ -134,6 +204,16 @@ export async function loadRemoteAdapterSecret(
   teamId: TeamId,
   expectedAppId: string,
 ): Promise<string> {
+  return (await loadRemoteInstallPayload(credentialsId, teamId, expectedAppId)).secret;
+}
+
+/** The install's whole decrypted payload: its server secret, and the host's
+ *  OAuth apps for the module's declared credentials. */
+export async function loadRemoteInstallPayload(
+  credentialsId: string,
+  teamId: TeamId,
+  expectedAppId: string,
+): Promise<RemoteAdapterCredentialPayload> {
   const row = await getAutomationsQb(['external_service_credentials'])
     .selectFrom('external_service_credentials')
     .where('id', '=', credentialsId as ExternalServiceCredentialsId)
@@ -176,5 +256,5 @@ export async function loadRemoteAdapterSecret(
       `Remote adapter credential (credentials_id=${credentialsId}) payload is malformed — expected { "secret": string }.`,
     );
   }
-  return parsed.data.secret;
+  return parsed.data;
 }

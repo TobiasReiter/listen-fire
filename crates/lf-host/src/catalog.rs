@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use crate::externals::{RunningExternal, plugin_entries};
 use crate::json::{Js, Obj};
 use crate::obj;
-use crate::secrets::Credentials;
+use crate::secrets::{Binding, Credentials};
 use crate::sources::MovementFile;
 
 /// `CATALOG_SNAPSHOT_VERSION`.
@@ -23,7 +23,16 @@ fn instance_schema_key(credential_name: Option<&str>) -> String {
 pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, credentials: &Credentials, files: &[MovementFile]) -> Js {
     let mut credential_specs = Obj::new();
     for credential in credentials {
-        credential_specs.insert(credential.name.clone(), Js::from(obj! { "adapters" => Js::strings([&credential.external]) }));
+        // An install's secret signs calls; it is no account a `using` may name.
+        let mut spec = obj! { "adapters" => Js::strings([&credential.external]) };
+        match &credential.binding {
+            Binding::Install => continue,
+            Binding::Credential(declared) => {
+                spec.insert("credential".into(), Js::str(declared));
+            }
+            Binding::Legacy => {}
+        }
+        credential_specs.insert(credential.name.clone(), Js::from(spec));
     }
     let mut enumerated = credential_specs.clone();
     movement_parser::util::js::object_key_order(&mut enumerated);
@@ -32,7 +41,8 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
         let name = &r.external.manifest.name;
         // The hosted product holds a remote install's secret itself, so there
         // it constructs credential-free; here the secrets file names it.
-        let credentialed = r.external.manifest.auth.is_some();
+        let installed = credentials.iter().any(|c| c.external == *name && c.binding == Binding::Install);
+        let credentialed = !r.credential_declarations.is_empty() || (r.external.manifest.auth.is_some() && !installed);
         let mut adapter_schemas = Obj::new();
         if let Some(schema) = schemas.get(name) {
             if !credentialed {
@@ -50,7 +60,7 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
         } else {
             Vec::new()
         };
-        adapters.insert(name.clone(), adapter_snapshot_of(&r.supported_triggers, &r.listen, construction_args, adapter_schemas));
+        adapters.insert(name.clone(), adapter_snapshot_of(&r.supported_triggers, &r.listen, construction_args, &declared_names(&r.credential_declarations), adapter_schemas));
     }
     let files: Obj = files.iter().map(|f| (f.name.clone(), Js::from(obj! { "source" => Js::str(&f.source) }))).collect();
     Js::from(obj! {
@@ -62,10 +72,17 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
     })
 }
 
+fn declared_names(declarations: &[crate::oauth2::Declaration]) -> Vec<String> {
+    declarations.iter().map(|d| d.name.clone()).collect()
+}
+
 /// `adapterSnapshotOf` for a remote adapter's manifest: no construction
 /// blocks, no connect affordance, no trigger expectation, an introspected schema.
-fn adapter_snapshot_of(supported_triggers: &[String], listen: &Obj, construction_args: Vec<Js>, schemas: Obj) -> Js {
+fn adapter_snapshot_of(supported_triggers: &[String], listen: &Obj, construction_args: Vec<Js>, declared_credentials: &[String], schemas: Obj) -> Js {
     let mut snapshot = obj! { "constructionArgs" => Js::Arr(construction_args) };
+    if !declared_credentials.is_empty() {
+        snapshot.insert("declaredCredentials".into(), Js::strings(declared_credentials));
+    }
     for (k, v) in trigger_config_vocabulary(supported_triggers, listen) {
         snapshot.insert(k, v);
     }

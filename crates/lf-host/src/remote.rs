@@ -23,7 +23,7 @@ use crate::json::{Js, Obj};
 use crate::obj;
 use crate::project::Project;
 use crate::protocol::RpcError;
-use crate::secrets::{Credential, Credentials, credential_for};
+use crate::secrets::{Credential, Credentials, credential_for, signer_of};
 use crate::wire::{Hv, json_of_js};
 use crate::wire_results;
 
@@ -301,7 +301,9 @@ impl<'s> SegmentAdapters<'s> {
         let credential: Option<&Credential> = instance.credential.map(|i| &ext.credentials[i]);
         let target = Target { external: &running.external, base_url: &running.base_url, declarations: &running.credential_declarations, methods: &running.methods };
         let sending = Sending { tenant: ext.tenant, method, cache_scope_id: &instance.cache_scope, params: json_of_js(&params) };
-        let raw = send(&target, ext.credentials, credential, credential, sending).await?;
+        // The install's server secret signs a call made as a user credential.
+        let signer = signer_of(ext.credentials, &running.external.manifest.name, credential);
+        let raw = send(&target, ext.credentials, credential, signer, sending).await?;
         wire_results::check(method, &running.external.manifest.name, &raw)
             .map_err(|message| CallFailure::Adapter { message, name: Some("RemoteResponseShapeError".into()), status: None })
     }

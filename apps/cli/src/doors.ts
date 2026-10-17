@@ -33,11 +33,11 @@ import {
 import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import { authHeader } from 'movement-engine/services/translation_graph/protocol/client';
 import { queueAwaitWake } from 'movement-engine/services/run_host/rules';
-import { credentialFor, type RunningExternal } from './externals';
+import { type RunningExternal } from './externals';
 import { LOCAL_TENANT } from './host';
 import { remoteAdapterOf } from './remote';
 import { fireEvent, type RunOutcome, type Session } from './runs';
-import type { Credential } from './secrets';
+import { installOf, type Credential } from './secrets';
 
 /** What the doors need of a session: tests supply a session of their own. */
 export type DoorSession = Pick<Session, 'runHost' | 'state' | 'credentials' | 'running' | 'documents'>;
@@ -124,6 +124,7 @@ function remoteInboundAdapter(input: { running: RunningExternal; credential: Cre
   const adapter = remoteAdapterOf({
     running: input.running,
     credential: input.credential,
+    secrets: input.session.credentials,
     documents: input.session.documents,
     tenant: LOCAL_TENANT,
   });
@@ -232,7 +233,7 @@ export function hookTarget(session: DoorSession, input: { external: string; inst
   if (!setup) return null;
   return {
     provider: setup.declaration.providerKey,
-    subscriptionId: input.install ?? credentialFor(session.credentials, input.external)?.name ?? '',
+    subscriptionId: input.install ?? installOf(session.credentials, input.external)?.name ?? '',
   };
 }
 

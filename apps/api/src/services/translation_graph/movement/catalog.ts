@@ -98,6 +98,7 @@ import {
 import {
   buildCatalogSnapshot,
   constructionArgsOf,
+  needsCredential,
   triggerConfigVocabulary,
   type CatalogAdapterInput,
 } from 'movement-engine/services/translation_graph/movement/catalog_snapshot';
@@ -337,7 +338,7 @@ export interface TeamMovementCatalog {
   /** Imported credential name → `external_service_credentials.id`. */
   resolveCredentialId: (name: string) => string | undefined;
   /** Credential name → credential row, for reporting/UX. */
-  credentialsByName: Record<string, { id: string; rowName: string; adapters: string[] }>;
+  credentialsByName: ReturnType<typeof credentialImportNames>;
   /**
    * File-import resolution (`import { … } from "<file>"`) against the
    * team's saved movement rows by name — the transitive closure reachable
@@ -433,7 +434,7 @@ function introspectionPairs(input: {
   gaps: CatalogGap[];
   manifests: ReturnType<typeof listAdapterManifests>;
   credentialRows: CredentialRow[];
-  credentialsByName: Record<string, { id: string; rowName: string; adapters: string[] }>;
+  credentialsByName: ReturnType<typeof credentialImportNames>;
   notes: string[];
 }): IntrospectionPair[] {
   const { manifests, credentialRows, credentialsByName, notes, gaps } = input;
@@ -474,7 +475,7 @@ function introspectionPairs(input: {
       gaps.push({ adapter: ref.adapter, detail: manifest.configurationGap });
       notes.push(`${ref.adapter}: ${manifest.configurationGap}`);
     }
-    if (!manifest.requiredCredentialType) {
+    if (!needsCredential(manifest)) {
       const key = `${ref.adapter}::`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -1123,12 +1124,13 @@ async function assembleTeamCatalog(
       if (!manifest) return undefined;
       return {
         constructionArgs: constructionArgsOf(manifest),
+        ...(manifest.declaredCredentials !== undefined ? { declaredCredentials: [...manifest.declaredCredentials] } : {}),
         ...triggerConfigVocabulary(manifest),
       };
     },
     credential(name): CredentialSpec | undefined {
       const row = credentialsByName[name];
-      return row ? { adapters: row.adapters } : undefined;
+      return row ? { adapters: row.adapters, ...(row.credential !== undefined ? { credential: row.credential } : {}) } : undefined;
     },
     credentialNames(): string[] {
       return Object.keys(credentialsByName);
@@ -1466,7 +1468,7 @@ function credentialsOf(
   const credentials: Record<string, CredentialSpec> = {};
   const credentialIds: Record<string, string> = {};
   for (const [name, row] of Object.entries(credentialsByName)) {
-    credentials[name] = { adapters: row.adapters };
+    credentials[name] = { adapters: row.adapters, ...(row.credential !== undefined ? { credential: row.credential } : {}) };
     credentialIds[name] = row.id;
   }
   return { credentials, credentialIds };
@@ -2041,7 +2043,7 @@ async function loadCredentialRows(teamId: TeamId): Promise<CredentialRow[]> {
   const rows = await getAutomationsQb(['external_service_credentials'])
     .selectFrom('external_service_credentials')
     .where('team_id', '=', teamId)
-    .select(['id', 'name', 'type', 'created_at', 'app_id'])
+    .select(['id', 'name', 'type', 'created_at', 'app_id', 'declared_credential'])
     .orderBy('created_at', 'asc')
     .execute();
   return rows
@@ -2049,5 +2051,14 @@ async function loadCredentialRows(teamId: TeamId): Promise<CredentialRow[]> {
     // — movements run on the "listen-fire" app, so only its Slack credentials are
     // offered here. Non-Slack credentials are unaffected.
     .filter((r) => !(r.type === ExternalServiceType.SLACK && isLegacyApp(r.app_id)))
-    .map((r) => ({ id: r.id as unknown as string, name: r.name, type: r.type as string }));
+    .map((r) => ({
+      id: r.id as unknown as string,
+      name: r.name,
+      type: r.type as string,
+      // A remote module's provider credential: bound to its module and to the
+      // declared credential it fills, both stored on the row.
+      ...(typeof r.declared_credential === 'string' && typeof r.app_id === 'string'
+        ? { module: { adapterType: r.app_id, credential: r.declared_credential } }
+        : {}),
+    }));
 }

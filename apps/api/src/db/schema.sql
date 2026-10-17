@@ -4252,7 +4252,13 @@ CREATE TABLE automations.external_service_credentials (
     -- (the movements app). NULL means legacy/pre-discriminator (treated as the
     -- legacy app). Lets a second app of the same ExternalServiceType be told
     -- apart + filtered without decrypting the credential payload.
-    app_id text
+    app_id text,
+    -- A remote module's PROVIDER credential (one user's account at the
+    -- provider, named by a connection's `using`): the name of the credential
+    -- it fills among those the module's manifest declares. `app_id` is then
+    -- the module's slug. NULL on every other row, including the install's own
+    -- server secret (a REMOTE row the install's credentials_id points at).
+    declared_credential text
 );
 
 

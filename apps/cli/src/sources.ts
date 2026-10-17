@@ -72,14 +72,23 @@ export function catalogOf(input: {
   files: MovementFile[];
 }): CatalogSnapshot {
   const credentials: Record<string, CredentialSpec> = {};
-  for (const credential of input.credentials.values()) credentials[credential.name] = { adapters: [credential.external] };
+  for (const credential of input.credentials.values()) {
+    const binding = credential.binding ?? { kind: 'legacy' as const };
+    // An install's secret signs calls; it is no account a `using` may name.
+    if (binding.kind === 'install') continue;
+    credentials[credential.name] = { adapters: [credential.external], ...(binding.kind === 'credential' ? { credential: binding.declared } : {}) };
+  }
   const adapters: CatalogAdapterInput[] = [];
   for (const [name, running] of input.running) {
     if (running.external.manifest.kind === 'plugin') continue;
     // The hosted product holds a remote install's secret itself, so there it
     // constructs credential-free; here the secrets file names it, so an
     // external that authenticates takes the credential as an argument.
-    const credentialed = running.external.manifest.auth !== undefined;
+    // A module that declares credentials is connected as one of its users.
+    // One that declares none is connected as itself once its install holds
+    // the server secret; before that (a hand-written entry) the entry names it.
+    const installed = [...input.credentials.values()].some((c) => c.external === name && c.binding?.kind === 'install');
+    const credentialed = running.credentials.length > 0 || (running.external.manifest.auth !== undefined && !installed);
     const schema = input.schemas.get(name);
     const schemas: Record<string, InstanceSchema> = {};
     if (schema !== undefined) {
@@ -93,6 +102,7 @@ export function catalogOf(input: {
         adapterType: name,
         supportedTriggers: z.array(triggerTypeSchema).parse(running.supportedTriggers),
         ...running.listen,
+        ...(running.credentials.length > 0 ? { declaredCredentials: running.credentials.map((declared) => declared.name) } : {}),
         introspectedSchema: true,
       },
       constructionArgs: credentialed ? [{ name: 'credentials', kind: 'credential', required: true }] : [],
