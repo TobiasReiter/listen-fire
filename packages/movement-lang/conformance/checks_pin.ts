@@ -10,13 +10,6 @@
 // Each language version has its own two files (`v<n>.json`, the checks, and
 // `v<n>.diagnostics.json`, the lists), so retiring a version deletes them.
 //
-// A third, `v<n>.programs.json`, holds the texts of that version's pinned
-// programs that no test writes: programs the pin kept only because the tests
-// that read the corpus (the upgrade floor, reachability) re-checked them under
-// the harvest, so each re-harvest pinned them again. Nothing else can find
-// them. A re-harvest (`--pin`) stops consulting these files and deletes them,
-// so the programs leave the pin then.
-//
 // The harvest writes the programs it found (`programs.jsonl`: each hash with
 // its text and the tests it came from) and the corpus assembled from the pin
 // and those programs (`checks.json`, in the language kit's format, with
@@ -133,35 +126,6 @@ export function readPin(dir: string = PIN_DIR): PinnedCheck[] {
   return pinnedVersions(dir).flatMap(version => readPinnedVersion(version, dir).checks);
 }
 
-const programsFile = (dir: string, version: number): string => path.join(dir, `v${version}.programs.json`);
-
-/** The texts the pin keeps for programs no test writes, by hash, with the
- *  rows whose hash is not their text's. */
-export function storedPrograms(dir: string = PIN_DIR): { programs: Map<string, string>; byVersion: Map<number, string[]>; misnamed: string[] } {
-  const programs = new Map<string, string>();
-  const byVersion = new Map<number, string[]>();
-  const misnamed: string[] = [];
-  for (const version of pinnedVersions(dir)) {
-    if (!fs.existsSync(programsFile(dir, version))) continue;
-    const keys: string[] = [];
-    for (const [i, row] of jsonLines(programsFile(dir, version)).entries()) {
-      if (!isObject(row) || typeof row.program !== 'string' || typeof row.source !== 'string') {
-        throw new Error(`${programsFile(dir, version)} line ${i + 1} is not a program`);
-      }
-      if (programKey(row.source) !== row.program) misnamed.push(`${programsFile(dir, version)} line ${i + 1}`);
-      programs.set(row.program, row.source);
-      keys.push(row.program);
-    }
-    byVersion.set(version, keys);
-  }
-  return { programs, byVersion, misnamed };
-}
-
-/** Deletes the stored texts (a re-harvest pins only what the tests write). */
-export function dropStoredPrograms(dir: string = PIN_DIR): void {
-  for (const version of pinnedVersions(dir)) fs.rmSync(programsFile(dir, version), { force: true });
-}
-
 /** Pins `records` (in their order), one pair of files per version, replacing
  *  the pin in `dir`: a version no record holds loses its files. */
 export function writePin(records: readonly CheckRecord[], dir: string = PIN_DIR): void {
@@ -172,7 +136,6 @@ export function writePin(records: readonly CheckRecord[], dir: string = PIN_DIR)
     if (byVersion.has(version)) continue;
     fs.rmSync(pinFile(dir, version));
     fs.rmSync(tableFile(dir, version), { force: true });
-    fs.rmSync(programsFile(dir, version), { force: true });
   }
   for (const [version, rows] of byVersion) {
     const table = new Map<string, string>();
@@ -191,8 +154,8 @@ export function writePin(records: readonly CheckRecord[], dir: string = PIN_DIR)
 }
 
 /** The pin's checks with their texts from `programs` (hash → text: what
- *  the harvest found, and the stored texts), in the language kit's record
- *  format; `missing` are the checks whose program has no text in either. */
+ *  the harvest found), in the language kit's record format; `missing` are the
+ *  checks whose program the harvest did not find. */
 export function assemble(pin: readonly PinnedCheck[], programs: ReadonlyMap<string, string>): { records: CheckRecord[]; missing: PinnedCheck[] } {
   const records: CheckRecord[] = [];
   const missing: PinnedCheck[] = [];

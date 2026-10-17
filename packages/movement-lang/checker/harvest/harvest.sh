@@ -14,6 +14,11 @@
 # assertions are about the whole corpus, which the second pass is still
 # completing, so they are run (not recorded) once it is complete, last, with
 # the checker regression's replay.
+#
+# A re-harvest rewrites the pin from the first pass alone, before the second
+# runs, so the readers see only programs some test writes. They re-check the
+# corpus they read; were that the old pin, their re-checks would pin its
+# programs again, and a program no test writes would never leave it.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE="$(cd "$HERE/../.." && pwd)"

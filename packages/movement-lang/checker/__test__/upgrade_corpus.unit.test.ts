@@ -53,8 +53,10 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  MOV_JSON_HAS_NO_EDGES, MOV_KG_QUERY_RETIRED and others, a few programs
  *  each): 4,962 of 5,905 (84.0%). Lowered at the merge of those slices:
  *  the re-harvest took in every slice's new test programs at once, 62 more,
- *  of which 38 upgrade clean: 5,000 of 5,967 (83.8%). */
-const FLOOR = 0.837;
+ *  of which 38 upgrade clean: 5,000 of 5,967 (83.8%). Raised when 174 orphan
+ *  programs no test writes were dropped (with the checks of catalogs no test
+ *  builds any more): 4,732 of 5,515 (85.8%). */
+const FLOOR = 0.858;
 
 interface Program {
   source: string;

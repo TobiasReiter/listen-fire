@@ -33,7 +33,7 @@
 // Set UPDATE_CHECKS_FIXTURE=1 (with CHECKS_CORPUS=1) to rewrite the pins from
 // the current checker (after a ruling) — then read the diff.
 import { canonical, replayChecks } from '../../conformance/checks_corpus';
-import { overCorpus, pinnedVersions, readPin, readPinnedVersion, storedPrograms, type PinnedCheck } from '../../conformance/checks_pin';
+import { overCorpus, pinnedVersions, readPin, readPinnedVersion, type PinnedCheck } from '../../conformance/checks_pin';
 import { checkNow, loadChecks as load, SNAPSHOT_TABLE, writeChecks } from './checks_fixture';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -69,15 +69,6 @@ describe('checks regression', () => {
       expect(checks.filter(c => !/^[0-9a-f]{64}$/.test(c.program))).toEqual([]);
     }
     expect(pin().length).toBeGreaterThan(2000);
-  });
-
-  it('stores a text only for a program its version pins, under the hash of that text', () => {
-    const { byVersion, misnamed } = storedPrograms();
-    expect(misnamed).toEqual([]);
-    for (const [version, keys] of byVersion) {
-      const named = new Set(readPinnedVersion(version).checks.map(c => c.program));
-      expect({ version, unpinned: keys.filter(k => !named.has(k)) }).toEqual({ version, unpinned: [] });
-    }
   });
 
   it('keys every snapshot by the sha256 of its canonical form, as the harvest does', () => {

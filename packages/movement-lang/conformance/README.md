@@ -68,8 +68,7 @@ dropped).
 - Its pin (`checker/__test__/__fixtures__/checks/`, see `checks_pin.ts`)
   holds no program text: each check names its program by a hash of the text,
   and its diagnostics by key in its version's table. The text lives in the
-  test that checks it. (The few pinned programs no test writes any more keep
-  their text in `v<n>.programs.json`, until the next re-harvest drops them.)
+  test that checks it.
 - `pnpm checks:corpus` in `packages/movement-lang` harvests the texts and
   writes the corpus, in the format above, to `target/checks/checks.json`
   (with `checks.snapshots.json` beside it). It then holds every pinned check
