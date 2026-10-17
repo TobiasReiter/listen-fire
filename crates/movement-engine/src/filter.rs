@@ -429,6 +429,13 @@ mod tests {
         Js::str(text)
     }
 
+    /// V8 read `"item 3"` and `"item 12"` as dates; only ISO texts are dates.
+    #[test]
+    fn texts_that_only_v8_read_as_dates_compare_as_texts() {
+        assert!(!compare_values(&s("item 3"), FilterOperator::Lt, &s("item 12")).unwrap());
+        assert!(compare_values(&s("2026-03-05T10:00"), FilterOperator::Lt, &s("2026-03-05T10:00:01Z")).unwrap());
+    }
+
     #[test]
     fn equality_is_strict_and_lists_compare_as_sets() {
         let eq = |a: &Js, b: &Js| compare_values(a, FilterOperator::Eq, b).unwrap();
