@@ -19,10 +19,11 @@ fn path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/frozen").join(format!("{name}.jsonl"))
 }
 
-/// The cases as recorded, in order.
+/// The cases as recorded, in order. A lone surrogate's escape reads as
+/// U+FFFD, as the engine reads one.
 pub fn cases(name: &str) -> Vec<Json> {
     let text = std::fs::read_to_string(path(name)).unwrap_or_else(|e| panic!("{name}.jsonl reads: {e}"));
-    text.lines().map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("{name}.jsonl: {e}: {line}"))).collect()
+    text.lines().map(|line| movement_engine::js_string::from_json_text(line).unwrap_or_else(|e| panic!("{name}.jsonl: {e}: {line}"))).collect()
 }
 
 /// Holds the file to `answered` (the same cases with Rust's answers), or

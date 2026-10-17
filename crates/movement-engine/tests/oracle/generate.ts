@@ -14,9 +14,6 @@
 //     (./order_limit_oracle.ts; not ./order_limit, which Node resolves to
 //     the .json beside it);
 //   - priced.json: the priced-plugin cap (./priced_oracle.ts);
-//   - chunks.json: `CHUNKS`'s cut and the entities estimate of each piece,
-//     the size mode on any text, the entities mode on ASCII text
-//     (./chunks_oracle.ts);
 //   - patterns.json: what the Rust engine, the version 5 reference, does
 //     with seeded programs for each pattern of the language, run through the
 //     real shim against one scripted host (./patterns_oracle.ts; the report
@@ -63,7 +60,6 @@ import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writePricedOracle } from './priced_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
 import { writePatternsOracle } from './patterns_oracle';
-import { writeChunksOracle } from './chunks_oracle';
 import { outcome, wire } from './wire';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
 
@@ -328,7 +324,6 @@ console.log(`regex.json: ${regexCases.length} cases`);
 (async () => {
   await writeOrderLimitOracle(mulberry32(5));
   await writePricedOracle(mulberry32(20261009));
-  writeChunksOracle(mulberry32(20261017), (name, text) => writeFileSync(path.join(__dirname, name), text));
   // The Rust engine: the movement.wasm the shim loads is the one committed.
   await writePatternsOracle(mulberry32(20261015), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
