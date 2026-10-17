@@ -6,6 +6,7 @@
 //!   lf-host check [--dir <project>]          the TypeScript `lf check`
 //!   lf-host run --event <file> [--dry-run]   route an event to its listens and run each
 //!   lf-host resume [<run-id>]                step a parked run, or drain due work and every parked run
+//!   lf-host upgrade [--check] [--all]        rewrite the movement files into the current language version
 //!   lf-host runs                             the runs, most recent first
 //!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
 //!   lf-host --contract-store <state.db>      the run host's backend over stdio JSON-RPC
@@ -32,6 +33,7 @@ mod secrets;
 mod segment;
 mod sources;
 mod store;
+mod upgrade;
 mod wire;
 mod wire_results;
 
@@ -47,13 +49,14 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs> [--dir <proj
   catalog   the catalog snapshot the files are checked against, as JSON
   run       route the event file's event to the listens it matches and run each (as `lf run --event`)
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
+  upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   runs      the runs in the state file, most recent first (as `lf runs`)
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
-not yet here (the TypeScript lf has them): init, upgrade, serve, call, cancel, run --webhook";
+not yet here (the TypeScript lf has them): init, serve, call, cancel, run --webhook";
 
 /// The commands the TypeScript lf has that this binary does not yet.
-const NOT_YET: &[&str] = &["init", "upgrade", "serve", "call", "cancel"];
+const NOT_YET: &[&str] = &["init", "serve", "call", "cancel"];
 
 struct Args {
     command: Option<String>,
@@ -64,6 +67,8 @@ struct Args {
     dry_run: bool,
     event: Option<PathBuf>,
     webhook: Option<String>,
+    check_only: bool,
+    all: bool,
     contract_store: Option<PathBuf>,
     project_schema: bool,
     help: bool,
@@ -78,6 +83,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         dry_run: false,
         event: None,
         webhook: None,
+        check_only: false,
+        all: false,
         contract_store: None,
         project_schema: false,
         help: false,
@@ -89,6 +96,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--dir" => args.dir = PathBuf::from(value("--dir")?),
             "--event" => args.event = Some(PathBuf::from(value("--event")?)),
             "--webhook" => args.webhook = Some(value("--webhook")?),
+            "--check" => args.check_only = true,
+            "--all" => args.all = true,
             "--ephemeral" => args.ephemeral = true,
             "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(PathBuf::from(value("--contract-store")?)),
@@ -133,6 +142,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 Ok(1)
             }
         },
+        "upgrade" => upgrade::run(&project::load_project(&args.dir)?, upgrade::UpgradeOptions { check_only: args.check_only, all: args.all }, &mut out).await,
         "run" => {
             if args.webhook.is_some() {
                 eprintln!("lf-host: `run --webhook` is not in lf-host yet; use the TypeScript lf for it");
