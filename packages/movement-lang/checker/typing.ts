@@ -6062,7 +6062,12 @@ export class ExpressionTyping {
         if (expr.fn === FILE_FUNCTION_ID) return 'file';
         if (expr.fn === READ_FUNCTION_ID) return this.typeReadCall(args);
         if (expr.fn === CHUNKS_FUNCTION_ID) return this.typeChunksCall(args);
-        if (expr.fn in BARE_COERCER_RETURNS) return BARE_COERCER_RETURNS[expr.fn];
+        if (expr.fn in BARE_COERCER_RETURNS) {
+          // From version 5 `Number.parse` answers nothing for text that is no
+          // number (the engine's `NUMBER("")` is null), so it is `number | absent`.
+          if (expr.fn === 'number' && since(this.options.languageVersion, 5)) return maybeAbsent('number');
+          return BARE_COERCER_RETURNS[expr.fn];
+        }
         if (expr.fn === COALESCE_FUNCTION_ID) return coalesceType(args, { join: (kinds, old) => this.joinedRecords(kinds, old) });
         if (expr.fn === MULTI_FUNCTION_ID) return multiType(args, this.options.recordJoin);
         const stdlibSpec = stdlibFunctionById(expr.fn);

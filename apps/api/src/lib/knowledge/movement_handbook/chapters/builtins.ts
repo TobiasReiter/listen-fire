@@ -307,7 +307,7 @@ n = Number.parse(msg.Subject)
 
 ### Number.parse
 
-\`Number.parse(value)\` → \`number\` — coerces text to a number. \`NUMBER(value)\` is its spelling inside walk brackets.
+\`Number.parse(value)\` → \`number | absent\` — coerces text to a number, and is absent when the text is no number. Guard it (\`n != null\`) or give it a fallback (\`coalesce\`, \`?:\`) where a value is required. \`NUMBER(value)\` is its spelling inside walk brackets.
 
 \`\`\`
 crm-[t:Teams WHERE t.\`Team Size\` <= NUMBER(m.Body)]->
