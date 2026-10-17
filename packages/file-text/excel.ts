@@ -3,7 +3,14 @@ import { Readable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import { Parser as FormulaParser } from 'hot-formula-parser';
 
-import { anthropicChat } from '../anthropic';
+/** The model call that reads a sheet's layout: the host picks the model and
+ *  meters the call; the answer is the model's JSON text. */
+type SheetAnalyzer = (request: {
+  temperature: number;
+  system: string;
+  userMessage: string;
+}) => Promise<string>;
+
 
 // Raw cell value type
 type CellValue = string | number | boolean | null;
@@ -160,7 +167,11 @@ Return ONLY the JSON array.`;
  * Extracts content from an XLSX or CSV file as structured JSON using
  * LLM-based semantic analysis for accurate structure detection.
  */
-async function getXlsxContent(docStream: Readable, filename?: string): Promise<string> {
+async function getXlsxContent(
+  docStream: Readable,
+  filename: string | undefined,
+  analyze: SheetAnalyzer,
+): Promise<string> {
   const workbook = new ExcelJS.Workbook();
 
   if (filename?.toLowerCase().endsWith('.csv')) {
@@ -177,7 +188,7 @@ async function getXlsxContent(docStream: Readable, filename?: string): Promise<s
 
     evaluateFormulas(grid);
 
-    const blocks = await identifySemanticBlocks(grid);
+    const blocks = await identifySemanticBlocks(grid, analyze);
     const areas: Area[] = [];
 
     for (const block of blocks) {
@@ -630,7 +641,7 @@ function parseJsonResponse(response: string): SemanticBlock[] {
  * Use LLM to identify semantic blocks in the spreadsheet.
  * Includes retry logic with higher temperature if JSON parsing fails.
  */
-async function identifySemanticBlocks(grid: Grid): Promise<SemanticBlock[]> {
+async function identifySemanticBlocks(grid: Grid, analyze: SheetAnalyzer): Promise<SemanticBlock[]> {
   const preview = gridToPreview(grid);
   const userPrompt = USER_PROMPT_TEMPLATE.replace('{preview}', preview);
 
@@ -640,12 +651,10 @@ async function identifySemanticBlocks(grid: Grid): Promise<SemanticBlock[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const temperature = TEMPERATURES[attempt] ?? 0.5;
-      const response = await anthropicChat({
-        model: 'claude-sonnet-5',
+      const response = await analyze({
         temperature,
         system: SYSTEM_PROMPT,
         userMessage: userPrompt,
-        label: 'excel-semantic-analysis',
       });
 
       const blocks = parseJsonResponse(response);
@@ -1420,4 +1429,4 @@ function convertEmptyTableToMetadata(area: Area, grid: Grid, block: SemanticBloc
   return area;
 }
 
-export { getXlsxContent };
+export { getXlsxContent, type SheetAnalyzer };

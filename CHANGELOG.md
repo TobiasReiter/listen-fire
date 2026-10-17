@@ -1191,6 +1191,13 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 
 - The entity identity judge (which candidate record is the one being written) moved into the engine package with its prompts as files; the hosted platform wires it to its model and Jev clients and decides exactly as before (replayed against recorded cases).
 
+### ev1-filetext
+
+- Reading a file's text (PDF text layer then OCR, decks, spreadsheets, CSV, audio) moved into its own
+  package, `packages/file-text`. OCR, transcription, the spreadsheet model call, the byte source and
+  the logger are passed in, so a shell without the hosted product can read files. The text read from
+  the same files is unchanged.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
