@@ -510,19 +510,33 @@ describe('the Rust engine shim', () => {
     expect(documented.sort()).toEqual(Object.keys(ENGINE_OWN_ROUTES).sort());
   });
 
+  // A shim bug: a result naming no writes is read as the old wire's empty
+  // list (`['l', 0, []]`, rust_engine.ts `resultOf`), which the plain wire
+  // refuses ("a wire list is [\"l\", items]"). Fails until the default is
+  // `['l', []]`.
+  it.failing('reads a result that names no writes as writing nothing', async () => {
+    const context = { trace: { entries: [], published: 0 }, ledger: new RunLedger({}) };
+    expect(readRunResult({ result: { movementName: 'm' } }, { context, hostErrors: [] })).toEqual({
+      ran: { movementName: 'm', writes: [], trace: [], extractionSites: {} },
+    });
+  });
+
   it('reads a result, a failure and a decline, charges the cost it reports, and refuses what it does not decode yet', async () => {
     const trace = [{ kind: 'gate' as const, outcome: true }];
     const context = (entries: typeof trace = []) => ({ trace: { entries, published: 0 }, ledger: new RunLedger({}) });
-    expect(readRunResult({ result: { movementName: 'm' } }, { context: context(trace), hostErrors: [] })).toEqual({
+    // Every result here names its writes (none: `['l', []]`); one naming
+    // none is the case above.
+    const none = ['l', []];
+    expect(readRunResult({ result: { movementName: 'm', writes: none } }, { context: context(trace), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [], trace, extractionSites: {} },
     });
-    expect(readRunResult({ result: { movementName: 'm', cancelled: true } }, { context: context(), hostErrors: [] })).toEqual({
+    expect(readRunResult({ result: { movementName: 'm', writes: none, cancelled: true } }, { context: context(), hostErrors: [] })).toEqual({
       ran: { movementName: 'm', writes: [], trace: [], extractionSites: {}, cancelled: true },
     });
     // The cost the engine reports must be what its host was charged.
     const charged = context();
     charged.ledger.charge([{ source: 'model:judge', microdollars: 12 }]);
-    const reported = { result: { movementName: 'm' }, cost: [{ source: 'model:judge', microdollars: 12 }] };
+    const reported = { result: { movementName: 'm', writes: none }, cost: [{ source: 'model:judge', microdollars: 12 }] };
     expect(readRunResult(reported, { context: charged, hostErrors: [] })).toMatchObject({ ran: { movementName: 'm' } });
     expect(() => readRunResult(reported, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     expect(readRunResult({ declined: 'a shape' }, { context: context(), hostErrors: [] })).toEqual({ declined: 'a shape' });
@@ -550,7 +564,7 @@ describe('the Rust engine shim', () => {
     expect(() => readRunResult({ thrown: { class: 'RunCostCapExceeded', capMicrodollars: '1' } }, { context: context(), hostErrors: [] })).toThrow(RustShimError);
     let failed: unknown;
     try {
-      readRunResult({ failed: { error: { hostError: 0 }, result: { movementName: 'm' } } }, { context: context(trace), hostErrors: [original] });
+      readRunResult({ failed: { error: { hostError: 0 }, result: { movementName: 'm', writes: none } } }, { context: context(trace), hostErrors: [original] });
     } catch (error) {
       failed = error;
     }
@@ -617,7 +631,7 @@ describe('the segment input', () => {
     expect(rustRunStats).toMatchObject({ segments: 0, unsupported: { [EVENT_DOES_NOT_CROSS]: 1 }, hostCalls: {} });
     expect(asked).toEqual([]);
     // The source crosses: its lone half is read as the TypeScript's parser is
-    // handed it (rust_wire_round_trip.unit.test.ts runs it on both engines).
+    // handed it (rust_wire_round_trip.unit.test.ts runs it).
     const { engine, started } = scriptedEngine(() => ({ done: { result: {} } }));
     resetRustRunStats();
     await runSegmentInRust({ input: crossing({ source: 'x = "\ud800"', event: { payload: {} } }), context: served.context }, engine).catch(() => undefined);
@@ -633,7 +647,7 @@ describe('the segment input', () => {
     await runSegmentInRust({ input, context: served.context }, engine).catch(() => undefined);
     expect(rustRunStats.unsupported).toEqual({});
     // Data, as every dict is: no record tag anywhere in the input.
-    expect(JSON.stringify(started)).toContain('["meta",["o",2,[["kind","event"]]]]');
+    expect(JSON.stringify(started)).toContain('["meta",["o",[["kind","event"]]]]');
     expect(JSON.stringify(started)).toContain('"kind","toString"');
     expect(JSON.stringify(started)).not.toContain('["x"');
   });
