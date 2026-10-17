@@ -32,9 +32,8 @@ use crate::wire::{Hv, Wire, js_of_json, json_of_js};
 pub const TEAM: &str = "local";
 
 /// The host methods this host serves, by path: the engine asks an optional
-/// one only of a host that lists it. The callback family (`park.callbacks`)
-/// is not served yet, nor is a cost-cap pause (`commitLimitPause`), which the
-/// TypeScript lf does not serve either.
+/// one only of a host that lists it. A cost-cap pause (`commitLimitPause`)
+/// is not served, as the TypeScript lf does not serve it either.
 const SERVES: &[&str] = &[
     "segment.open",
     "segment.close",
@@ -53,6 +52,8 @@ const SERVES: &[&str] = &[
     "park.sink.cancelSubtrees",
     "park.sink.commitSuspension",
     "park.wake",
+    "park.callbacks.mint",
+    "park.callbacks.calls",
     "park.sources.save",
     "park.sources.load",
     "park.bindings.record",
@@ -95,6 +96,8 @@ pub enum Entry {
     Resume { state: Js, reenter: bool },
     /// A race a batch resume deferred, settled.
     Settle { state: Js, frame_address: String },
+    /// A recorded call's body, entered at its callback with the call's values.
+    Fire { state: Js, values: Obj, call_index: usize },
 }
 
 /// What a segment runs: the run's facts and how it is entered.
@@ -155,6 +158,8 @@ pub struct SegmentHost<'s> {
     pub documents: &'s Documents,
     /// The acting user every event acts as (`localIdentity`).
     pub user: Js,
+    /// Where lf is reached from outside: a minted callback's url is under it.
+    pub public_url: String,
     wire: RefCell<Wire>,
     positions: RefCell<HashMap<i64, Hv>>,
     host_errors: RefCell<Vec<HostFailure>>,
@@ -173,6 +178,7 @@ impl<'s> SegmentHost<'s> {
             adapters: input.adapters,
             documents: input.documents,
             user: input.user,
+            public_url: input.public_url,
             wire: RefCell::new(Wire::default()),
             positions: RefCell::new(HashMap::new()),
             host_errors: RefCell::new(Vec::new()),
@@ -191,6 +197,7 @@ pub struct SegmentHostParts<'s> {
     pub adapters: SegmentAdapters<'s>,
     pub documents: &'s Documents,
     pub user: Js,
+    pub public_url: String,
 }
 
 /// A number from the environment, positive and finite, else `default`.
@@ -211,6 +218,7 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
         Entry::Run => (None, false, None),
         Entry::Resume { state, reenter } => (Some(state), *reenter, None),
         Entry::Settle { state, frame_address } => (Some(state), false, Some(frame_address)),
+        Entry::Fire { state, .. } => (Some(state), false, None),
     };
     if let Some(state) = state {
         // A parked state's files are made host-side, in the segment's file
@@ -229,6 +237,11 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
     }
     if let Some(frame_address) = settle {
         segment.insert("settle".into(), json!({ "frameAddress": frame_address }));
+    }
+    if let Entry::Fire { values, call_index, .. } = &input.entry {
+        // The call's values are data, as the event is.
+        let values = wire.write(&Hv::of_js(&Js::Obj(values.clone())));
+        segment.insert("fire".into(), json!({ "values": values, "callIndex": call_index }));
     }
     segment.insert("source".into(), json!(input.source));
     segment.insert("nativeCheck".into(), json!(true));
@@ -644,6 +657,42 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
             let adapter_type = text(args, "adapterType", "park.wake")?;
             let key = text(args, "correlationKey", "park.wake")?;
             queue_await_wake(store, adapter_type, TEAM, key).map(|()| None).map_err(rules_failure)
+        }
+        "park.callbacks.mint" => {
+            const LABEL: &str = "park.callbacks.mint";
+            if args.get("wire") != Some(&json!(true)) {
+                return Err(Fault(format!("{LABEL} carries its state on the eval wire")));
+            }
+            let single_use = args.get("singleUse").and_then(Json::as_bool).ok_or_else(|| Fault(format!("{LABEL} singleUse is a boolean")))?;
+            let params: Vec<(String, String)> = args
+                .get("params")
+                .and_then(Json::as_array)
+                .and_then(|list| list.iter().map(|p| Some((p.get("name")?.as_str()?.to_string(), p.get("type")?.as_str()?.to_string()))).collect())
+                .ok_or_else(|| Fault(format!("{LABEL} params are {{name, type}} each")))?;
+            let expires_at = match args.get("expiresAt") {
+                None => None,
+                Some(at) => Some(at.as_str().filter(|t| crate::callbacks::to_iso(t).is_some()).ok_or_else(|| Fault(format!("{LABEL} expiresAt is not an ISO 8601 instant")))?),
+            };
+            let address = text(args, "address", LABEL)?;
+            let state = read_wire(host, args.get("state"))?.js();
+            if !matches!(state.get("version"), Some(Js::Num(_))) {
+                return Err(Fault(format!("{LABEL} state is a parked state")));
+            }
+            let mint = crate::callbacks::Mint { team_id: TEAM, run_id, address, params: &params, state: &state, single_use, expires_at };
+            match store.mint_callback(mint) {
+                Ok(id) => Ok(Some(json!({ "id": id, "url": crate::callbacks::callback_url(&host.public_url, &id) }))),
+                Err(error) => Err(store_failure(error)),
+            }
+        }
+        "park.callbacks.calls" => {
+            let id = text(args, "callbackId", "park.callbacks.calls")?;
+            match store.callback(id) {
+                Ok(callback) => {
+                    let calls = callback.map(|c| c.landed_calls()).unwrap_or(Js::Arr(Vec::new()));
+                    Ok(Some(host.wire.borrow().write(&Hv::of_js(&calls))))
+                }
+                Err(error) => Err(store_failure(error)),
+            }
         }
         "park.sources.save" => {
             let source = text(args, "source", "park.sources.save")?;

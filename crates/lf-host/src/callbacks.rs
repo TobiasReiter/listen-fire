@@ -267,14 +267,6 @@ pub enum Refusal {
     Expired,
 }
 
-impl Refusal {
-    pub fn name(self) -> &'static str {
-        match self {
-            Refusal::Closed => "closed",
-            Refusal::Expired => "expired",
-        }
-    }
-}
 
 /// The body's work row (`callbackBodyWork`): keyed by the call, so a call is
 /// queued once however often this is reached.
@@ -285,8 +277,21 @@ pub fn queue_body(store: &Store, callback_id: &str, team_id: &str, call_index: u
 
 // ── The family, over the state file ─────────────────────────────────────────
 
+/// A callback to mint: the run's statement it resumes at, the fire-time
+/// signature, and the captured continuation.
+pub struct Mint<'a> {
+    pub team_id: &'a str,
+    pub run_id: &'a str,
+    pub address: &'a str,
+    pub params: &'a [(String, String)],
+    pub state: &'a Js,
+    pub single_use: bool,
+    pub expires_at: Option<&'a str>,
+}
+
 impl Store {
-    pub fn mint_callback(&self, team_id: &str, run_id: &str, address: &str, params: &[(String, String)], state: &Js, single_use: bool, expires_at: Option<&str>) -> Result<String> {
+    pub fn mint_callback(&self, mint: Mint<'_>) -> Result<String> {
+        let Mint { team_id, run_id, address, params, state, single_use, expires_at } = mint;
         let id = new_callback_id();
         let expires_at = match expires_at {
             None => None,
@@ -516,7 +521,7 @@ fn coerce_one(name: &str, kind: &str, raw: &Js) -> std::result::Result<Js, Strin
 
 /// What a door's call came to (`CallbackCallOutcome`).
 pub enum CallOutcome {
-    Recorded { callback: CallbackRecord, call_index: usize },
+    Recorded { callback: Box<CallbackRecord>, call_index: usize },
     NotFound,
     Closed,
     Expired,
@@ -553,7 +558,7 @@ pub fn record_callback_call(store: &Store, id: &str, values: &Obj, body_due_at: 
     };
     let wake = Js::Obj(obj! { "adapterType" => Js::str(CALLBACK_AWAIT_TYPE), "teamId" => Js::str(&callback.team_id), "correlationKey" => Js::str(&callback.id) });
     store.enqueue("wake_await", &format!("wake_await:callback_backstop:{}", callback.id), &wake, Some(wake_due_at))?;
-    Ok(CallOutcome::Recorded { callback, call_index })
+    Ok(CallOutcome::Recorded { callback: Box::new(callback), call_index })
 }
 
 /// The run's callback-backed awaits that are resolvable now
@@ -601,7 +606,15 @@ pub fn rpc(store: &Store, method: &str, params: &Js) -> Option<std::result::Resu
                     _ => return Err(RpcFailure::Params("singleUse: expected a boolean".into())),
                 };
                 let state = params.get("state").cloned().unwrap_or(Js::Null);
-                let id = store.mint_callback(text("teamId")?, text("runId")?, text("address")?, &declared, &state, single_use, optional("expiresAt")?)?;
+                let id = store.mint_callback(Mint {
+                    team_id: text("teamId")?,
+                    run_id: text("runId")?,
+                    address: text("address")?,
+                    params: &declared,
+                    state: &state,
+                    single_use,
+                    expires_at: optional("expiresAt")?,
+                })?;
                 Js::Obj(obj! { "id" => Js::Str(id) })
             }
             "callbacks.get" => store.callback(text("id")?)?.map(|c| c.to_js()).unwrap_or(Js::Null),

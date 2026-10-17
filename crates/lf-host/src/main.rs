@@ -7,8 +7,12 @@
 //!   lf-host run --event <file> [--dry-run]   route an event to its listens and run each
 //!   lf-host resume [<run-id>]                step a parked run, or drain due work and every parked run
 //!   lf-host runs                             the runs, most recent first
+//!   lf-host serve [--port N]                 the inbound doors, the callback door and the work drain
+//!   lf-host call <callback-id> [--body <values.json>]
+//!   lf-host cancel <run-id> [--reason <text>]
 //!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
 //!   lf-host --contract-store <state.db>      the run host's backend over stdio JSON-RPC
+//!   lf-host --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!   lf-host --project-schema                 one schema projection, stdin to stdout (a parity probe)
 //!
 //! Single-threaded: one tokio thread, every wait an await.
@@ -16,10 +20,14 @@
 mod callbacks;
 mod catalog;
 mod check;
+mod contract_doors;
 mod contract_store;
+mod doors;
 mod documents;
 mod externals;
 mod file_ref;
+mod http;
+mod inbound;
 mod json;
 mod park_files;
 mod project;
@@ -31,6 +39,7 @@ mod runs;
 mod schema;
 mod secrets;
 mod segment;
+mod serve;
 mod sources;
 mod store;
 mod wire;
@@ -39,22 +48,31 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs> [--dir <project folder>] [--ephemeral]
+const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|serve|call|cancel> [--dir <project folder>] [--ephemeral]
        lf-host run --event <file.json> [--dry-run]
+       lf-host run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
        lf-host resume [<run-id>]
+       lf-host serve [--port N]
+       lf-host call <callback-id> [--body <values.json>]
+       lf-host cancel <run-id> [--reason <text>]
        lf-host --contract-store <state.db>
+       lf-host --contract-doors
        lf-host --project-schema
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
   run       route the event file's event to the listens it matches and run each (as `lf run --event`)
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   runs      the runs in the state file, most recent first (as `lf runs`)
+  serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
+  call      call a callback, as its url's POST does (the values: a JSON object)
+  cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
+  --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
-not yet here (the TypeScript lf has them): init, upgrade, serve, call, cancel, run --webhook";
+not yet here (the TypeScript lf has them): init, upgrade";
 
 /// The commands the TypeScript lf has that this binary does not yet.
-const NOT_YET: &[&str] = &["init", "upgrade", "serve", "call", "cancel"];
+const NOT_YET: &[&str] = &["init", "upgrade"];
 
 struct Args {
     command: Option<String>,
@@ -65,7 +83,13 @@ struct Args {
     dry_run: bool,
     event: Option<PathBuf>,
     webhook: Option<String>,
+    body: Option<PathBuf>,
+    install: Option<String>,
+    headers: Vec<String>,
+    port: Option<String>,
+    reason: Option<String>,
     contract_store: Option<PathBuf>,
+    contract_doors: bool,
     project_schema: bool,
     help: bool,
 }
@@ -79,7 +103,13 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         dry_run: false,
         event: None,
         webhook: None,
+        body: None,
+        install: None,
+        headers: Vec::new(),
+        port: None,
+        reason: None,
         contract_store: None,
+        contract_doors: false,
         project_schema: false,
         help: false,
     };
@@ -90,6 +120,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--dir" => args.dir = PathBuf::from(value("--dir")?),
             "--event" => args.event = Some(PathBuf::from(value("--event")?)),
             "--webhook" => args.webhook = Some(value("--webhook")?),
+            "--body" => args.body = Some(PathBuf::from(value("--body")?)),
+            "--install" => args.install = Some(value("--install")?),
+            "--header" => args.headers.push(value("--header")?),
+            "--port" => args.port = Some(value("--port")?),
+            "--reason" => args.reason = Some(value("--reason")?),
+            "--contract-doors" => args.contract_doors = true,
             "--ephemeral" => args.ephemeral = true,
             "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(PathBuf::from(value("--contract-store")?)),
@@ -108,6 +144,9 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
     let args = parse_args(&argv)?;
     if let Some(path) = args.contract_store {
         return contract_store::serve(&path).await.map(|()| 0);
+    }
+    if args.contract_doors {
+        return contract_doors::serve().await.map(|()| 0);
     }
     let mut out = std::io::stdout().lock();
     if args.project_schema {
@@ -135,9 +174,10 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             }
         },
         "run" => {
-            if args.webhook.is_some() {
-                eprintln!("lf-host: `run --webhook` is not in lf-host yet; use the TypeScript lf for it");
-                return Ok(2);
+            if let (Some(external), Some(body)) = (&args.webhook, &args.body) {
+                let session = runs::open_session(project::load_project(&args.dir)?, args.ephemeral).await?;
+                let delivery = serve::WebhookFile { external, install: args.install.as_deref(), body, headers: &args.headers };
+                return runs::report(&serve::receive_webhook(&session, delivery).await?, &mut out);
             }
             let Some(event_file) = &args.event else {
                 eprintln!("lf run needs --event <file> or --webhook <external> --body <file>");
@@ -168,6 +208,9 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             }
             Ok(0)
         }
+        "serve" => serve::run(project::load_project(&args.dir)?, args.ephemeral, args.port.as_deref()).await,
+        "call" => serve::call_command(&args.dir, args.rest.first().map(String::as_str), args.body.as_deref(), &mut out).await,
+        "cancel" => serve::cancel_command(&args.dir, args.rest.first().map(String::as_str), args.reason.as_deref(), &mut out).await,
         other if NOT_YET.contains(&other) => {
             eprintln!("lf-host: `{other}` is not in lf-host yet; use the TypeScript lf for it");
             Ok(2)
@@ -182,7 +225,8 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a tokio runtime");
-    let code = match runtime.block_on(run(argv)) {
+    // A LocalSet, so a listener's connections run as tasks on this one thread.
+    let code = match runtime.block_on(tokio::task::LocalSet::new().run_until(run(argv))) {
         Ok(code) => code,
         Err(message) => {
             eprintln!("lf-host: {message}");

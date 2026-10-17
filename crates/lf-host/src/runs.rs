@@ -1,14 +1,16 @@
 //! A session — one project opened for running: its secrets, externals,
 //! catalog, files and listens — and the entry points the run commands share:
 //! an event routed to the listens it matches and run, a parked run resumed,
-//! and the work queue drained. A port of apps/cli/src/runs.ts, its output
-//! (`report`) the TypeScript lf's line for line.
+//! the work queue drained, a callback called and a run cancelled. A port of
+//! apps/cli/src/runs.ts, its output (`report`) the TypeScript lf's line for
+//! line.
 
 use std::cell::RefCell;
 use std::io::Write;
 
 use indexmap::IndexMap;
 
+use crate::callbacks::{CALLBACK_AWAIT_TYPE, CallFor, CallOutcome, queue_body, record_callback_call, refusal, resolvable_awaits};
 use crate::catalog::catalog_of;
 use crate::check::{LOCAL_TENANT, describe_external};
 use crate::documents::Documents;
@@ -19,11 +21,11 @@ use crate::project::{Project, refuse_below_lf};
 use crate::remote::{Externals, SegmentAdapters};
 use crate::routing::{Listen, collect_listens, event_matches_trigger_scope, trigger_event_of};
 use crate::run_host::{
-    Lease, Settled, StepOutcome, StepRequest, Stepper, after_step, arm_timer_wake, clear_if_quiescent, drain_due_timers, drain_run, next_timer_wake,
-    run_complete_without, run_quiescent, with_run_lease,
+    CANCELLED_BY_OPERATOR, Lease, Settled, StepOutcome, StepRequest, Stepper, after_step, arm_timer_wake, clear_if_quiescent, drain_due_timers, drain_run,
+    fail_run, next_timer_wake, run_complete_without, run_quiescent, settle_if_cancel_requested, with_run_lease,
 };
 use crate::secrets::{Credentials, load_secrets, missing_credentials};
-use crate::segment::{Ended, Entry, SegmentHost, SegmentHostParts, SegmentInput, run_segment};
+use crate::segment::{Ended, Entry, Ran, SegmentHost, SegmentHostParts, SegmentInput, run_segment};
 use crate::sources::{MovementFile, scan_movements};
 use crate::store::{Store, iso};
 use crate::wire_results;
@@ -34,13 +36,15 @@ const WORK_LEASE_MS: i64 = 60_000;
 /// held elsewhere, and when it failed.
 const BUSY_RETRY_MS: i64 = 5_000;
 const FAILED_RETRY_MS: i64 = 30_000;
+/// Where `lf serve` listens unless told otherwise (`DEFAULT_PORT`).
+pub const DEFAULT_PORT: u16 = 4400;
 
 pub struct Session {
     pub project: Project,
     pub store: Store,
     credentials: Credentials,
     running: Vec<RunningExternal>,
-    documents: Documents,
+    pub documents: Documents,
     files: Vec<MovementFile>,
     catalog: Js,
     listens: Vec<Listen>,
@@ -48,6 +52,8 @@ pub struct Session {
     due_offset_ms: i64,
     /// The principal every event acts as (`localIdentity`).
     user: Js,
+    /// Where lf is reached from outside: a callback's url is under it.
+    public_url: String,
     /// The temporary folder an ephemeral session's state lives in.
     ephemeral_dir: Option<std::path::PathBuf>,
 }
@@ -113,7 +119,12 @@ pub async fn open_session(project: Project, ephemeral: bool) -> Result<Session, 
     let catalog = catalog_of(&running, &schemas, &credentials, &files);
     let listens = collect_listens(&files, project.language_version);
     let user = local_identity(&project);
-    Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, ephemeral_dir })
+    let public_url = project
+        .public_url
+        .clone()
+        .or_else(|| crate::serve::host_url().map(str::to_string))
+        .unwrap_or_else(|| format!("http://127.0.0.1:{DEFAULT_PORT}"));
+    Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, public_url, ephemeral_dir })
 }
 
 /// What one entry into a run came to (`RunOutcome`).
@@ -121,7 +132,8 @@ pub struct RunOutcome {
     pub run_id: String,
     pub file: String,
     pub movement: String,
-    /// `fired` or `resumed` (a callback's body, `called`, is not run here yet).
+    /// `fired`, `resumed`, or `called` (a callback's body; `error`: the body
+    /// failed, and the run carries on).
     pub entry: &'static str,
     /// `completed`, `parked`, `failed` or `leaseLost`.
     pub status: String,
@@ -178,7 +190,17 @@ impl RunFacts {
 }
 
 impl Session {
-    fn externals(&self) -> Externals<'_> {
+    /// The externals the session started.
+    pub fn running(&self) -> &[RunningExternal] {
+        &self.running
+    }
+
+    /// The installs: the secrets file's credentials, then the environment's.
+    pub fn credentials(&self) -> &Credentials {
+        &self.credentials
+    }
+
+    pub fn externals(&self) -> Externals<'_> {
         Externals { project: &self.project, running: &self.running, credentials: &self.credentials, documents: &self.documents, tenant: LOCAL_TENANT }
     }
 
@@ -258,28 +280,7 @@ impl Session {
         completing: Option<&str>,
     ) -> Result<StepOutcome, String> {
         tally.borrow_mut().stepped += 1;
-        let externals = self.externals();
-        let segment_id = uuid::Uuid::new_v4().to_string();
-        let host = SegmentHost::new(SegmentHostParts {
-            segment_id: segment_id.clone(),
-            run_id: run_id.to_string(),
-            fence: fence.map(str::to_string),
-            store: &self.store,
-            adapters: SegmentAdapters::new(&segment_id, &externals),
-            documents: &self.documents,
-            user: self.user.clone(),
-        });
-        let input = SegmentInput {
-            source: &facts.source,
-            language_version: facts.language_version,
-            movement_name: &facts.movement_name,
-            event: &facts.event,
-            fired_at: &facts.fired_at,
-            catalog: &self.catalog,
-            dry_run: captured.is_some(),
-            entry,
-        };
-        let ran = match run_segment(&host, input).await {
+        let ran = match self.segment(run_id, facts, fence, captured.is_some(), entry).await {
             Ok(ran) => ran,
             Err(Ended::LeaseLost) => return Ok(StepOutcome::LeaseLost),
             Err(Ended::Failed(message)) => {
@@ -311,6 +312,33 @@ impl Session {
         };
         self.store.settle_run(run_id, if complete { "completed" } else { "parked" }, &outcome, &at).map_err(|e| e.to_string())?;
         Ok(StepOutcome::Completed { deferred_race_frames: ran.deferred_race_frames })
+    }
+
+    /// One engine segment of the run, entered as `entry`, under `fence`.
+    async fn segment(&self, run_id: &str, facts: &RunFacts, fence: Option<&str>, dry_run: bool, entry: Entry) -> Result<Ran, Ended> {
+        let externals = self.externals();
+        let segment_id = uuid::Uuid::new_v4().to_string();
+        let host = SegmentHost::new(SegmentHostParts {
+            segment_id: segment_id.clone(),
+            run_id: run_id.to_string(),
+            fence: fence.map(str::to_string),
+            store: &self.store,
+            adapters: SegmentAdapters::new(&segment_id, &externals),
+            documents: &self.documents,
+            user: self.user.clone(),
+            public_url: self.public_url.clone(),
+        });
+        let input = SegmentInput {
+            source: &facts.source,
+            language_version: facts.language_version,
+            movement_name: &facts.movement_name,
+            event: &facts.event,
+            fired_at: &facts.fired_at,
+            catalog: &self.catalog,
+            dry_run,
+            entry,
+        };
+        run_segment(&host, input).await
     }
 
     /// Where a run stands once an entry into it is over, as its row says. A
@@ -366,7 +394,7 @@ impl Session {
                     drain_run(&self.store, run_id, &leaves, None, lease, &stepper).await?
                 }
                 Drain::DueTimers => drain_due_timers(&self.store, run_id, &self.due_by(), lease, &stepper).await?,
-                Drain::Leaves(addresses) => drain_run(&self.store, run_id, addresses, None, lease, &stepper).await?,
+                Drain::Awaits(extra) => drain_awaits(&self.store, run_id, extra, lease, &stepper).await?,
             };
             Ok(Some((*stepper.tally.borrow(), lease_lost)))
         })
@@ -472,7 +500,7 @@ impl Session {
                 }
                 let (mut busy, mut outcomes) = (false, Vec::new());
                 for (run_id, addresses) in by_run {
-                    match self.drive_parked_run(&run_id, Drain::Leaves(addresses)).await? {
+                    match self.drive_parked_run(&run_id, Drain::Awaits(addresses)).await? {
                         Parked::Busy => busy = true,
                         Parked::NotStepped => {}
                         Parked::Stepped(outcome) => outcomes.push(outcome),
@@ -480,7 +508,15 @@ impl Session {
                 }
                 Ok((busy, outcomes))
             }
-            "fire_callback" => Err("lf-host does not run callback bodies yet; the TypeScript lf drains this row".into()),
+            "fire_callback" => {
+                let index = payload.get("callIndex").and_then(|n| if let Js::Num(n) = n { n.as_u64() } else { None });
+                let index = index.ok_or("a fire_callback row has no callIndex")? as usize;
+                Ok(match self.run_recorded_body(&text("callbackId")?, index).await? {
+                    BodyRun::Ran(outcomes) => (false, outcomes),
+                    BodyRun::Busy => (true, Vec::new()),
+                    BodyRun::Refused => (false, Vec::new()),
+                })
+            }
             other => Err(format!("not a work kind: {other}")),
         }
     }
@@ -490,7 +526,25 @@ impl Session {
 enum Drain {
     EveryParkedLeaf,
     DueTimers,
-    Leaves(Vec<String>),
+    /// The awaits resolvable now: those a woken key names, and those whose
+    /// callback has a landed call.
+    Awaits(Vec<String>),
+}
+
+/// `drainAwaits`: step every currently resolvable await leaf of one run under
+/// the caller's lease, the callback-backed ones (`callbackAwaitKeeper`) and
+/// the `extra` ones the caller already knows are resolvable, each once.
+async fn drain_awaits(store: &Store, run_id: &str, extra: &[String], lease: &Lease, stepper: &impl Stepper) -> Result<bool, String> {
+    let mut addresses = resolvable_awaits(store, run_id).map_err(|e| e.to_string())?;
+    for address in extra {
+        if !addresses.contains(address) {
+            addresses.push(address.clone());
+        }
+    }
+    if addresses.is_empty() {
+        return Ok(false);
+    }
+    drain_run(store, run_id, &addresses, None, lease, stepper).await
 }
 
 enum Parked {
@@ -524,6 +578,196 @@ impl Stepper for LeafStepper<'_> {
             .record_segment(&self.run_id, &self.facts, Some(&self.lease.token), &self.tally, None, entry, Some(&completing))
             .await;
         recorded.unwrap_or_else(StepOutcome::Failed)
+    }
+}
+
+// ── Callbacks ───────────────────────────────────────────────────────────────
+
+/// How long after a call its durable rows (its body's, its awaiters' wake)
+/// come due. Its body runs at once when the run is free; the rows matter only
+/// if this process dies first, so they wait well past a normal body.
+const CALLBACK_BACKSTOP_MS: i64 = 30_000;
+
+/// What calling a callback came to (`CallOutcome`).
+pub struct Called {
+    pub call: CallOutcome,
+    /// The run was being stepped elsewhere: the body waits on its work row,
+    /// due now, for whichever lf process drains next.
+    pub queued: bool,
+    pub outcomes: Vec<RunOutcome>,
+}
+
+/// Whether a recorded call's body ran (`RecordedBodyRun`). `Busy`: another
+/// process holds the run, or the lease went before the body began, so the
+/// body is left to its work row.
+enum BodyRun {
+    Ran(Vec<RunOutcome>),
+    Busy,
+    Refused,
+}
+
+/// What a body segment came to (`CallbackBodyOutcome`): a failed body fails
+/// its segment, never the run.
+enum BodyOutcome {
+    Ran,
+    Failed(String),
+    Cancelled(Option<String>),
+    LeaseLost,
+}
+
+/// What `runCallbackBody` came to under the lease.
+enum UnderLease {
+    Ran { outcome: BodyOutcome, body: Tally, stepped: Option<Tally> },
+    NotStarted,
+    /// Its callback is gone or closed, the call is not there or already
+    /// started, or its run has ended.
+    Refused,
+}
+
+impl Session {
+    /// Call a callback (`callCallback`): validate and record the call (its
+    /// body queued with it), then run the body now under the run's lease and
+    /// wake whatever awaits the callback. The door (`POST /api/cb/<id>`) and
+    /// `lf call` both come here.
+    pub async fn call_callback(&self, id: &str, values: &Obj) -> Result<Called, String> {
+        let backstop = iso(CALLBACK_BACKSTOP_MS);
+        let call = record_callback_call(&self.store, id, values, &backstop, &backstop).map_err(|e| e.to_string())?;
+        let CallOutcome::Recorded { callback, call_index } = &call else { return Ok(Called { call, queued: false, outcomes: Vec::new() }) };
+        let (callback_id, team_id, call_index) = (callback.id.clone(), callback.team_id.clone(), *call_index);
+        match self.run_recorded_body(&callback_id, call_index).await? {
+            BodyRun::Ran(outcomes) => Ok(Called { call, queued: false, outcomes }),
+            BodyRun::Refused => Ok(Called { call, queued: false, outcomes: Vec::new() }),
+            BodyRun::Busy => {
+                // Held elsewhere: its row, due now, runs it once the run is free.
+                queue_body(&self.store, &callback_id, &team_id, call_index, &iso(0)).map_err(|e| e.to_string())?;
+                Ok(Called { call, queued: true, outcomes: Vec::new() })
+            }
+        }
+    }
+
+    /// Run one recorded call's body under its run's lease, then the awaits
+    /// it resolves (`runRecordedBody`).
+    async fn run_recorded_body(&self, callback_id: &str, call_index: usize) -> Result<BodyRun, String> {
+        let store_error = |e: crate::store::StoreError| e.to_string();
+        let Some(callback) = self.store.callback(callback_id).map_err(store_error)? else { return Ok(BodyRun::Refused) };
+        let Some(row) = self.store.run(&callback.run_id).map_err(store_error)? else { return Ok(BodyRun::Refused) };
+        let run_id = row.id.clone();
+        let held = with_run_lease(&self.store, &run_id, async |lease: &Lease| self.callback_body_under(&row, callback_id, call_index, lease).await).await?;
+        let Some(under) = held else { return Ok(BodyRun::Busy) };
+        let (outcome, body, stepped) = match under? {
+            UnderLease::NotStarted => return Ok(BodyRun::Busy),
+            UnderLease::Refused => return Ok(BodyRun::Refused),
+            UnderLease::Ran { outcome, body, stepped } => (outcome, body, stepped),
+        };
+        let mut called = self.settled_outcome(&run_id, "called", body, matches!(outcome, BodyOutcome::LeaseLost))?;
+        if let BodyOutcome::Failed(error) = &outcome {
+            called.error = Some(format!("the callback's body failed: {error}"));
+        }
+        let mut outcomes = vec![called];
+        if let Some(stepped) = stepped.filter(|t| t.stepped > 0) {
+            outcomes.push(self.settled_outcome(&run_id, "resumed", stepped, false)?);
+        }
+        Ok(BodyRun::Ran(outcomes))
+    }
+
+    /// `runCallbackBody`: everything that decides whether the body runs is
+    /// read again here, under the lease; the body is marked started before it
+    /// runs (at most once after start, a crash included), and the run's
+    /// awaits on the callback are woken last, so what the body wrote is
+    /// there for the continuation that reads it.
+    async fn callback_body_under(&self, row: &crate::store::RunRow, callback_id: &str, call_index: usize, lease: &Lease) -> Result<UnderLease, String> {
+        let store_error = |e: crate::store::StoreError| e.to_string();
+        let fence = Some(lease.token.as_str());
+        let Some(callback) = self.store.callback(callback_id).map_err(store_error)? else { return Ok(UnderLease::Refused) };
+        let Some(call) = callback.calls.get(call_index) else { return Ok(UnderLease::Refused) };
+        if refusal(&callback, CallFor::RecordedCall, &iso(0)).is_some() {
+            return Ok(UnderLease::Refused);
+        }
+        if call.body_started_at.is_some() {
+            return Ok(UnderLease::Refused);
+        }
+        let open = self.store.run(&callback.run_id).map_err(store_error)?.is_some_and(|r| r.status == "parked" || r.status == "running");
+        if !open {
+            return Ok(UnderLease::Refused);
+        }
+        if lease.is_lost() || !self.store.mark_body_started(callback_id, call_index, fence).map_err(store_error)? {
+            return Ok(UnderLease::NotStarted);
+        }
+        let mut body = Tally::default();
+        let outcome = self.callback_body_segment(row, &callback.state, &call.values, call_index, lease, &mut body).await?;
+        match &outcome {
+            BodyOutcome::LeaseLost => return Ok(UnderLease::Ran { outcome, body, stepped: None }),
+            BodyOutcome::Cancelled(reason) => {
+                fail_run(&self.store, &callback.run_id, reason.as_deref().unwrap_or(CANCELLED_BY_OPERATOR), fence)?;
+                return Ok(UnderLease::Ran { outcome, body, stepped: None });
+            }
+            BodyOutcome::Ran | BodyOutcome::Failed(_) => {}
+        }
+        let parks: Vec<String> = self
+            .store
+            .correlated(CALLBACK_AWAIT_TYPE, &callback.team_id, &callback.id)
+            .map_err(store_error)?
+            .into_iter()
+            .filter(|p| p.run_id == callback.run_id)
+            .map(|p| p.address)
+            .collect();
+        if parks.is_empty() {
+            return Ok(UnderLease::Ran { outcome, body, stepped: None });
+        }
+        let Some(stepper) = self.parked_stepper(&callback.run_id, lease)? else { return Ok(UnderLease::Ran { outcome, body, stepped: None }) };
+        drain_awaits(&self.store, &callback.run_id, &parks, lease, &stepper).await?;
+        let stepped = *stepper.tally.borrow();
+        Ok(UnderLease::Ran { outcome, body, stepped: Some(stepped) })
+    }
+
+    /// A callback's body (`callbackBodySegment`): one engine segment entered
+    /// at the callback, with the call's values.
+    async fn callback_body_segment(&self, row: &crate::store::RunRow, state: &Js, values: &Obj, call_index: usize, lease: &Lease, tally: &mut Tally) -> Result<BodyOutcome, String> {
+        if !matches!(state.get("version"), Some(Js::Num(_))) {
+            return Ok(BodyOutcome::Failed("the callback holds no state to run its body from".into()));
+        }
+        let facts = RunFacts::of_row(&row.id, &row.input)?;
+        tally.stepped += 1;
+        let entry = Entry::Fire { state: state.clone(), values: values.clone(), call_index };
+        Ok(match self.segment(&row.id, &facts, Some(&lease.token), false, entry).await {
+            Err(Ended::LeaseLost) => BodyOutcome::LeaseLost,
+            Err(Ended::Failed(message)) => BodyOutcome::Failed(message),
+            Ok(ran) => {
+                tally.writes += ran.writes;
+                if ran.cancelled {
+                    BodyOutcome::Cancelled(self.store.cancel_request(&row.id).map_err(|e| e.to_string())?.flatten())
+                } else {
+                    BodyOutcome::Ran
+                }
+            }
+        })
+    }
+}
+
+// ── Cancel ──────────────────────────────────────────────────────────────────
+
+/// What `lf cancel` came to (`CancelOutcome`).
+pub enum Cancelled {
+    /// The run was not being stepped: it is settled failed now.
+    Now,
+    /// Another lf process is stepping it: its segment stops at the next
+    /// statement boundary, and the run settles failed there.
+    Requested,
+}
+
+/// `lf cancel <run>` (`cancelRun`): stamp the operator's request on the run's
+/// row, then settle it through the core's cancel path (failed with the
+/// reason, its live state torn down, its callbacks revoked) when no one
+/// holds it. Settling starts no segment, so it needs no session.
+pub async fn cancel_run(store: &Store, run_id: &str, reason: Option<&str>) -> Result<Cancelled, String> {
+    let row = store.run(run_id).map_err(|e| e.to_string())?.ok_or_else(|| format!("no run {run_id}"))?;
+    if !store.request_cancel(run_id, reason).map_err(|e| e.to_string())? {
+        return Err(format!("run {run_id} is {}; there is nothing to cancel", row.status));
+    }
+    let held = with_run_lease(store, run_id, async |lease: &Lease| settle_if_cancel_requested(store, run_id, Some(&lease.token))).await?;
+    match held {
+        None => Ok(Cancelled::Requested),
+        Some(settled) => settled.map(|_| Cancelled::Now),
     }
 }
 
