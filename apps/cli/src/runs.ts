@@ -109,6 +109,8 @@ export async function openSession(
   try {
     const schemas = new Map<string, InstanceSchema>();
     for (const [name, r] of running) {
+      // A plugin external has no graph to describe; its plugins are its manifest's.
+      if (r.external.manifest.kind === 'plugin') continue;
       schemas.set(name, await describeExternal(remoteAdapterOf({ running: r, credential: credentialFor(credentials, name), documents, tenant: LOCAL_TENANT })));
     }
     const files = scanMovements(project);

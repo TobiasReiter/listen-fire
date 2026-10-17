@@ -551,6 +551,9 @@ importers:
       engine-contracts:
         specifier: workspace:*
         version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
       movement-engine:
         specifier: workspace:*
         version: link:../../packages/movement-engine

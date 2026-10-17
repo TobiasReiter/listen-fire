@@ -30,6 +30,7 @@ import { modelCalls } from './models';
 import { localCancelGate, localParkFamily } from './parks';
 import type { Project } from './project';
 import { remoteAdapterOf } from './remote';
+import { pluginExternalFor } from './sources';
 import type { Credential } from './secrets';
 import type { State } from './state';
 
@@ -91,7 +92,12 @@ export function localHost(parts: LocalHostParts & { runId: string; fence?: strin
     ...(parts.writeSink !== undefined ? { writeSink: parts.writeSink } : {}),
   });
 
-  const models = modelCalls(credentials);
+  const models = modelCalls(credentials, ({ plugin, config, extractedContext }) => {
+    const running = pluginExternalFor(externals, plugin);
+    if (running === undefined) return undefined;
+    const adapter = remoteAdapterOf({ running, credential: credentialFor(credentials, running.external.manifest.name), documents: parts.documents, tenant: LOCAL_TENANT });
+    return adapter.invokePlugin({ name: plugin, config, extractedContext });
+  });
 
   return {
     segment: {

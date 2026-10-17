@@ -8,12 +8,15 @@
 // from the shared price table (movement-engine's lib/models/prices.json) and
 // charged to its run, so the run's cost cap sees what its model calls spent.
 
-import type { EngineHost } from 'movement-engine/services/movement_engine/host';
+import type { WirePluginResultShape } from 'engine-contracts';
+import type { Costed, EngineHost } from 'movement-engine/services/movement_engine/host';
+import type { TransformInvocationResult } from 'movement-engine/services/movement_engine/extraction';
 import type { ChatCall } from 'movement-engine/lib/models/chat';
 import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
 import { anthropicClient, type LlmUsage } from 'movement-engine/lib/anthropic';
 import { costMicrodollars } from 'movement-engine/lib/models/pricing';
+import { costSourceKey } from 'movement-engine/lib/run_cost';
 import { reportRunCost } from 'movement-engine/lib/run_spend';
 import { models } from 'movement-engine/lib/models/registry';
 import { anthropicKeyedChatProvider, type AnthropicKey } from 'movement-engine/lib/models/providers/anthropic';
@@ -25,7 +28,14 @@ import {
 import { arbitrateWithoutJudge } from 'movement-engine/services/translation_graph/uniqueness';
 import { MODEL_CREDENTIAL, type Credential } from './secrets';
 
-export function modelCalls(credentials: Map<string, Credential>): EngineHost['llm'] {
+/** One call of a plugin a plugin external serves; undefined when none does. */
+export type LocalPluginCall = (input: {
+  plugin: string;
+  config: Record<string, unknown>;
+  extractedContext: Record<string, unknown>;
+}) => Promise<WirePluginResultShape> | undefined;
+
+export function modelCalls(credentials: Map<string, Credential>, plugins: LocalPluginCall): EngineHost['llm'] {
   const chat = anthropicClient({
     // Read at the call, not here: a run that never reaches a model needs no key.
     chatCallFor: (name) => anthropicCall(name, anthropicKey(credentials)),
@@ -39,12 +49,31 @@ export function modelCalls(credentials: Map<string, Credential>): EngineHost['ll
     client: { call: (request) => metered(request, (input) => llm.call(input)) },
     extractCall: { call: (request) => metered(request, (input) => extractCall.call(input)) },
     transforms: {
-      invoke: async ({ plugin }) => {
-        throw new Error(`plugin "${plugin}" cannot run: lf does not serve plugins yet`);
-      },
+      invoke: (request) =>
+        metered(request, async ({ plugin, config, extractedContext }) => {
+          const answered = plugins({ plugin, config, extractedContext });
+          if (answered === undefined) {
+            throw new Error(`plugin "${plugin}" cannot run: no plugin external in this project serves it`);
+          }
+          return pluginInvocation(plugin, await answered);
+        }),
     },
     arbitrateEntities: (request) => refusingPastBudget(async () => arbitrate(request)),
   };
+}
+
+/** A plugin external's answer, as the engine takes a plugin's: what it
+ *  added, and what its own work cost under its name, charged to the run. */
+function pluginInvocation(plugin: string, answer: WirePluginResultShape): Costed<TransformInvocationResult> {
+  const out: Costed<TransformInvocationResult> = {};
+  if (answer.text !== undefined && answer.text !== '') out.text = answer.text;
+  if (answer.data !== undefined && Object.keys(answer.data).length > 0) out.data = answer.data;
+  if (answer.records !== undefined && answer.records.length > 0) out.records = answer.records;
+  if (answer.outcome !== undefined) out.outcome = answer.outcome;
+  if (answer.costMicrodollars !== undefined) {
+    out.cost = [{ source: costSourceKey({ kind: 'plugin', name: plugin }), microdollars: answer.costMicrodollars }];
+  }
+  return out;
 }
 
 /** Keys already told about. An unpriced model's usage would read as free; say
