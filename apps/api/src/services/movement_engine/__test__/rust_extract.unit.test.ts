@@ -325,7 +325,10 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
     ]);
   });
 
-  it('reads a model number past the double range as JSON.parse left it: refused, and asked again', async () => {
+  // `JSON.parse('1e999')` is Infinity, which crosses the wire as null: the
+  // record's one field is empty, so the record is dropped, and nothing is
+  // asked again.
+  it('reads a model number past the double range as null: the record is dropped, and nothing is asked again', async () => {
     const source = [
       'node Raise: "the raise described" {',
       '  amount: <number> "the amount raised"',
@@ -337,14 +340,14 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
     const rust = await onRust(
       {
         source,
-        // `JSON.parse('1e999')` is Infinity, which the number check refuses.
         replies: [one({ amount: cite(Infinity) }), one({ amount: cite(3000000) })],
       },
       { runsWhole: true },
     );
-    expect(rust.asked).toHaveLength(2);
+    expect(rust.asked).toHaveLength(1);
     const trace = 'result' in rust && rust.result !== undefined ? rust.result.trace : [];
-    expect(trace[0]).toMatchObject({ kind: 'extraction', retried: [expect.stringContaining('amount')] });
+    expect(trace[0]).toMatchObject({ kind: 'extraction', dropped: { Raise: 1 } });
+    expect(trace[0]).not.toHaveProperty('retried');
   });
 
   it("reads a library declaration's words, its base's included, in the library's own file", async () => {
@@ -585,16 +588,20 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
     });
   });
 
-  // A checked-clean program the engine refuses (it stages nested calls in a
-  // body only): a reachability gap, failing until the checker or the engine
-  // closes it.
-  it.failing('runs a file-level value holding a nested call', async () => {
-    resetRustRunStats();
-    const r = await runOn({
-      source: `import { echo } from plugins\nsaid = { page: echo(q: "x") }\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
+  // From version 5 a file-level value holds a value only: a call nested in
+  // one is refused at the check, before the run starts.
+  it('ends a run whose file-level value holds a nested call at the check (MOV_FILE_VALUE_RUNS)', async () => {
+    const r = await onRust(
+      {
+        source: `import { echo } from plugins\nsaid = { page: echo(q: "x") }\nmovement m(msg: <inbox-[:message]->>) {\n  x = 1\n}`,
+      },
+      { endsAtCheck: true },
+    );
+    expect('error' in r && runFailureCause(r.error)).toMatchObject({
+      code: 'MOVENG_CHECK',
+      message: expect.stringContaining('MOV_FILE_VALUE_RUNS'),
     });
-    // The engine's own refusal fails the run (it is not counted at the door).
-    expect('error' in r ? String(r.error) : 'ran').toBe('ran');
+    expect(r.invoked).toEqual([]);
   });
 
   it('runs a plugin argument that calls a closure whole, its value what the closure returns (PLAN-08A Task 2)', async () => {
@@ -604,8 +611,10 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
     expect(rustRunStats).toMatchObject({ segments: 1, unsupported: {}, shimFaults: 0 });
   });
 
-  // The checker's MOV_SHAPE_FIELD_PROTO: the run ends at the check.
-  it('ends a run whose extraction declares a field or node named __proto__ at the check', async () => {
+  // From version 5 `__proto__` is an ordinary name (MOV_SHAPE_FIELD_PROTO
+  // applies before 5 only): the shape is asked for, and the reply's own key
+  // read as the field it is.
+  it('runs an extraction whose shape declares a field or node named __proto__', async () => {
     const flat = 'node Entry {\n  __proto__: <text> "p"\n  name: <text> "n"\n}\n';
     const call = (indent: string) => `${indent}d = extractOne([msg.\`text\`], Entry)`;
     const fan = [
@@ -617,20 +626,20 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
     ].join('\n');
     const declared =
       'node Entry {\n  name: <text>\n  node __proto__ {\n    a: <text>\n  }\n}\nmovement m(msg: <inbox-[:message]->>) {\n  d = extractOne([msg.`text`], Entry)\n}';
-    const reply = one({ __proto__: cite(3), name: cite('Acme') });
+    // A computed key, so the reply holds `__proto__` as its own key.
+    const reply = one({ ['__proto__']: cite('p'), name: cite('Acme') });
     const sources = [
       `${call('  ')}\n  return d`,
       fan,
       `  if 1 == 1 {\n    g = 1\n  }\n${fan}`,
     ].map((body) => `${flat}movement m(msg: <inbox-[:message]->>) {\n${body}\n}`);
-    for (const source of [...sources, declared]) {
-      const rust = await onRust({ source, replies: [reply, reply, reply] }, { endsAtCheck: true });
-      expect('error' in rust && runFailureCause(rust.error)).toMatchObject({
-        code: 'MOVENG_CHECK',
-        message: expect.stringContaining('MOV_SHAPE_FIELD_PROTO'),
-      });
-      expect(rust.asked).toEqual([]);
+    for (const source of sources) {
+      const rust = await onRust({ source, replies: [reply, reply, reply] }, { runsWhole: true });
+      expect(rust.asked.length).toBeGreaterThan(0);
     }
+    const nested = one({ name: cite('Acme'), ['__proto__']: [{ a: cite('x') }] });
+    const rust = await onRust({ source: declared, replies: [nested] }, { runsWhole: true });
+    expect('error' in rust ? String(rust.error) : 'ran').toBe('ran');
   });
 
   it('suspends before a plugin call a suspendAt names: it never invokes the plugin', async () => {
@@ -825,13 +834,15 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
     // `__proto__` key crosses as a key: rust_wire_round_trip.unit.test.ts.)
     const lone = JSON.parse('{"record":{"name":{"evidence":{"item":0,"quote":"q"},"value":"\\ud800"}}}');
 
-    it('reads the reply as it is, in one call', async () => {
+    it('reads the reply in one call, the surrogate as U+FFFD', async () => {
       const rust = await onRust(
         { source: askNamed('[msg.`text`]'), replies: [lone] },
         { runsWhole: true },
       );
       expect(rust.asked).toHaveLength(1);
-      expect(JSON.stringify('result' in rust ? rust.result : undefined)).toContain('\\ud800');
+      // The plain wire: a lone surrogate crosses as U+FFFD.
+      expect(JSON.stringify('result' in rust ? rust.result : undefined)).toContain('\ufffd');
+      expect(JSON.stringify('result' in rust ? rust.result : undefined)).not.toContain('\\ud800');
     });
   });
 

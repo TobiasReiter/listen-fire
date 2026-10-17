@@ -1,6 +1,6 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`extraction calls and plugin calls in the Rust engine a model reply holding a lone surrogate (transition artefacts row 9: read on) reads the reply as it is, in one call 1`] = `
+exports[`extraction calls and plugin calls in the Rust engine a model reply holding a lone surrogate (transition artefacts row 9: read on) reads the reply in one call, the surrogate as U+FFFD 1`] = `
 "{
   "asked": [
     {
@@ -49,7 +49,7 @@ exports[`extraction calls and plugin calls in the Rust engine a model reply hold
           "Named": [
             {
               "fields": {
-                "name": "\\ud800"
+                "name": "�"
               }
             }
           ]
@@ -68,7 +68,7 @@ exports[`extraction calls and plugin calls in the Rust engine a plugin's or a fi
       "model": "sonnet",
       "effort": "low",
       "blocks": [
-        "## Content item 0 (file \\"deck.pdf\\")\\n\\ud800",
+        "## Content item 0 (file \\"deck.pdf\\")\\n�",
         "## What to extract\\n\\nExtract the company described — the single one these sources describe, or nothing if they don't.\\n\\n**Named**: the company described — the one record, as the object under \`record\`\\n    - \`name\` (text): the company\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
       ]
     }
@@ -139,7 +139,7 @@ exports[`extraction calls and plugin calls in the Rust engine a plugin's or a fi
     }
   ],
   "parked": [],
-  "outcome": "MovementEngineError: MOVENG_ERROR: \\"\\\\ud800\\""
+  "outcome": "MovementEngineError: MOVENG_ERROR: \\"�\\""
 }"
 `;
 
@@ -988,39 +988,12 @@ exports[`extraction calls and plugin calls in the Rust engine asks each tier's m
 }"
 `;
 
-exports[`extraction calls and plugin calls in the Rust engine ends a run whose extraction declares a field or node named __proto__ at the check 1`] = `
+exports[`extraction calls and plugin calls in the Rust engine ends a run whose file-level value holds a nested call at the check (MOV_FILE_VALUE_RUNS) 1`] = `
 "{
   "asked": [],
   "invoked": [],
   "parked": [],
-  "outcome": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:\\n  MOV_SHAPE_FIELD_PROTO (line 5): '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name"
-}"
-`;
-
-exports[`extraction calls and plugin calls in the Rust engine ends a run whose extraction declares a field or node named __proto__ at the check 2`] = `
-"{
-  "asked": [],
-  "invoked": [],
-  "parked": [],
-  "outcome": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:\\n  MOV_SHAPE_FIELD_PROTO (line 5): '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name"
-}"
-`;
-
-exports[`extraction calls and plugin calls in the Rust engine ends a run whose extraction declares a field or node named __proto__ at the check 3`] = `
-"{
-  "asked": [],
-  "invoked": [],
-  "parked": [],
-  "outcome": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:\\n  MOV_SHAPE_FIELD_PROTO (line 5): '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name"
-}"
-`;
-
-exports[`extraction calls and plugin calls in the Rust engine ends a run whose extraction declares a field or node named __proto__ at the check 4`] = `
-"{
-  "asked": [],
-  "invoked": [],
-  "parked": [],
-  "outcome": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:\\n  MOV_SHAPE_FIELD_PROTO (line 6): '__proto__' cannot name a field or a node — JavaScript reads that key as the record's prototype, so the record would never hold it; give it another name"
+  "outcome": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:\\n  MOV_FILE_VALUE_RUNS (line 5): 'said' is a file-level value, worked out before every run with no event in scope, so it holds a value only — not a call to 'echo'. Do it inside the function that uses it."
 }"
 `;
 
@@ -1202,7 +1175,7 @@ exports[`extraction calls and plugin calls in the Rust engine hands a plugin a r
 }"
 `;
 
-exports[`extraction calls and plugin calls in the Rust engine parks what an extraction yielded, and the park resumes to the same writes 1`] = `"{"version":1,"address":"s1.b0.s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"attio":{"kind":"opaque","what":"import","name":"attio"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"Firm":{"kind":"shape","name":"Firm"}}},{"bindings":{"msg":{"kind":"event"},"found":{"kind":"nodePosition","id":0,"fields":{"name":"Acme"},"fieldOrder":["name"],"fieldProvenance":{"name":{"origins":[{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"name","description":"the company","quote":"q","item":0}],"direct":{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"name","description":"the company","quote":"q","item":0}}},"landedOn":"Firm","edges":{"founder":{"kind":"landed","landings":[{"kind":"nodePosition","id":1,"fields":{"first":"Ada"},"fieldOrder":["first"],"fieldProvenance":{"first":{"origins":[{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}],"direct":{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}}},"landedOn":"founder","edges":{}},{"kind":"nodePosition","id":2,"fields":{"first":"Grace"},"fieldOrder":["first"],"fieldProvenance":{"first":{"origins":[{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}],"direct":{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}}},"landedOn":"founder","edges":{}}],"landing":{"fields":["first"],"edges":{}}}}}}},{"bindings":{"kept":{"kind":"positions","landings":[{"kind":"nodeRef","id":1},{"kind":"nodeRef","id":2}]}}}]}"`;
+exports[`extraction calls and plugin calls in the Rust engine parks what an extraction yielded, and the park resumes to the same writes 1`] = `"{"version":2,"address":"s1.b0.s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"attio":{"kind":"opaque","what":"import","name":"attio"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"Firm":{"kind":"shape","name":"Firm"}}},{"bindings":{"msg":{"kind":"event"},"found":{"kind":"nodePosition","id":0,"fields":{"name":"Acme"},"fieldOrder":["name"],"fieldProvenance":{"name":{"origins":[{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"name","description":"the company","quote":"q","item":0}],"direct":{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"name","description":"the company","quote":"q","item":0}}},"landedOn":"Firm","edges":{"founder":{"kind":"landed","landings":[{"kind":"nodePosition","id":1,"fields":{"first":"Ada"},"fieldOrder":["first"],"fieldProvenance":{"first":{"origins":[{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}],"direct":{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}}},"landedOn":"founder","edges":{}},{"kind":"nodePosition","id":2,"fields":{"first":"Grace"},"fieldOrder":["first"],"fieldProvenance":{"first":{"origins":[{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}],"direct":{"kind":"extraction","site":{"siteId":"xc:firm#1","node":"Firm","description":"the company described","stage":0,"dataSources":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"text"}]},"field":"first","description":"first name","quote":"q","item":0}}},"landedOn":"founder","edges":{}}],"landing":{"fields":["first"],"edges":{}}}}}}},{"bindings":{"kept":{"kind":"positions","landings":[{"kind":"nodeRef","id":1},{"kind":"nodeRef","id":2}]}}}]}"`;
 
 exports[`extraction calls and plugin calls in the Rust engine parks what an extraction yielded, and the park resumes to the same writes 2`] = `"{"writes":[{"adapterType":"attio","recordType":"company","created":true,"committed":true,"externalId":"co-1","writtenValues":{"name":"Acme"},"resultData":{},"outcome":"create","provenance":{"name":[{"kind":"extraction","site":"xc:firm#1","field":"name","description":"the company","quote":"q","item":0}]},"origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},{"adapterType":"attio","recordType":"company","created":true,"committed":true,"externalId":"co-2","writtenValues":{"name":"2 kept"},"resultData":{},"outcome":"create","provenance":{"name":[{"kind":"extraction","site":"xc:firm#1","field":"first","description":"first name","quote":"q","item":0},{"kind":"extraction","site":"xc:firm#1","field":"first","description":"first name","quote":"q","item":0},{"kind":"literal","span":{"end":{"col":52,"line":22},"start":{"col":38,"line":22}}}]},"origin":{"kind":"write","writeIndex":1,"externalId":"co-2"}},{"adapterType":"attio","recordType":"company","created":true,"committed":true,"externalId":"co-3","writtenValues":{"name":"Ada"},"resultData":{},"outcome":"create","provenance":{"name":[{"kind":"extraction","site":"xc:firm#1","field":"first","description":"first name","quote":"q","item":0}]},"origin":{"kind":"write","writeIndex":2,"externalId":"co-3"}},{"adapterType":"attio","recordType":"company","created":true,"committed":true,"externalId":"co-4","writtenValues":{"name":"Grace"},"resultData":{},"outcome":"create","provenance":{"name":[{"kind":"extraction","site":"xc:firm#1","field":"first","description":"first name","quote":"q","item":0}]},"origin":{"kind":"write","writeIndex":3,"externalId":"co-4"}}],"trace":[{"kind":"block","root":"found-[f:founder]->","positions":2}]}"`;
 
@@ -1267,7 +1240,7 @@ exports[`extraction calls and plugin calls in the Rust engine reads a library de
 }"
 `;
 
-exports[`extraction calls and plugin calls in the Rust engine reads a model number past the double range as JSON.parse left it: refused, and asked again 1`] = `
+exports[`extraction calls and plugin calls in the Rust engine reads a model number past the double range as null: the record is dropped, and nothing is asked again 1`] = `
 "{
   "asked": [
     {
@@ -1277,15 +1250,6 @@ exports[`extraction calls and plugin calls in the Rust engine reads a model numb
       "blocks": [
         "## Content item 0 (text)\\nAcme raised 3 million.",
         "## What to extract\\n\\nExtract the raise described — the single one these sources describe, or nothing if they don't.\\n\\n**Raise**: the raise described — the one record, as the object under \`record\`\\n    - \`amount\` (number): the amount raised\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
-      ]
-    },
-    {
-      "label": "movement_extract_call_retry",
-      "model": "sonnet",
-      "effort": "low",
-      "blocks": [
-        "## Content item 0 (text)\\nAcme raised 3 million.",
-        "## What to extract\\n\\nExtract the raise described — the single one these sources describe, or nothing if they don't.\\n\\n**Raise**: the raise described — the one record, as the object under \`record\`\\n    - \`amount\` (number): the amount raised\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null.\\n\\n---\\n\\nYour previous response had validation errors:\\n  - record.amount.value: Invalid input: expected number, received number\\n\\nReturn the complete corrected JSON, with the one record (or null) under \`record\`."
       ]
     }
   ],
@@ -1310,17 +1274,20 @@ exports[`extraction calls and plugin calls in the Rust engine reads a model numb
         "emissions": {
           "Raise": 1
         },
-        "retried": [
-          "  - record.amount.value: Invalid input: expected number, received number"
-        ],
         "reply": {
           "why": [
-            "retried"
+            "dropped_records"
           ],
           "keys": [
             "record"
           ],
-          "sample": "{\\"record\\":{\\"amount\\":{\\"value\\":3000000,\\"evidence\\":{\\"item\\":0,\\"quote\\":\\"q\\"}}}}"
+          "sample": "{\\"record\\":{\\"amount\\":{\\"value\\":null,\\"evidence\\":{\\"item\\":0,\\"quote\\":\\"q\\"}}}}"
+        },
+        "empty": {
+          "Raise": 1
+        },
+        "dropped": {
+          "Raise": 1
         },
         "model": "sonnet",
         "durationMs": 0,
@@ -1329,18 +1296,9 @@ exports[`extraction calls and plugin calls in the Rust engine reads a model numb
             0
           ],
           "sharedItems": 0,
-          "inputTokens": 2,
+          "inputTokens": 1,
           "readTokens": 0,
           "writeTokens": 0
-        },
-        "entities": {
-          "Raise": [
-            {
-              "fields": {
-                "amount": "3000000"
-              }
-            }
-          ]
         }
       }
     ]
@@ -1686,6 +1644,350 @@ exports[`extraction calls and plugin calls in the Rust engine runs a library's f
 }"
 `;
 
+exports[`extraction calls and plugin calls in the Rust engine runs an extraction whose shape declares a field or node named __proto__ 1`] = `
+"{
+  "asked": [
+    {
+      "label": "movement_extract_call",
+      "model": "sonnet",
+      "effort": "low",
+      "blocks": [
+        "## Content item 0 (text)\\nAcme raised 3 million.",
+        "## What to extract\\n\\nExtract the single **Entry** these sources describe, or nothing if they don't.\\n\\n**Entry** — the one record, as the object under \`record\`\\n    - \`__proto__\` (text): p\\n    - \`name\` (text): n\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
+      ]
+    }
+  ],
+  "invoked": [],
+  "parked": [],
+  "outcome": {
+    "movementName": "m",
+    "writes": [],
+    "extractionSites": {},
+    "trace": [
+      {
+        "kind": "extraction",
+        "form": "call",
+        "node": "Entry",
+        "inputChars": 47,
+        "inputs": [
+          {
+            "classification": "item 0 (text)",
+            "chars": 47
+          }
+        ],
+        "emissions": {
+          "Entry": 1
+        },
+        "model": "sonnet",
+        "durationMs": 0,
+        "cache": {
+          "breakpoints": [
+            0
+          ],
+          "sharedItems": 0,
+          "inputTokens": 1,
+          "readTokens": 0,
+          "writeTokens": 0
+        },
+        "entities": {
+          "Entry": [
+            {
+              "fields": {
+                "__proto__": "p",
+                "name": "Acme"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}"
+`;
+
+exports[`extraction calls and plugin calls in the Rust engine runs an extraction whose shape declares a field or node named __proto__ 2`] = `
+"{
+  "asked": [
+    {
+      "label": "movement_extract_call",
+      "model": "sonnet",
+      "effort": "low",
+      "blocks": [
+        "## Content item 0 (text)\\nAcme raised 3 million.",
+        "## What to extract\\n\\nExtract the single **Entry** these sources describe, or nothing if they don't.\\n\\n**Entry** — the one record, as the object under \`record\`\\n    - \`__proto__\` (text): p\\n    - \`name\` (text): n\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
+      ]
+    },
+    {
+      "label": "movement_extract_call",
+      "model": "sonnet",
+      "effort": "low",
+      "blocks": [
+        "## Content item 0 (text)\\nAcme raised 3 million.",
+        "## What to extract\\n\\nExtract the single **Entry** these sources describe, or nothing if they don't.\\n\\n**Entry** — the one record, as the object under \`record\`\\n    - \`__proto__\` (text): p\\n    - \`name\` (text): n\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
+      ]
+    }
+  ],
+  "invoked": [],
+  "parked": [],
+  "outcome": {
+    "movementName": "m",
+    "writes": [],
+    "extractionSites": {},
+    "trace": [
+      {
+        "kind": "extraction",
+        "form": "call",
+        "node": "Entry",
+        "inputChars": 47,
+        "inputs": [
+          {
+            "classification": "item 0 (text)",
+            "chars": 47
+          }
+        ],
+        "emissions": {
+          "Entry": 1
+        },
+        "model": "sonnet",
+        "durationMs": 0,
+        "cache": {
+          "breakpoints": [
+            0
+          ],
+          "sharedItems": 0,
+          "inputTokens": 1,
+          "readTokens": 0,
+          "writeTokens": 0
+        },
+        "entities": {
+          "Entry": [
+            {
+              "fields": {
+                "__proto__": "p",
+                "name": "Acme"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "extraction",
+        "form": "call",
+        "node": "Entry",
+        "inputChars": 47,
+        "inputs": [
+          {
+            "classification": "item 0 (text)",
+            "chars": 47
+          }
+        ],
+        "emissions": {
+          "Entry": 1
+        },
+        "model": "sonnet",
+        "durationMs": 0,
+        "cache": {
+          "breakpoints": [
+            0
+          ],
+          "sharedItems": 1,
+          "inputTokens": 1,
+          "readTokens": 0,
+          "writeTokens": 0
+        },
+        "entities": {
+          "Entry": [
+            {
+              "fields": {
+                "__proto__": "p",
+                "name": "Acme"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}"
+`;
+
+exports[`extraction calls and plugin calls in the Rust engine runs an extraction whose shape declares a field or node named __proto__ 3`] = `
+"{
+  "asked": [
+    {
+      "label": "movement_extract_call",
+      "model": "sonnet",
+      "effort": "low",
+      "blocks": [
+        "## Content item 0 (text)\\nAcme raised 3 million.",
+        "## What to extract\\n\\nExtract the single **Entry** these sources describe, or nothing if they don't.\\n\\n**Entry** — the one record, as the object under \`record\`\\n    - \`__proto__\` (text): p\\n    - \`name\` (text): n\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
+      ]
+    },
+    {
+      "label": "movement_extract_call",
+      "model": "sonnet",
+      "effort": "low",
+      "blocks": [
+        "## Content item 0 (text)\\nAcme raised 3 million.",
+        "## What to extract\\n\\nExtract the single **Entry** these sources describe, or nothing if they don't.\\n\\n**Entry** — the one record, as the object under \`record\`\\n    - \`__proto__\` (text): p\\n    - \`name\` (text): n\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
+      ]
+    }
+  ],
+  "invoked": [],
+  "parked": [],
+  "outcome": {
+    "movementName": "m",
+    "writes": [],
+    "extractionSites": {},
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true
+      },
+      {
+        "kind": "extraction",
+        "form": "call",
+        "node": "Entry",
+        "inputChars": 47,
+        "inputs": [
+          {
+            "classification": "item 0 (text)",
+            "chars": 47
+          }
+        ],
+        "emissions": {
+          "Entry": 1
+        },
+        "model": "sonnet",
+        "durationMs": 0,
+        "cache": {
+          "breakpoints": [
+            0
+          ],
+          "sharedItems": 0,
+          "inputTokens": 1,
+          "readTokens": 0,
+          "writeTokens": 0
+        },
+        "entities": {
+          "Entry": [
+            {
+              "fields": {
+                "__proto__": "p",
+                "name": "Acme"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "extraction",
+        "form": "call",
+        "node": "Entry",
+        "inputChars": 47,
+        "inputs": [
+          {
+            "classification": "item 0 (text)",
+            "chars": 47
+          }
+        ],
+        "emissions": {
+          "Entry": 1
+        },
+        "model": "sonnet",
+        "durationMs": 0,
+        "cache": {
+          "breakpoints": [
+            0
+          ],
+          "sharedItems": 1,
+          "inputTokens": 1,
+          "readTokens": 0,
+          "writeTokens": 0
+        },
+        "entities": {
+          "Entry": [
+            {
+              "fields": {
+                "__proto__": "p",
+                "name": "Acme"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}"
+`;
+
+exports[`extraction calls and plugin calls in the Rust engine runs an extraction whose shape declares a field or node named __proto__ 4`] = `
+"{
+  "asked": [
+    {
+      "label": "movement_extract_call",
+      "model": "sonnet",
+      "effort": "low",
+      "blocks": [
+        "## Content item 0 (text)\\nAcme raised 3 million.",
+        "## What to extract\\n\\nExtract the single **Entry** these sources describe, or nothing if they don't.\\n\\n**Entry** — the one record, as the object under \`record\`\\n    - \`name\` (text)\\n  **__proto__** (an array under the key \`__proto__\` inside each **Entry**)\\n      - \`a\` (text)\\n\\n## How to answer\\n\\nReturn a JSON object with one key, \`record\`, whose value is the one record as a bare JSON object — or null when these sources describe none. Never an array: this asks for one record. A nested node is a bare array of its own records under its key inside the record.\\n\\nEvery field is answered as \`{ \\"value\\": …, \\"evidence\\": { \\"item\\": <n>, \\"quote\\": \\"…\\" } }\` — the typed value, the number of the content item it came from, and a quote of the passage that supports it. Use null for a value the content does not give.\\n\\n## Rules\\n- \`item\` is the number in the heading of the content block the value came from (0). When a value is composed from several items, cite the one that carries most of it.\\n- The \`{ value, evidence }\` wrapping belongs to a FIELD and to nothing else. A list of records is a bare array and a record is a bare object.\\n- Every key inside a record is a field or nested node the guide declares for it. Do not rename a field or answer under a key of your own.\\n- A field's description is authoritative. When it asks you to compose, normalise or reformat a value, produce that value and quote the passage(s) it was built from.\\n- Use null only when the content genuinely lacks the information. Never stand a missing value in with an empty string or a placeholder like \\"none\\", \\"N/A\\" or \\"unknown\\".\\n- Answer \`record\` as null rather than a record with every field null. Records of the same nested kind must be distinct; omit a nested record rather than emitting one with every field null."
+      ]
+    }
+  ],
+  "invoked": [],
+  "parked": [],
+  "outcome": {
+    "movementName": "m",
+    "writes": [],
+    "extractionSites": {},
+    "trace": [
+      {
+        "kind": "extraction",
+        "form": "call",
+        "node": "Entry",
+        "inputChars": 47,
+        "inputs": [
+          {
+            "classification": "item 0 (text)",
+            "chars": 47
+          }
+        ],
+        "emissions": {
+          "Entry": 1
+        },
+        "model": "sonnet",
+        "durationMs": 0,
+        "cache": {
+          "breakpoints": [
+            0
+          ],
+          "sharedItems": 0,
+          "inputTokens": 1,
+          "readTokens": 0,
+          "writeTokens": 0
+        },
+        "entities": {
+          "Entry": [
+            {
+              "fields": {
+                "name": "Acme"
+              }
+            }
+          ],
+          "__proto__": [
+            {
+              "fields": {
+                "a": "x"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}"
+`;
+
 exports[`extraction calls and plugin calls in the Rust engine suspends before a plugin call a suspendAt names: it never invokes the plugin 1`] = `
 "{
   "asked": [],
@@ -1694,7 +1996,7 @@ exports[`extraction calls and plugin calls in the Rust engine suspends before a 
     [
       "commitSuspension",
       "s0",
-      "{\\"version\\":1,\\"address\\":\\"s0\\",\\"bindingName\\":null,\\"suspended\\":true,\\"journal\\":[],\\"scopeChain\\":[{\\"bindings\\":{\\"m\\":{\\"kind\\":\\"movement\\",\\"name\\":\\"m\\"},\\"email\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"email\\"},\\"dealflow_inbox\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"dealflow_inbox\\"},\\"inbox\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"inbox\\",\\"adapterSlug\\":\\"email\\",\\"credentialName\\":\\"dealflow_inbox\\"}},\\"fetch_url\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"a plugin\\",\\"name\\":\\"fetch_url\\"}}},{\\"bindings\\":{\\"msg\\":{\\"kind\\":\\"event\\"}}}]}"
+      "{\\"version\\":2,\\"address\\":\\"s0\\",\\"bindingName\\":null,\\"suspended\\":true,\\"journal\\":[],\\"scopeChain\\":[{\\"bindings\\":{\\"m\\":{\\"kind\\":\\"movement\\",\\"name\\":\\"m\\"},\\"email\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"email\\"},\\"dealflow_inbox\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"dealflow_inbox\\"},\\"inbox\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"inbox\\",\\"adapterSlug\\":\\"email\\",\\"credentialName\\":\\"dealflow_inbox\\"}},\\"fetch_url\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"a plugin\\",\\"name\\":\\"fetch_url\\"}}},{\\"bindings\\":{\\"msg\\":{\\"kind\\":\\"event\\"}}}]}"
     ]
   ],
   "outcome": {
@@ -1734,12 +2036,12 @@ exports[`extraction calls and plugin calls in the Rust engine suspends inside a 
     [
       "commitSuspension",
       "s0.i0.s0",
-      "{\\"version\\":1,\\"address\\":\\"s0.i0.s0\\",\\"bindingName\\":null,\\"suspended\\":true,\\"journal\\":[],\\"scopeChain\\":[{\\"bindings\\":{\\"m\\":{\\"kind\\":\\"movement\\",\\"name\\":\\"m\\"},\\"email\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"email\\"},\\"dealflow_inbox\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"dealflow_inbox\\"},\\"inbox\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"inbox\\",\\"adapterSlug\\":\\"email\\",\\"credentialName\\":\\"dealflow_inbox\\"}},\\"fetch_url\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"a plugin\\",\\"name\\":\\"fetch_url\\"},\\"attio\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"attio\\"},\\"acme_main\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"acme_main\\"},\\"crm\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"crm\\",\\"adapterSlug\\":\\"attio\\",\\"credentialName\\":\\"acme_main\\"}}}},{\\"bindings\\":{\\"msg\\":{\\"kind\\":\\"event\\"}}},{\\"bindings\\":{\\"e\\":{\\"kind\\":\\"sourcePosition\\",\\"position\\":{\\"adapterType\\":\\"attio\\",\\"recordType\\":\\"company\\",\\"identity\\":{\\"kind\\":\\"unstable\\",\\"data\\":{\\"name\\":\\"one\\"}}},\\"read\\":{\\"instanceName\\":\\"crm\\"}}}}]}"
+      "{\\"version\\":2,\\"address\\":\\"s0.i0.s0\\",\\"bindingName\\":null,\\"suspended\\":true,\\"journal\\":[],\\"scopeChain\\":[{\\"bindings\\":{\\"m\\":{\\"kind\\":\\"movement\\",\\"name\\":\\"m\\"},\\"email\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"email\\"},\\"dealflow_inbox\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"dealflow_inbox\\"},\\"inbox\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"inbox\\",\\"adapterSlug\\":\\"email\\",\\"credentialName\\":\\"dealflow_inbox\\"}},\\"fetch_url\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"a plugin\\",\\"name\\":\\"fetch_url\\"},\\"attio\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"attio\\"},\\"acme_main\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"acme_main\\"},\\"crm\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"crm\\",\\"adapterSlug\\":\\"attio\\",\\"credentialName\\":\\"acme_main\\"}}}},{\\"bindings\\":{\\"msg\\":{\\"kind\\":\\"event\\"}}},{\\"bindings\\":{\\"e\\":{\\"kind\\":\\"sourcePosition\\",\\"position\\":{\\"adapterType\\":\\"attio\\",\\"recordType\\":\\"company\\",\\"identity\\":{\\"kind\\":\\"unstable\\",\\"data\\":{\\"name\\":\\"one\\"}}},\\"read\\":{\\"instanceName\\":\\"crm\\"}}}}]}"
     ],
     [
       "commitSuspension",
       "s0.i1.s0",
-      "{\\"version\\":1,\\"address\\":\\"s0.i1.s0\\",\\"bindingName\\":null,\\"suspended\\":true,\\"journal\\":[],\\"scopeChain\\":[{\\"bindings\\":{\\"m\\":{\\"kind\\":\\"movement\\",\\"name\\":\\"m\\"},\\"email\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"email\\"},\\"dealflow_inbox\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"dealflow_inbox\\"},\\"inbox\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"inbox\\",\\"adapterSlug\\":\\"email\\",\\"credentialName\\":\\"dealflow_inbox\\"}},\\"fetch_url\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"a plugin\\",\\"name\\":\\"fetch_url\\"},\\"attio\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"attio\\"},\\"acme_main\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"acme_main\\"},\\"crm\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"crm\\",\\"adapterSlug\\":\\"attio\\",\\"credentialName\\":\\"acme_main\\"}}}},{\\"bindings\\":{\\"msg\\":{\\"kind\\":\\"event\\"}}},{\\"bindings\\":{\\"e\\":{\\"kind\\":\\"sourcePosition\\",\\"position\\":{\\"adapterType\\":\\"attio\\",\\"recordType\\":\\"company\\",\\"identity\\":{\\"kind\\":\\"unstable\\",\\"data\\":{\\"name\\":\\"two\\"}}},\\"read\\":{\\"instanceName\\":\\"crm\\"}}}}]}"
+      "{\\"version\\":2,\\"address\\":\\"s0.i1.s0\\",\\"bindingName\\":null,\\"suspended\\":true,\\"journal\\":[],\\"scopeChain\\":[{\\"bindings\\":{\\"m\\":{\\"kind\\":\\"movement\\",\\"name\\":\\"m\\"},\\"email\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"email\\"},\\"dealflow_inbox\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"dealflow_inbox\\"},\\"inbox\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"inbox\\",\\"adapterSlug\\":\\"email\\",\\"credentialName\\":\\"dealflow_inbox\\"}},\\"fetch_url\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"a plugin\\",\\"name\\":\\"fetch_url\\"},\\"attio\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"attio\\"},\\"acme_main\\":{\\"kind\\":\\"opaque\\",\\"what\\":\\"import\\",\\"name\\":\\"acme_main\\"},\\"crm\\":{\\"kind\\":\\"instance\\",\\"instance\\":{\\"name\\":\\"crm\\",\\"adapterSlug\\":\\"attio\\",\\"credentialName\\":\\"acme_main\\"}}}},{\\"bindings\\":{\\"msg\\":{\\"kind\\":\\"event\\"}}},{\\"bindings\\":{\\"e\\":{\\"kind\\":\\"sourcePosition\\",\\"position\\":{\\"adapterType\\":\\"attio\\",\\"recordType\\":\\"company\\",\\"identity\\":{\\"kind\\":\\"unstable\\",\\"data\\":{\\"name\\":\\"two\\"}}},\\"read\\":{\\"instanceName\\":\\"crm\\"}}}}]}"
     ]
   ],
   "outcome": {
