@@ -7,7 +7,7 @@
  * exist, which looks exactly like a routing bug and is not one.
  *
  * The signature is proved against the real verifier
- * (`adapters/email/svix.ts`), over the exact bytes the injector posts.
+ * (`services/inbound/svix.ts`), over the exact bytes the injector posts.
  */
 import * as fs from 'node:fs/promises';
 
@@ -17,7 +17,7 @@ import {
   DEFAULT_RESEND_WEBHOOK_SECRET,
   injectResendEmail,
 } from '../inject';
-import { verifySvixSignature } from '../../../services/translation_graph/adapters/email/svix';
+import { verifySvixSignature } from 'movement-engine/public/inbound';
 
 const TO = 'inbox+pi-devloop@example.com';
 

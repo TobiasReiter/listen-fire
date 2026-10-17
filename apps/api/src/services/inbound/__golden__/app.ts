@@ -18,9 +18,10 @@ import { callbacksRouter } from '../../../interfaces/rest/callbacks';
 import { asksRouter } from '../../../interfaces/rest/asks';
 import { whatsappRouter } from '../../../interfaces/rest/whatsapp';
 import { receiveWebhook } from '../../../interfaces/whatsapp/webhook';
-import { resendInboundEmailHandler } from '../../../interfaces/rest/private';
+import { inboundEmailHandler, resendInboundEmailHandler } from '../../../interfaces/rest/private';
 import { webhooksRouter as valuationsWebhooksRouter } from '../../../interfaces/rest/v1/valuations/webhooks';
-import { resendInboundDoor } from '../../translation_graph/adapters/email/inbound_auth';
+import { inboundEmailDoor, mailgunEventDoor, resendInboundDoor } from '../../translation_graph/adapters/email/inbound_auth';
+import { mailgunRouter } from '../../../interfaces/rest/webhooks/mailgun';
 import { jsonBodyParser, urlencodedBodyParser } from '../../../lib/middleware/body_parser';
 
 /** The authentication funnel's verdict for a door: the door answers a refusal
@@ -32,7 +33,11 @@ function throughDoor(door: { authenticate(req: Request, res: Response): Promise<
       .then((identity) => {
         if (identity !== null) next();
       })
-      .catch(next);
+      // The authentication funnel's own rule: a door that threw after it
+      // answered has answered; one that threw before answers 500.
+      .catch(() => {
+        if (!res.headersSent) res.status(500).send({ error: { code: 500, message: 'Internal error' } });
+      });
   };
 }
 
@@ -57,6 +62,9 @@ export function buildGoldenApp(): express.Express {
   // imported, so the door as it behaves with no secret set is mounted here.
   app.post('/api/public/whatsapp-unsigned/webhook', receiveWebhook({ verifyToken: undefined, appSecret: undefined }));
   app.post('/api/resend/callback', throughDoor(resendInboundDoor), resendInboundEmailHandler);
+  app.post('/api/mailgun/callback', throughDoor(inboundEmailDoor), inboundEmailHandler);
+  // The outbound-telemetry sink: the real router, behind its event door.
+  app.use('/api/webhook/mailgun', throughDoor(mailgunEventDoor), mailgunRouter);
   app.use('/api/v1/valuations/webhooks', valuationsWebhooksRouter);
   return app;
 }

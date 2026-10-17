@@ -5,7 +5,7 @@
 // secret rotation (two signatures, one of which is ours).
 
 import { signResendWebhook } from '../../../../../scripts/dev/lib/resend-sign';
-import { svixSignature, verifySvixSignature } from '../svix';
+import { svixSignature, verifySvixSignature } from 'movement-engine/public/inbound';
 
 const SECRET = 'whsec_ZGV2LWxvb3AtcmVzZW5kLXNlY3JldA==';
 const BODY = '{"type":"email.received","data":{"email_id":"re_1"}}';

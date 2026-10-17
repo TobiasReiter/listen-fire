@@ -63,6 +63,16 @@ export function kyselyFake(): AnyRecord {
       if (table === 'webhook_subscription' && op === 'select') {
         return world.subscriptions[String(whereValue(steps, 'id'))];
       }
+      if (table === 'inbound_email_route' && op === 'select') {
+        const addresses = whereValue(steps, 'address');
+        const like = steps.find(([name, args]) => name === 'where' && args[1] === 'like')?.[1][2];
+        if (typeof like === 'string') {
+          const suffix = like.replace(/^%/, '').toLowerCase();
+          return world.mailRoutes.find((row) => row.is_service_email && row.address.toLowerCase().endsWith(suffix));
+        }
+        const wanted = Array.isArray(addresses) ? addresses.map((entry) => String(entry).toLowerCase()) : [];
+        return world.mailRoutes.filter((row) => wanted.includes(row.address.toLowerCase()));
+      }
       record({ kind: 'db', op, table, steps: plain(steps) });
       return undefined;
     });
@@ -134,6 +144,8 @@ export function triggerTableFake(): AnyRecord {
       record({ kind: 'find_triggers', teamId: input.teamId, kinds: input.kinds });
       return world.triggers.filter((trigger) => input.kinds.includes(trigger.kind));
     },
+    findTriggerByInboundKey: async (input: { teamId: string; key: string }) =>
+      world.mailKeyTriggers[`${input.teamId} ${input.key}`] ?? null,
     loadTriggerById: async (id: string) => {
       const trigger = world.triggers.find((row) => row.id === id);
       return trigger ? { ...trigger, movementId: world.emailTriggerLive ? trigger.movementId : null } : null;
@@ -170,6 +182,7 @@ export function dispatchEventFake(): AnyRecord {
 export function eventStoreFake(): AnyRecord {
   return {
     receiveTriggerEvent: async (input: AnyRecord) => {
+      if (world.storeFails) throw new Error('store unavailable');
       record({ kind: 'store_trigger_event', ...input });
       return { eventId: 'event-1', duplicate: false };
     },
@@ -313,6 +326,19 @@ export function resendApiFake(actual: AnyRecord): AnyRecord {
       return world.resendFetch;
     },
     listReceivedAttachments: async () => [],
+  };
+}
+
+export function directoryFake(actual: AnyRecord): AnyRecord {
+  return {
+    ...actual,
+    principalDirectory: () => ({
+      teamsForEmail: async (email: string) => world.mailMembers[email.toLowerCase()] ?? [],
+      userById: async (input: { id: string; teamId: string }) => {
+        const key = `${input.id} ${input.teamId}`;
+        return key in world.mailAccess ? { id: input.id, hasAccess: world.mailAccess[key] } : null;
+      },
+    }),
   };
 }
 

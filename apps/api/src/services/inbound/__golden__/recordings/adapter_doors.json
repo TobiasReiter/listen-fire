@@ -309,10 +309,10 @@
     "response": {
       "status": 413,
       "headers": {
-        "content-type": "text/html; charset=utf-8",
-        "content-length": "144"
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
       },
-      "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Payload Too Large</pre>\n</body>\n</html>\n"
+      "body": "{\"error\":\"payload_too_large\"}"
     },
     "effects": []
   },

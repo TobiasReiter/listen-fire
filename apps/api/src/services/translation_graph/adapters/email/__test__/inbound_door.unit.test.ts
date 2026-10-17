@@ -104,7 +104,9 @@ jest.mock('movement-engine/services/logger', () => ({
   },
 }));
 
-import { verifyInboundEmailRequest, type InboundEmailDecision } from '../inbound_door';
+import type { InboundEmailDecision } from 'movement-engine/public/inbound';
+
+import { verifyInboundEmailRequest } from '../inbound_door';
 
 const API_KEY = 'test-harness-dummy-key';
 const TEAM = 'team-1';
@@ -123,9 +125,9 @@ function signed(body: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-function request(body: Record<string, unknown>): Parameters<typeof verifyInboundEmailRequest>[0] {
-  // The door reads `req.body` and nothing else off the request.
-  return { body } as Parameters<typeof verifyInboundEmailRequest>[0];
+// The door reads the form body and nothing else off the request.
+function request(body: Record<string, unknown>): Record<string, unknown> {
+  return body;
 }
 
 /** A person of TEAM whose address is a login, granted. */

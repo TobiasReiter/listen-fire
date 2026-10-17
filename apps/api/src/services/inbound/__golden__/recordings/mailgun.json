@@ -1,0 +1,598 @@
+[
+  {
+    "id": "mail-routed-to-trigger",
+    "door": "mailgun",
+    "note": "A signed form post from a team member to a keyed address is stored against the matching trigger before the 201.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "store_trigger_event",
+        "triggerId": "trigger-1",
+        "event": {
+          "pipelineInputId": "trigger:trigger-1",
+          "adapterType": "inbound_email",
+          "triggerType": "webhook",
+          "payload": {
+            "sender": "ada@example.com",
+            "recipient": "inbox+deals@example.com",
+            "To": "inbox+deals@example.com",
+            "subject": "Intro",
+            "body-plain": "Hello there",
+            "Message-Id": "<m-1@example.com>",
+            "timestamp": "1792238400",
+            "token": "golden-mailgun-token-0001",
+            "signature": "efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb",
+            "messageId": "<m-1@example.com>",
+            "bodyText": "Hello there",
+            "attachments": []
+          },
+          "changeType": "create",
+          "rootRecordType": "email:message",
+          "idempotencyKey": "<m-1@example.com>",
+          "externalRecordRef": {
+            "adapterType": "email",
+            "externalId": "<m-1@example.com>",
+            "recordType": "email:message"
+          },
+          "occurredAt": "2026-10-17T12:00:00.000Z"
+        },
+        "teamId": "team-1"
+      }
+    ]
+  },
+  {
+    "id": "mail-no-key-quarantined",
+    "door": "mailgun",
+    "note": "Authenticated mail whose recipients carry no routing key is stored for replay, ops is told, and the answer is 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=someone%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "db",
+        "op": "insert",
+        "table": "dropped_inbound_email",
+        "steps": [
+          [
+            "values",
+            [
+              {
+                "team_id": "team-1",
+                "request_id": "request-1",
+                "reason": "no_matching_trigger",
+                "recipients": [
+                  "someone@example.com"
+                ],
+                "body": {
+                  "sender": "ada@example.com",
+                  "recipient": "inbox+deals@example.com",
+                  "To": "someone@example.com",
+                  "subject": "Intro",
+                  "body-plain": "Hello there",
+                  "Message-Id": "<m-1@example.com>",
+                  "timestamp": "1792238400",
+                  "token": "golden-mailgun-token-0001",
+                  "signature": "efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb",
+                  "messageId": "<m-1@example.com>",
+                  "bodyText": "Hello there",
+                  "attachments": []
+                }
+              }
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Dropped an inbound email for team team-1 (recipients: someone@example.com) — no automation listens for that address. Stored for replay.",
+        "opsTitle": "Dropped an inbound email with no matching automation (recipients: someone@example.com)"
+      }
+    ]
+  },
+  {
+    "id": "mail-key-names-no-trigger-quarantined",
+    "door": "mailgun",
+    "note": "A routing key no trigger of the sender's team answers for is quarantined, not dropped.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "db",
+        "op": "insert",
+        "table": "dropped_inbound_email",
+        "steps": [
+          [
+            "values",
+            [
+              {
+                "team_id": "team-1",
+                "request_id": "request-1",
+                "reason": "no_matching_trigger",
+                "recipients": [
+                  "inbox+deals@example.com"
+                ],
+                "body": {
+                  "sender": "ada@example.com",
+                  "recipient": "inbox+deals@example.com",
+                  "To": "inbox+deals@example.com",
+                  "subject": "Intro",
+                  "body-plain": "Hello there",
+                  "Message-Id": "<m-1@example.com>",
+                  "timestamp": "1792238400",
+                  "token": "golden-mailgun-token-0001",
+                  "signature": "efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb",
+                  "messageId": "<m-1@example.com>",
+                  "bodyText": "Hello there",
+                  "attachments": []
+                }
+              }
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Dropped an inbound email for team team-1 (recipients: inbox+deals@example.com) — no automation listens for that address. Stored for replay.",
+        "opsTitle": "Dropped an inbound email with no matching automation (recipients: inbox+deals@example.com)"
+      }
+    ]
+  },
+  {
+    "id": "mail-trigger-not-live-quarantined",
+    "door": "mailgun",
+    "note": "A matching trigger with no movement behind it is not dispatched; the mail is quarantined.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "db",
+        "op": "insert",
+        "table": "dropped_inbound_email",
+        "steps": [
+          [
+            "values",
+            [
+              {
+                "team_id": "team-1",
+                "request_id": "request-1",
+                "reason": "no_matching_trigger",
+                "recipients": [
+                  "inbox+deals@example.com"
+                ],
+                "body": {
+                  "sender": "ada@example.com",
+                  "recipient": "inbox+deals@example.com",
+                  "To": "inbox+deals@example.com",
+                  "subject": "Intro",
+                  "body-plain": "Hello there",
+                  "Message-Id": "<m-1@example.com>",
+                  "timestamp": "1792238400",
+                  "token": "golden-mailgun-token-0001",
+                  "signature": "efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb",
+                  "messageId": "<m-1@example.com>",
+                  "bodyText": "Hello there",
+                  "attachments": []
+                }
+              }
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Dropped an inbound email for team team-1 (recipients: inbox+deals@example.com) — no automation listens for that address. Stored for replay.",
+        "opsTitle": "Dropped an inbound email with no matching automation (recipients: inbox+deals@example.com)"
+      }
+    ]
+  },
+  {
+    "id": "mail-key-in-two-teams-dropped",
+    "door": "mailgun",
+    "note": "A key that two of the sender's teams own is ambiguous: 201, nothing runs.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "sender-unrecognised-refused-201",
+    "door": "mailgun",
+    "note": "A sender with no account and no service address for their domain is 201 and ops is told.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=stranger%40elsewhere.test&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Unrecognised inbound email from stranger@elsewhere.test — not routed (no Listen-Fire account, and no service email for their domain). Onboard them if this should be handled.",
+        "opsTitle": "Unrecognised inbound email from stranger@elsewhere.test was not routed"
+      }
+    ]
+  },
+  {
+    "id": "sender-without-access-refused-201",
+    "door": "mailgun",
+    "note": "A known login that may not act for the team is not a sender for it: 201.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Unrecognised inbound email from ada@example.com — not routed (no Listen-Fire account, and no service email for their domain). Onboard them if this should be handled.",
+        "opsTitle": "Unrecognised inbound email from ada@example.com was not routed"
+      }
+    ]
+  },
+  {
+    "id": "same-domain-service-address-answers",
+    "door": "mailgun",
+    "note": "A stranger from a domain whose shared inbox a team registered is routed to that team.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=newcomer%40example.org&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "store_trigger_event",
+        "triggerId": "trigger-1",
+        "event": {
+          "pipelineInputId": "trigger:trigger-1",
+          "adapterType": "inbound_email",
+          "triggerType": "webhook",
+          "payload": {
+            "sender": "newcomer@example.org",
+            "recipient": "inbox+deals@example.com",
+            "To": "inbox+deals@example.com",
+            "subject": "Intro",
+            "body-plain": "Hello there",
+            "Message-Id": "<m-1@example.com>",
+            "timestamp": "1792238400",
+            "token": "golden-mailgun-token-0001",
+            "signature": "efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb",
+            "messageId": "<m-1@example.com>",
+            "bodyText": "Hello there",
+            "attachments": []
+          },
+          "changeType": "create",
+          "rootRecordType": "email:message",
+          "idempotencyKey": "<m-1@example.com>",
+          "externalRecordRef": {
+            "adapterType": "email",
+            "externalId": "<m-1@example.com>",
+            "recordType": "email:message"
+          },
+          "occurredAt": "2026-10-17T12:00:00.000Z"
+        },
+        "teamId": "team-1"
+      }
+    ]
+  },
+  {
+    "id": "sender-not-a-team-member",
+    "door": "mailgun",
+    "note": "Mail whose sender maps to no acting user is 401 after routing.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "store-fails",
+    "door": "mailgun",
+    "note": "A failure writing the trigger event is a retryable 500.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "bad-signature",
+    "door": "mailgun",
+    "note": "A signature made with another key is 406 (never a code Mailgun retries).",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=34b1017d553271d6d91836b6a65e501a2f209343bf8a9b6ca471388a6d5ebccf"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "signature-of-another-length",
+    "door": "mailgun",
+    "note": "A signature of the wrong length is a wrong signature, 406, not an error.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=abc"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "missing-signature-fields",
+    "door": "mailgun",
+    "note": "No timestamp, token or signature at all: 406.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "no-sender-field",
+    "door": "mailgun",
+    "note": "A post with no sender is not an inbound email: 406.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "no-signing-key-configured",
+    "door": "mailgun",
+    "note": "A production deployment with no Mailgun key refuses every delivery 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "test-harness-key-outside-production",
+    "door": "mailgun",
+    "note": "Outside production, only a harness deployment has a signing key: the fixed harness key signs.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=73bd53e761e130e65b7449ba6d0c6a8e429c996860231ee58fc39ab5ea45bfa7"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "store_trigger_event",
+        "triggerId": "trigger-1",
+        "event": {
+          "pipelineInputId": "trigger:trigger-1",
+          "adapterType": "inbound_email",
+          "triggerType": "webhook",
+          "payload": {
+            "sender": "ada@example.com",
+            "recipient": "inbox+deals@example.com",
+            "To": "inbox+deals@example.com",
+            "subject": "Intro",
+            "body-plain": "Hello there",
+            "Message-Id": "<m-1@example.com>",
+            "timestamp": "1792238400",
+            "token": "golden-mailgun-token-0001",
+            "signature": "73bd53e761e130e65b7449ba6d0c6a8e429c996860231ee58fc39ab5ea45bfa7",
+            "messageId": "<m-1@example.com>",
+            "bodyText": "Hello there",
+            "attachments": []
+          },
+          "changeType": "create",
+          "rootRecordType": "email:message",
+          "idempotencyKey": "<m-1@example.com>",
+          "externalRecordRef": {
+            "adapterType": "email",
+            "externalId": "<m-1@example.com>",
+            "recordType": "email:message"
+          },
+          "occurredAt": "2026-10-17T12:00:00.000Z"
+        },
+        "teamId": "team-1"
+      }
+    ]
+  },
+  {
+    "id": "not-production-no-harness-refused",
+    "door": "mailgun",
+    "note": "Outside production and without a harness team there is no signing key: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/mailgun/callback",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "sender=ada%40example.com&recipient=inbox%2Bdeals%40example.com&To=inbox%2Bdeals%40example.com&subject=Intro&body-plain=Hello+there&Message-Id=%3Cm-1%40example.com%3E&timestamp=1792238400&token=golden-mailgun-token-0001&signature=efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  }
+]

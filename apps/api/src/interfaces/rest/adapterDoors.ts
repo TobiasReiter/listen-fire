@@ -19,7 +19,7 @@ import type { Request, Response } from 'express';
 import { MB } from '../../constants';
 import { answerEmit, answerWake, type PushStore } from 'movement-engine/public/inbound';
 import { platformPushStore } from '../../services/webhook_sync/adapter_doors';
-import { sendInboundAnswer } from './inbound_answer';
+import { inboundBodyRefusals, sendInboundAnswer } from './inbound_answer';
 
 /** The doors over any store: the platform's below, an in-memory one in the
  *  inbound contract suite. */
@@ -36,6 +36,7 @@ export function createAdapterDoorsRouter<Captured>(store: PushStore<Captured>): 
   router.post('/:adapterType/wake', async (req: Request, res: Response) => {
     sendInboundAnswer(res, await answerWake(store, { adapterType: req.params.adapterType, headers: req.headers, body: req.body }));
   });
+  router.use(inboundBodyRefusals);
   return router;
 }
 

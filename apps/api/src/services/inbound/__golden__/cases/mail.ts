@@ -3,6 +3,7 @@
 
 import type { GoldenCase } from '../harness';
 
+import { signMailgunPayload } from '../../../../scripts/dev/lib/mailgun-sign';
 import { signResendWebhook } from '../../../../scripts/dev/lib/resend-sign';
 import { withEnv } from '../env';
 import { FIXED_NOW_SECONDS, SECRETS } from '../secrets';
@@ -196,5 +197,222 @@ export const valuationsWebhookCases: GoldenCase[] = define('valuations_webhooks'
       ];
     },
     request: { method: 'GET', path: WEBHOOKS, headers: {}, body: { kind: 'none' } },
+  },
+]);
+
+// ── Mailgun: inbound mail (a form post, signed with the account key) ──────
+
+const MAILGUN_PATH = '/api/mailgun/callback';
+const MAILGUN_EVENT_PATH = '/api/webhook/mailgun/event';
+const MAILGUN_ENV = { NODE_ENV: 'production', MAILGUN_API_KEY: SECRETS.mailgunApiKey, INBOUND_EMAIL_ADDRESS: 'inbox@example.com' };
+const mailgunSigned = (apiKey: string = SECRETS.mailgunApiKey) =>
+  signMailgunPayload({ apiKey, timestamp: FIXED_NOW_SECONDS, token: 'golden-mailgun-token-0001' });
+const mailgunForm = (fields: Record<string, string> = {}, signing: Record<string, string> = { ...mailgunSigned() }) => ({
+  kind: 'form' as const,
+  fields: {
+    sender: 'ada@example.com',
+    recipient: 'inbox+deals@example.com',
+    To: 'inbox+deals@example.com',
+    subject: 'Intro',
+    'body-plain': 'Hello there',
+    'Message-Id': '<m-1@example.com>',
+    ...signing,
+    ...fields,
+  },
+});
+const FORM = { 'content-type': 'application/x-www-form-urlencoded' };
+const givenMailMember = (email = 'ada@example.com') => {
+  world.mailMembers[email] = [{ teamId: 'team-1', userId: 'user-1' }];
+  world.mailAccess['user-1 team-1'] = true;
+  world.emailActingUser = { userId: 'user-1' };
+};
+const givenMailTrigger = () => {
+  world.mailKeyTriggers['team-1 deals'] = { id: 'trigger-1', kind: 'INBOUND_EMAIL' };
+  givenTrigger({ kind: 'INBOUND_EMAIL' });
+};
+const mailgunArrange = (setup: () => void = () => undefined) => () => {
+  const restore = withEnv(MAILGUN_ENV);
+  setup();
+  return restore;
+};
+
+export const mailgunCases: GoldenCase[] = define('mailgun', [
+  {
+    id: 'mail-routed-to-trigger',
+    note: 'A signed form post from a team member to a keyed address is stored against the matching trigger before the 201.',
+    arrange: mailgunArrange(() => {
+      givenMailMember();
+      givenMailTrigger();
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'mail-no-key-quarantined',
+    note: 'Authenticated mail whose recipients carry no routing key is stored for replay, ops is told, and the answer is 200.',
+    arrange: mailgunArrange(() => givenMailMember()),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({ To: 'someone@example.com' }) },
+  },
+  {
+    id: 'mail-key-names-no-trigger-quarantined',
+    note: 'A routing key no trigger of the sender\'s team answers for is quarantined, not dropped.',
+    arrange: mailgunArrange(() => givenMailMember()),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'mail-trigger-not-live-quarantined',
+    note: 'A matching trigger with no movement behind it is not dispatched; the mail is quarantined.',
+    arrange: mailgunArrange(() => {
+      givenMailMember();
+      givenMailTrigger();
+      world.emailTriggerLive = false;
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'mail-key-in-two-teams-dropped',
+    note: 'A key that two of the sender\'s teams own is ambiguous: 201, nothing runs.',
+    arrange: mailgunArrange(() => {
+      world.mailMembers['ada@example.com'] = [
+        { teamId: 'team-1', userId: 'user-1' },
+        { teamId: 'team-2', userId: 'user-1' },
+      ];
+      world.mailAccess['user-1 team-1'] = true;
+      world.mailAccess['user-1 team-2'] = true;
+      world.mailKeyTriggers['team-1 deals'] = { id: 'trigger-1', kind: 'INBOUND_EMAIL' };
+      world.mailKeyTriggers['team-2 deals'] = { id: 'trigger-2', kind: 'INBOUND_EMAIL' };
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'sender-unrecognised-refused-201',
+    note: 'A sender with no account and no service address for their domain is 201 and ops is told.',
+    arrange: mailgunArrange(),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({ sender: 'stranger@elsewhere.test' }) },
+  },
+  {
+    id: 'sender-without-access-refused-201',
+    note: 'A known login that may not act for the team is not a sender for it: 201.',
+    arrange: mailgunArrange(() => {
+      world.mailMembers['ada@example.com'] = [{ teamId: 'team-1', userId: 'user-1' }];
+      world.mailAccess['user-1 team-1'] = false;
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'same-domain-service-address-answers',
+    note: 'A stranger from a domain whose shared inbox a team registered is routed to that team.',
+    arrange: mailgunArrange(() => {
+      world.mailRoutes.push({ address: 'shared@example.org', team_id: 'team-1', is_service_email: true, accepts_plus_addressing: false });
+      world.mailMembers['shared@example.org'] = [{ teamId: 'team-1', userId: 'user-1' }];
+      world.mailAccess['user-1 team-1'] = true;
+      world.emailActingUser = { userId: 'user-1' };
+      givenMailTrigger();
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({ sender: 'newcomer@example.org' }) },
+  },
+  {
+    id: 'sender-not-a-team-member',
+    note: 'Mail whose sender maps to no acting user is 401 after routing.',
+    arrange: mailgunArrange(() => {
+      givenMailMember();
+      world.emailActingUser = null;
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'store-fails',
+    note: 'A failure writing the trigger event is a retryable 500.',
+    arrange: mailgunArrange(() => {
+      givenMailMember();
+      givenMailTrigger();
+      world.storeFails = true;
+    }),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'bad-signature',
+    note: 'A signature made with another key is 406 (never a code Mailgun retries).',
+    arrange: mailgunArrange(() => givenMailMember()),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({}, { ...mailgunSigned('some-other-key') }) },
+  },
+  {
+    id: 'signature-of-another-length',
+    note: 'A signature of the wrong length is a wrong signature, 406, not an error.',
+    arrange: mailgunArrange(() => givenMailMember()),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({ signature: 'abc' }) },
+  },
+  {
+    id: 'missing-signature-fields',
+    note: 'No timestamp, token or signature at all: 406.',
+    arrange: mailgunArrange(() => givenMailMember()),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({}, {}) },
+  },
+  {
+    id: 'no-sender-field',
+    note: 'A post with no sender is not an inbound email: 406.',
+    arrange: mailgunArrange(),
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: { kind: 'form', fields: { ...mailgunSigned() } } },
+  },
+  {
+    id: 'no-signing-key-configured',
+    note: 'A production deployment with no Mailgun key refuses every delivery 401.',
+    arrange: () => {
+      const restore = withEnv({ ...MAILGUN_ENV, MAILGUN_API_KEY: undefined });
+      givenMailMember();
+      return restore;
+    },
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+  {
+    id: 'test-harness-key-outside-production',
+    note: 'Outside production, only a harness deployment has a signing key: the fixed harness key signs.',
+    arrange: () => {
+      const restore = withEnv({ ...MAILGUN_ENV, NODE_ENV: 'development', TEST_HARNESS_TEAM_ID: 'team-1' });
+      givenMailMember();
+      givenMailTrigger();
+      return restore;
+    },
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm({}, { ...mailgunSigned('test-harness-dummy-key') }) },
+  },
+  {
+    id: 'not-production-no-harness-refused',
+    note: 'Outside production and without a harness team there is no signing key: 401.',
+    arrange: () => {
+      const restore = withEnv({ ...MAILGUN_ENV, NODE_ENV: 'development', TEST_HARNESS_TEAM_ID: undefined });
+      givenMailMember();
+      return restore;
+    },
+    request: { method: 'POST', path: MAILGUN_PATH, headers: FORM, body: mailgunForm() },
+  },
+]);
+
+// ── Mailgun's event sink (delivery telemetry; a signed 200 sink) ──────────
+
+const eventBody = (signature: unknown) => json({ signature, 'event-data': { event: 'delivered' } });
+
+export const mailgunEventCases: GoldenCase[] = define('mailgun_events', [
+  {
+    id: 'signed-event-acknowledged',
+    note: 'A correctly signed event is acknowledged 200 and nothing is kept.',
+    arrange: () => withEnv({ MAILGUN_API_KEY: SECRETS.mailgunApiKey, PUBLIC_USER_ID: 'public-user' }),
+    request: post(MAILGUN_EVENT_PATH, eventBody({ ...mailgunSigned() })),
+  },
+  {
+    id: 'bad-signature',
+    note: 'A signature made with another key is 406, so Mailgun does not retry.',
+    arrange: () => withEnv({ MAILGUN_API_KEY: SECRETS.mailgunApiKey, PUBLIC_USER_ID: 'public-user' }),
+    request: post(MAILGUN_EVENT_PATH, eventBody({ ...mailgunSigned('some-other-key') })),
+  },
+  {
+    id: 'signature-of-another-length',
+    note: 'A signature of the wrong length is judged like any other wrong signature.',
+    arrange: () => withEnv({ MAILGUN_API_KEY: SECRETS.mailgunApiKey, PUBLIC_USER_ID: 'public-user' }),
+    request: post(MAILGUN_EVENT_PATH, eventBody({ timestamp: FIXED_NOW_SECONDS, token: 'golden-mailgun-token-0001', signature: 'abc' })),
+  },
+  {
+    id: 'no-signature-object',
+    note: 'A body with no signature block cannot be judged.',
+    arrange: () => withEnv({ MAILGUN_API_KEY: SECRETS.mailgunApiKey, PUBLIC_USER_ID: 'public-user' }),
+    request: post(MAILGUN_EVENT_PATH, json({ 'event-data': { event: 'delivered' } })),
   },
 ]);
