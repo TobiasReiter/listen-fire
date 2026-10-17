@@ -4,24 +4,15 @@
 // what Gmail receives is one blob of bytes, so "the reply named its parent" is
 // only true if those bytes say so.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-jest.mock('movement-engine/services/logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
 
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { FileRef, ParentLink, WriteInput } from 'movement-engine/services/translation_graph/adapter';
-import type { GmailApiClient } from '../client';
+import type { FileRef, ParentLink, WriteInput } from 'movement-engine/public/adapter';
+import type { GmailApiClient } from '../api_client';
 
-import { GmailApiError } from '../../../../../adapters/gmail/apiClient';
-import { decodeGmailMessage } from '../../../../../adapters/gmail/mime';
-import { GmailAdapter } from '../index';
+import { GmailApiError } from '../api_client';
+import { decodeGmailMessage } from '../mime';
+import { adapterOver } from './host';
 import { GMAIL_MESSAGE_DISPLAY_NAME } from '../types';
 
-const TEAM = 'team-1' as TeamId;
 const MAILBOX = 'deals@example.com';
 
 /** The write path never reads it; every WriteInput carries one. */
@@ -35,7 +26,7 @@ interface SentCall {
 function fakeClient(over: { fail?: GmailApiError } = {}) {
   const sent: SentCall[] = [];
   const client = {
-    credentials: { mailbox: MAILBOX },
+    credentials: { mailbox: MAILBOX, method: 'delegated' },
     async sendMessage(input: { raw: string; threadId?: string }) {
       sent.push(input);
       if (over.fail) throw over.fail;
@@ -104,7 +95,7 @@ function write(input: {
 describe('sending a new message', () => {
   it('addresses it, titles it and returns the id Gmail gave it', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
 
     const result = await adapter.createRecord(
       write({
@@ -133,7 +124,7 @@ describe('sending a new message', () => {
 
   it('sends both bodies as alternatives when HTML rides along', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await adapter.createRecord(
       write({
         fields: {
@@ -150,7 +141,7 @@ describe('sending a new message', () => {
 
   it('attaches the files the run is holding', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     const file: FileRef & { content: string } = {
       __brand: 'FileRef',
       name: 'figures.csv',
@@ -171,7 +162,7 @@ describe('sending a new message', () => {
 
   it('refuses a message with nobody to send it to', async () => {
     const { client } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await expect(
       adapter.createRecord(write({ fields: { Subject: 'Hi', Body: 'Hello' } })),
     ).rejects.toThrow('a new message needs at least one `To` address');
@@ -179,7 +170,7 @@ describe('sending a new message', () => {
 
   it('refuses a message with nothing in it', async () => {
     const { client } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await expect(
       adapter.createRecord(write({ fields: { To: ['rita@northwind.example'] } })),
     ).rejects.toThrow('needs a `Body` (plain text) or an `HTML Body`');
@@ -194,7 +185,7 @@ describe('sending a new message', () => {
         'Request had insufficient authentication scopes.',
       ),
     });
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     const send = adapter.createRecord(
       write({ fields: { To: ['rita@northwind.example'], Body: 'Hello' } }),
     );
@@ -207,7 +198,7 @@ describe('sending a new message', () => {
 describe('replying inside a thread', () => {
   it('threads on Gmail’s side and in the headers, without being told either', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
 
     await adapter.createRecord(
       write({ fields: { Body: 'Got it.' }, parentLinks: [replyParent()] }),
@@ -224,7 +215,7 @@ describe('replying inside a thread', () => {
 
   it('does not stack Re: on a conversation that already carries one', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await adapter.createRecord(
       write({
         fields: { Body: 'Still here.' },
@@ -236,7 +227,7 @@ describe('replying inside a thread', () => {
 
   it('lets the author override the address and the subject', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await adapter.createRecord(
       write({
         fields: { To: ['anil@example.com'], Subject: 'Handing this over', Body: 'Over to you.' },
@@ -251,7 +242,7 @@ describe('replying inside a thread', () => {
 
   it('fails plainly when the message it hangs off carries no thread', async () => {
     const { client, sent } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await expect(
       adapter.createRecord(
         write({ fields: { Body: 'Got it.' }, parentLinks: [replyParent({ threadId: null })] }),
@@ -262,7 +253,7 @@ describe('replying inside a thread', () => {
 
   it('refuses an anchor that is not a reply', async () => {
     const { client } = fakeClient();
-    const adapter = new GmailAdapter(TEAM, 'cred-1', client);
+    const adapter = adapterOver(client);
     await expect(
       adapter.createRecord(
         write({

@@ -237,14 +237,14 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
   await bytes(`${REFUSED}bytes of a file with no handle`, { __brand: 'FileRef', name: 'loose.txt', contentType: 'text/plain' });
 
   // ── Read-back by id ───────────────────────────────────────────────────────
-  await step('readRecord Message msg-beta', (a) => a.readRecord({ recordType: 'Message', externalId: 'msg-beta' }));
-  await step('readRecord Message (missing)', (a) => a.readRecord({ recordType: 'Message', externalId: 'msg-nope' }));
-  await step('readRecord Attachment', (a) => a.readRecord({ recordType: 'Attachment', externalId: 'msg-acme:msg-acme-att-1' }));
+  await step('readRecord Message msg-beta', async (a) => (await a.readRecord?.({ recordType: 'Message', externalId: 'msg-beta' })) ?? null);
+  await step('readRecord Message (missing)', async (a) => (await a.readRecord?.({ recordType: 'Message', externalId: 'msg-nope' })) ?? null);
+  await step('readRecord Attachment', async (a) => (await a.readRecord?.({ recordType: 'Attachment', externalId: 'msg-acme:msg-acme-att-1' })) ?? null);
 
   // ── Every write kind ──────────────────────────────────────────────────────
   const write = (name: string, recordType: string, fields: Record<string, unknown>, parentLinks?: ParentLink[]) =>
     step(name, (a) => a.createRecord({ recordType, fields, mutationContext: MUTATION, ...(parentLinks !== undefined ? { parentLinks } : {}) }));
-  const acmeData = positionData(acme) ?? {};
+  const acmeData: Record<string, unknown> = { ...(positionData(acme) ?? {}) };
   const replyAlong = (data: Record<string, unknown>): ParentLink[] => [
     { recordType: 'Message', externalId: String(data['id'] ?? 'msg-acme'), edgeName: 'Replies', data },
   ];

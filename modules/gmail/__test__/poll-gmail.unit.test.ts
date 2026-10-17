@@ -2,16 +2,8 @@
 // end, and the checkpoint's resume point when a tick stops short. No network:
 // the API client is faked, per label and per page.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-jest.mock('movement-engine/services/logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
 
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { GmailApiClient } from '../client';
+import type { GmailApiClient } from '../api_client';
 
 import {
   GmailApiError,
@@ -19,10 +11,9 @@ import {
   type GmailMessage,
   type GmailMessageRef,
   type GmailProfile,
-} from '../../../../../adapters/gmail/apiClient';
+} from '../api_client';
 import { GmailPollSource, GMAIL_LABELS_SHAPE_ERROR, listenLabels } from '../poll';
 
-const TEAM = 'team-1' as TeamId;
 
 function wireMessage(id: string, labelIds: string[] = ['INBOX']): GmailMessage {
   return {
@@ -117,7 +108,7 @@ function asClient(client: unknown): GmailApiClient {
 
 function pollWith(setup: Parameters<typeof fakeClient>[0]) {
   const { client, calls } = fakeClient(setup);
-  return { source: new GmailPollSource(TEAM, 'cred-1', asClient(client)), calls };
+  return { source: new GmailPollSource(async () => asClient(client)), calls };
 }
 
 const added = (id: string, historyId: string): GmailHistoryAddition => ({

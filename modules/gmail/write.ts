@@ -14,24 +14,23 @@
 // it is authorable, because none of it is a decision: getting any of it wrong
 // produces a message that lands outside the thread it was meant for.
 
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { FileRef, ParentLink, WriteResult } from 'movement-engine/services/translation_graph/adapter';
-import type { GmailApiClient } from './client';
+import type { FileRef, ParentLink, WriteResult } from 'movement-engine/public/adapter';
+import type { ModuleLog } from 'module-kit';
 
-import { logger } from 'movement-engine/services/logger';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import { hasFileSource } from 'movement-engine/public/files';
 import {
   GmailApiError,
-  gmailMethodOf,
   gmailMissingSendScopeMessage,
-} from '../../../../adapters/gmail/apiClient';
+  type GmailApiClient,
+  type GmailConnectMethod,
+} from './api_client';
 import {
   buildRfc2822,
   toGmailRaw,
   type ComposeOptions,
   type GmailOutboundAttachment,
-} from '../../../../adapters/gmail/compose';
-import { splitAddressHeader } from '../../../../adapters/gmail/mime';
+} from './compose';
+import { splitAddressHeader } from './mime';
 import { GMAIL_ADAPTER_TYPE, GMAIL_MESSAGE_DISPLAY_NAME } from './types';
 
 /** The parent of a reply, as the write path reads it off the position that was
@@ -89,8 +88,10 @@ export function replySubject(parentSubject: string | undefined): string {
  */
 export async function sendGmailMessage(input: {
   client: GmailApiClient;
-  /** The team whose run is sending — an attached file is redeemed for it. */
-  teamId: TeamId;
+  /** The bytes of a file the write was handed (at its url, else through the
+   *  host's files). */
+  readFile: (ref: FileRef) => Promise<Uint8Array>;
+  log: ModuleLog;
   fields: Record<string, unknown>;
   replyTo?: GmailReplyTarget;
   /** Injectable so a test can assert a whole message rather than one with a
@@ -104,7 +105,7 @@ export async function sendGmailMessage(input: {
   const cc = strings(fields['cc']);
   const bodyText = str(fields['body']);
   const bodyHtml = str(fields['bodyHtml']);
-  const attachments = await resolveAttachments(fields['files'], input.teamId);
+  const attachments = await resolveAttachments(fields['files'], input.readFile);
 
   if (to.length === 0) {
     throw new Error(
@@ -150,10 +151,10 @@ export async function sendGmailMessage(input: {
       ...(replyTo?.threadId !== undefined ? { threadId: replyTo.threadId } : {}),
     });
   } catch (error) {
-    throw sendFailure(error, mailbox, gmailMethodOf(client.credentials));
+    throw sendFailure(error, mailbox, client.credentials.method);
   }
 
-  logger.info(
+  input.log.info(
     `[GmailAdapter.write] sent ${sent.id} as ${mailbox}` +
       `${replyTo ? ` (reply in thread ${replyTo.threadId})` : ''}`,
   );
@@ -211,7 +212,7 @@ function referenceChain(replyTo: GmailReplyTarget): string[] {
 function sendFailure(
   error: unknown,
   mailbox: string,
-  method: ReturnType<typeof gmailMethodOf>,
+  method: GmailConnectMethod,
 ): Error {
   if (error instanceof GmailApiError && error.failure === 'missing_send_scope') {
     return new Error(gmailMissingSendScopeMessage(mailbox, method));
@@ -233,7 +234,10 @@ function asFileValue(raw: unknown): FileValue | null {
   return raw as FileValue;
 }
 
-async function resolveAttachments(raw: unknown, teamId: TeamId): Promise<GmailOutboundAttachment[]> {
+async function resolveAttachments(
+  raw: unknown,
+  readFile: (ref: FileRef) => Promise<Uint8Array>,
+): Promise<GmailOutboundAttachment[]> {
   if (raw === undefined || raw === null) return [];
   const values = (Array.isArray(raw) ? raw : [raw])
     .map(asFileValue)
@@ -241,7 +245,7 @@ async function resolveAttachments(raw: unknown, teamId: TeamId): Promise<GmailOu
 
   const attachments: GmailOutboundAttachment[] = [];
   for (const value of values) {
-    const bytes = await fileBytes(value, teamId);
+    const bytes = await fileBytes(value, readFile);
     if (bytes === null) {
       // Loud, and fatal: an email that silently goes out without the document
       // it was about is worse than one that does not go out at all.
@@ -259,16 +263,20 @@ async function resolveAttachments(raw: unknown, teamId: TeamId): Promise<GmailOu
   return attachments;
 }
 
+/** A file the write can read: one a host exposed at a url, or one whose
+ *  owner the host can redeem. */
+function isServed(value: FileValue): boolean {
+  return typeof value.url === 'string' || hasFileSource(value);
+}
+
 async function fileBytes(
   value: FileValue,
-  teamId: TeamId,
+  readFile: (ref: FileRef) => Promise<Uint8Array>,
 ): Promise<{ body: Buffer; contentType: string } | null> {
-  if (hasFileSource(value)) {
-    const resolved = await streamFileRef(value, { teamId });
-    const body = await streamToBuffer(resolved.stream);
+  if (isServed(value)) {
     return {
-      body,
-      contentType: resolved.contentType ?? value.contentType ?? 'application/octet-stream',
+      body: Buffer.from(await readFile(value)),
+      contentType: value.contentType ?? 'application/octet-stream',
     };
   }
   if (typeof value.content === 'string') {
@@ -278,12 +286,4 @@ async function fileBytes(
     };
   }
   return null;
-}
-
-async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
 }

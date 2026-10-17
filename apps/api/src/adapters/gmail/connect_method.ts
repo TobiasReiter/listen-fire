@@ -14,9 +14,9 @@
 // — reads the method from here rather than re-deriving it.
 
 import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
+import { GMAIL_CONNECT_METHODS, type GmailConnectMethod } from '@lf/gmail/api_client';
 
-export const GMAIL_CONNECT_METHODS = ['oauth', 'delegated'] as const;
-export type GmailConnectMethod = (typeof GMAIL_CONNECT_METHODS)[number];
+export { GMAIL_CONNECT_METHODS, type GmailConnectMethod };
 
 const METHOD_VAR = 'GMAIL_CONNECT_METHOD';
 const SEND_VAR = 'GMAIL_SEND_ENABLED';

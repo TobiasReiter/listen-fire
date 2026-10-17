@@ -17,6 +17,7 @@ jest.mock('movement-engine/lib/google_cloud', () => {
 const builtAuths: unknown[] = [];
 jest.mock('googleapis', () => ({
   google: {
+    auth: { OAuth2: class { credentials: Record<string, unknown> = {}; setCredentials(credentials: Record<string, unknown>) { this.credentials = credentials; } } },
     gmail: (opts: { auth: unknown }) => {
       builtAuths.push(opts.auth);
       return {
@@ -118,7 +119,8 @@ describe('the signed-in shape', () => {
     const client = await resolveGmailClient({ teamId: TEAM, credentialsId: 'cred-1' });
     expect(client).not.toBeNull();
     expect(delegatedAuth).not.toHaveBeenCalled();
-    expect(builtAuths).toHaveLength(1);
+    // One client per scope, both carrying the sign-in's one token.
+    expect(builtAuths).toHaveLength(2);
   });
 
   it('still obeys an allowlist that IS set', async () => {

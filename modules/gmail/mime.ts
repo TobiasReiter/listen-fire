@@ -8,7 +8,7 @@
 
 import { convert as htmlToText } from 'html-to-text';
 
-import type { GmailMessage, GmailPart } from './apiClient';
+import type { GmailMessage, GmailPart } from './api_client';
 
 /** One file hanging off a message. The bytes are NOT here — Gmail serves them
  *  from their own endpoint, keyed by this id, so a movement that never opens a

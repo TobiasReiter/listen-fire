@@ -9,7 +9,7 @@ import {
   buildRfc2822,
   encodeAddress,
   toGmailRaw,
-} from '../../../../../adapters/gmail/compose';
+} from '../compose';
 
 /** A deterministic boundary supply, so a whole message can be asserted rather
  *  than a message with a random string cut out of it. */
