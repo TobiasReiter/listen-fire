@@ -499,7 +499,7 @@ const CONTRACTS_DIR = path.join(REPO_DIR, 'packages/engine-contracts');
 const EMBEDDABLE_ROOTS = [
   ...PURE_FILES.map(engineFile),
   engineFile('test_host.ts'),
-  path.join(SRC_DIR, 'services/translation_graph/protocol/server.ts'),
+  path.join(REPO_DIR, 'packages/module-kit/index.ts'),
   path.join(CONTRACTS_DIR, 'index.ts'),
 ];
 
@@ -605,7 +605,7 @@ describe('generated database code stays out of what an embedder imports', () => 
     expect(violations).toEqual([]);
   });
 
-  it('the engine, the contracts, the test host and the server kit reach no database code, by any path', () => {
+  it('the engine, the contracts, the test host and the module kit reach no database code, by any path', () => {
     expect(databaseReach(EMBEDDABLE_ROOTS)).toEqual([]);
   });
 
