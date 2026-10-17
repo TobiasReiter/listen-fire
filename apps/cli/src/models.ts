@@ -4,14 +4,17 @@
 // speaking the same Messages API).
 //
 // Every model name goes to Anthropic under its own name: lf has no model map.
-// Nothing is billed — there is no account to bill — so a run's cost cap does
-// not see what its model calls spent.
+// Nothing is invoiced — there is no account to bill — but each call is priced
+// from the shared price table (movement-engine's lib/models/prices.json) and
+// charged to its run, so the run's cost cap sees what its model calls spent.
 
 import type { EngineHost } from 'movement-engine/services/movement_engine/host';
 import type { ChatCall } from 'movement-engine/lib/models/chat';
 import type { ChatModelName } from 'movement-engine/lib/models/registry';
 
-import { anthropicClient } from 'movement-engine/lib/anthropic';
+import { anthropicClient, type LlmUsage } from 'movement-engine/lib/anthropic';
+import { costMicrodollars } from 'movement-engine/lib/models/pricing';
+import { reportRunCost } from 'movement-engine/lib/run_spend';
 import { models } from 'movement-engine/lib/models/registry';
 import { anthropicKeyedChatProvider, type AnthropicKey } from 'movement-engine/lib/models/providers/anthropic';
 import { metered, refusingPastBudget } from 'movement-engine/services/translation_graph/movement/metered';
@@ -26,7 +29,7 @@ export function modelCalls(credentials: Map<string, Credential>): EngineHost['ll
   const chat = anthropicClient({
     // Read at the call, not here: a run that never reaches a model needs no key.
     chatCallFor: (name) => anthropicCall(name, anthropicKey(credentials)),
-    recordUsage: async () => {},
+    recordUsage: chargeToRun,
     logFields: () => ({}),
   });
   const llm = makeAnthropicLlmClient({ chat: chat.anthropicChatDetailed });
@@ -42,6 +45,31 @@ export function modelCalls(credentials: Map<string, Credential>): EngineHost['ll
     },
     arbitrateEntities: (request) => refusingPastBudget(async () => arbitrate(request)),
   };
+}
+
+/** Keys already told about. An unpriced model's usage would read as free; say
+ *  so once per key per process. */
+const unpricedKeysWarned = new Set<string>();
+
+// Charged before the first await: the call is not awaited, and the run's next
+// priced call must already see what this one cost.
+async function chargeToRun(usage: LlmUsage): Promise<void> {
+  const { resolved } = usage;
+  const key = `${resolved.provider}/${resolved.wireModel}`;
+  const cost = costMicrodollars(key, {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cacheReadTokens ?? 0,
+    cacheCreationTokens: usage.cacheCreationTokens ?? 0,
+  });
+  if (cost === undefined) {
+    if (!unpricedKeysWarned.has(key)) {
+      unpricedKeysWarned.add(key);
+      process.stderr.write(`lf: no price for "${key}": its usage counts as free. Add it to movement-engine/lib/models/prices.json.\n`);
+    }
+    return;
+  }
+  reportRunCost({ source: { kind: 'model', name: resolved.wireModel }, microdollars: cost });
 }
 
 function anthropicKey(credentials: Map<string, Credential>): AnthropicKey {

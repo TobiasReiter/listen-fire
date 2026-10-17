@@ -9,6 +9,7 @@ import type { AgentConversationId } from '../generated/kysely/public/AgentConver
 import type { TriggerRunId } from '../generated/kysely/automations/TriggerRun';
 
 import { isInsideSpendMeter, reportRunCost } from 'movement-engine/lib/run_spend';
+import { costMicrodollars } from 'movement-engine/lib/models/pricing';
 import { models } from 'movement-engine/lib/models/registry';
 import { logger } from 'movement-engine/services/logger';
 import { getQb } from './kysely';
@@ -81,75 +82,7 @@ function runFields(): { runId?: string } {
 
 // -- Pricing --
 
-// Prices in dollars per million tokens.
-// cost_microdollars = tokens * priceDollarsPerMillion
-// e.g. 1000 tokens of gpt-4.1 input at $2/M = 1000 * 2 = 2000 microdollars = $0.002
-// Sources:
-//   OpenAI: https://pricepertoken.com/pricing-page/provider/openai (Feb 2026)
-//   Anthropic: https://platform.claude.com/docs/en/about-claude/pricing (Feb 2026)
-//   Embeddings: https://platform.openai.com/docs/models/text-embedding-3-large
-//   Google: https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing (2026-09-17)
-//
-// Keyed on `provider/wire-model` — who served the call and what it was called
-// on their wire — because that pair, not the name the caller asked for, is what
-// a vendor bills. Claude on Vertex is priced as on Anthropic's own API. Google's
-// own prices are the GLOBAL endpoint's and its base (<=200K input) tier.
-type Price = { input: number; output: number; cacheRead?: number; cacheCreation?: number };
-
-const CLAUDE_PRICING: Record<string, Price> = {
-  // https://platform.claude.com/docs/en/about-claude/pricing (checked 2026-09-24):
-  // base input, output, cache hits, 5m cache writes. Fable 5.1's cache hits are
-  // 0.025x its input price, not the usual 0.1x.
-  'claude-fable-5-1': { input: 10.0, output: 50.0, cacheRead: 0.25, cacheCreation: 12.5 },
-  'claude-opus-4-6': { input: 5.0, output: 25.0, cacheRead: 0.5, cacheCreation: 6.25 },
-  'claude-haiku-4-5': { input: 1.0, output: 5.0, cacheRead: 0.1, cacheCreation: 1.25 },
-  'claude-haiku-4-5-20251001': { input: 1.0, output: 5.0, cacheRead: 0.1, cacheCreation: 1.25 },
-  'claude-sonnet-4-5-20250929': { input: 3.0, output: 15.0, cacheRead: 0.3, cacheCreation: 3.75 },
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0, cacheRead: 0.3, cacheCreation: 3.75 },
-  // $2/$10 is the standard rate: the increase to $3/$15 once scheduled for
-  // September 2026 was withdrawn (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-09-25).
-  'claude-sonnet-5': { input: 2.0, output: 10.0, cacheRead: 0.2, cacheCreation: 2.5 },
-  'claude-opus-4-20250514': { input: 15.0, output: 75.0, cacheRead: 1.5, cacheCreation: 18.75 },
-  'claude-opus-4-7': { input: 5.0, output: 25.0, cacheRead: 0.5, cacheCreation: 6.25 },
-  'claude-opus-4-8': { input: 5.0, output: 25.0, cacheRead: 0.5, cacheCreation: 6.25 },
-  'claude-opus-5': { input: 5.0, output: 25.0, cacheRead: 0.5, cacheCreation: 6.25 },
-};
-
-const MODEL_PRICING: Record<string, Price> = {
-  ...Object.fromEntries(
-    Object.entries(CLAUDE_PRICING).flatMap(([name, price]) => [
-      [`anthropic/${name}`, price],
-      [`vertex/${name}`, price],
-    ]),
-  ),
-  // Chat on OpenAI is still reachable: the model map can send a Claude name to
-  // `openai/gpt-5`.
-  'openai/gpt-4.1': { input: 2.0, output: 8.0 },
-  'openai/gpt-4.1-mini': { input: 0.4, output: 1.6 },
-  'openai/gpt-4.1-nano': { input: 0.1, output: 0.4 }, // deprecated 2026-10-23
-  'openai/gpt-5': { input: 1.25, output: 10.0 },
-  'openai/gpt-5-mini': { input: 0.25, output: 2.0 },
-  'openai/gpt-5-nano': { input: 0.05, output: 0.4 },
-  'openai/o3': { input: 2.0, output: 8.0 },
-  'openai/text-embedding-3-large': { input: 0.13, output: 0 },
-  'openai/text-embedding-3-small': { input: 0.02, output: 0 },
-  // https://developers.openai.com/api/docs/pricing (checked 2026-09-24), per
-  // million tokens: text input $5, cached text input $1.25, image output $40.
-  // OpenAI also prices image INPUT tokens at $10, which this table cannot tell
-  // apart from text input; generation sends only a text prompt, so none arise.
-  'openai/gpt-image-1': { input: 5.0, output: 40.0, cacheRead: 1.25 },
-  // Above 200K input tokens this becomes $4.00/$18.00 — a tier this table has
-  // no way to express, so a very long prompt is under-priced rather than
-  // unpriced.
-  'gemini/gemini-3.1-pro-preview': { input: 2.0, output: 12.0, cacheRead: 0.2 },
-  // Standard rates; introductory $0.75/$3.75 applies through 2026-12-31, then
-  // reverts to these.
-  'gemini/gemini-3.8-flash': { input: 1.5, output: 7.5, cacheRead: 0.15 },
-  // Google prices this at $0.00015 per 1,000 "count" (= $0.15 per million) and
-  // hands back its own `token_count`, which is what we record — so this entry
-  // takes one count as one token.
-  'gemini/gemini-embedding-001': { input: 0.15, output: 0 },
-};
+// The prices are data, in movement-engine's prices.json (see pricing.ts for sources).
 
 /**
  * Keys already complained about. An unpriced key records a real token count at
@@ -183,24 +116,18 @@ function calculateCostMicrodollars(options: {
   cacheCreationTokens: number;
 }): number {
   const key = pricingKey(options.served);
-  const pricing = MODEL_PRICING[key];
-  if (!pricing) {
+  const cost = costMicrodollars(key, options);
+  if (cost === undefined) {
     if (!unpricedKeysWarned.has(key)) {
       unpricedKeysWarned.add(key);
       logger.warn(
         `[llm_usage] no price for "${key}" (from ${originOf(options.served)}) — its usage is recorded ` +
-          'at zero cost. Add it to MODEL_PRICING.',
+          'at zero cost. Add it to movement-engine/lib/models/prices.json.',
       );
     }
     return 0;
   }
-
-  const inputCost = options.inputTokens * pricing.input;
-  const outputCost = options.outputTokens * pricing.output;
-  const cacheReadCost = options.cacheReadTokens * (pricing.cacheRead ?? pricing.input);
-  const cacheCreationCost = options.cacheCreationTokens * (pricing.cacheCreation ?? pricing.input);
-
-  return Math.round(inputCost + outputCost + cacheReadCost + cacheCreationCost);
+  return cost;
 }
 
 // -- Recording --

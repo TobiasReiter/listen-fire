@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 // Every price the product charges, pinned to the microdollar. The fixture was
 // generated from the table as it stood in llm_usage.ts, before the prices moved
-// into movement-engine's pricing.json; a price changes only by regenerating it
+// into movement-engine's prices.json; a price changes only by regenerating it
 // on purpose (PRICE_SNAPSHOT_REGENERATE=1) and reading the diff.
 
 jest.mock('movement-engine/services/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));

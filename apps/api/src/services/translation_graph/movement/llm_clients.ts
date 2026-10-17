@@ -15,14 +15,22 @@ interface HostedModelClientOptions {
   cancel?: CancelGate;
 }
 
+/** Ops calibration knob for the extraction loop guard, read off `process.env`
+ *  (the `LOOP_GUARD_*` idiom, not the prod-required `getEnvVar`): unset must
+ *  fall back to trusting the model, in every environment including production. */
+function extractionOutputBudgetEnabled(): boolean {
+  const raw = process.env.EXTRACTION_OUTPUT_BUDGET;
+  return raw === '1' || raw === 'true';
+}
+
 // Reached at call time rather than bound once, so a test that mocks the
 // client module is heard here.
 const chat: typeof anthropicChatDetailed = (options) => anthropicChatDetailed(options);
 
 export function makeAnthropicLlmClient(options: HostedModelClientOptions = {}): LlmClient {
-  return makeLlmClient({ ...options, chat });
+  return makeLlmClient({ ...options, chat, outputBudget: extractionOutputBudgetEnabled() });
 }
 
 export function makeAnthropicExtractCallClient(options: HostedModelClientOptions = {}): ExtractCallLlmClient {
-  return makeExtractCallClient({ ...options, chat });
+  return makeExtractCallClient({ ...options, chat, outputBudget: extractionOutputBudgetEnabled() });
 }
