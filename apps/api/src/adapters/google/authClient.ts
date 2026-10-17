@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { OAuth2Client } from 'google-auth-library';
-
 import { logger } from 'movement-engine/services/logger';
 import { createOAuth2Connector, createSecretsFamily, OAuth2ExchangeFailed, type OAuth2Connector, type OAuth2Declaration } from 'movement-engine/public/secrets';
+
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
 const scopes = [

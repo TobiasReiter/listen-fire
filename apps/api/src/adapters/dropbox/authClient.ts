@@ -1,5 +1,4 @@
 import { z } from 'zod';
-
 import { logger } from 'movement-engine/services/logger';
 import {
   createOAuth2Connector,
@@ -11,6 +10,7 @@ import {
   type OAuth2Declaration,
   type SecretFields,
 } from 'movement-engine/public/secrets';
+
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
 const REFRESH_WINDOW_MS = 60_000;
@@ -47,6 +47,12 @@ export const dropboxCredsParser = z.object({
 });
 
 export type DropboxCreds = z.infer<typeof dropboxCredsParser>;
+
+const dropboxIssuedTokens = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().min(1),
+  expires_in: z.coerce.number(),
+});
 
 export class DropboxAuthClient {
   private readonly connector: OAuth2Connector;
@@ -127,9 +133,3 @@ export class DropboxAuthClient {
     return this.connector.begin();
   }
 }
-
-const dropboxIssuedTokens = z.object({
-  access_token: z.string().min(1),
-  refresh_token: z.string().min(1),
-  expires_in: z.coerce.number(),
-});

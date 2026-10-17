@@ -19,9 +19,6 @@
 
 import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
-
-import type { Credentials } from 'google-auth-library';
-
 import { logger } from 'movement-engine/services/logger';
 import {
   beginOAuth2Connect,
@@ -33,13 +30,17 @@ import {
   type OAuth2Attempt,
   type OAuth2Declaration,
 } from 'movement-engine/public/secrets';
+import { GMAIL_READONLY_SCOPE } from 'movement-engine/lib/google_cloud';
+
+import type { Credentials } from 'google-auth-library';
+
+
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 import {
   GMAIL_OAUTH_CLIENT_LABEL,
   gmailOAuthClientCredentials,
   gmailOAuthScopes,
 } from './connect_method';
-import { GMAIL_READONLY_SCOPE } from 'movement-engine/lib/google_cloud';
 import { GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT, googleIssuedTokens } from '../google/authClient';
 
 /** The token half of a signed-in mailbox's credential, as the rotation listener

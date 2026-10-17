@@ -1,5 +1,4 @@
 import { z } from 'zod';
-
 import { logger } from 'movement-engine/services/logger';
 import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector, type OAuth2Declaration } from 'movement-engine/public/secrets';
 

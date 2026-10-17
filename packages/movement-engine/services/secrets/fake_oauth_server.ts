@@ -37,7 +37,9 @@ export async function startFakeOAuthServer(options: {
   clientSecret: string;
   /** Where the client must authenticate on the token call. Default basic. */
   clientAuth?: 'basic' | 'body';
-  expiresIn?: number;
+  /** Seconds each issued access token lives; a function of the issue's
+   *  number (1 for the first) to vary it. Default 3600. */
+  expiresIn?: number | ((issue: number) => number);
   /** Refuse PKCE-less attempts. */
   requirePkce?: boolean;
 }): Promise<FakeOAuthServer> {
@@ -50,7 +52,7 @@ export async function startFakeOAuthServer(options: {
   const issueTokens = (res: ServerResponse) => {
     serial += 1;
     refreshToken = `refresh-${serial}-${randomBytes(4).toString('hex')}`;
-    json(res, 200, { access_token: `access-${serial}`, token_type: 'bearer', expires_in: options.expiresIn ?? 3600, refresh_token: refreshToken, scope: 'granted' });
+    json(res, 200, { access_token: `access-${serial}`, token_type: 'bearer', expires_in: typeof options.expiresIn === 'function' ? options.expiresIn(serial) : (options.expiresIn ?? 3600), refresh_token: refreshToken, scope: 'granted' });
   };
 
   const clientOk = (req: IncomingMessage, form: URLSearchParams): boolean => {
