@@ -3,20 +3,20 @@
 // operations layer (honoring a parent organization via `parentLinks`), then
 // write custom-field values.
 
-import type { AffinityOperations } from '../../../../adapters/affinity/operations';
+import type { AffinityOperations } from './operations';
 import type {
   WriteInput,
   WriteResult,
   UpdateInput,
   UpdateResult,
   UpdateWriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
-import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
-import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
-import { logger } from 'movement-engine/services/logger';
+import { AffinityMergedEntityError } from './api_client';
+import { writeParentLinks } from 'movement-engine/public/adapter';
+import { logger } from 'movement-engine/public/log';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE } from './types';
-import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
+import { UPDATE_NOT_FOUND, isHttp404 } from 'module-kit/adapter/not_found';
 import {
   applyCustomReferenceParentLinks,
   buildPersonData,

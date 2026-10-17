@@ -5,15 +5,14 @@
 // (a copy of the v3 `writeFieldValues`/`resolveFieldValue`, LLM-free except for
 // the LOCATION formatter the underlying operations already owns).
 
-import type { AffinityAPIClient } from '../../../../adapters/affinity/apiClient';
-import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import type { ParentAssociation, ParentLink, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import type { AffinityAPIClient } from './api_client';
+import type { AffinityOperations } from './operations';
+import type { ParentAssociation, ParentLink, WriteInput } from 'movement-engine/public/adapter';
 
-import { valueType, locationFieldValue } from '../../../../adapters/affinity/apiClient';
-import { anthropicChat } from '../../../../lib/anthropic';
-import { logger } from 'movement-engine/services/logger';
-import { isAdapterCallCeilingExceeded } from 'movement-engine/services/translation_graph/segment_scope';
-import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
+import { valueType, locationFieldValue } from './api_client';
+import { logger } from 'movement-engine/public/log';
+import { isAdapterCallCeilingExceeded } from 'movement-engine/public/adapter-support';
+import { writeParentLinks } from 'movement-engine/public/adapter';
 import {
   decodedFixedType,
   isReferenceValueType,
@@ -446,7 +445,7 @@ export async function resolveFieldValue(
     }
     return match ? match.id : null;
   } else if (fieldDef.value_type === valueType.LOCATION) {
-    const formatted = await anthropicChat({
+    const formatted = await operations.models.chat({
       label: 'affinity.formatLocation',
       effort: 'low',
       system: `You are a location formatter. You will be given a location and you must format it into a string that can be used in a location field.

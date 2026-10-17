@@ -4,19 +4,19 @@
 // already arbitrated identity (resolveEntity) and may hand us an `externalId`
 // to update — so we pass it through as the operations `affinityId`.
 
-import type { AffinityOperations } from '../../../../adapters/affinity/operations';
+import type { AffinityOperations } from './operations';
 import type {
   WriteInput,
   WriteResult,
   UpdateInput,
   UpdateResult,
   UpdateWriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
-import { attachPersonToOrganisation } from '../../../../adapters/affinity/employer_association';
-import { AffinityMergedEntityError } from '../../../../adapters/affinity/apiClient';
-import { writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
-import { logger } from 'movement-engine/services/logger';
+import { attachPersonToOrganisation } from './employer_association';
+import { AffinityMergedEntityError } from './api_client';
+import { writeParentLinks } from 'movement-engine/public/adapter';
+import { logger } from 'movement-engine/public/log';
 import {
   applyCustomReferenceParentLinks,
   buildOrgData,
@@ -32,7 +32,7 @@ import {
   type WebUrlSource,
 } from './shared';
 import { AFFINITY_ADAPTER_TYPE, decodedFixedType } from './types';
-import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
+import { UPDATE_NOT_FOUND, isHttp404 } from 'module-kit/adapter/not_found';
 
 /** Write the BUILT-IN person↔org association from the PERSON side: a person
  *  parent (`write person -[:Organizations]-> org`) means this organization

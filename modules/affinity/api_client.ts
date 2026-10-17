@@ -2,11 +2,8 @@ import { z } from 'zod';
 import { backOff } from 'exponential-backoff';
 import uniq from 'lodash/uniq';
 
-import { parseJsonResponse } from '../../lib/utils/fetch';
-import { Queue } from 'movement-engine/lib/utils/queue';
-import { logger } from 'movement-engine/services/logger';
-import { SECOND } from '../../constants';
-import { currentContext } from '../../services/context';
+import { Queue } from 'movement-engine/public/adapter-support';
+import { logger } from 'movement-engine/public/log';
 import {
   bindAdapterCallCounter,
   fillMemoisedRead,
@@ -14,8 +11,20 @@ import {
   forgetMemoisedReadsUnder,
   isAdapterCallCeilingExceeded,
   memoisedRead,
-} from 'movement-engine/services/translation_graph/segment_scope';
-import { sendSlackNotification } from '../../lib/slack';
+} from 'movement-engine/public/adapter-support';
+import { reportAffinityWriteFailure } from './write_failures';
+
+const SECOND = 1000;
+
+async function parseJsonResponse(response: Response, serviceName: string): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    logger.error(`${serviceName} returned non-JSON response`, { status: response.status, body: text });
+    throw new Error(`${serviceName} returned non-JSON response (${response.status}): ${text.slice(0, 200)}`);
+  }
+}
 
 const RETRY_LIMIT = 5;
 const INITIAL_DELAY = 1 * SECOND;
@@ -1255,12 +1264,9 @@ class AffinityAPIClient {
     } catch (e) {
       logger.error(e);
 
-      const ctx = currentContext();
-
-      await sendSlackNotification({
-        type: 'DEALFLOW',
-        text: `:warning: Affinity error for user ${ctx.user.id} adding note (orgs: ${orgIds.join(',') || '—'}, persons: ${person_ids?.join(',') ?? '—'}, opportunities: ${opportunity_ids?.join(',') ?? '—'}, parent: ${parent_id ?? '—'})`,
-        opsTitle: `Affinity error adding a note`,
+      await reportAffinityWriteFailure({
+        kind: 'note',
+        detail: `orgs: ${orgIds.join(',') || '—'}, persons: ${person_ids?.join(',') ?? '—'}, opportunities: ${opportunity_ids?.join(',') ?? '—'}, parent: ${parent_id ?? '—'}`,
       });
       return null;
     }

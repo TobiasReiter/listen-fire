@@ -7,9 +7,9 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { resolve as resolvePath } from 'node:path';
 
-import type { ModuleDefinition, ModuleLog } from './define';
+import type { ModuleDefinition, ModuleLog, ModuleModels } from './define';
 
-import { refusingFiles, refusingKv } from './in_process';
+import { refusingFiles, refusingKv, refusingModels } from './in_process';
 import { createModuleProtocolHandler } from './module_server';
 
 /** A log that writes one JSON line per entry to `write`. */
@@ -31,6 +31,9 @@ export interface ServeModuleOptions {
   token?: string;
   baseUrlOverride?: string;
   log?: ModuleLog;
+  /** Models to lend the module (an embedder's). The command line lends none,
+   *  so a module call that asks one is refused by name there. */
+  models?: ModuleModels;
 }
 
 export async function serveModule(options: ServeModuleOptions): Promise<{ port: number; server: Server }> {
@@ -43,6 +46,7 @@ export async function serveModule(options: ServeModuleOptions): Promise<{ port: 
     log,
     files: refusingFiles(unavailable('ctx.files')),
     kv: refusingKv(unavailable('ctx.kv')),
+    models: options.models ?? refusingModels(`module ${definition.name}: ctx.models is lent by no host when the module is served by the serve-module command line`),
     ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
     ...(token !== undefined ? { authenticate: (headers) => headers.authorization === `Bearer ${token}` } : {}),
   });

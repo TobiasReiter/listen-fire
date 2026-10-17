@@ -28,16 +28,19 @@ import {
   type ModuleDefinition,
   type PluginModuleDefinition,
 } from 'module-kit';
-import { createSecretsFamily, type SecretsFamily } from 'movement-engine/public/secrets';
+import { createSecretsFamily, declaredRefresher, type SecretsFamily } from 'movement-engine/public/secrets';
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { postgresSecrets } from '../../credentials/secrets_postgres';
 import { credentialTypeOf } from './credential_type';
+import { hostedModels, hostedModuleFiles } from './module_host';
+import { platformOAuthApp, storedCredentialShape } from './module_credentials';
 
 export type BuiltinLine = 'legacy' | 'module';
 
@@ -68,7 +71,16 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
   },
   granola: { kind: 'adapter', line: 'legacy' },
   evertrace: { kind: 'adapter', line: 'legacy' },
-  affinity: { kind: 'adapter', line: 'legacy' },
+  affinity: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: AFFINITY_MANIFEST,
+    load: () => {
+      require('./affinity/write_failure_alerts');
+      const { affinityModule }: typeof import('@lf/affinity') = require('@lf/affinity');
+      return affinityModule;
+    },
+  },
   airtable: { kind: 'adapter', line: 'legacy' },
   attio: { kind: 'adapter', line: 'legacy' },
   google_sheets: { kind: 'adapter', line: 'legacy' },
@@ -94,7 +106,7 @@ function moduleLineOf(name: string): AdapterModuleLine | undefined {
 }
 
 /** Every adapter module line's definition, loaded. */
-function adapterModuleDefinitions(): AdapterModuleDefinition[] {
+export function adapterModuleDefinitions(): AdapterModuleDefinition[] {
   return Object.values(BUILTIN_MODULES).flatMap((entry) => (entry.kind === 'adapter' && entry.line === 'module' ? [entry.load()] : []));
 }
 
@@ -106,7 +118,9 @@ export interface BuiltinInstall {
 }
 
 /** The install's credential, read and written back through the encrypted
- *  store (cipher and payload exactly as the connect flow stored them). */
+ *  store (cipher and payload exactly as the connect flow stored them, in the
+ *  module's own field names), and refreshed with this deployment's OAuth app
+ *  when the module declares an OAuth credential. */
 function storedCredential(definition: ModuleDefinition, install: BuiltinInstall, secrets: SecretsFamily): ModuleCredential {
   const declared = definition.credentials[0];
   const displayName = definition.kind === 'adapter' ? definition.manifest.displayName : definition.name;
@@ -115,11 +129,26 @@ function storedCredential(definition: ModuleDefinition, install: BuiltinInstall,
   if (ref === undefined) {
     return noCredential(`${displayName}: no credential is connected for team ${install.teamId} (credentialsId unset). Connect ${displayName}.`);
   }
-  return {
+  const shape = storedCredentialShape(definition.name);
+  const credential: ModuleCredential = {
     name: declared.name,
-    fields: async () => (await secrets.resolve(ref)).fields,
+    fields: async () => shape.toModule((await secrets.resolve(ref)).fields),
     update: async (fields) => {
-      await secrets.update(ref, fields);
+      await secrets.update(ref, shape.toStored(fields));
+    },
+  };
+  const app = platformOAuthApp(definition.name);
+  const refresher = declaredRefresher(declared, app !== undefined ? { client: app } : {});
+  if (refresher === undefined) return credential;
+  return {
+    ...credential,
+    refresh: async () => {
+      const seen = await secrets.resolve(ref);
+      const refreshed = await secrets.refresh(ref, {
+        seenVersion: seen.version,
+        refresher: async (current) => shape.toStored(await refresher({ ...current, fields: shape.toModule(current.fields) })),
+      });
+      return shape.toModule(refreshed.fields);
     },
   };
 }
@@ -146,8 +175,9 @@ export function loadBuiltinModule(definition: AdapterModuleDefinition, install: 
     tenant: install.teamId,
     credential: storedCredential(definition, install, secrets),
     log: logger,
-    files: refusingFiles(unavailable('ctx.files')),
+    files: hostedModuleFiles(install.teamId, definition.name),
     kv: refusingKv(unavailable('ctx.kv')),
+    models: hostedModels,
     ...(baseUrlOverride !== undefined ? { baseUrlOverride } : {}),
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
     validateResults: inProcessValidationDefault(process.env),

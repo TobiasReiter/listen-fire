@@ -14,7 +14,7 @@ import { claimPendingCredentials } from '../../../lib/pendingCredentials';
 import { logger } from 'movement-engine/services/logger';
 import { bindFlowToUser, extractStateFromUrl } from '../../../lib/oauthFlows';
 import { slackCredsParser } from '../../../adapters/slack/webApi/apiClient';
-import { affinityCredsParser } from '../../../adapters/affinity/apiClient';
+import { affinityCredsParser } from '@lf/affinity/api_client';
 import {
   airtableCredsParser,
   clearClientByCredentialsId,

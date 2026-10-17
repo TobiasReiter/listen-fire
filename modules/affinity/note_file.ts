@@ -9,13 +9,12 @@
 //   • File  — lifts v3 `executeFile`: a File-typed value (a Resource handle)
 //     is fetched and uploaded to the parent organization.
 
-import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import type { FileRef, WriteInput, WriteResult } from 'movement-engine/services/translation_graph/adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { AffinityOperations } from './operations';
+import type { FileRef, WriteInput, WriteResult } from 'movement-engine/public/adapter';
+import type { ModuleContext } from 'module-kit';
 
-import { singleParentLink } from 'movement-engine/services/translation_graph/adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
-import { logger } from 'movement-engine/services/logger';
+import { singleParentLink } from 'movement-engine/public/adapter';
+import { logger } from 'movement-engine/public/log';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE } from './types';
 import { createNoopTracer } from './shared';
 
@@ -84,11 +83,12 @@ function asFileValue(raw: unknown): FileValue | null {
 
 export async function createFile(input: {
   operations: AffinityOperations;
-  /** The team whose run is writing — the `File` value is redeemed for it. */
-  teamId: TeamId;
+  /** Where the `File` value's bytes come from: the host's files, or the URL
+   *  a file sent over the wire carries. */
+  host: Pick<ModuleContext, 'files' | 'fetch'>;
   write: WriteInput;
 }): Promise<WriteResult> {
-  const { operations, teamId, write } = input;
+  const { operations, host, write } = input;
   // A file belongs to a single owning record — the lone parent: an
   // organization, person, or opportunity (POST /entity-files takes exactly
   // one of organization_id / person_id / opportunity_id).
@@ -115,7 +115,7 @@ export async function createFile(input: {
     return { adapterType: AFFINITY_ADAPTER_TYPE, externalId: '', data: {} };
   }
 
-  const blob = await fetchFileBlob(fileValue, teamId);
+  const blob = await fetchFileBlob(fileValue, host);
   if (!blob) {
     logger.warn('[AffinityAdapter.createFile] could not retrieve file bytes — skipping upload', {
       name: fileValue.name,
@@ -137,18 +137,26 @@ export async function createFile(input: {
   };
 }
 
+async function redeemedBytes(ref: FileRef, host: Pick<ModuleContext, 'files' | 'fetch'>): Promise<Uint8Array> {
+  try {
+    return await host.files.read(ref);
+  } catch (error) {
+    if (typeof ref.url !== 'string') throw error;
+    return new Uint8Array(await (await host.fetch(ref.url)).arrayBuffer());
+  }
+}
+
 async function fetchFileBlob(
   fileValue: FileValue,
-  teamId: TeamId,
+  host: Pick<ModuleContext, 'files' | 'fetch'>,
 ): Promise<{ blob: Blob; contentType: string } | null> {
-  // Redeem the descriptor for its bytes and buffer them into the Blob the
-  // Affinity upload needs.
-  if (hasFileSource(fileValue)) {
+  // The bytes, buffered into the Blob the Affinity upload needs: redeemed from
+  // the host's files, or — served as a process, where the host holds them —
+  // fetched from the URL the file was sent over the wire with.
+  if (fileValue.source !== undefined) {
     try {
-      const resolved = await streamFileRef(fileValue, { teamId });
-      const bytes = await streamToBuffer(resolved.stream);
-      const contentType =
-        resolved.contentType ?? fileValue.contentType ?? 'application/octet-stream';
+      const bytes = await redeemedBytes(fileValue, host);
+      const contentType = fileValue.contentType ?? 'application/octet-stream';
       return { blob: new Blob([bytes], { type: contentType }), contentType };
     } catch (err) {
       logger.warn('[AffinityAdapter.createFile] file retrieval failed', {
@@ -167,12 +175,4 @@ async function fetchFileBlob(
   }
 
   return null;
-}
-
-async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
 }

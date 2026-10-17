@@ -12,18 +12,18 @@
 // here (Affinity has no formula filter to compile them against); identity per
 // adapter-minimalism is what `findMatchingOrganisation`/email matching express.
 
-import type { AffinityOperations } from '../../../../adapters/affinity/operations';
+import type { AffinityOperations } from './operations';
 import type {
   ResolveEntityInput,
   ResolveEntityResult,
   ExternalRecordRef,
   LinkedObjectCandidate,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
 import { AFFINITY_ADAPTER_TYPE, listEntityKind, type DecodedTypeId } from './types';
 import { AFFINITY_LIST_ENTRIES_EDGE, AFFINITY_LIST_NAME_FIELD } from './schema_catalog';
-import { logger } from 'movement-engine/services/logger';
-import { isAdapterCallCeilingExceeded } from 'movement-engine/services/translation_graph/segment_scope';
+import { logger } from 'movement-engine/public/log';
+import { isAdapterCallCeilingExceeded } from 'movement-engine/public/adapter-support';
 import { readOrgBuiltins, readPersonBuiltins } from './shared';
 
 export async function resolveEntity(input: {

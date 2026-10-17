@@ -1,11 +1,4 @@
-import { z } from 'zod';
+// The extraction pipeline's field configuration lives with Affinity's module,
+// whose write path reads it too.
 
-export const fieldConfigurationSchema = z.object({
-  fieldId: z.number(),
-  fieldName: z.string(),
-  fieldType: z.string(),
-  prompt: z.string(),
-  overrideExisting: z.boolean().optional(),
-});
-
-export type AffinityFieldConfiguration = z.infer<typeof fieldConfigurationSchema>;
+export { fieldConfigurationSchema, type AffinityFieldConfiguration } from '@lf/affinity/field_configuration';

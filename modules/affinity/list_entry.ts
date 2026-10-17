@@ -11,10 +11,10 @@
 // which is the safe default — an entity already on the list is never
 // re-added.
 
-import type { AffinityOperations } from '../../../../adapters/affinity/operations';
-import type { UpdateInput, UpdateResult, WriteInput, WriteResult } from 'movement-engine/services/translation_graph/adapter';
+import type { AffinityOperations } from './operations';
+import type { UpdateInput, UpdateResult, WriteInput, WriteResult } from 'movement-engine/public/adapter';
 
-import { containerAssociation, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
+import { containerAssociation, singleParentLink } from 'movement-engine/public/adapter';
 import { decodedFixedType, AFFINITY_ADAPTER_TYPE, type DecodedTypeId } from './types';
 import { createNoopTracer, writeCustomFieldValues } from './shared';
 import { AFFINITY_LIST_NAME_FIELD } from './schema_catalog';

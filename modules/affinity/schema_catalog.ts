@@ -9,14 +9,14 @@
 // constraints (adapter-minimalism). `describe` therefore leaves
 // `uniquenessConstraints` unset.
 
-import type { AffinityAPIClient } from '../../../../adapters/affinity/apiClient';
+import type { AffinityAPIClient } from './api_client';
 import type {
   SchemaEntryPoint,
   SchemaFieldDescriptor,
   SchemaFieldKind,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
 import {
   AFFINITY_ADAPTER_TYPE,

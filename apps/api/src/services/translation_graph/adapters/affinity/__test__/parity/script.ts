@@ -115,7 +115,7 @@ export async function runAffinityParityScript(adapter: Adapter): Promise<Transcr
     await t.step('ensureEventSubscription widened', () =>
       adapter.ensureEventSubscription?.({ callbackUrl: 'https://example.test/x', events: ['organization.created', 'person.created'], current: { externalId, events: ['organization.created'] } } as never) ?? null,
     );
-    await t.step('removeEventSubscription', () => adapter.removeEventSubscription?.({ externalId } as never) ?? null);
+    await t.step('removeEventSubscription', () => adapter.removeEventSubscription?.({ callbackUrl: 'https://example.test/x', externalId }) ?? null);
   }
   await t.step('listEventTypes', () => adapter.listEventTypes?.() ?? null);
   return t.entries;

@@ -84,7 +84,7 @@ export async function runAirtableParityScript(adapter: Adapter, scoped: Adapter,
       adapter.ensureEventSubscription?.({ callbackUrl: 'https://example.test/x', events: ['record.created', 'record.deleted'], scope, current: { externalId: webhookId, events: ['record.created'] } } as never) ?? null,
     );
     const live = recreated?.externalId ?? webhookId;
-    await t.step('removeEventSubscription', () => adapter.removeEventSubscription?.({ externalId: live, scope } as never) ?? null);
+    await t.step('removeEventSubscription', () => adapter.removeEventSubscription?.({ callbackUrl: 'https://example.test/x', externalId: live, scope }) ?? null);
   }
   await t.step('ensureEventSubscription without a table scope', () =>
     adapter.ensureEventSubscription?.({ callbackUrl: 'https://example.test/x', events: ['record.created'], scope: { base: BASE } } as never) ?? null,

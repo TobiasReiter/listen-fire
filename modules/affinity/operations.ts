@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { sub } from 'date-fns';
 
-import type { ParentAssociation } from 'movement-engine/services/translation_graph/adapter';
+import type { ParentAssociation } from 'movement-engine/public/adapter';
 
-import { AffinityAPIClient, fieldsValidator, locationFieldValue, valueType } from './apiClient';
+import { AffinityAPIClient, fieldsValidator, locationFieldValue, valueType } from './api_client';
 import {
   findMatchingOrganisation as findMatchingOrganisationCommon,
   normalizeEmail,
@@ -11,13 +11,11 @@ import {
   splitNameByLastToken,
   type AffinityOrganisation,
 } from './common';
-import { anthropicChat, anthropicChatStructured } from '../../lib/anthropic';
-import { parseJson } from 'movement-engine/lib/utils/parse_json';
-import { logger } from 'movement-engine/services/logger';
-import { sendSlackNotification } from '../../lib/slack';
-import { notNull } from '../../lib/utils/nullability';
-import { Tracer } from '../../services/tracer';
-import { fieldConfigurationSchema, AffinityFieldConfiguration } from './nodes/shared';
+import type { ModuleModels } from 'module-kit';
+import { parseJson } from 'movement-engine/public/adapter-support';
+import { logger } from 'movement-engine/public/log';
+import { reportAffinityWriteFailure } from './write_failures';
+import { fieldConfigurationSchema, AffinityFieldConfiguration } from './field_configuration';
 import {
   attachPersonToOrganisation,
   type AffinityPersonRecord,
@@ -31,8 +29,18 @@ type AffinityField = z.infer<typeof fieldsValidator>;
  *  the matching person, or null when none of the candidates is one. */
 const bestPersonMatchSchema = z.object({ id: z.number().nullable() });
 
+/** What the write paths record about the decisions they made; the hosted
+ *  pipeline passes its trace, the movement path a no-op. */
+export interface OperationsTracer {
+  add(key: string, value: unknown): void;
+}
+
 export class AffinityOperations {
-  constructor(private client: AffinityAPIClient) {}
+  constructor(
+    private client: AffinityAPIClient,
+    /** The host's models: the fuzzy matches and the free-text location. */
+    readonly models: ModuleModels,
+  ) {}
 
   getClient(): AffinityAPIClient {
     return this.client;
@@ -60,7 +68,7 @@ export class AffinityOperations {
       };
     });
 
-    const chatResponse = await anthropicChat({
+    const chatResponse = await this.models.chat({
       label: 'affinity.extractFieldValues',
       system: `You are an intelligent function in a data extraction system.
 
@@ -116,7 +124,7 @@ Only return the JSON, nothing else. If you cannot evaluate a field, set its valu
     domain?: string | null;
     context?: string;
   }): Promise<AffinityOrganisation | null> {
-    return findMatchingOrganisationCommon(this.client, { name, domain, context });
+    return findMatchingOrganisationCommon(this.client, this.models, { name, domain, context });
   }
 
   /** The person Affinity holds for this name/email, as fetched. */
@@ -142,7 +150,7 @@ Only return the JSON, nothing else. If you cannot evaluate a field, set its valu
       if (personByOtherEmails) return personByOtherEmails;
     }
 
-    const nameWithoutAffixes = await anthropicChat({
+    const nameWithoutAffixes = await this.models.chat({
       label: 'affinity.stripNameAffixes',
       // Stripping "Dr." off a name is a rewrite, not a judgement — the deepest
       // reasoning the default model would otherwise buy is all latency.
@@ -178,7 +186,7 @@ Expect the user to provide a name. If for any reason the name cannot be processe
     );
     if (person) return person;
 
-    const bestPersonMatch = await anthropicChatStructured({
+    const bestPersonMatch = await this.models.chatStructured({
       system: `You are a helpful assistant that determines the best match for a name.
 
 Here's the name we're matching: ${name}${email ? `\nHere's their email: ${email}` : ''}
@@ -235,7 +243,7 @@ If you can't find a match, or if it's unlikely that any of the provided people a
     const byLastToken = splitNameByLastToken(name);
     if (!byLastToken.firstName) return null;
 
-    const splitNameString = await anthropicChat({
+    const splitNameString = await this.models.chat({
       label: 'affinity.splitName',
       effort: 'low',
       system: `You are a helpful assistant that splits a name into first name and last name.
@@ -324,7 +332,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
   }: {
     searchQuery: { name: string; domain?: string | null; context?: string };
     userText: string;
-    tracer: Tracer;
+    tracer: OperationsTracer;
     fieldConfigurations: AffinityFieldConfiguration[];
     affinityId?: number;
   }): Promise<{ id: number; isNew: boolean }> {
@@ -399,7 +407,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
       lastName?: string | null;
     };
     userText: string;
-    tracer: Tracer;
+    tracer: OperationsTracer;
     fieldConfigurations: AffinityFieldConfiguration[];
     orgId?: number;
     /**
@@ -527,7 +535,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
       minutes?: number;
       seconds?: number;
     };
-    tracer: Tracer;
+    tracer: OperationsTracer;
   }): Promise<{ id: number; isNew: boolean } | null> {
     const list = await this.client.getListById(listId);
     tracer.add('listName', list.name);
@@ -573,7 +581,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
     parentNoteId?: number;
     content: string;
     type?: number;
-    tracer: Tracer;
+    tracer: OperationsTracer;
   }): Promise<{ id: number } | null> {
     if (!content.trim()) {
       tracer.add('noteAction', 'skipped_empty');
@@ -612,7 +620,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
     userText: string;
     fieldConfigurations: AffinityFieldConfiguration[];
     listEntryId?: number;
-    tracer: Tracer;
+    tracer: OperationsTracer;
     forceOverwrite?: boolean;
   }): Promise<void> {
     const extractedFields = await this.extractFields({
@@ -686,10 +694,9 @@ Expect the user to provide a name. If for any reason the name cannot be split in
           }
         } catch (err) {
           logger.error(err);
-          await sendSlackNotification({
-            type: 'DEALFLOW',
-            text: `:warning: Affinity error adding field value (field: ${fieldDef.id}, entity: ${entityId}, list_entry: ${listEntryId ?? '—'}, value: ${String(resolvedValue)})`,
-            opsTitle: 'Affinity error adding a field value',
+          await reportAffinityWriteFailure({
+            kind: 'field value',
+            detail: `field: ${fieldDef.id}, entity: ${entityId}, list_entry: ${listEntryId ?? '—'}, value: ${String(resolvedValue)}`,
           });
         }
       }
@@ -727,7 +734,7 @@ Expect the user to provide a name. If for any reason the name cannot be split in
     } else if (fieldDef.value_type === valueType.DATE) {
       return new Date(value).toISOString();
     } else if (fieldDef.value_type === valueType.LOCATION) {
-      const formattedLocation = await anthropicChat({
+      const formattedLocation = await this.models.chat({
         label: 'affinity.formatLocation',
         effort: 'low',
         system: `You are a location formatter. You will be given a location and you must format it into a string that can be used in a location field.

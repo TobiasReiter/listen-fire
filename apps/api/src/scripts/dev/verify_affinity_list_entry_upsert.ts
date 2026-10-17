@@ -24,8 +24,9 @@
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
-import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
+import { AffinityAPIClient } from '@lf/affinity/api_client';
+import { AffinityAdapter } from '@lf/affinity';
+import { hostedModels, hostedModuleFiles } from '../../services/translation_graph/adapters/module_host';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 
@@ -33,8 +34,13 @@ const requests: string[] = [];
 
 function adapterOnFake(): AffinityAdapter {
   const adapter = new AffinityAdapter({
-    teamId: 'team-upsert' as TeamId,
-    credentialsId: 'creds-upsert' as ExternalServiceCredentialsId,
+    tenant: 'team-upsert' as TeamId,
+    client: async () => {
+      throw new Error('this script supplies its own client');
+    },
+    models: hostedModels,
+    files: hostedModuleFiles('team-upsert' as TeamId, '@lf/affinity'),
+    fetch,
   });
   const client = new AffinityAPIClient({ apiKey: 'fake', baseUrl: BASE });
   // Every call the adapter makes, in order — the evidence for "no field-value

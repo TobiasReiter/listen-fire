@@ -10,7 +10,7 @@ import { ADAPTER_TEAM_HEADER } from 'movement-engine/public/adapter';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import { METHODS, type MethodName, type RpcResponseShape, type WireCredentialShape } from 'engine-contracts';
 
-import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog } from './define';
+import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog, ModuleModels } from './define';
 
 import { moduleContext, noCredential } from './in_process';
 import { loadedModule, moduleManifest, type LoadedModule } from './manifest';
@@ -32,6 +32,8 @@ export interface ModuleServerOptions {
   log: ModuleLog;
   files: ModuleFiles;
   kv: ModuleKv;
+  /** The models the serving host lends; default: refused by name. */
+  models?: ModuleModels;
   baseUrlOverride?: string;
 }
 
@@ -127,6 +129,7 @@ async function answer(options: ModuleServerOptions, req: IncomingMessage, reques
         log: options.log,
         files: options.files,
         kv: options.kv,
+        ...(options.models !== undefined ? { models: options.models } : {}),
         ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
         validateResults: false,
       }),

@@ -81,7 +81,7 @@ export async function runAttioParityScript(adapter: Adapter): Promise<Transcript
     await t.step('ensureEventSubscription widened', () =>
       adapter.ensureEventSubscription?.({ callbackUrl: 'https://example.test/x', events: ['record.created', 'record.deleted'], current: { externalId, events: ['record.created'] } } as never) ?? null,
     );
-    await t.step('removeEventSubscription', () => adapter.removeEventSubscription?.({ externalId } as never) ?? null);
+    await t.step('removeEventSubscription', () => adapter.removeEventSubscription?.({ callbackUrl: 'https://example.test/x', externalId }) ?? null);
   }
 
   return t.entries;

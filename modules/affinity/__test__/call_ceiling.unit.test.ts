@@ -8,24 +8,17 @@
 // must not spend four more attempts on the very error that exists to stop
 // spending.
 
-jest.mock('movement-engine/services/logger', () => ({
+jest.mock('movement-engine/public/log', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-jest.mock('../../../lib/slack', () => ({ sendSlackNotification: jest.fn() }));
 
-jest.mock('../../../services/context', () => ({
-  currentContext: () => ({ user: { id: 'u1' } }),
-}));
-
-import type { TeamId } from '../../../generated/kysely/core/Team';
-
-import { AffinityAPIClient } from '../apiClient';
-import { withSegment } from 'movement-engine/services/translation_graph/segment_scope';
+import { AffinityAPIClient } from '../api_client';
+import { withSegment } from 'movement-engine/public/adapter-support';
 
 /** One run segment's host scope, as the engine opens it for a run. */
 const inARun = <T>(fn: () => Promise<T>) =>
-  withSegment({ teamId: '00000000-0000-0000-0000-000000000081' as TeamId }, fn);
+  withSegment({ teamId: '00000000-0000-0000-0000-000000000081' }, fn);
 
 const BASE = 'https://affinity.test';
 const ENV_VAR = 'AFFINITY_MAX_CALLS_PER_RUN';

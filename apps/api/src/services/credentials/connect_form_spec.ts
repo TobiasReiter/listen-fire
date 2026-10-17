@@ -17,7 +17,7 @@
 import { z } from 'zod';
 
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
-import { affinityCredsParser } from '../../adapters/affinity/apiClient';
+import { affinityCredsParser } from '@lf/affinity/api_client';
 import { attioCredsParser } from '../../adapters/attio/apiClient';
 import { evertraceCredsParser } from '../../adapters/evertrace/apiClient';
 import { dealroomCredsParser } from '@lf/dealroom/api_client';

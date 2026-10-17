@@ -12,17 +12,17 @@
 // The name-based fallback calls out to two LLMs. Stub them to a flat "no
 // match" so each test isolates the EMAIL branch: anything these tests match,
 // they matched on email alone.
-jest.mock('../../../lib/anthropic', () => ({
-  anthropicChat: jest.fn(async () => JSON.stringify({ name: null })),
-  anthropicChatStructured: jest.fn(async () => ({ id: null })),
-}));
+const anthropicChat = jest.fn(async (_input: { label: string; system: string; userMessage: string }) => JSON.stringify({ name: null }));
+const models = {
+  chat: anthropicChat,
+  chatStructured: async <T,>(input: { schema: { parse(value: unknown): T } }): Promise<T> => input.schema.parse({ id: null }),
+};
 
-import type { AffinityAPIClient } from '../apiClient';
+import type { AffinityAPIClient } from '../api_client';
 
 import { AffinityOperations } from '../operations';
 import { normalizeEmail, ownsEmail } from '../common';
-import { anthropicChat } from '../../../lib/anthropic';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 const STORED = 'b.smith@acme.example';
 
@@ -38,7 +38,7 @@ function operationsWith(people: { id: number; first_name: string; last_name: str
   });
 
   const client = { findManyPeople } as unknown as AffinityAPIClient;
-  return { operations: new AffinityOperations(client), findManyPeople };
+  return { operations: new AffinityOperations(client, models), findManyPeople };
 }
 
 const BOB = {
@@ -139,7 +139,7 @@ describe('AffinityOperations.findMatchingPerson — email is matched the way Aff
 function operationsCreating() {
   const createPerson = jest.fn(async () => ({ id: 77 }));
   const client = { createPerson } as unknown as AffinityAPIClient;
-  return { operations: new AffinityOperations(client), createPerson };
+  return { operations: new AffinityOperations(client, models), createPerson };
 }
 
 describe('AffinityOperations.createPerson — the first/last pair Affinity requires', () => {

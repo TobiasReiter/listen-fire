@@ -25,9 +25,10 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
 import { runMovement } from 'movement-engine/services/movement_engine/run';
-import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
-import { AffinityAdapter } from '../../services/translation_graph/adapters/affinity';
-import { AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
+import { AffinityAPIClient } from '@lf/affinity/api_client';
+import { AffinityAdapter } from '@lf/affinity';
+import { hostedModels, hostedModuleFiles } from '../../services/translation_graph/adapters/module_host';
+import { AFFINITY_MANIFEST } from '@lf/affinity';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
 import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
@@ -37,8 +38,13 @@ const TEAM_ID = '00000000-0000-0000-0000-000000000010' as TeamId;
 
 function adapterOnFake(): AffinityAdapter {
   const adapter = new AffinityAdapter({
-    teamId: TEAM_ID,
-    credentialsId: 'creds-verify' as ExternalServiceCredentialsId,
+    tenant: TEAM_ID,
+    client: async () => {
+      throw new Error('this script supplies its own client');
+    },
+    models: hostedModels,
+    files: hostedModuleFiles(TEAM_ID, '@lf/affinity'),
+    fetch,
   });
   const client = new AffinityAPIClient({ apiKey: 'fake', baseUrl: BASE });
   Object.assign(adapter, {

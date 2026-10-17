@@ -19,6 +19,7 @@ import type {
   ModuleFiles,
   ModuleKv,
   ModuleLog,
+  ModuleModels,
   PluginAnswer,
   PluginInvocation,
   PluginModuleDefinition,
@@ -37,6 +38,8 @@ export interface ModuleHost {
   log: ModuleLog;
   files: ModuleFiles;
   kv: ModuleKv;
+  /** Default: refused by name (a host with no models to lend). */
+  models?: ModuleModels;
   baseUrlOverride?: string;
   constructionArgs?: Readonly<Record<string, string>>;
   /** Check every answer against the protocol's result schema. */
@@ -62,6 +65,7 @@ export function moduleContext(host: ModuleHost): ModuleContext {
     log: host.log,
     files: host.files,
     kv: host.kv,
+    models: host.models ?? refusingModels('this host lends no models to its modules'),
     config: {
       tenant: host.tenant,
       ...(host.baseUrlOverride !== undefined ? { baseUrlOverride: host.baseUrlOverride } : {}),
@@ -216,6 +220,20 @@ export function refusingFiles(reason: string): ModuleFiles {
       throw new Error(reason);
     },
     read: async () => {
+      throw new Error(reason);
+    },
+    expose: async () => {
+      throw new Error(reason);
+    },
+  };
+}
+
+export function refusingModels(reason: string): ModuleModels {
+  return {
+    chat: async () => {
+      throw new Error(reason);
+    },
+    chatStructured: async () => {
       throw new Error(reason);
     },
   };

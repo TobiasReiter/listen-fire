@@ -7,7 +7,9 @@
 // on the write decides what the row can carry, and the handle the write hands
 // back stands on that list — which is what makes its relationships reachable.
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { AdapterManifest } from 'movement-engine/public/adapter';
+
+type HandbookSection = NonNullable<AdapterManifest['handbookSection']>;
 
 export const AFFINITY_HANDBOOK_SECTION: HandbookSection = {
   title: 'Affinity — lists, and the people attached to a row',

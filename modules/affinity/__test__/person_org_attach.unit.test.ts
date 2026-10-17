@@ -12,10 +12,11 @@
 // employer check and the address check are three parts of one question about
 // one record that cannot change between them.
 
-import type { AffinityAPIClient } from '../apiClient';
+import type { AffinityAPIClient } from '../api_client';
 
 import { AffinityOperations } from '../operations';
-import { createNoopTracer } from '../../../services/translation_graph/adapters/affinity/shared';
+import { createNoopTracer } from '../shared';
+import { refusingModels } from 'module-kit';
 
 const PERSON_ID = 77;
 const ORG_ID = 501;
@@ -38,7 +39,7 @@ function operationsWith(organizationIds: number[]) {
   });
 
   const client = { getPersonById, updatePerson, findManyPeople } as unknown as AffinityAPIClient;
-  return { operations: new AffinityOperations(client), getPersonById, updatePerson };
+  return { operations: new AffinityOperations(client, refusingModels('no model call here')), getPersonById, updatePerson };
 }
 
 /** The shape the adapter's update path hands over for a parent-only attach:

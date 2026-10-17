@@ -1506,9 +1506,9 @@
     ]
   },
   {
-    "id": "affinity-unset-key-accepts-unsigned",
+    "id": "affinity-unset-key-refused",
     "door": "webhook_sync",
-    "note": "A subscription with no signature key is accepted without any header (URL secrecy carries it).",
+    "note": "A subscription with no signature key refuses every delivery: 401. (Before Affinity became a module that declares its signed inbound, URL secrecy carried it and the delivery was accepted.)",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/affinity/sub-1",
@@ -1518,64 +1518,14 @@
       "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
     },
     "response": {
-      "status": 200,
+      "status": 401,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "content-length": "31"
+        "content-length": "29"
       },
-      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+      "body": "{\"error\":\"signature_invalid\"}"
     },
-    "effects": [
-      {
-        "kind": "adapter_preprocess",
-        "adapterType": "affinity",
-        "teamId": "team-1"
-      },
-      {
-        "kind": "find_triggers",
-        "teamId": "team-1",
-        "kinds": [
-          "AFFINITY",
-          "affinity"
-        ]
-      },
-      {
-        "kind": "capture_receipt",
-        "triggerId": "trigger-1",
-        "movementId": "movement-1",
-        "teamId": "team-1",
-        "adapterType": "affinity",
-        "triggerType": "webhook",
-        "event": {
-          "eventType": "inbound",
-          "externalId": "rec-1",
-          "idempotencyKey": "delivery-1",
-          "payload": {
-            "type": "list_entry.created",
-            "body": {
-              "id": 7
-            }
-          }
-        }
-      },
-      {
-        "kind": "enqueue_receipts",
-        "receipts": [
-          {
-            "receiptId": "receipt-trigger-1"
-          }
-        ]
-      },
-      {
-        "kind": "enqueue_wakes",
-        "adapterType": "affinity",
-        "teamId": "team-1",
-        "correlationKeys": []
-      },
-      {
-        "kind": "notify_work"
-      }
-    ]
+    "effects": []
   },
   {
     "id": "affinity-key-set-unsigned-rejected",

@@ -9,17 +9,11 @@
 // so the walk is asserted on the REQUESTS made (the page token is carried
 // forward) as well as on the concatenated result.
 
-jest.mock('movement-engine/services/logger', () => ({
+jest.mock('movement-engine/public/log', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-jest.mock('../../../lib/slack', () => ({ sendSlackNotification: jest.fn() }));
-
-jest.mock('../../../services/context', () => ({
-  currentContext: () => ({ user: { id: 'u1' } }),
-}));
-
-import { AffinityAPIClient } from '../apiClient';
+import { AffinityAPIClient } from '../api_client';
 
 const BASE = 'https://affinity.test';
 

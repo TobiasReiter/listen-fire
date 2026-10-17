@@ -22,8 +22,20 @@ export const value = (v: string | number | boolean | null): Expression => ({ typ
 export const cmp = (left: Expression, op: 'eq' | 'contains' | 'gte', right: Expression): Expression =>
   ({ type: 'compare', op, left, right }) as Expression;
 
-/** A mutation context no adapter here reads beyond its presence. */
-export const MUTATION = { source: 'parity' } as never;
+/** A mutation context no adapter here reads beyond its presence, in the
+ *  shape the wire carries. */
+export const MUTATION = { source: { kind: 'parity' }, occurredAt: '2026-10-01T09:00:00.000Z' } as never;
+
+/** A transcript as a caller compares it across transports: the process
+ *  transport's error envelope (`Remote adapter error for method …: code — `)
+ *  wraps the module's own message, which is what parity holds equal. */
+export function unwrappedRemoteErrors(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
+  return entries.map((entry) => {
+    const answer = entry.answer;
+    if (answer === null || typeof answer !== 'object' || !('error' in answer) || typeof answer.error !== 'string') return entry;
+    return { step: entry.step, answer: { error: answer.error.replace(/^Remote adapter error for method "[^"]+": [a-z_]+ — /, '') } };
+  });
+}
 
 function json(answer: unknown): unknown {
   return answer === undefined ? null : JSON.parse(JSON.stringify(answer));

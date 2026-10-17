@@ -1,11 +1,23 @@
 import { z } from 'zod';
 import { parse } from 'tldts';
 
-import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from 'movement-engine/lib/utils/parse_json';
-import { safeToUrl } from '../../lib/utils/url';
-import { AffinityAPIClient } from './apiClient';
-import { logger } from 'movement-engine/services/logger';
+import type { ModuleModels } from 'module-kit';
+import { parseJson } from 'movement-engine/public/adapter-support';
+import { AffinityAPIClient } from './api_client';
+import { logger } from 'movement-engine/public/log';
+
+/** The URL a domain or address names, `https://` assumed; null when it is none. */
+function urlOf(raw: string): URL | null {
+  const trimmed = raw.trim();
+  for (const candidate of [trimmed, `https://${trimmed}`]) {
+    try {
+      return new URL(candidate);
+    } catch {
+      // try the next spelling
+    }
+  }
+  return null;
+}
 
 /** Email addresses are compared case-insensitively across every Affinity write
  *  path. Affinity enforces one person per address and adjudicates it with a
@@ -46,7 +58,7 @@ function ownsEmail(candidates: (string | null | undefined)[] | null | undefined,
  *  Normalization is for MATCHING only, exactly like `normalizeEmail` — the
  *  domain is written as authored. */
 function domainHost(domain: string): string | null {
-  const host = safeToUrl(domain, { log: false })?.hostname;
+  const host = urlOf(domain)?.hostname;
   return host ? host.replace(/^www\./, '') : null;
 }
 
@@ -92,6 +104,7 @@ Output: Strictly JSON: either a number (the id) or null. No extra text.`;
 
 async function findMatchingOrganisation(
   client: AffinityAPIClient,
+  models: ModuleModels,
   {
     name,
     domain,
@@ -163,7 +176,7 @@ async function findMatchingOrganisation(
     return decide('none', null);
   }
 
-  const closeMatchId = await anthropicChat({
+  const closeMatchId = await models.chat({
     label: 'affinity.findMatchingOrganisation',
     system: ORGANISATION_JUDGE_SYSTEM,
     userMessage: JSON.stringify(

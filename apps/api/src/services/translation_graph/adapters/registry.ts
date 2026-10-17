@@ -21,7 +21,8 @@ import { TELEGRAM_ADAPTER_TYPE, TELEGRAM_MANIFEST, createTelegramAdapter } from 
 import { EMAIL_ADAPTER_TYPE, EMAIL_MANIFEST, createEmailAdapter } from './email';
 import { WHATSAPP_ADAPTER_TYPE, WHATSAPP_MANIFEST, createWhatsappAdapter } from './whatsapp';
 import { AIRTABLE_ADAPTER_TYPE, AIRTABLE_MANIFEST, createAirtableAdapter } from './airtable';
-import { AFFINITY_ADAPTER_TYPE, AFFINITY_MANIFEST, createAffinityAdapter } from './affinity';
+import { AFFINITY_ADAPTER_TYPE } from '@lf/affinity/types';
+import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   GOOGLE_SHEETS_MANIFEST,
@@ -82,8 +83,10 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Affinity adapter — write target only (v3-output parity). Source-side
   // triggers (snapshot/poll) are deferred — Affinity has no v3 input — so it
   // appears as a target in the editor picker, not a source.
-  [AFFINITY_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createAffinityAdapter({ teamId, credentialsId }),
+  [AFFINITY_ADAPTER_TYPE]: builtinAdapterFactory(AFFINITY_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createAffinityAdapter }: typeof import('./affinity') = require('./affinity');
+    return createAffinityAdapter({ teamId, credentialsId });
+  }),
   [NATIVE_VALUATIONS_ADAPTER_TYPE]: createNativeValuationsAdapter,
   [SLACK_ADAPTER_TYPE]: createSlackAdapter,
   // Telegram adapter — source (inbound messages + media) AND target (send a

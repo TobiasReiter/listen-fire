@@ -315,7 +315,7 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
     request: post(PATH('airtable'), json({ base: { id: 'app1' } }), { 'x-airtable-content-mac': `hmac-sha256=${'d'.repeat(64)}` }),
   },
 
-  // ── Affinity: its own chain, and tolerant of an unset key ───────────────
+  // ── Affinity: its own chain; an unset key refuses (its module's signed inbound) ─
   {
     id: 'affinity-hex-signature',
     note: 'Hex HMAC in x-affinity-signature.',
@@ -339,8 +339,8 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
     })),
   },
   {
-    id: 'affinity-unset-key-accepts-unsigned',
-    note: 'A subscription with no signature key is accepted without any header (URL secrecy carries it).',
+    id: 'affinity-unset-key-refused',
+    note: 'A subscription with no signature key refuses every delivery: 401. (Before Affinity became a module that declares its signed inbound, URL secrecy carried it and the delivery was accepted.)',
     arrange: () => {
       givenSubscription({ provider: 'AFFINITY', webhook_secret: '' });
       givenTrigger({ kind: 'AFFINITY' });

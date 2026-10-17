@@ -8,16 +8,20 @@
 // lookup for a URL-shaped domain fell through to the name search and, when the
 // name had drifted at all, created a duplicate company.
 
-jest.mock('../../../lib/anthropic', () => ({
-  anthropicChat: jest.fn(async () => 'null'),
-}));
+import type { AffinityAPIClient } from '../api_client';
 
-import type { AffinityAPIClient } from '../apiClient';
-
-import { anthropicChat } from '../../../lib/anthropic';
 import { findMatchingOrganisation } from '../common';
 
-const judge = jest.mocked(anthropicChat);
+// The host's model, as the matcher's judge: answers "no match" unless a test says otherwise.
+const judge = jest.fn(async (_input: { label: string; system: string; userMessage: string }) => 'null');
+const models = {
+  chat: judge,
+  chatStructured: async (): Promise<never> => {
+    throw new Error('the organisation judge makes no structured call');
+  },
+};
+
+beforeEach(() => judge.mockClear());
 
 type Org = { id: number; name: string; domain: string; domains: string[]; global: boolean };
 
@@ -42,7 +46,7 @@ describe('findMatchingOrganisation searches by the domain Affinity actually stor
   ])('searches by the bare host for %s', async (_label, input) => {
     const { client, findManyOrganisations } = clientWith([VELTHA]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Veltha Labs', domain: input });
+    const match = await findMatchingOrganisation(client, models, { name: 'Veltha Labs', domain: input });
 
     expect(findManyOrganisations).toHaveBeenCalledWith({ search: 'veltha.ai', includeGlobal: true });
     expect(match).toEqual(VELTHA);
@@ -55,14 +59,14 @@ describe('findMatchingOrganisation searches by the domain Affinity actually stor
     const { client } = clientWith([stored]);
 
     expect(
-      await findMatchingOrganisation(client, { name: 'Veltha Labs', domain: 'veltha.ai' }),
+      await findMatchingOrganisation(client, models, { name: 'Veltha Labs', domain: 'veltha.ai' }),
     ).toEqual(stored);
   });
 
   it('falls back to the name search when the domain is not one Affinity holds', async () => {
     const { client, findManyOrganisations } = clientWith([VELTHA]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Veltha', domain: 'nowhere.example' });
+    const match = await findMatchingOrganisation(client, models, { name: 'Veltha', domain: 'nowhere.example' });
 
     expect(match).toEqual(VELTHA);
     expect(findManyOrganisations).toHaveBeenCalledWith({ search: 'nowhere.example', includeGlobal: true });
@@ -95,7 +99,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
   it('a domain match beats every name candidate, without asking the judge', async () => {
     const { client } = clientWith([FYVIE_PRIVATE, FYVIE_GLOBAL]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Fyvie', domain: 'https://fyvie.ai' });
+    const match = await findMatchingOrganisation(client, models, { name: 'Fyvie', domain: 'https://fyvie.ai' });
 
     expect(match).toEqual(FYVIE_GLOBAL);
     expect(judge).not.toHaveBeenCalled();
@@ -104,7 +108,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
   it('an exact workspace name beats a global record with the same exact name', async () => {
     const { client } = clientWith([FYVIE_EXACT_GLOBAL, FYVIE_PRIVATE]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Fyvie' });
+    const match = await findMatchingOrganisation(client, models, { name: 'Fyvie' });
 
     expect(match).toEqual(FYVIE_PRIVATE);
     expect(judge).not.toHaveBeenCalled();
@@ -113,7 +117,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
   it('never adopts a global record on an exact name alone', async () => {
     const { client } = clientWith([FYVIE_EXACT_GLOBAL]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Fyvie' });
+    const match = await findMatchingOrganisation(client, models, { name: 'Fyvie' });
 
     expect(match).toBeNull();
     expect(judgeInput().query.organizations).toEqual([
@@ -125,7 +129,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
     const VELTHA_LIKE: Org = { id: 13, name: 'Fyvie Labs', domain: 'fyvielabs.com', domains: [], global: false };
     const { client, findManyOrganisations } = clientWith([VELTHA_LIKE, FYVIE_GLOBAL]);
 
-    await findMatchingOrganisation(client, {
+    await findMatchingOrganisation(client, models, {
       name: 'Fyvie',
       context: 'Description: AI copilot for fertility clinics',
     });
@@ -151,7 +155,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
     judge.mockResolvedValue('10');
     const { client } = clientWith([FYVIE_GLOBAL]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Fyvie' });
+    const match = await findMatchingOrganisation(client, models, { name: 'Fyvie' });
 
     expect(match).toEqual(FYVIE_GLOBAL);
     const { system, query } = judgeInput();
@@ -165,7 +169,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
     const ATLAS_GLOBAL: Org = { id: 20, name: 'Atlas AI', domain: 'atlas.ai', domains: ['atlas.ai'], global: true };
     const { client } = clientWith([ATLAS_GLOBAL]);
 
-    const match = await findMatchingOrganisation(client, { name: 'Atlas' });
+    const match = await findMatchingOrganisation(client, models, { name: 'Atlas' });
 
     expect(match).toBeNull();
     const { system, query } = judgeInput();
@@ -181,7 +185,7 @@ describe('findMatchingOrganisation weighs global records only through the judge'
     judge.mockResolvedValue('10');
     const { client } = clientWith([FYVIE_GLOBAL]);
 
-    const match = await findMatchingOrganisation(client, {
+    const match = await findMatchingOrganisation(client, models, {
       name: 'Fyvie',
       context: 'Description: AI copilot for fertility clinics',
     });
@@ -193,13 +197,13 @@ describe('findMatchingOrganisation weighs global records only through the judge'
     judge.mockResolvedValue('999');
     const { client } = clientWith([FYVIE_GLOBAL]);
 
-    expect(await findMatchingOrganisation(client, { name: 'Fyvie' })).toBeNull();
+    expect(await findMatchingOrganisation(client, models, { name: 'Fyvie' })).toBeNull();
   });
 
   it('returns null without asking the judge when nothing comes back', async () => {
     const { client } = clientWith([]);
 
-    expect(await findMatchingOrganisation(client, { name: 'Fyvie' })).toBeNull();
+    expect(await findMatchingOrganisation(client, models, { name: 'Fyvie' })).toBeNull();
     expect(judge).not.toHaveBeenCalled();
   });
 });

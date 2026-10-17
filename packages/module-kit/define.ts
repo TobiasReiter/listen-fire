@@ -17,7 +17,9 @@ import type {
   WireInboundDeclarationShape,
   WirePluginResultShape,
 } from 'engine-contracts';
+import type { ZodType } from 'zod';
 import type { Adapter, AdapterManifest, DiscriminableEvent } from 'movement-engine/public/adapter';
+import type { ChatModelName } from 'movement-engine/public/models';
 import type { PluginDeclaration } from 'movement-engine/public/plugins';
 
 // ── The context a host hands a module ───────────────────────────────────────
@@ -34,6 +36,11 @@ export interface ModuleCredential {
   /** The provider changed it (a refreshed token, a rotated refresh token): the
    *  host merges these fields over the stored ones and writes them back. */
   update(fields: CredentialFields): Promise<void>;
+  /** The provider refused the token: the host refreshes the credential with
+   *  its own OAuth app (once, however many calls ask) and answers the new
+   *  fields. Absent where the host refreshes before each call instead (a
+   *  module served as a process: the calling host refreshes by expiry). */
+  refresh?(): Promise<CredentialFields>;
 }
 
 export interface ModuleLog {
@@ -48,6 +55,30 @@ export interface ModuleLog {
 export interface ModuleFiles {
   put(input: { bytes: Uint8Array; name?: string; contentType?: string }): Promise<FileRef>;
   read(ref: FileRef): Promise<Uint8Array>;
+  /** A short-lived URL a provider fetches the bytes from (an attachment the
+   *  provider downloads itself). A file sent over the wire already carries
+   *  one (`url`); this is for a file the host holds. */
+  expose(ref: FileRef): Promise<{ url: string }>;
+}
+
+/** One model call. The host picks the provider for `model` (or its default),
+ *  meters it and bills it to the run, exactly as for its own calls. */
+export interface ModuleChat {
+  /** Names the call in usage records and logs (`affinity.formatLocation`). */
+  label: string;
+  system: string;
+  userMessage: string;
+  model?: ChatModelName;
+  effort?: 'low' | 'medium' | 'high';
+}
+
+/** The host's models, lent to a module whose writes ask one (a fuzzy name
+ *  match, a free-text location made structured). */
+export interface ModuleModels {
+  /** The reply's text. */
+  chat(input: ModuleChat): Promise<string>;
+  /** The reply as `schema`, by forcing one tool call. */
+  chatStructured<T>(input: ModuleChat & { schema: ZodType<T>; toolName: string; toolDescription: string }): Promise<T>;
 }
 
 /** Small durable state of the module's own, per install (a dedup mark, a
@@ -75,6 +106,8 @@ export interface ModuleContext {
   log: ModuleLog;
   files: ModuleFiles;
   kv: ModuleKv;
+  /** Refuses by name on a host that lends none. */
+  models: ModuleModels;
   config: ModuleConfig;
 }
 
