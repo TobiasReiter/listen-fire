@@ -22,8 +22,6 @@ export const KNOWN_GAPS: readonly string[] = [
   "MOVENG_UNSUPPORTED: traversing inside EXISTS() from '…', which holds nothing rather than a",
   "MOVENG_UNSUPPORTED: traversing inside EXISTS() from '…', which holds a list that is not al",
   "MOVENG_UNSUPPORTED: the expression kind '…' is not supported by the movement engine yet",
-  "MOVENG_UNSUPPORTED: reading '…' (a deferred traversal) as a bare value is not supported by",
-  "MOVENG_UNSUPPORTED: reading '…' (the movement parameter (the event position)) as a bare va",
   "MOVENG_UNSUPPORTED: handing a record held as a value (a write handle) to the host is not s",
   // Checker refusals still to add: forms the engine does not run.
   "MOVENG_UNSUPPORTED: await '…' over a list of records is not supported by the movement engi",

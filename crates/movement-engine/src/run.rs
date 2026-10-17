@@ -1811,6 +1811,10 @@ impl Run<'_> {
         match ask {
             Ask::EventField { field } => self.event_field(&field).await.map(Ok),
             Ask::Bare { name, member } => match scope.resolve(&name) {
+                // A walk kept to run at each read is, read bare, the records
+                // it lands on now (`count(lazy …)`), as the walk written
+                // there would be.
+                Some(Binding::LazyWalk(walk)) => self.deferred_records(&walk).await.map(Ok),
                 Some(binding) => self.bare(&name, binding, member).map(Ok),
                 None => Err(Failure::engine("MOVENG_RUNTIME", format!("'{name}' is not in scope — the checker should have caught this"))),
             },

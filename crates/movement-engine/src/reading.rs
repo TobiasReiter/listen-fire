@@ -117,7 +117,9 @@ impl Run<'_> {
                 .collect();
             return Ok(Evaluated { value: Js::array(values), prov });
         }
-        if record::is_one_record(&binding) {
+        // The event is the record that fired the run, read bare as itself
+        // (`coalesce(event, record)`), as any record a walk landed on is.
+        if record::is_one_record(&binding) || matches!(binding, Binding::Event) {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: record::held(binding), prov });
         }
@@ -485,6 +487,30 @@ impl Run<'_> {
         })
     }
 
+    /// A deferred walk read bare: the list of what it lands on now.
+    pub(crate) async fn deferred_records(&self, walk: &crate::bindings::DeferredWalk) -> Result<Evaluated, Failure> {
+        let landed = self.deferred_landings(walk, &[]).await?;
+        self.records_held(landed)
+    }
+
+    /// Records in hand as the list value holding them, citing each one.
+    fn records_held(&self, landed: Vec<Binding>) -> Result<Evaluated, Failure> {
+        let mut origins: Vec<u32> = Vec::new();
+        for binding in &landed {
+            origins.extend(self.entity_origins(binding)?);
+        }
+        let value = Js::array(
+            landed
+                .into_iter()
+                .map(|b| match b {
+                    Binding::Value(value) => value.value,
+                    other => record::held(other),
+                })
+                .collect(),
+        );
+        Ok(Evaluated { value, prov: Prov::Built(Trail { origins, direct: None }) })
+    }
+
     /// `runDeferredWalk(walk, extraSteps)`: the walk's landings, the hops
     /// past it walked inside it, in the scope it captured.
     async fn deferred_landings(&self, walk: &crate::bindings::DeferredWalk, steps: &[TraversalStep]) -> Result<Vec<Binding>, Failure> {
@@ -529,20 +555,7 @@ impl Run<'_> {
             return Err(unsupported(&format!("this read shape on {what} ('{name}')")));
         };
         if field == POSITION_SENTINEL {
-            let mut origins: Vec<u32> = Vec::new();
-            for binding in &landed {
-                origins.extend(self.entity_origins(binding)?);
-            }
-            let value = Js::array(
-                landed
-                    .into_iter()
-                    .map(|b| match b {
-                        Binding::Value(value) => value.value,
-                        other => record::held(other),
-                    })
-                    .collect(),
-            );
-            return Ok(Evaluated { value, prov: Prov::Built(Trail { origins, direct: None }) });
+            return self.records_held(landed);
         }
         let mut results = Vec::with_capacity(landed.len());
         for binding in &landed {
