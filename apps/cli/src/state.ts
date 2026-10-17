@@ -215,6 +215,10 @@ create table if not exists callback (
   revoked_at text
 );
 create index if not exists callback_run on callback (run_id);
+create table if not exists inbound_checkpoint (
+  subscription_id text primary key,
+  checkpoint text not null
+);
 create table if not exists work (
   id integer primary key autoincrement,
   kind text not null,
@@ -300,6 +304,20 @@ export class State {
       this.db.exec('rollback');
       throw error;
     }
+  }
+
+  // ── Inbound pull cursors ──────────────────────────────────────────────────
+
+  /** The cursor an external's `preprocessInbound` last returned for this install. */
+  inboundCheckpoint(subscriptionId: string): unknown {
+    const row = this.db.prepare('select checkpoint from inbound_checkpoint where subscription_id = ?').get(subscriptionId);
+    return row === undefined ? null : JSON.parse(z.object({ checkpoint: z.string() }).parse(row).checkpoint);
+  }
+
+  saveInboundCheckpoint(subscriptionId: string, checkpoint: unknown): void {
+    this.db
+      .prepare('insert into inbound_checkpoint (subscription_id, checkpoint) values (?, ?) on conflict (subscription_id) do update set checkpoint = excluded.checkpoint')
+      .run(subscriptionId, JSON.stringify(checkpoint));
   }
 
   // ── Runs ──────────────────────────────────────────────────────────────────

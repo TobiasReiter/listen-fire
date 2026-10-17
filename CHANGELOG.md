@@ -1326,6 +1326,21 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   stored credential shapes are unchanged, so existing connections and registered redirect URIs
   keep working. Slack keeps its own installer flow.
 
+### ev3-lfdoors
+
+- `lf serve` takes deliveries at `/api/public/webhook-sync/<provider>/<install>`, the same door the hosted
+  product serves, on the shared inbound core. `/hooks/<external>/<install>` keeps working as lf's older
+  name for it and still answers `202 { runs }` with the runs it started. The webhook-sync door queues
+  events and answers `{ ok, eventsProcessed }`.
+- An external that declares `inbound` in its manifest has its deliveries verified by the declared scheme.
+  The secret is the install's `webhook_secret` field, or the field `webhook.secretField` in
+  `lf-external.yaml` names. An external with only the `webhook:` block verifies as before.
+- A signed delivery with a missing, empty or placeholder secret is refused, whatever the scheme.
+- The push doors (`emit`, `wake`) and `lf run --webhook` run on the same core. A pull cursor an external
+  returns from `preprocessInbound` is now kept in lf's state and handed back on the next delivery.
+- A delivery with an unreadable body now answers 500 (it was 400), and a refusal now carries a code
+  (`signature_invalid`, `unknown_provider`, `subscription_not_found`) in place of a sentence.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
