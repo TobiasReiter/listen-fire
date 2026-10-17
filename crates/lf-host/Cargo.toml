@@ -1,0 +1,37 @@
+[package]
+name = "lf-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+description = "The local run host as one Rust binary: the end state of `lf` (plans/cloud-native-2026-10-06/22_everywhere_plan.md #7). Named lf-host until it replaces the TypeScript lf."
+
+# A native binary only: the WASM build names its packages (-p movement-engine,
+# -p movement-parser), so this crate and its dependencies never enter it.
+[[bin]]
+name = "lf-host"
+path = "src/main.rs"
+
+[dependencies]
+movement-parser = { path = "../movement-parser" }
+# The checker with its native zone database: the same one the engine's
+# artifact answers zones from.
+movement-checker = { path = "../movement-checker" }
+serde = { version = "1", features = ["derive"] }
+# As the parser's. `preserve_order` must stay off: features unify across the
+# workspace, and the parser's sorted output depends on it being off.
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
+serde_yaml = "0.9"
+# Objects in insertion order (src/json.rs).
+indexmap = "2"
+# Single-threaded: one host process, one thread, every wait an await.
+tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "io-std", "net", "time"] }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+# SQLite linked in, so the binary needs no system library.
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+# The engine's pin: ISO instants written as `Date.toISOString` writes them.
+jiff = { version = "=0.2.16", default-features = false, features = ["std"] }
