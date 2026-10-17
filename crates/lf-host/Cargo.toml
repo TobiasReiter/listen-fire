@@ -41,3 +41,13 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.11"
 # The engine's pin: ISO instants written as `Date.toISOString` writes them.
 jiff = { version = "=0.2.16", default-features = false, features = ["std"] }
+# HTTPS to a provider's token endpoint (src/http_out.rs): pure-Rust TLS on
+# the system-free root set, so the binary still needs no system library.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+# Secrets (src/oauth2.rs, src/oauth_redirect.rs): URLs parsed and query
+# strings written as WHATWG URL / URLSearchParams do, and the random state
+# and PKCE verifier of a sign-in.
+url = "2"
+getrandom = "0.4"

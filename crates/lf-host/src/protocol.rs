@@ -110,6 +110,19 @@ fn target_of(base_url: &str) -> Result<Target, String> {
 
 /// One protocol call: its `result`, or why it failed.
 pub async fn post_rpc(call: Call<'_>) -> Result<Js, RpcError> {
+    post_rpc_carrying(call, None).await.0
+}
+
+/// One protocol call carrying a module's declared credential (the request's
+/// `credential`): its answer, and the answer's `credentialUpdate` — read on a
+/// failed answer too, since a rotated refresh token must be stored either way.
+pub async fn post_rpc_carrying(call: Call<'_>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
+    let mut update = None;
+    let answer = post(call, credential, &mut update).await;
+    (answer, update)
+}
+
+async fn post(call: Call<'_>, credential: Option<serde_json::Value>, update: &mut Option<Js>) -> Result<Js, RpcError> {
     let target = target_of(call.base_url).map_err(RpcError::Unreachable)?;
     let unreachable = |e: &dyn std::fmt::Display| {
         RpcError::Unreachable(format!("Remote adapter at {} could not be reached for method \"{}\": {e}", call.base_url, call.method))
@@ -119,12 +132,15 @@ pub async fn post_rpc(call: Call<'_>) -> Result<Js, RpcError> {
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    let body = json!({
+    let mut body = json!({
         "protocolVersion": PROTOCOL_VERSION,
         "method": call.method,
         "cacheScopeId": call.cache_scope_id,
         "params": call.params,
     });
+    if let Some(credential) = credential {
+        body["credential"] = credential;
+    }
     let mut request = Request::post(&target.path)
         .header("host", format!("{}:{}", target.host, target.port))
         .header("content-type", "application/json")
@@ -142,6 +158,7 @@ pub async fn post_rpc(call: Call<'_>) -> Result<Js, RpcError> {
     let envelope = Js::parse(&bytes).map_err(|e| {
         RpcError::Shape(format!("Remote adapter \"{}\" answered \"{}\" with a body that is not JSON: {e}", call.base_url, call.method))
     })?;
+    *update = envelope.get("credentialUpdate").cloned();
     match envelope.get("ok") {
         Some(Js::Bool(true)) => Ok(envelope.get("result").cloned().unwrap_or(Js::Null)),
         Some(Js::Bool(false)) => {
