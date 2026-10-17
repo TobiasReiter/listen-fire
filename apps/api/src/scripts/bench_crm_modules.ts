@@ -9,8 +9,8 @@
 // fixture. The database is excluded, as the credential read is on both
 // lines (the module line's secrets family caches it per instance).
 //
-//   pnpm tsx src/scripts/bench_crm_modules.ts               all, interleaved, 5 runs each
-//   pnpm tsx src/scripts/bench_crm_modules.ts <crm> <mode>  one run (JSON)
+//   node --require <tsx/cjs> src/scripts/bench_crm_modules.ts [<crm>]   interleaved, 5 runs each
+//   node --require <tsx/cjs> src/scripts/bench_crm_modules.ts <crm> <mode>  one run (JSON)
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -66,17 +66,20 @@ async function runOne(crm: Crm, mode: Mode): Promise<Record<string, number>> {
   routeEngineLogsTo(() => undefined);
   const provider = await recordedProvider(crm);
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
+  // One of each for every instance, as the platform lends its own.
   const files = kit.refusingFiles('none');
+  const models = kit.refusingModels('none');
+  const kv = kit.refusingKv('none');
 
   const adapterFor = (round: number): Adapter => {
     const tenant = `team-${round % 4}`;
     if (crm === 'affinity') {
       const m: typeof import('@lf/affinity') = require('@lf/affinity');
       if (mode === 'legacy') {
-        return new m.AffinityAdapter({ tenant, client: async () => m.getAffinityClient('dev-loop-affinity-key', provider.url), models: kit.refusingModels('none'), files, fetch });
+        return new m.AffinityAdapter({ tenant, client: async () => m.getAffinityClient('dev-loop-affinity-key', provider.url), models, files, fetch });
       }
       const fields = { apiKey: 'dev-loop-affinity-key', baseUrl: provider.url };
-      return kit.adapterInProcess(m.affinityModule, { tenant, credential: { name: 'affinity', fields: async () => fields, update: async () => {} }, log: quiet, files, kv: kit.refusingKv('none'), validateResults: mode === 'validated' }).adapter;
+      return kit.adapterInProcess(m.affinityModule, { tenant, credential: { name: 'affinity', fields: async () => fields, update: async () => {} }, log: quiet, files, kv, models, validateResults: mode === 'validated' }).adapter;
     }
     if (crm === 'airtable') {
       const m: typeof import('@lf/airtable') = require('@lf/airtable');
@@ -85,7 +88,7 @@ async function runOne(crm: Crm, mode: Mode): Promise<Record<string, number>> {
         return new m.AirtableAdapter({ tenant, client: async () => client, files });
       }
       const fields = { access_token: 'dev-loop-airtable-token', refresh_token: 'r', baseUrl: provider.url };
-      return kit.adapterInProcess(m.airtableModule, { tenant, credential: { name: 'airtable', fields: async () => fields, update: async () => {} }, log: quiet, files, kv: kit.refusingKv('none'), validateResults: mode === 'validated' }).adapter;
+      return kit.adapterInProcess(m.airtableModule, { tenant, credential: { name: 'airtable', fields: async () => fields, update: async () => {} }, log: quiet, files, kv, models, validateResults: mode === 'validated' }).adapter;
     }
     const m: typeof import('@lf/attio') = require('@lf/attio');
     if (mode === 'legacy') {
@@ -93,7 +96,7 @@ async function runOne(crm: Crm, mode: Mode): Promise<Record<string, number>> {
     }
     const { stampingFileOwners }: typeof import('../services/translation_graph/adapters/module_file_owners') = require('../services/translation_graph/adapters/module_file_owners');
     const fields = { access_token: 'dev-loop-attio-token', baseUrl: provider.url };
-    const adapter = kit.adapterInProcess(m.attioModule, { tenant, credential: { name: 'attio', fields: async () => fields, update: async () => {} }, log: quiet, files, kv: kit.refusingKv('none'), validateResults: mode === 'validated' }).adapter;
+    const adapter = kit.adapterInProcess(m.attioModule, { tenant, credential: { name: 'attio', fields: async () => fields, update: async () => {} }, log: quiet, files, kv, models, validateResults: mode === 'validated' }).adapter;
     return stampingFileOwners(adapter, { teamId: tenant as never, credentialsId: 'cred-1' });
   };
 
@@ -141,12 +144,12 @@ function isMode(value: string | undefined): value is Mode {
 
 async function main(): Promise<void> {
   const [crm, mode] = process.argv.slice(2);
-  if (crm !== undefined) {
+  if (crm !== undefined && mode !== undefined) {
     if (!isCrm(crm) || !isMode(mode)) throw new Error(`usage: <${CRMS.join('|')}> <${MODES.join('|')}>`);
     process.stdout.write(`${JSON.stringify(await runOne(crm, mode))}\n`);
     return;
   }
-  for (const c of CRMS) {
+  for (const c of crm !== undefined && isCrm(crm) ? [crm] : CRMS) {
     // Interleaved, five runs of every mode, so a busy machine slows each mode
     // alike; the median of each figure is reported.
     const runs: Record<string, Array<Record<string, number>>> = {};

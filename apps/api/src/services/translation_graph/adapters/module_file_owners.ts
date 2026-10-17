@@ -33,16 +33,23 @@ function stamped(value: unknown, adapterType: string, install: BuiltinInstall): 
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, stamped(item, adapterType, install)]));
 }
 
-/** The adapter, each answer's own files naming `install` as their owner. */
+/** The methods whose answers are field values, where a file value lives. The
+ *  rest (catalogue, walks, writes) are left as they are, so stamping costs
+ *  nothing on the calls that cannot carry a file. */
+const VALUE_METHODS = ['getFieldValue', 'readRecord'] as const;
+
+/** The adapter, each field value's own files naming `install` as their owner:
+ *  its two value methods are overridden on the instance itself (a proxy would
+ *  sit in front of every property the adapter reads of itself). */
 export function stampingFileOwners<A extends Adapter>(adapter: A, install: BuiltinInstall): A {
-  return new Proxy(adapter, {
-    get(target, property, receiver) {
-      const member: unknown = Reflect.get(target, property, receiver);
-      if (typeof member !== 'function' || property === 'resolveFileRef') return member;
-      return (...args: unknown[]) => {
-        const answer: unknown = Reflect.apply(member, target, args);
-        return answer instanceof Promise ? answer.then((settled: unknown) => stamped(settled, adapter.adapterType, install)) : answer;
-      };
-    },
-  });
+  for (const name of VALUE_METHODS) {
+    const method: unknown = Reflect.get(adapter, name);
+    if (typeof method !== 'function') continue;
+    Object.defineProperty(adapter, name, {
+      configurable: true,
+      writable: true,
+      value: async (...args: unknown[]) => stamped(await Reflect.apply(method, adapter, args), adapter.adapterType, install),
+    });
+  }
+  return adapter;
 }
