@@ -18,14 +18,14 @@ import { makeTestHost } from 'movement-engine/services/movement_engine/test_host
 const SOURCE = 'import { manual } from adapters';
 
 /** A `segment` entry's input: the smallest run, which asks its host for
- *  the check first. Pinned to version 3, as every fixture here is: the
- *  crossing is the point, and no version reads these programs differently. */
+ *  the check first. Version 5, the first the Rust engine runs. */
 function segmentStart(source: string, segmentId = 'g1', catalog: object = EMPTY_CATALOG_SNAPSHOT): string {
   return JSON.stringify({
     entry: 'segment',
     source,
     languageVersion: 5,
-    event: ['o', 0, [['pipelineInputId', 'p'], ['adapterType', 'manual'], ['triggerType', 'webhook'], ['payload', ['o', 1, []]]]],
+    // The plain wire: a map is ["o", entries].
+    event: ['o', [['pipelineInputId', 'p'], ['adapterType', 'manual'], ['triggerType', 'webhook'], ['payload', ['o', []]]]],
     segmentId,
     serves: [],
     now: '2026-10-07T09:00:00.000Z',
@@ -70,8 +70,7 @@ describe('the Rust engine artifact', () => {
       pending: [{ family: 'check', method: 'program' }],
     });
     read.finish();
-    // Declined, so the TypeScript engine runs it, and refuses the snapshot
-    // with the message both readers share.
+    // Declined before anything is asked: the run fails, naming why.
     const unread = openEngineSegment();
     expect(unread.start(segmentStart(SOURCE, 'g1', { ...EMPTY_CATALOG_SNAPSHOT, contractVersion: 2 })).json).toEqual({
       done: { declined: 'catalog_does_not_load' },
@@ -88,7 +87,7 @@ describe('the Rust engine artifact', () => {
     }
   });
 
-  it('is driven by the shim against a host: the check is the TypeScript checker, and its failure ends the run', async () => {
+  it('is driven by the shim against a host: the host's check fails, and its failure ends the run', async () => {
     // Parses, and fails the check: no adapter `nope` in the snapshot.
     const host = makeTestHost();
     const context = await openRunContext({ host, teamId: tenantIdOf('team-1'), languageVersion: 5, spend: {} });
