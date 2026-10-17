@@ -16,15 +16,6 @@
 //     (./order_limit_oracle.ts; not ./order_limit, which Node resolves to
 //     the .json beside it);
 //   - priced.json: the priced-plugin cap (./priced_oracle.ts);
-//   - records.json: records held as values, whole programs run on the
-//     TypeScript engine (./records_oracle.ts);
-//   - parallel.json: `parallel` and `race` programs run on the TypeScript
-//     engine, their requests in order and their writes in ledger order
-//     (./parallel_oracle.ts);
-//   - handles.json: language version 4's write handles (the record as
-//     found, `-[:@old]->`, in-place writes, a match's miss) run on the
-//     TypeScript engine against a scripted CRM, with what it received, the
-//     writes, the trace and the parked state (./handles_oracle.ts);
 //   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts);
 //   - dates.json: V8's date parser, and the members that read dates through
 //     it, under five local zones (./dates_oracle.ts);
@@ -34,12 +25,16 @@
 //   - chunks.json: `CHUNKS`'s cut and the entities estimate of each piece,
 //     the size mode on any text, the entities mode on ASCII text
 //     (./chunks_oracle.ts);
-//   - patterns.json: the retirement proof — seeded programs for every
-//     admission pattern the README's port list names, and every one chunk 7A
-//     closed, each run on both engines through the real shim against one
-//     scripted host and compared (./patterns_oracle.ts; the report is
-//     ./patterns_report.ts, `pnpm engine:patterns`). A program that ends where
-//     its pattern does not say fails the generator.
+//   - patterns.json: what the Rust engine, the version 5 reference, does
+//     with seeded programs for each pattern of the language, run through the
+//     real shim against one scripted host (./patterns_oracle.ts; the report
+//     is ./patterns_report.ts, `pnpm engine:patterns`). A program that ends
+//     where its pattern does not say fails the generator.
+// records.json, handles.json and parallel.json are no longer written: they
+// were the TypeScript engine's runs, which the Rust engine is no longer held
+// to (Rust is the version 5 reference). Their programs stay, frozen, as
+// corpora: the reachability test, the checker parity harness and the
+// upgrade corpus read them.
 // Deterministic: a rerun writes the same bytes (CI diffs them). Some answers
 // read local time (an offset-less date-time is local to `new Date`), so the
 // process runs in UTC wherever it is started — all but dates_oracle.ts,
@@ -51,7 +46,7 @@
 
 // Before anything reads the clock: Node re-reads TZ when it is assigned.
 process.env.TZ = 'UTC';
-// The engine's modules read these as they load (records_oracle.ts runs whole
+// The engine's modules read these as they load (patterns_oracle.ts runs whole
 // programs in process); nothing the oracle runs reaches a database.
 process.env.NODE_ENV ??= 'test';
 process.env.DATABASE_URL_TEST ??= 'postgresql://oracle:oracle@localhost:5432/oracle-unused';
@@ -75,9 +70,6 @@ import { fileValue } from '../../../../packages/engine-contracts/file_ref';
 import { compareValues } from '../../../../packages/shared/expression/filter';
 import { writePricedOracle } from './priced_oracle';
 import { writeOrderLimitOracle } from './order_limit_oracle';
-import { writeHandlesOracle } from './handles_oracle';
-import { writeParallelOracle } from './parallel_oracle';
-import { writeRecordsOracle } from './records_oracle';
 import { writeTailOracles } from './tail_oracle';
 import { writeDatesOracle } from './dates_oracle';
 import { writePatternsOracle } from './patterns_oracle';
@@ -373,14 +365,11 @@ console.log(`regex.json: ${regexCases.length} cases`);
 (async () => {
   await writeOrderLimitOracle(mulberry32(5));
   await writePricedOracle(mulberry32(20261009));
-  await writeRecordsOracle(mulberry32(20261010), (name, text) => writeFileSync(path.join(__dirname, name), text));
-  await writeParallelOracle(mulberry32(20261011), (name, text) => writeFileSync(path.join(__dirname, name), text));
-  await writeHandlesOracle(mulberry32(20261012), (name, text) => writeFileSync(path.join(__dirname, name), text));
   await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeDatesOracle(mulberry32(20261013), (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeStringsOracle(mulberry32(20261016), (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeChunksOracle(mulberry32(20261017), (name, text) => writeFileSync(path.join(__dirname, name), text));
-  // Both engines: the movement.wasm the shim loads is the one committed.
+  // The Rust engine: the movement.wasm the shim loads is the one committed.
   await writePatternsOracle(mulberry32(20261015), (name, text) => writeFileSync(path.join(__dirname, name), text));
 })().catch((error: unknown) => {
   console.error(error);
