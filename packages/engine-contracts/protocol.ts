@@ -36,11 +36,34 @@ export const WireManifestProtocolVersion = z.literal(MANIFEST_PROTOCOL_VERSION, 
     `this adapter targets an older adapter protocol; update it to protocol version ${MANIFEST_PROTOCOL_VERSION}.`,
 });
 
+/** A credential's fields as stored, every value a string (`expires_at` an ISO
+ *  time). */
+export const WireCredentialFields = z.record(z.string(), z.string());
+
+/** The resolved credential a request carries to a module that declares one
+ *  (`credentials` on the manifest): the install's credential of that name. */
+export const WireCredential = z.object({
+  name: z.string().min(1),
+  fields: WireCredentialFields,
+});
+export type WireCredentialShape = z.infer<typeof WireCredential>;
+
+/** Fields a module changed (a refreshed token, a rotated refresh token),
+ *  merged over the stored ones and written back by the host. Only the named
+ *  fields change. */
+export const WireCredentialUpdate = z.object({
+  name: z.string().min(1),
+  fields: WireCredentialFields,
+});
+export type WireCredentialUpdateShape = z.infer<typeof WireCredentialUpdate>;
+
 export const RpcRequest = z.object({
   protocolVersion: z.string(),
   method: z.string(),
   cacheScopeId: z.string(),
   params: z.unknown(),
+  /** Within version 2: absent for a server that declares no credential. */
+  credential: WireCredential.optional(),
 });
 export type RpcRequestShape = z.infer<typeof RpcRequest>;
 
@@ -51,9 +74,11 @@ export const RpcError = z.object({
 });
 export type RpcErrorShape = z.infer<typeof RpcError>;
 
+// `credentialUpdate` rides a failure too: a module that refreshed and was then
+// refused must still hand back the rotated refresh token, or it is lost.
 export const RpcResponse = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), result: z.unknown() }),
-  z.object({ ok: z.literal(false), error: RpcError }),
+  z.object({ ok: z.literal(true), result: z.unknown(), credentialUpdate: WireCredentialUpdate.optional() }),
+  z.object({ ok: z.literal(false), error: RpcError, credentialUpdate: WireCredentialUpdate.optional() }),
 ]);
 export type RpcResponseShape = z.infer<typeof RpcResponse>;
 
@@ -581,8 +606,159 @@ export const WireListenDeclarations = z.object({
     .optional(),
 });
 
+// ── Module declarations (within version 2: all optional) ─────────────────────
+// What an installable module declares beyond its methods, so a host can do
+// the module's housekeeping without knowing the module: which credential it
+// needs and how that credential is connected and refreshed, how its
+// provider's webhooks are signed, and what it wants run on a schedule. A
+// server that declares none of them is the version-2 server it always was.
+
+const DECLARED_NAME = /^[a-z][a-z0-9_]*$/;
+const declaredName = (what: string) =>
+  z.string().regex(DECLARED_NAME, `${what} must be ASCII lower case: a letter, then letters, digits or underscores`);
+
+/** One field a credential holds, by the name it is stored and sent under. */
+export const WireCredentialField = z.object({
+  name: z.string().min(1),
+  label: z.string().optional(),
+  /** Absent means secret: kept out of logs, traces and error text. `false` is
+   *  for a field that is safe to show, such as a workspace id. */
+  secret: z.boolean().optional(),
+  optional: z.boolean().optional(),
+});
+
+/** How an OAuth 2 credential is connected and refreshed. The host refreshes
+ *  it with the standard refresh-token grant at `tokenUrl`; a module whose
+ *  provider refreshes some other way implements `refreshCredential` instead. */
+export const WireOAuth2Declaration = z.object({
+  authorizeUrl: z.string().url(),
+  tokenUrl: z.string().url(),
+  scopes: z.array(z.string().min(1)).optional(),
+  /** Where the client id and secret go on the token call: an HTTP Basic
+   *  header (absent) or the form body. */
+  clientAuth: z.enum(['basic', 'body']).optional(),
+  pkce: z.boolean().optional(),
+  /** Extra query parameters the provider's authorize page needs
+   *  (`access_type: "offline"`, …). */
+  authorizeParams: z.record(z.string(), z.string()).optional(),
+});
+
+/**
+ * A credential the module needs. `static` is entered once and never refreshed
+ * by the host (an API key, a bot token). `oauth2` is connected through the
+ * provider's authorize page and holds `access_token`, `refresh_token` and
+ * `expires_at` (an ISO time) besides the `fields` it lists.
+ */
+export const WireCredentialDeclaration = z.discriminatedUnion('kind', [
+  z.object({ name: declaredName('a credential name'), kind: z.literal('static'), fields: z.array(WireCredentialField) }),
+  z.object({
+    name: declaredName('a credential name'),
+    kind: z.literal('oauth2'),
+    fields: z.array(WireCredentialField),
+    oauth2: WireOAuth2Declaration,
+  }),
+]);
+export type WireCredentialDeclarationShape = z.infer<typeof WireCredentialDeclaration>;
+
+/** How a provider signs the webhooks it sends, one name per scheme the host
+ *  verifies. `remote` is this protocol's own (`x-listen-fire-signature`). */
+export const INBOUND_SIGNATURE_SCHEMES = [
+  'hmac_sha256_hex',
+  'airtable_mac',
+  'attio',
+  'affinity_hex_or_b64',
+  'slack_v0',
+  'telegram_secret_token',
+  'remote',
+] as const;
+export const WireInboundSignatureScheme = z.enum(INBOUND_SIGNATURE_SCHEMES);
+export type WireInboundSignatureSchemeShape = z.infer<typeof WireInboundSignatureScheme>;
+
+/** A request the host answers itself before verifying a delivery: Slack's
+ *  `url_verification`, which echoes its `challenge` unsigned. A name the host
+ *  does not know is refused at parse rather than silently not answered. */
+export const INBOUND_INTERCEPTS = ['slack_url_verification'] as const;
+export const WireInboundIntercept = z.enum(INBOUND_INTERCEPTS);
+
+const HEADER_NAME = /^[a-z0-9-]+$/;
+
+/**
+ * How the provider's webhooks reach the module: through the host's door at
+ * `/api/public/webhook-sync/<providerKey>/<subscription>`, verified by
+ * `scheme` before `preprocessInbound` sees the body.
+ */
+export const WireInboundDeclaration = z.object({
+  /** The door's provider segment — for a built-in, today's key, so no
+   *  subscription's URL changes. */
+  providerKey: z.string().regex(/^[a-z][a-z0-9_-]*$/, 'providerKey must be ASCII lower case'),
+  scheme: WireInboundSignatureScheme,
+  /** The headers that may carry the signature, lower case, the first present
+   *  one read. `slack_v0` also reads `x-slack-request-timestamp`, which the
+   *  scheme fixes. */
+  signatureHeaders: z
+    .array(z.string().regex(HEADER_NAME, 'a signature header is a lower-case header name'))
+    .min(1),
+  intercepts: z.array(WireInboundIntercept).optional(),
+});
+export type WireInboundDeclarationShape = z.infer<typeof WireInboundDeclaration>;
+
+/** The module is a polled source: the host calls `poll` every
+ *  `intervalSeconds` per listen (a listen's own `every` overrides it). */
+export const WirePollDeclaration = z.object({
+  intervalSeconds: z.number().int().positive(),
+});
+
+/** Housekeeping the host runs every `intervalSeconds` per install, by
+ *  `runPeriodic({ name })` (renewing a provider's expiring webhook, say). */
+export const WirePeriodicDeclaration = z.object({
+  name: declaredName('a periodic task name'),
+  intervalSeconds: z.number().int().positive(),
+});
+
+export const WireModuleDeclarations = z.object({
+  credentials: z.array(WireCredentialDeclaration).optional(),
+  inbound: WireInboundDeclaration.optional(),
+  poll: WirePollDeclaration.optional(),
+  periodic: z.array(WirePeriodicDeclaration).optional(),
+});
+export type WireModuleDeclarationsShape = z.infer<typeof WireModuleDeclarations>;
+
+/** A declaration and the method that answers it go together: a host would
+ *  otherwise schedule a call nobody answers, or never schedule one that is
+ *  answered. */
+function refuseUnpairedDeclarations(
+  manifest: WireModuleDeclarationsShape & { methods: string[] },
+  ctx: z.RefinementCtx,
+): void {
+  const lists = new Set(manifest.methods);
+  const pair = (declared: boolean, method: string, declaration: string) => {
+    if (declared && !lists.has(method)) {
+      ctx.addIssue({ code: 'custom', path: ['methods'], message: `declares \`${declaration}\` but does not list \`${method}\` in methods` });
+    } else if (!declared && lists.has(method)) {
+      ctx.addIssue({ code: 'custom', path: [declaration], message: `lists \`${method}\` in methods but declares no \`${declaration}\`` });
+    }
+  };
+  pair(manifest.poll !== undefined, 'poll', 'poll');
+  pair((manifest.periodic ?? []).length > 0, 'runPeriodic', 'periodic');
+  // Refreshing is optional for a declared credential (the host refreshes an
+  // OAuth 2 one itself), but there is nothing to refresh without one.
+  if (lists.has('refreshCredential') && (manifest.credentials ?? []).length === 0) {
+    ctx.addIssue({ code: 'custom', path: ['credentials'], message: 'lists `refreshCredential` in methods but declares no `credentials`' });
+  }
+  const unique = (names: string[], path: string) => {
+    const seen = new Set<string>();
+    for (const name of names) {
+      if (seen.has(name)) ctx.addIssue({ code: 'custom', path: [path], message: `\`${name}\` is declared twice` });
+      seen.add(name);
+    }
+  };
+  unique((manifest.credentials ?? []).map((credential) => credential.name), 'credentials');
+  unique((manifest.periodic ?? []).map((task) => task.name), 'periodic');
+}
+
 export const WireManifestResult = z.object({
   ...WireListenDeclarations.shape,
+  ...WireModuleDeclarations.shape,
   protocolVersion: WireManifestProtocolVersion,
   adapterType: z.string(),
   supportedTriggers: z.array(z.string()),
@@ -604,7 +780,7 @@ export const WireManifestResult = z.object({
   // adapter's webhook/synthetic event type. Pure config, declared in the
   // manifest rather than answered by an RPC.
   webhookEventTypeId: z.string().optional(),
-});
+}).superRefine(refuseUnpairedDeclarations);
 
 // ── Streaming page shapes ────────────────────────────────────────────────────
 
@@ -845,6 +1021,29 @@ export const METHODS = {
   invokeFieldFunction: {
     params: WireInvokeFieldFunctionInput,
     result: z.unknown(),
+  },
+  // Module methods (within version 2; each paired with its manifest
+  // declaration, see `refuseUnpairedDeclarations`).
+  // One solicited pull of a polled source: `config` is the listen's options,
+  // `checkpoint` whatever the previous poll returned (absent the first time).
+  poll: {
+    params: z.object({ config: z.unknown(), checkpoint: z.unknown().optional() }),
+    result: z.object({
+      events: z.array(WireDiscriminableEvent),
+      checkpoint: z.unknown().optional(),
+    }),
+  },
+  // Refresh the request's `credential` when the host's own OAuth 2 refresh
+  // does not fit the provider. The host serialises it per credential. The
+  // answer is the changed fields, which the host writes back.
+  refreshCredential: {
+    params: z.object({}),
+    result: z.object({ fields: WireCredentialFields }),
+  },
+  // One run of a declared periodic task, for one install.
+  runPeriodic: {
+    params: z.object({ name: z.string().min(1) }),
+    result: z.null(),
   },
 } as const;
 
