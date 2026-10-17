@@ -1380,6 +1380,18 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `serve-module` keeps a module's state in files when given `MODULE_STATE_DIR` (one file per team),
   and serves one install's construction arguments from `MODULE_CONSTRUCTION_ARGS` (the protocol
   carries none).
+- Google Drive is a module: `@lf/google-drive` (`modules/google-drive`). Nothing changes for a team
+  using it: the same requests, answers and writes (granted folders and files, a folder's children,
+  a file's fields and bytes, folder creates, Google Doc imports and uploads), held by a recording of
+  the old adapter replayed against the module in process and as a process. Switching back is one
+  line (`BUILTIN_MODULES`).
+- A module can now read files out and be handed files in. A file it reads names itself by its own
+  handle and the host names it as the install's, so a run can fetch its bytes later; a file handed
+  to a write is read at its URL, or else from the platform's files.
+- `serve-module` serves a file's bytes at a one-time URL of its own when the module resolves them
+  from its provider (set `MODULE_PUBLIC_URL` when callers reach it through a proxy).
+- The platform's own Drive calls (the older pipeline outputs) now get their token per call from the
+  platform's Google client, and send through Node's fetch instead of node-fetch.
 
 ## [v0.11.0] - 2026-10-12
 
