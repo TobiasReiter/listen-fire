@@ -197,7 +197,7 @@ fn knob(name: &str, default: f64) -> f64 {
 
 /// The segment's input text (`segmentInput`).
 fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String, String> {
-    let wire = host.wire.borrow();
+    let mut wire = host.wire.borrow_mut();
     let event = wire.write(&Hv::of_js(input.event));
     let mut segment = serde_json::Map::new();
     segment.insert("entry".into(), json!("segment"));
@@ -210,10 +210,12 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
         Entry::Settle { state, frame_address } => (Some(state), false, Some(frame_address)),
     };
     if let Some(state) = state {
-        // A parked state's files are made host-side: THIN — a park holding
-        // a file resumes with the file as the descriptor data it was parked as.
+        // A parked state's files are made host-side, in the segment's file
+        // table: the engine is handed their handles, never their descriptors.
+        let mut state = Hv::of_js(state);
+        crate::park_files::in_park_state(&mut wire, &mut state);
         let mut resume = serde_json::Map::new();
-        resume.insert("state".into(), wire.write(&Hv::of_js(state)));
+        resume.insert("state".into(), wire.write(&state));
         if reenter {
             resume.insert("reenter".into(), json!(true));
         }
@@ -245,7 +247,7 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
     segment.insert("now".into(), json!(input.fired_at));
     segment.insert("serves".into(), json!(SERVES));
     segment.insert("extractionFileChars".into(), json!(knob("EXTRACTION_FILE_CHARS", 50_000.0)));
-    segment.insert("maxCallDepth".into(), json!(knob("MOVEMENT_MAX_CALL_DEPTH", 32.0) as u64));
+    segment.insert("maxCallDepth".into(), json!(max_call_depth()?));
     segment.insert("extractionTiers".into(), json!({}));
     // The catalog last, as text: its maps are read in their own order.
     let mut catalog = match input.catalog {
@@ -425,10 +427,55 @@ fn failure_of(host: &SegmentHost<'_>, error: &Json) -> Ended {
             None => Ended::Failed(format!("the Rust engine failed with a host error this host never answered ({reference})")),
         };
     }
+    Ended::Failed(thrown_message(error))
+}
+
+/// The message of the error the TypeScript engine would have thrown
+/// (`thrownBy`): a `MovementEngineError`'s is its code, then its message.
+fn thrown_message(error: &Json) -> String {
     let message = error.get("message").and_then(Json::as_str).unwrap_or_default();
-    Ended::Failed(match error.get("class").and_then(Json::as_str) {
-        Some("RunCostCapExceeded") => format!("{} (the run's cost cap)", if message.is_empty() { "the run met its cost cap" } else { message }),
+    match error.get("class").and_then(Json::as_str) {
+        Some("MovementEngineError") => format!("{}: {message}", error.get("code").and_then(Json::as_str).unwrap_or("MOVENG_ERROR")),
+        Some("CallDepthExceeded") => {
+            let limit = error.get("limit").and_then(Json::as_u64).unwrap_or_default();
+            let chain: Vec<&str> = error.get("chain").and_then(Json::as_array).map(|c| c.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
+            format!(
+                "MOVENG_CALL_DEPTH: call depth limit reached: '{}' would nest {} calls deep, and the limit set by {CALL_DEPTH_ENV_VAR} is {limit}. The run was stopped in case a recursion never reaches the case that ends it. If this run legitimately needs to go deeper, raise {CALL_DEPTH_ENV_VAR} in the server's environment.",
+                describe_chain(&chain),
+                chain.len().saturating_sub(1)
+            )
+        }
+        // A priced call met the cap: lf-host makes none yet (G6).
+        Some("RunCostCapExceeded") => "Run cost cap reached: the run was stopped before its next priced call".into(),
         _ => message.to_string(),
+    }
+}
+
+/// `describeChain`: a long chain shortened to its two ends.
+fn describe_chain(chain: &[&str]) -> String {
+    if chain.len() <= 12 {
+        return chain.join(" → ");
+    }
+    let omitted = chain.len() - 10;
+    let mut parts: Vec<String> = chain[..4].iter().map(|s| s.to_string()).collect();
+    parts.push(format!("… {omitted} more …"));
+    parts.extend(chain[chain.len() - 6..].iter().map(|s| s.to_string()));
+    parts.join(" → ")
+}
+
+const CALL_DEPTH_ENV_VAR: &str = "MOVEMENT_MAX_CALL_DEPTH";
+
+/// `maxCallDepth`: the deployment's limit, or 32; a value that is set but is
+/// not a positive whole number is refused, never read as no limit.
+fn max_call_depth() -> Result<u64, String> {
+    let raw = std::env::var(CALL_DEPTH_ENV_VAR).unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(32);
+    }
+    raw.trim().parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| {
+        format!(
+            "{CALL_DEPTH_ENV_VAR}=\"{raw}\" is not a positive whole number. Set it to how many calls deep one movement run may nest (e.g. {CALL_DEPTH_ENV_VAR}=32), or leave it unset for the default of 32."
+        )
     })
 }
 
@@ -572,7 +619,11 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
                             })
                             .collect(),
                     );
-                    Ok(Some(host.wire.borrow().write(&Hv::of_js(&rows))))
+                    // A branch's exports are parked state: its files the host's to make.
+                    let mut wire = host.wire.borrow_mut();
+                    let mut rows = Hv::of_js(&rows);
+                    crate::park_files::in_branch_exports(&mut wire, &mut rows);
+                    Ok(Some(wire.write(&rows)))
                 }
                 Err(error) => Err(store_failure(error)),
             }
@@ -859,6 +910,15 @@ fn is_text_type(content_type: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_engine_error_reads_as_the_typescript_one() {
+        assert_eq!(thrown_message(&json!({ "class": "MovementEngineError", "code": "MOVENG_CHECK", "message": "m" })), "MOVENG_CHECK: m");
+        assert_eq!(thrown_message(&json!({ "class": "TypeError", "message": "t" })), "t");
+        let chain: Vec<String> = (0..14).map(|i| format!("f{i}")).collect();
+        let chain: Vec<&str> = chain.iter().map(String::as_str).collect();
+        assert_eq!(describe_chain(&chain), "f0 → f1 → f2 → f3 → … 4 more … → f8 → f9 → f10 → f11 → f12 → f13");
+    }
 
     #[test]
     fn text_types_are_the_typescript_lfs() {
