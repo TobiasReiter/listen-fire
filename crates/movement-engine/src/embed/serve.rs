@@ -33,6 +33,7 @@ impl Session {
         let label = format!("{}.{}", request.family, request.method);
         match self.route(hosts, &label, &request.args) {
             Ok(value) => Ok(value),
+            Err(failure) if failure.is_budget() && PRICED.contains(&label.as_str()) => Ok(Some(budget_refusal(&label, &failure.message))),
             Err(failure) => {
                 let mut detail = serde_json::Map::new();
                 detail.insert("message".into(), json!(failure.message));
@@ -151,12 +152,16 @@ impl Session {
                     language_version: args.get("languageVersion").and_then(Json::as_u64).unwrap_or(5) as u32,
                     budget: args.get("budget").cloned().unwrap_or(Json::Null),
                 })?;
-                let mut out = vec![("index".to_string(), verdict.index.map_or(Data::Null, |i| Data::Number(i as f64)))];
-                if verdict.judge_unavailable {
-                    out.push(("judgeUnavailable".into(), Data::Bool(true)));
+                // The judge's answer is plain JSON, unlike the other model
+                // families' (crate::host::llm::arbitrate_entities).
+                let mut out = json!({ "index": verdict.index });
+                if let Some(reason) = verdict.judge_unavailable {
+                    out["judgeUnavailable"] = json!(reason);
                 }
-                push_cost(&mut out, &verdict.cost);
-                Ok(Some(Data::Map(out).to_wire()))
+                if !verdict.cost.is_empty() {
+                    out["cost"] = json!(verdict.cost);
+                }
+                Ok(Some(out))
             }
             "llm.transforms.invoke" => {
                 let modules = hosts.modules.as_deref_mut().ok_or_else(|| unserved_failure(label))?;
@@ -245,11 +250,20 @@ impl Session {
                 }
                 Ok(None)
             }
+            // One process running one segment at a time holds a lock as soon
+            // as it asks, so a host with no store still serves them.
             "locks.acquire" => {
                 let names = texts(args.get("names"), label)?;
-                Ok(Some(json!({ "token": store(hosts, label)?.acquire_locks(&names)? })))
+                let token = match hosts.store.as_deref_mut() {
+                    Some(store) => store.acquire_locks(&names)?,
+                    None => names.join(","),
+                };
+                Ok(Some(json!({ "token": token })))
             }
-            "locks.release" => store(hosts, label)?.release_locks(text(args, "token", label)?).map(|()| None),
+            "locks.release" => match hosts.store.as_deref_mut() {
+                Some(store) => store.release_locks(text(args, "token", label)?).map(|()| None),
+                None => Ok(None),
+            },
             "control.cancel.cancelled" | "control.cancel.cancelledNow" => match hosts.store.as_deref_mut() {
                 Some(store) => Ok(Some(json!(store.cancelled()?))),
                 None => Ok(Some(json!(false))),
@@ -330,6 +344,19 @@ impl Session {
             })),
             other => Err(unserved_failure(other)),
         }
+    }
+}
+
+/// The calls whose answer may be a budget refusal.
+const PRICED: [&str; 5] = ["llm.client.call", "llm.extractCall.call", "llm.transforms.invoke", "llm.arbitrateEntities", "files.resolveFileText"];
+
+/// `{error: {kind: "budget", message}}`: plain JSON for the judge, on the
+/// eval wire for the rest, as their answers are read.
+fn budget_refusal(label: &str, message: &str) -> Json {
+    if label == "llm.arbitrateEntities" {
+        json!({ "error": { "kind": "budget", "message": message } })
+    } else {
+        Data::map([("error", Data::map([("kind", Data::text("budget")), ("message", Data::text(message))]))]).to_wire()
     }
 }
 

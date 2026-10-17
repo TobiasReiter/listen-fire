@@ -26,7 +26,21 @@ impl HostFailure {
     pub fn new(message: impl Into<String>) -> HostFailure {
         HostFailure { message: message.into(), name: None }
     }
+
+    /// A priced call (a model, the judge, a plugin, a file read) refused
+    /// because the run's budget (its `budget` field) cannot cover it. The run
+    /// ends at its cost cap where its own figures say the cap is met, and
+    /// fails with this message where they do not.
+    pub fn budget(message: impl Into<String>) -> HostFailure {
+        HostFailure { message: message.into(), name: Some(BUDGET.into()) }
+    }
+
+    pub(crate) fn is_budget(&self) -> bool {
+        self.name.as_deref() == Some(BUDGET)
+    }
 }
+
+const BUDGET: &str = "budget";
 
 impl From<String> for HostFailure {
     fn from(message: String) -> HostFailure {
@@ -59,6 +73,15 @@ pub struct Cost {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ParkedState(pub(crate) serde_json::Value);
+
+impl ParkedState {
+    /// Parked on an `until`'s timer: woken, it tests its condition again
+    /// rather than stepping past.
+    pub(crate) fn is_until(&self) -> bool {
+        let entries = self.0.get(1).and_then(serde_json::Value::as_array);
+        entries.into_iter().flatten().any(|entry| entry.get(0).and_then(serde_json::Value::as_str) == Some("until") && entry.get(1) == Some(&serde_json::Value::Bool(true)))
+    }
+}
 
 /// A finished branch's exports at a join, as the engine wrote them. Opaque,
 /// as a parked state is.
@@ -224,7 +247,9 @@ pub struct Arbitration {
 pub struct Verdict {
     /// Which candidate the write is, if any.
     pub index: Option<usize>,
-    pub judge_unavailable: bool,
+    /// Why the judge could not judge, when it could not: the write then
+    /// goes on without a match, as the engine's own rules leave it.
+    pub judge_unavailable: Option<String>,
     pub cost: Vec<Cost>,
 }
 

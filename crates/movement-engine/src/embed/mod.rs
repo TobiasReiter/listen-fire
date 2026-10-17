@@ -4,7 +4,8 @@
 //! ```text
 //! check(source, &catalog)            -> problems, before anything runs
 //! run(&mut hosts, RunInput)          -> Outcome (finished, parked, failed…)
-//! resume(&mut hosts, RunInput, state) -> Outcome, when a park is due
+//! resume(&mut hosts, RunInput, state, wake) -> Outcome, when a park is due
+//! fire(&mut hosts, RunInput, state, call)   -> Outcome, a callback called
 //! ```
 //!
 //! This is the same engine the JSON boundary drives (crate::begin, the WASM
@@ -16,6 +17,8 @@
 //! the engine made it.
 
 mod data;
+#[cfg(test)]
+mod end_to_end;
 mod hosts;
 mod serve;
 
@@ -407,18 +410,52 @@ impl From<ProtocolError> for EmbedError {
 
 /// Run `input` to its end against `hosts`.
 pub fn run(hosts: &mut Hosts<'_>, input: &RunInput) -> Result<Outcome, EmbedError> {
-    drive(hosts, input, None)
+    drive(hosts, input, Entry::Run)
 }
 
-/// Resume a parked flow of `input`'s run from its state, once its park is
-/// due (a timer's `wake_at` passed, an awaited event arrived).
-pub fn resume(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState) -> Result<Outcome, EmbedError> {
-    drive(hosts, input, Some(state))
+/// Why a parked flow is run again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wake {
+    /// Its timer came due (`wake_at` passed): a `sleep` is stepped past, an
+    /// `until` tests its condition again.
+    Timer,
+    /// What it awaited arrived (an adapter's record, a callback's call): the
+    /// awaiting statement is entered again and checks once more.
+    Arrival,
 }
 
-fn drive(hosts: &mut Hosts<'_>, input: &RunInput, resume: Option<&ParkedState>) -> Result<Outcome, EmbedError> {
+/// Resume a parked flow of `input`'s run from its state, woken as `wake`
+/// says.
+pub fn resume(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState, wake: Wake) -> Result<Outcome, EmbedError> {
+    let reenter = wake == Wake::Arrival || state.is_until();
+    drive(hosts, input, Entry::Resume { state, reenter })
+}
+
+/// A callback called: the values the caller supplied for its parameters
+/// (an object), and the call's place on the callback's ledger
+/// ([`Store::callback_calls`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallbackCall {
+    pub values: Data,
+    pub call_index: usize,
+}
+
+/// Run a called callback's body against the state it was minted with
+/// ([`CallbackMint::state`]). The flow awaiting the callback is woken by
+/// [`resume`] with [`Wake::Arrival`], once the call is on the ledger.
+pub fn fire(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState, call: &CallbackCall) -> Result<Outcome, EmbedError> {
+    drive(hosts, input, Entry::Fire { state, call })
+}
+
+enum Entry<'a> {
+    Run,
+    Resume { state: &'a ParkedState, reenter: bool },
+    Fire { state: &'a ParkedState, call: &'a CallbackCall },
+}
+
+fn drive(hosts: &mut Hosts<'_>, input: &RunInput, entry: Entry<'_>) -> Result<Outcome, EmbedError> {
     let segment_id = "segment";
-    let mut segment = crate::begin(&input_text(hosts, input, resume, segment_id))?;
+    let mut segment = crate::begin(&input_text(hosts, input, &entry, segment_id))?;
     let mut session = serve::Session::new(input.now.clone());
     let mut queue = std::collections::VecDeque::new();
     let mut step = segment.start()?;
@@ -436,7 +473,7 @@ fn drive(hosts: &mut Hosts<'_>, input: &RunInput, resume: Option<&ParkedState>) 
     Ok(outcome(&done, &session.failures))
 }
 
-fn input_text(hosts: &mut Hosts<'_>, input: &RunInput, resume: Option<&ParkedState>, segment_id: &str) -> String {
+fn input_text(hosts: &mut Hosts<'_>, input: &RunInput, entry: &Entry<'_>, segment_id: &str) -> String {
     let credential_ids: serde_json::Map<String, Json> = input
         .catalog
         .snapshot
@@ -470,8 +507,18 @@ fn input_text(hosts: &mut Hosts<'_>, input: &RunInput, resume: Option<&ParkedSta
     if input.dry_run {
         head["dryRun"] = json!(true);
     }
-    if let Some(state) = resume {
-        head["resume"] = json!({ "state": state.0 });
+    match entry {
+        Entry::Run => {}
+        Entry::Resume { state, reenter } => {
+            head["resume"] = json!({ "state": state.0 });
+            if *reenter {
+                head["resume"]["reenter"] = json!(true);
+            }
+        }
+        Entry::Fire { state, call } => {
+            head["resume"] = json!({ "state": state.0 });
+            head["fire"] = json!({ "values": call.values.to_wire(), "callIndex": call.call_index });
+        }
     }
     // The catalog last, as its own text: its maps are read in their order.
     let head = head.to_string();
@@ -568,7 +615,7 @@ mod tests {
         assert!(matches!(&outcome, Outcome::Parked(ran) if ran.function == "m"), "{outcome:?}");
         assert_eq!(timers.0[0].wake_at, "2026-03-12T13:00:00.000Z");
         let state = timers.0[0].state.clone();
-        let outcome = resume(&mut Hosts::new().adapters(&mut inbox).store(&mut timers), &input(), &state).unwrap();
+        let outcome = resume(&mut Hosts::new().adapters(&mut inbox).store(&mut timers), &input(), &state, Wake::Timer).unwrap();
         assert!(matches!(outcome, Outcome::Finished(_)), "{outcome:?}");
     }
 }

@@ -227,7 +227,7 @@ impl Game {
         let mut hosts = Hosts::new().adapters(&mut self.world).store(&mut self.parks).clock(&mut self.clock).trace(&mut self.log);
         let outcome = match &state {
             None => embed::run(&mut hosts, input),
-            Some(state) => embed::resume(&mut hosts, input, state),
+            Some(state) => embed::resume(&mut hosts, input, state, embed::Wake::Timer),
         };
         match outcome {
             Ok(Outcome::Parked(ran)) => self.parked.push((ran.parked_address.unwrap_or_default(), input.clone())),
