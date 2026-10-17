@@ -33,7 +33,7 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from 'movement-engine/public/models';
+import type { ChatModelName } from 'movement-engine/public/anthropic';
 import type { PageFetchResult, WebSearchResult, WebToolEvent } from 'movement-engine/public/anthropic';
 import type { SearchHit } from '../search_hygiene';
 import type { ProfileRead } from './profile_read';
@@ -48,7 +48,7 @@ import type {
 } from './contract';
 
 import { defaultPageReader, meterAnthropicUsage } from 'movement-engine/public/anthropic';
-import { resolveModel } from 'movement-engine/public/models';
+import { resolveModel } from 'movement-engine/public/anthropic';
 import { describeError, isLinkedInUrl } from '../addresses';
 import { profileSlug } from '../linkedin_identity';
 import { runSearch } from '../search_hygiene';

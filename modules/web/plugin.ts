@@ -1,12 +1,12 @@
 // One web plugin: its declaration (the engine package's data) and its body,
 // and how what a body made becomes the answer a host hands the run.
 
-import type { CostEnvelope } from 'movement-engine/public/models';
+import type { CostEnvelope } from 'movement-engine/public/anthropic';
 import type { PluginAnswer } from 'module-kit';
 import type { PluginDeclaration } from 'movement-engine/public/plugins';
 import type { Emission } from './addresses';
 
-import { costEnvelopeMicrodollars } from 'movement-engine/public/models';
+import { costEnvelopeMicrodollars } from 'movement-engine/public/anthropic';
 import { tools } from './tools';
 
 /**

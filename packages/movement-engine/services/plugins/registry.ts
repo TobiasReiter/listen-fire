@@ -1,16 +1,15 @@
 // The bundled plugins, as data: each one's signature and whether it may cost
 // money. Moved here from the product shell (Plan 22 #3 C3) so every host reads
-// the same surface: the hosted catalog projects it for the checker, and a host
-// that runs plugins pairs each declaration with its implementation by name
-// (apps/api `engine/transforms/register-bundled.ts`, which fails as it loads when
-// a declaration and an implementation do not match one to one).
+// the same surface: the hosted catalog projects it for the checker, and the
+// module that runs them (`@lf/web`, modules/web) pairs each declaration with
+// its body, failing as it loads when the two do not match one to one.
 //
 // Running a plugin is the host's (`llm.transforms.invoke`); nothing here runs.
 
 import type { PluginSpec } from 'movement-lang';
 import type { TransformSignature } from '../translation_graph/types';
 
-import { pluginDeclarationNamed, pluginSpecsOf, type PluginDeclaration } from './spec';
+import { pluginDeclarationNamed, pluginSpecOf, pluginSpecsOf, type PluginDeclaration } from './spec';
 
 /**
  * Public signature — surfaced through the registry. The editor uses
@@ -514,9 +513,24 @@ export const BUNDLED_PLUGINS: readonly PluginDeclaration[] = [
   RESEARCH_PLUGIN,
 ];
 
-/** Every bundled plugin's checker surface, keyed the way a program spells it. */
+/** The package the bundled plugins are served by (`modules/web`): a movement
+ *  imports them one by one or as the package
+ *  (``import { `@lf/web` as web } from plugins``). */
+export const BUNDLED_PLUGINS_PACKAGE = '@lf/web';
+
+/** Every bundled plugin's checker surface, keyed the way a program spells it,
+ *  each tagged with its package. */
 export function bundledPluginSpecs(): Record<string, PluginSpec> {
-  return pluginSpecsOf(BUNDLED_PLUGINS);
+  return Object.fromEntries(
+    Object.entries(pluginSpecsOf(BUNDLED_PLUGINS)).map(([name, spec]) => [name, { ...spec, package: BUNDLED_PLUGINS_PACKAGE }]),
+  );
+}
+
+/** A bundled plugin's checker surface by either spelling, tagged with its
+ *  package. */
+export function bundledPluginSpecNamed(name: string): PluginSpec | undefined {
+  const declaration = bundledPluginNamed(name);
+  return declaration ? { ...pluginSpecOf(declaration), package: BUNDLED_PLUGINS_PACKAGE } : undefined;
 }
 
 /** A bundled plugin by either spelling (`vc_url_retrieval`, `vc-url-retrieval`). */

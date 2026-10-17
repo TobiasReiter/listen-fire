@@ -22,7 +22,7 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from 'movement-engine/public/models';
+import type { ChatModelName } from 'movement-engine/public/anthropic';
 import type { ProfileIdentity } from '../linkedin_identity';
 import type { SearchHit } from '../search_hygiene';
 import type {

@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-import type { ChatModelName } from 'movement-engine/public/models';
+import type { ChatModelName } from 'movement-engine/public/anthropic';
 
 import { neverAsAny } from 'movement-lang';
 import { describeError } from '../addresses';

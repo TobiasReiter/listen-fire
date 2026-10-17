@@ -21,11 +21,11 @@ import type { WireCredentialDeclarationShape } from 'engine-contracts';
 import type { ModuleContext } from 'module-kit';
 
 import { z } from 'zod';
-import type { ChatCall, ChatModelName } from 'movement-engine/public/models';
+import type { ChatCall, ChatModelName } from 'movement-engine/public/anthropic';
 import type { FetchedResource, SearchResult, WebTools } from './tools';
 
 import { anthropicClient, anthropicKeyedChatProvider, type LlmUsage } from 'movement-engine/public/anthropic';
-import { costMicrodollars, models } from 'movement-engine/public/models';
+import { costMicrodollars, models } from 'movement-engine/public/anthropic';
 import { isLinkedInUrl, looksLikeNonHtmlAddress } from './addresses';
 
 const BRIGHT_DATA = 'https://api.brightdata.com';

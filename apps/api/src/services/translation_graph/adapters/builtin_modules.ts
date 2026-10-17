@@ -304,9 +304,11 @@ export function builtinPluginModule(
     if (pluginProgramName(name) !== pluginProgramName(plugin)) continue;
     const definition = entry.load();
     if (pluginDeclarationNamed(definition.plugins, plugin) === undefined) continue;
+    const loaded = loadedPluginModules.get(definition)?.get(install.teamId);
+    if (loaded !== undefined) return loaded;
     const secrets = createSecretsFamily({ backend: postgresSecrets({ teamId: install.teamId }), warn: (message) => logger.warn(message) });
     const unavailable = (what: string) => `module ${definition.name}: ${what} has no store on the platform yet (no built-in module uses it)`;
-    return pluginsInProcess(definition, {
+    const module = pluginsInProcess(definition, {
       tenant: install.teamId,
       credential: storedCredential(definition, install, secrets),
       log: logger,
@@ -314,6 +316,16 @@ export function builtinPluginModule(
       kv: refusingKv(unavailable('ctx.kv')),
       validateResults: inProcessValidationDefault(process.env),
     });
+    const forTeams = loadedPluginModules.get(definition) ?? new Map<TeamId, InProcessPluginModule>();
+    forTeams.set(install.teamId, module);
+    loadedPluginModules.set(definition, forTeams);
+    return module;
   }
   return undefined;
 }
+
+// One loaded plugin module per module and team, kept: loading checks the
+// manifest against what `create` built, which is the same answer every time,
+// and a call reads the team's credential afresh anyway. Without it a plugin
+// call paid that check on every invocation (the benchmark's +28% p50).
+const loadedPluginModules = new WeakMap<PluginModuleDefinition, Map<TeamId, InProcessPluginModule>>();
