@@ -154,6 +154,12 @@ fn check_builtin_args(typing: &mut Typing, builtin: &Builtin, args: &[Option<Ty>
         }
         let Some(ty) = ty else { continue };
         if param_accepts(param.ty, ty) {
+            if param.ty == ParamType::Number
+                && let Some(expr) = exprs.get(index)
+            {
+                let reader = crate::families::values::NumberReader::Param { builtin: builtin.name, param: param.name };
+                crate::families::values::refuse_absent_number(typing, expr, Some(ty), &reader);
+            }
             continue;
         }
         typing.report(

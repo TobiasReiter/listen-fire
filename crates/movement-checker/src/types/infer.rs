@@ -1561,7 +1561,7 @@ pub fn holds_fields_in_hand(position: &Position) -> bool {
 
 /// `mayHoldEmptyItem`: a list (or tuple) one of whose items may be empty —
 /// what `COUNT` skipped before version 5 and counts from it.
-fn may_hold_empty_item(ty: &Ty) -> bool {
+pub(crate) fn may_hold_empty_item(ty: &Ty) -> bool {
     let empty = |item: Option<&Ty>| matches!(item, Some(Ty::MaybeAbsent(_) | Ty::Absent));
     match strip_absent(ty) {
         Ty::List { of, .. } => empty(Some(of)),

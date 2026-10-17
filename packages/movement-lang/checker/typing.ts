@@ -1342,9 +1342,10 @@ function topLevelHandles(type: FieldType | undefined): FieldType[] {
   }
 }
 
-/** Whether a value of `type` is one `param` takes. Absence passes through —
- *  every built-in answers absent for an absent argument — and a union must
- *  fit member by member. */
+/** Whether a value of `type` is one `param` takes. Absence passes through
+ *  here — a text built-in answers absent for an absent argument, and a number
+ *  parameter's absence is its own rule from version 5 (`refuseAbsentNumber`)
+ *  — and a union must fit member by member. */
 function paramAccepts(param: BuiltinParamType, type: FieldType): boolean {
   const variant = variantOf(type);
   switch (variant.kind) {
@@ -2645,6 +2646,45 @@ export function checkNegateOperand(
     code: TypedDiagnosticCodes.ARITH_NON_NUMERIC,
     message: `An arithmetic operation requires numeric operands — the operand of unary '-' is ${described}.${hint}`,
   };
+}
+
+/**
+ * What reads a number, for `absentNumberMessage`: an operator, a built-in's
+ * number parameter, or a fold over a list's members.
+ */
+export type NumberReader =
+  | { kind: 'operator'; op: string }
+  | { kind: 'negate' }
+  | { kind: 'param'; builtin: string; param: string }
+  | { kind: 'fold'; builtin: string };
+
+/**
+ * From language version 5 a number that may be absent is refused wherever a
+ * number is computed from it, as TypeScript refuses `n + 1` on
+ * `number | undefined`: the engine reads an absent value as 0 there (or
+ * answers nothing), so the run would compute a number nobody meant, silently.
+ * The remedy is written from the author's own operand when it is printable:
+ * a `!= null` guard, or a fallback; a fold's is to drop the absent members
+ * (`List.compact`, which types as the list without them) or fill them. The message is the version 5 one; `refuseAbsentNumber` frames it
+ * for a move up.
+ */
+export function absentNumberMessage(type: FieldType, source: string | undefined, reader: NumberReader): string {
+  const shown = describeFieldType(type);
+  if (reader.kind === 'fold') {
+    const subject = source !== undefined ? `'${source}' may hold an absent member` : 'This list may hold an absent member';
+    const xs = source ?? '…';
+    return `${subject} (${shown}), and ${reader.builtin} reads an absent member as 0. Drop the absent members first ('${reader.builtin}(MULTI(${xs}))'), or fill them ('${reader.builtin}(map(${xs}, (x) => coalesce(x, 0)))').`;
+  }
+  const subject = source !== undefined ? `'${source}' may be absent` : 'This value may be absent';
+  const needs =
+    reader.kind === 'operator' ? `'${reader.op}' needs a number on both sides (it reads an absent value as 0)`
+    : reader.kind === 'negate' ? `unary '-' needs a number (it reads an absent value as 0)`
+    : `${reader.builtin}'s '${reader.param}' takes a number`;
+  const remedy =
+    source !== undefined
+      ? `Guard it ('if (${source} != null) { … }'), or fall back to a value that is always there ('coalesce(${source}, 0)')`
+      : `Guard it with a '!= null' test, or fall back to a value that is always there ('coalesce(…, 0)')`;
+  return `${subject} (${shown}), and ${needs}. ${remedy}.`;
 }
 
 /** The remedy clause, chosen by what the offending operand actually is: a
@@ -5050,6 +5090,35 @@ export class ExpressionTyping {
     );
   }
 
+  /** From version 5, a number computed from a value that may be absent is
+   *  refused (`absentNumberMessage`); versions 1–4 read the absent value as
+   *  0, and a move up across 5 is warned of. */
+  private refuseAbsentNumber(operand: Expression, type: FieldType | undefined, reader: NumberReader): void {
+    if (type === undefined || (!isMaybeAbsent(type) && type !== 'absent')) return;
+    this.reportAbsentNumber(absentNumberMessage(type, operandSource(operand), reader));
+  }
+
+  /** `refuseAbsentNumber` for a fold over a list that may hold an absent member. */
+  private refuseAbsentMembers(list: Expression, type: FieldType | undefined, fn: 'sum' | 'avg' | 'min' | 'max'): void {
+    if (type === undefined || !mayHoldEmptyItem(type)) return;
+    const element = collectionElementOf(type);
+    if (element === undefined) return;
+    this.reportAbsentNumber(absentNumberMessage(element, operandSource(list), { kind: 'fold', builtin: fn.toUpperCase() }));
+  }
+
+  private reportAbsentNumber(message: string): void {
+    if (!since(this.options.languageVersion, 5)) return;
+    if (this.upgradeCrosses(5)) {
+      this.report(
+        TypedDiagnosticCodes.ABSENT_REQUIRED,
+        `since ${describeLanguageVersion(5)} a number computed from a value that may be absent is refused; before, the absent value was read as 0. ${message.replace(/\.$/, '')}, then upgrade.`,
+        'upgrade',
+      );
+      return;
+    }
+    this.report(TypedDiagnosticCodes.ABSENT_REQUIRED, message);
+  }
+
   /** This walk is for a move up across the change version `n` made. */
   private upgradeCrosses(n: LanguageVersion): boolean {
     const from = this.options.upgradingFrom;
@@ -5810,7 +5879,12 @@ export class ExpressionTyping {
         // A closure refused as an operand is said once (language version 5).
         if ((leftOpaque && mayBeClosure(left)) || (rightOpaque && mayBeClosure(right))) return 'number';
         const nonNumeric = checkArithmeticOperands(expr, left, right);
-        if (nonNumeric !== null) this.report(nonNumeric.code, nonNumeric.message);
+        if (nonNumeric !== null) {
+          this.report(nonNumeric.code, nonNumeric.message);
+          return 'number';
+        }
+        if (!leftOpaque) this.refuseAbsentNumber(expr.left, left, { kind: 'operator', op: expr.op });
+        if (!rightOpaque) this.refuseAbsentNumber(expr.right, right, { kind: 'operator', op: expr.op });
         return 'number';
       }
       case 'compare': {
@@ -5831,9 +5905,11 @@ export class ExpressionTyping {
       }
       case 'negate': {
         const inner = this.inferAt(expr.expression, position);
-        if (this.requireTransparent(inner, 'negated') && mayBeClosure(inner)) return 'number';
+        const opaque = this.requireTransparent(inner, 'negated');
+        if (opaque && mayBeClosure(inner)) return 'number';
         const nonNumeric = checkNegateOperand(inner);
         if (nonNumeric !== null) this.report(nonNumeric.code, nonNumeric.message);
+        else if (!opaque) this.refuseAbsentNumber(expr.expression, inner, { kind: 'negate' });
         return 'number';
       }
       case 'conditional': {
@@ -5960,7 +6036,7 @@ export class ExpressionTyping {
             return 'number';
           case 'sum':
           case 'avg':
-            this.requireTransparent(element, 'added up');
+            if (!this.requireTransparent(element, 'added up')) this.refuseAbsentMembers(expr.expression, inner, expr.fn);
             return 'number';
           case 'join':
             this.requireTransparent(element, 'joined into text');
@@ -5971,7 +6047,7 @@ export class ExpressionTyping {
           // `avg` / `join` / `collect` have a zero, so they always answer.)
           case 'min':
           case 'max':
-            this.requireTransparent(element, 'ordered');
+            if (!this.requireTransparent(element, 'ordered')) this.refuseAbsentMembers(expr.expression, inner, expr.fn);
             return maybeAbsent(element);
           case 'first':
           case 'last':
@@ -6210,7 +6286,10 @@ export class ExpressionTyping {
       if (type !== undefined && this.requireTransparent(type, `handed to ${builtin.name}`)) return;
       if (this.refuseMaybeRecordForBuiltin(builtin, param, { type, expr })) return;
       if (type === undefined) return;
-      if (paramAccepts(param.type, type)) return;
+      if (paramAccepts(param.type, type)) {
+        if (param.type === 'number') this.refuseAbsentNumber(expr, type, { kind: 'param', builtin: builtin.name, param: param.name });
+        return;
+      }
       this.report(
         TypedDiagnosticCodes.BUILTIN_ARG_TYPE,
         `${builtin.name}'s '${param.name}' takes ${describeParamType(param.type)}, and this is ${describeFieldType(stripAbsent(type))} — ${describeBuiltin(builtin)}`,
