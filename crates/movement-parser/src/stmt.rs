@@ -1148,9 +1148,19 @@ impl Parser {
         if let Some(block) = self.try_parse_traversal_block()? {
             return Ok(Statement::Block(BlockStatement { span: block.span, block }));
         }
-        // `web.fetchUrl(u)` run bare (version 5): a package's member is one name.
+        // `web.fetchUrl(u)` run bare (version 5): a package's member is one
+        // name, and so is a standard namespace's (`Text.upper(x)`), which the
+        // checker then reports as a value nothing reads (version 5, whose
+        // spelling the namespaces are).
         self.pos = start;
-        let head = self.scan_head();
+        let head = match self.scan_callee() {
+            Some((callee, end))
+                if since(self.version, 5) && callee.split_once('.').is_some_and(|(head, _)| crate::surface::table::NAMESPACES.contains(&head)) =>
+            {
+                Some((callee, end))
+            }
+            _ => self.scan_head(),
+        };
         self.pos = after_word;
         if !quoted
             && let Some((dotted, end)) = head
