@@ -378,6 +378,14 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
 
+### close-narrowing
+- No change to what a program means: version 5 already narrows after a branch that always leaves,
+  in both checkers, as `if ISNULL(x) { ERROR(…) }` did on versions 1–4. Below
+  `if (x == null) { fail("…") }`, a `return`, or an `if` whose every arm and `else` leave, a record
+  that may be absent counts as present for the rest of the block, and every presence check accepts it.
+  `x != null && …` and `x == null || …` see `x` present on the right side. New twin tests pin this
+  in both checkers, under versions 4 and 5, with the branches that can fall through still refused.
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)
