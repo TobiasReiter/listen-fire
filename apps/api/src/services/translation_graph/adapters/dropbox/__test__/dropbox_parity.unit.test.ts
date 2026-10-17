@@ -3,7 +3,9 @@
 // the fake-channels Dropbox: every answer, and every request it made with
 // what came back (bytes included). Each implementation is replayed against
 // the recording and must make the same requests (its writes) and give the
-// same answers.
+// same answers: the legacy line, the module in process as the platform loads
+// it, and the module served as a process (serve-module) and called over
+// adapter protocol 2.
 //
 // Re-record (only when the legacy line changes on purpose, reading the diff):
 // DROPBOX_PARITY_RECORD=1 pnpm test:unit --testPathPattern dropbox_parity
@@ -31,6 +33,21 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
+
+import { createMemoryVault } from 'movement-engine/public/secrets';
+import { getAdapter } from '../../registry';
+import { BUILTIN_MODULES } from '../../builtin_modules';
+
+// The platform's encrypted store, as a vault the test seeds: the module line
+// reads its credential through the secrets family exactly as in production.
+const vault: { current?: ReturnType<typeof import('movement-engine/public/secrets').createMemoryVault> } = {};
+jest.mock('../../../../credentials/secrets_postgres', () => ({
+  ...jest.requireActual('../../../../credentials/secrets_postgres'),
+  postgresSecrets: () => {
+    if (vault.current === undefined) throw new Error('no vault seeded');
+    return vault.current;
+  },
+}));
 
 import { recordingServer, replayingServer, type Exchange } from './parity/exchange';
 import { bootFakeDropbox } from './parity/fake_dropbox';
@@ -109,5 +126,20 @@ async function expectParity(subjectAt: (baseUrl: string) => Promise<ParitySubjec
 
   it('the legacy line replays identically', async () => {
     await expectParity(legacySubject);
+  });
+
+  it('the module in process, through the platform registry, replays identically', async () => {
+    expect(BUILTIN_MODULES.dropbox?.line).toBe('module');
+    await expectParity((at) => {
+      vault.current = createMemoryVault({
+        'cred-parity': {
+          access_token: 'parity-access-token',
+          refresh_token: 'parity-refresh-token',
+          expires_at: new Date(EXPIRES_AT).toISOString(),
+          baseUrl: at,
+        },
+      });
+      return { adapter: getAdapter({ adapterType: 'dropbox', teamId: TEAM, credentialsId: 'cred-parity' }) };
+    });
   });
 });

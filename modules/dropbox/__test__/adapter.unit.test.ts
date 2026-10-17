@@ -12,86 +12,12 @@
 //   4. create-only updateRecord / deleteRecord throw.
 //   5. resolveEntity — always 0 candidates (create-only).
 //
-// The Dropbox client is mocked by overriding the adapter's private getClient;
-// fake-channels is never hit. Module-scope deps that crash at load are stubbed
-// exactly as the Drive adapter test does.
+// The Dropbox client is faked and the host's files are a map of bytes;
+// fake-channels is never hit.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
+import type { FileRef, ResolveEntityInput, WriteInput, UpdateInput, DeleteInput } from 'movement-engine/public/adapter';
 
-jest.mock('movement-engine/services/logger', () => ({
-  logger: {
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  },
-}));
-
-jest.mock('../../../../../lib/recording', () => ({
-  isTestHarnessTeam: () => false,
-  injectFakeBaseUrl: (p: unknown) => p,
-}));
-
-// The real DropboxClient is plain (fetch-based), but the adapter references it
-// as a value (constructed inside getClient — overridden in tests), so stub it
-// as a no-op to avoid any module-load side effects.
-jest.mock('../../../../../adapters/dropbox/apiClient', () => ({
-  DropboxClient: class {},
-}));
-
-jest.mock('../../../../../adapters/registry', () => ({
-  services: { dropbox: undefined },
-}));
-
-// types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
-// the leaf — the adapter consumes it only at type level.
-jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret, extend: ret, merge: ret,
-    pick: ret, omit: ret, partial: ret, describe: ret, or: ret, and: ret, min: ret,
-  });
-  return {
-    traversalStepSchema: stub,
-    fieldRefSchema: stub,
-    expressionSchema: stub,
-    filterExpressionSchema: stub,
-    webhookGraphOutputConfigSchema: stub,
-  };
-});
-
-jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret,
-  });
-  return {
-    isEdgeToEntry: (entry: { kind?: string }) => entry?.kind === 'edge_to',
-    storedUniquenessConstraintsSchema: stub,
-  };
-});
-
-import { Readable } from 'node:stream';
-
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type {
-  ResolveEntityInput,
-  WriteInput,
-  UpdateInput,
-  DeleteInput,
-} from 'movement-engine/services/translation_graph/adapter';
-
-import { DropboxAdapter } from '../index';
-import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
+import { DropboxAdapter } from '../adapter';
 import {
   DISPLAY_NAME_BY_KIND,
   structuredIdFor,
@@ -114,21 +40,20 @@ const PARENT_FOLDER = '/Clients';
 interface FakeClientCalls {
   findFolder: Array<{ name: string; parentPath: string }>;
   createFolder: Array<{ name: string; parentPath: string }>;
-  uploadFile: Array<{ name: string; parentPath: string; mimeType?: string; body: string }>;
+  uploadBytes: Array<{ name: string; parentPath: string; body: string }>;
 }
+
+/** The bytes the host holds, by the handle a file value names. */
+const HOST_FILES: Record<string, string> = { 'file-1': 'file-bytes' };
 
 function makeAdapter(options?: { existingFolderPath?: string }): {
   adapter: DropboxAdapter;
   calls: FakeClientCalls;
 } {
-  const adapter = new DropboxAdapter({
-    teamId: 'team-dropbox' as TeamId,
-    credentialsId: 'creds-1',
-  });
   const calls: FakeClientCalls = {
     findFolder: [],
     createFolder: [],
-    uploadFile: [],
+    uploadBytes: [],
   };
   const fakeClient = {
     findFolder: async (args: { name: string; parentPath: string }) => {
@@ -139,21 +64,24 @@ function makeAdapter(options?: { existingFolderPath?: string }): {
       calls.createFolder.push(args);
       return { path: `${args.parentPath}/${args.name}` };
     },
-    uploadFile: async (args: { name: string; parentPath: string; stream: Readable; mimeType?: string }) => {
-      const body = await streamToString(args.stream);
-      calls.uploadFile.push({ name: args.name, parentPath: args.parentPath, mimeType: args.mimeType, body });
+    uploadBytes: async (args: { name: string; parentPath: string; bytes: Uint8Array }) => {
+      calls.uploadBytes.push({ name: args.name, parentPath: args.parentPath, body: Buffer.from(args.bytes).toString('utf8') });
       return { path: `${args.parentPath}/${args.name}` };
     },
   };
-  (adapter as unknown as { getClient: () => Promise<typeof fakeClient> }).getClient = async () =>
-    fakeClient;
+  const adapter = new DropboxAdapter({
+    client: async () => fakeClient as never,
+    files: {
+      read: async (ref: FileRef) => {
+        const handle = ref.source !== undefined && 'handle' in ref.source ? ref.source.handle : undefined;
+        const bytes = handle !== undefined ? HOST_FILES[handle] : undefined;
+        if (bytes === undefined) throw new Error('the host holds no such file');
+        return Buffer.from(bytes);
+      },
+    },
+    log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  });
   return { adapter, calls };
-}
-
-async function streamToString(stream: Readable): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -319,29 +247,31 @@ describe('DropboxAdapter.createRecord — file', () => {
       parentLinks: [{ recordType: FOLDER_TYPE, externalId: PARENT_FOLDER, edgeName: 'Files' }],
     } as WriteInput);
 
-    expect(calls.uploadFile).toHaveLength(1);
-    expect(calls.uploadFile[0].name).toBe('notes.txt');
-    expect(calls.uploadFile[0].parentPath).toBe(PARENT_FOLDER);
-    expect(calls.uploadFile[0].body).toBe('hello world');
+    expect(calls.uploadBytes).toHaveLength(1);
+    expect(calls.uploadBytes[0].name).toBe('notes.txt');
+    expect(calls.uploadBytes[0].parentPath).toBe(PARENT_FOLDER);
+    expect(calls.uploadBytes[0].body).toBe('hello world');
     expect(result.externalId).toBe('/Clients/notes.txt');
   });
 
-  it('streams a file redeemed from its descriptor, name defaulting from the ref', async () => {
+  it('uploads the bytes the host reads for a file value, name defaulting from the ref', async () => {
     const { adapter, calls } = makeAdapter();
-    const store = installMemoryDocumentStore();
+    const file: FileRef = {
+      __brand: 'FileRef',
+      name: 'report.pdf',
+      contentType: 'application/pdf',
+      source: { adapterType: 'email', handle: 'file-1' },
+    };
 
     await adapter.createRecord({
       recordType: FILE_TYPE,
-      fields: {
-        file: store.file('file-bytes', { name: 'report.pdf', contentType: 'application/pdf' }),
-      },
+      fields: { file },
       mutationContext: {} as never,
       parentLinks: [{ recordType: FOLDER_TYPE, externalId: PARENT_FOLDER, edgeName: 'Files' }],
     } as WriteInput);
 
-    expect(calls.uploadFile[0].name).toBe('report.pdf');
-    expect(calls.uploadFile[0].mimeType).toBe('application/pdf');
-    expect(calls.uploadFile[0].body).toBe('file-bytes');
+    expect(calls.uploadBytes[0].name).toBe('report.pdf');
+    expect(calls.uploadBytes[0].body).toBe('file-bytes');
   });
 
   it('defaults to the Dropbox ROOT when no parent is given', async () => {
@@ -351,7 +281,7 @@ describe('DropboxAdapter.createRecord — file', () => {
       fields: { name: 'top.txt', file: 'x' },
       mutationContext: {} as never,
     } as WriteInput);
-    expect(calls.uploadFile[0].parentPath).toBe('');
+    expect(calls.uploadBytes[0].parentPath).toBe('');
     expect(result.externalId).toBe('/top.txt');
   });
 

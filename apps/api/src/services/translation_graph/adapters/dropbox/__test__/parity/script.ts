@@ -49,7 +49,8 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
   const related = (name: string, position: SourcePosition, fieldId: string) =>
     step(name, () => adapter.getRelated({ position, fieldId, direction: 'outgoing' }));
   const first = (results: RelatedResult[] | undefined): SourcePosition | undefined => results?.[0]?.position;
-  const write = (name: string, input: WriteInput) => step(name, () => adapter.createRecord(input));
+  const write = (name: string, input: Omit<WriteInput, 'mutationContext'>) =>
+    step(name, () => adapter.createRecord({ ...input, mutationContext: {} as never }));
 
   const meta = makeMetaPosition('dropbox');
   await step('listEntryPoints', () => adapter.listEntryPoints());
@@ -89,25 +90,25 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
   }
 
   // Creates.
-  await write('create Folder at the root', { recordType: 'Folder', fields: { name: 'Clients' } } as WriteInput);
-  await write('create the same Folder again (reused)', { recordType: 'Folder', fields: { name: 'clients' } } as WriteInput);
+  await write('create Folder at the root', { recordType: 'Folder', fields: { name: 'Clients' } });
+  await write('create the same Folder again (reused)', { recordType: 'Folder', fields: { name: 'clients' } });
   if (folder !== undefined) {
     await write('create Folder along an edge', {
       recordType: 'Folder',
       fields: { name: '2026' },
       parentLinks: [{ recordType: 'Folder', externalId: '/Deals', edgeName: 'Folders' }],
-    } as unknown as WriteInput);
+    });
   }
-  await write('create File from inline text', { recordType: 'File', fields: { name: 'hello.txt', file: 'hello from a run' } } as WriteInput);
+  await write('create File from inline text', { recordType: 'File', fields: { name: 'hello.txt', file: 'hello from a run' } });
   await write('create File from a file value', {
     recordType: 'File',
     fields: { file: { __brand: 'FileRef', name: 'memo.txt', contentType: 'text/plain', content: 'inline content' } },
-  } as unknown as WriteInput);
+  });
   if (ref !== undefined) {
-    await write('create File copied from a Dropbox file', { recordType: 'File', fields: { name: 'copy.txt', file: ref, parent: '/Clients' } } as unknown as WriteInput);
+    await write('create File copied from a Dropbox file', { recordType: 'File', fields: { name: 'copy.txt', file: ref, parent: '/Clients' } });
   }
-  await write('create File with no content', { recordType: 'File', fields: { name: 'empty.txt' } } as WriteInput);
-  await write('create an unknown type', { recordType: 'Spreadsheet', fields: {} } as WriteInput);
+  await write('create File with no content', { recordType: 'File', fields: { name: 'empty.txt' } });
+  await write('create an unknown type', { recordType: 'Spreadsheet', fields: {} });
   await step('updateRecord', () => adapter.updateRecord({ recordType: 'File', externalId: '/x', fields: {} } as never));
   await step('deleteRecord', () => adapter.deleteRecord({ recordType: 'File', externalId: '/x' } as never));
 

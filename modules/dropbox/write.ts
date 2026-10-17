@@ -1,4 +1,4 @@
-// Dropbox TG adapter — the write paths plus the reads that support them
+// Dropbox — the write paths plus the reads that support them
 // (bridge-only entity resolution, display data). Two create paths, one per
 // noun (adapters/CLAUDE.md rule 4 — the old document/upload split was one
 // concept; `files/upload` is the API's single file-creation endpoint):
@@ -19,9 +19,7 @@
 // supported" error (a created folder/file has no in-place TG mutation path;
 // the API's `files/move_v2` re-parent is a recorded capability gap).
 
-import { Readable } from 'node:stream';
-
-import type { DropboxClient } from '../../../../adapters/dropbox/apiClient';
+import type { ModuleFiles, ModuleLog } from 'module-kit';
 import type {
   DeleteInput,
   DeleteResult,
@@ -32,13 +30,10 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
+} from 'movement-engine/public/adapter';
+import type { DropboxClient } from './api_client';
 
-import { logger } from 'movement-engine/services/logger';
-import { singleParentLink } from 'movement-engine/services/translation_graph/adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import { singleParentLink } from 'movement-engine/public/adapter';
 import {
   DROPBOX_ADAPTER_TYPE,
   dropboxWebUrl,
@@ -47,12 +42,14 @@ import {
 
 // ── createRecord — dispatch on type ───────────────────────────────────────────
 
-export async function createRecord(input: {
+export interface WriteHost {
   client: DropboxClient;
-  /** The team whose run is writing — a `File` value is redeemed for it. */
-  teamId: TeamId;
-  write: WriteInput;
-}): Promise<WriteResult> {
+  /** The host's way to a file value's bytes (the run's own team's). */
+  files: Pick<ModuleFiles, 'read'>;
+  log: ModuleLog;
+}
+
+export async function createRecord(input: WriteHost & { write: WriteInput }): Promise<WriteResult> {
   // `recordType` is the pretty type name; recover the write kind from the static
   // name → kind map (an unknown name is drift — a hard throw).
   const kind = requireStructuredId(input.write.recordType, 'createRecord');
@@ -80,18 +77,15 @@ function resolveParentPath(write: WriteInput): string {
 /** Create (or reuse) a folder — mirror v3 `executeFolder`, minus the LLM. The
  *  tier-0 linked_object dedup happens in `resolveEntity`; here a tier-1 search
  *  by name within the parent precedes creation, exactly as v3 does. */
-async function createFolder(input: {
-  client: DropboxClient;
-  write: WriteInput;
-}): Promise<WriteResult> {
-  const { client, write } = input;
+async function createFolder(input: Pick<WriteHost, 'client' | 'log'> & { write: WriteInput }): Promise<WriteResult> {
+  const { client, write, log } = input;
   const folderName = String(write.fields.name ?? write.fields.title ?? 'Untitled');
   const parentPath = resolveParentPath(write);
 
   // Tier 1: search by name within parent (tier-0 bridge dedup is resolveEntity).
   const existingPath = await client.findFolder({ name: folderName, parentPath });
   if (existingPath) {
-    logger.info(`[Dropbox] Found existing folder "${folderName}" → ${existingPath}`);
+    log.info(`[Dropbox] Found existing folder "${folderName}" → ${existingPath}`);
     return {
       adapterType: DROPBOX_ADAPTER_TYPE,
       externalId: existingPath,
@@ -100,7 +94,7 @@ async function createFolder(input: {
   }
 
   const folder = await client.createFolder({ name: folderName, parentPath });
-  logger.info(`[Dropbox] Created folder "${folderName}" → ${folder.path}`);
+  log.info(`[Dropbox] Created folder "${folderName}" → ${folder.path}`);
   return {
     adapterType: DROPBOX_ADAPTER_TYPE,
     externalId: folder.path,
@@ -126,12 +120,8 @@ function asFileValue(raw: unknown): FileValue | string | null {
 /** Create a file — the ONE file-creation path (`files/upload`). The bytes
  *  arrive as the `File` field value (a FileRef descriptor, or inline text), not from a context-node resource: in
  *  the TG model content is delivered as a field. */
-async function createUpload(input: {
-  client: DropboxClient;
-  teamId: TeamId;
-  write: WriteInput;
-}): Promise<WriteResult> {
-  const { client, write } = input;
+async function createUpload(input: WriteHost & { write: WriteInput }): Promise<WriteResult> {
+  const { client, write, log } = input;
   const parentPath = resolveParentPath(write);
 
   const fileValue = asFileValue(write.fields.file);
@@ -142,19 +132,14 @@ async function createUpload(input: {
     );
   }
 
-  const resolved = await resolveUploadStream(fileValue, input.teamId);
+  const resolved = await uploadBytes(fileValue, input.files);
   const name =
     String(write.fields.name ?? '') ||
     (typeof fileValue === 'object' ? fileValue.name : undefined) ||
     'file';
 
-  const result = await client.uploadFile({
-    name,
-    parentPath,
-    stream: resolved.stream,
-    mimeType: resolved.contentType,
-  });
-  logger.info(`[Dropbox] Uploaded "${name}" → ${result.path}`);
+  const result = await client.uploadBytes({ name, parentPath, bytes: resolved });
+  log.info(`[Dropbox] Uploaded "${name}" → ${result.path}`);
   return {
     adapterType: DROPBOX_ADAPTER_TYPE,
     externalId: result.path,
@@ -162,31 +147,19 @@ async function createUpload(input: {
   };
 }
 
-/** Resolve a `file` field value to a readable stream + mime type. Preferred:
- *  the FileRef's bytes, redeemed for the team (`streamFileRef`, P5). Fallback:
+/** Whether a file value names where its bytes are: an owner and handle, or a
+ *  fetchable URL the host handed in. */
+function hasRetrievableBytes(ref: FileRef): boolean {
+  return ref.source !== undefined || (typeof ref.url === 'string' && ref.url !== '');
+}
+
+/** Resolve a `file` field value to its bytes. Preferred: the FileRef's own,
+ *  read through the host (which holds only the run's team's). Fallback:
  *  inline string content composed in the program body. */
-async function resolveUploadStream(
-  fileValue: FileValue | string,
-  teamId: TeamId,
-): Promise<{ stream: Readable; contentType: string | undefined }> {
-  if (typeof fileValue === 'string') {
-    return { stream: Readable.from(fileValue), contentType: 'text/plain' };
-  }
-
-  if (hasFileSource(fileValue)) {
-    const resolved = await streamFileRef(fileValue, { teamId });
-    return {
-      stream: resolved.stream,
-      contentType: resolved.contentType ?? fileValue.contentType ?? undefined,
-    };
-  }
-
-  if (typeof fileValue.content === 'string') {
-    return {
-      stream: Readable.from(fileValue.content),
-      contentType: fileValue.contentType ?? 'text/plain',
-    };
-  }
+async function uploadBytes(fileValue: FileValue | string, files: Pick<ModuleFiles, 'read'>): Promise<Uint8Array> {
+  if (typeof fileValue === 'string') return Buffer.from(fileValue);
+  if (hasRetrievableBytes(fileValue)) return files.read(fileValue);
+  if (typeof fileValue.content === 'string') return Buffer.from(fileValue.content);
 
   throw new Error(
     `DropboxAdapter.createRecord(File): file value "${fileValue.name ?? 'unnamed'}" ` +

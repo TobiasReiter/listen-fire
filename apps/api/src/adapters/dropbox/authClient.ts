@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DROPBOX_OAUTH2 } from '@lf/dropbox/manifest';
 import { logger } from 'movement-engine/services/logger';
 import {
   createOAuth2Connector,
@@ -8,6 +9,7 @@ import {
   oauth2Refresher,
   type OAuth2Connector,
   type OAuth2Declaration,
+  type Refresher,
   type SecretFields,
 } from 'movement-engine/public/secrets';
 
@@ -16,14 +18,8 @@ import { camelTokenPayloadShape, postgresSecrets } from '../../services/credenti
 const REFRESH_WINDOW_MS = 60_000;
 
 /** How a Dropbox credential is connected and refreshed: what Dropbox's module
- *  manifest will declare. `token_access_type=offline` is what makes Dropbox
- *  issue a refresh token at all. */
-export const dropboxOAuth2: OAuth2Declaration = {
-  authorizeUrl: 'https://www.dropbox.com/oauth2/authorize',
-  tokenUrl: 'https://api.dropboxapi.com/oauth2/token',
-  clientAuth: 'body',
-  authorizeParams: { token_access_type: 'offline' },
-};
+ *  manifest declares. */
+export const dropboxOAuth2: OAuth2Declaration = DROPBOX_OAUTH2;
 
 function dropboxSecrets() {
   return createSecretsFamily({ backend: postgresSecrets({ shape: camelTokenPayloadShape }) });
@@ -94,11 +90,7 @@ export class DropboxAuthClient {
     try {
       const refreshed = await secrets.refresh(credentialsId, {
         seenVersion: stored.version,
-        refresher: oauth2Refresher({
-          tokenUrl: this.oauth2.tokenUrl,
-          clientAuth: this.oauth2.clientAuth,
-          client: { clientId: this.clientId, clientSecret: this.clientSecret },
-        }),
+        refresher: this.refresher(),
       });
       logger.info('[DROPBOX] CREDENTIALS REFRESHED');
       return credsOf(refreshed.fields, creds);
@@ -108,6 +100,16 @@ export class DropboxAuthClient {
       logger.error(`[DROPBOX] Token refresh failed: ${error instanceof Error ? error.message : String(error)}`);
       throw new Error('Dropbox token refresh failed');
     }
+  }
+
+  /** The refresh-token grant for this app, at the token URL it connects to
+   *  (the dev loop's fake provider in the dev loop). */
+  refresher(): Refresher {
+    return oauth2Refresher({
+      tokenUrl: this.oauth2.tokenUrl,
+      clientAuth: this.oauth2.clientAuth,
+      client: { clientId: this.clientId, clientSecret: this.clientSecret },
+    });
   }
 
   async getValidAccessToken(credentialsId: string, creds: DropboxCreds): Promise<string> {

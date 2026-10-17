@@ -1,4 +1,4 @@
-// Drive + Dropbox read graphs (positions-and-edges): folders/files are
+// Drive read graph (the Dropbox half moved with the module, modules/dropbox):
 // stable nouns — collections off the meta root, children via
 // `folders`/`files` edges, bytes via the file's `File` field (FileRef).
 // Clients are mocked by overriding each adapter's private getClient.
@@ -25,7 +25,6 @@ import type { FileRef } from 'movement-engine/services/translation_graph/adapter
 import { isStablePosition, makeMetaPosition } from 'movement-engine/services/translation_graph/types';
 import * as grantedItems from '../../../credentials/granted_items';
 import { GoogleDriveAdapter } from '../google_drive';
-import { DropboxAdapter } from '../dropbox';
 
 const TEAM = 'team-1' as TeamId;
 
@@ -92,94 +91,5 @@ describe('GoogleDriveAdapter read graph', () => {
     expect(ref.__brand).toBe('FileRef');
     expect(ref.source).toEqual({ adapterType: 'google_drive', credentialId: 'cred-1', handle: 'file-1' });
     expect(await text((await a.resolveFileRef({ ref })).stream as Readable)).toBe('memo bytes');
-  });
-});
-
-describe('DropboxAdapter read graph', () => {
-  const entriesByPath: Record<string, unknown[]> = {
-    '': [{ name: 'Deals', path: '/Deals', isFolder: true, size: null }],
-    '/Deals': [
-      { name: '2024', path: '/Deals/2024', isFolder: true, size: null },
-      { name: 'notes.txt', path: '/Deals/notes.txt', isFolder: false, size: 5 },
-    ],
-  };
-
-  function adapter() {
-    const a = new DropboxAdapter({ teamId: TEAM, credentialsId: 'cred-1' });
-    (a as unknown as { getClient: () => Promise<unknown> }).getClient = async () => ({
-      listFolder: async (path: string) => entriesByPath[path] ?? [],
-      download: async () => Readable.from('notes bytes'),
-    });
-    return a;
-  }
-
-  it('meta → Folders → files: path-addressed positions, fields, and a working FileRef', async () => {
-    const a = adapter();
-    const [folder] = await a.getRelated({
-      position: makeMetaPosition('dropbox'),
-      fieldId: 'Folders',
-      direction: 'outgoing',
-    });
-    expect(isStablePosition(folder.position)).toBe(true);
-    expect(await a.getFieldValue({ position: folder.position, fieldId: 'Path' })).toBe('/Deals');
-
-    const [file] = await a.getRelated({
-      position: folder.position,
-      fieldId: 'Files',
-      direction: 'outgoing',
-    });
-    expect(file.position.recordType).toBe('File');
-    expect(await a.getFieldValue({ position: file.position, fieldId: 'Name' })).toBe('notes.txt');
-    const ref = (await a.getFieldValue({ position: file.position, fieldId: 'File' })) as FileRef;
-    expect(ref.source).toEqual({ adapterType: 'dropbox', credentialId: 'cred-1', handle: '/Deals/notes.txt' });
-    expect(await text((await a.resolveFileRef({ ref })).stream as Readable)).toBe('notes bytes');
-  });
-
-  it('file → parent and sub-folder → parent hop up the tree (path-derived, no round trip)', async () => {
-    const a = adapter();
-    const [file] = await a.getRelated({
-      position: makeMetaPosition('dropbox'),
-      fieldId: 'Folders',
-      direction: 'outgoing',
-    }).then(([folder]) =>
-      a.getRelated({ position: folder.position, fieldId: 'Files', direction: 'outgoing' }),
-    );
-    const [fileParent] = await a.getRelated({
-      position: file.position,
-      fieldId: 'Parent',
-      direction: 'outgoing',
-    });
-    expect(fileParent.position.recordType).toBe('Folder');
-    expect(await a.getFieldValue({ position: fileParent.position, fieldId: 'Path' })).toBe('/Deals');
-
-    // A sub-folder resolves its parent the same way.
-    const [subfolder] = await a.getRelated({
-      position: (
-        await a.getRelated({ position: makeMetaPosition('dropbox'), fieldId: 'Folders', direction: 'outgoing' })
-      )[0].position,
-      fieldId: 'Folders',
-      direction: 'outgoing',
-    });
-    const [subParent] = await a.getRelated({
-      position: subfolder.position,
-      fieldId: 'Parent',
-      direction: 'outgoing',
-    });
-    expect(await a.getFieldValue({ position: subParent.position, fieldId: 'Path' })).toBe('/Deals');
-  });
-
-  it('a top-level folder honestly yields no parent (its parent is the Dropbox root)', async () => {
-    const a = adapter();
-    const [deals] = await a.getRelated({
-      position: makeMetaPosition('dropbox'),
-      fieldId: 'Folders',
-      direction: 'outgoing',
-    });
-    const parents = await a.getRelated({
-      position: deals.position,
-      fieldId: 'Parent',
-      direction: 'outgoing',
-    });
-    expect(parents).toEqual([]);
   });
 });

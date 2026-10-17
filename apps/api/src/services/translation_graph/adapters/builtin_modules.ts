@@ -28,24 +28,39 @@ import {
   type ModuleDefinition,
   type PluginModuleDefinition,
 } from 'module-kit';
-import { createSecretsFamily, type SecretsFamily } from 'movement-engine/public/secrets';
+import { createSecretsFamily, expiresWithin, type Refresher, type SecretsFamily } from 'movement-engine/public/secrets';
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { DROPBOX_MANIFEST } from '@lf/dropbox/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
-import { postgresSecrets } from '../../credentials/secrets_postgres';
+import { services } from '../../../adapters/registry';
+import { camelTokenPayloadShape, postgresSecrets, type PayloadShape } from '../../credentials/secrets_postgres';
 import { credentialTypeOf } from './credential_type';
+import { nameFileOwner, platformFiles } from './module_files';
 
 export type BuiltinLine = 'legacy' | 'module';
+
+/** What a module line says about its credential beyond what the module
+ *  declares: how the platform's stored payload reads as the declared fields,
+ *  and how the platform refreshes an OAuth credential (the platform's own
+ *  registered app is the client). */
+export interface BuiltinCredentialHost {
+  /** The stored payload's shape; default: flat string fields. */
+  payloadShape?: PayloadShape;
+  /** The refresh-token grant for the platform's app, called only when a token
+   *  is about to expire. */
+  refresher?: () => Refresher;
+}
 
 /** One built-in's line. A module line names how to load the module, and the
  *  manifest the host lists it by without loading it. */
 export type BuiltinModuleLine =
   | { kind: 'adapter' | 'plugin'; line: 'legacy' }
-  | { kind: 'adapter'; line: 'module'; manifest: AdapterManifest; load: () => AdapterModuleDefinition }
+  | ({ kind: 'adapter'; line: 'module'; manifest: AdapterManifest; load: () => AdapterModuleDefinition } & BuiltinCredentialHost)
   | { kind: 'plugin'; line: 'module'; load: () => PluginModuleDefinition };
 
 /** The table a lookup reads: `BUILTIN_MODULES`, or a test's own. */
@@ -73,7 +88,21 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
   attio: { kind: 'adapter', line: 'legacy' },
   google_sheets: { kind: 'adapter', line: 'legacy' },
   google_drive: { kind: 'adapter', line: 'legacy' },
-  dropbox: { kind: 'adapter', line: 'legacy' },
+  dropbox: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: DROPBOX_MANIFEST,
+    // The connect flow stores `{ accessToken, refreshToken, expiresAt }`.
+    payloadShape: camelTokenPayloadShape,
+    refresher: () => {
+      if (!services.dropbox) throw new Error('Dropbox integrations are not configured (services.dropbox is unset).');
+      return services.dropbox.authClient.refresher();
+    },
+    load: () => {
+      const { dropboxModule }: typeof import('@lf/dropbox') = require('@lf/dropbox');
+      return dropboxModule;
+    },
+  },
   gmail: { kind: 'adapter', line: 'legacy' },
   telegram: { kind: 'adapter', line: 'legacy' },
   slack: { kind: 'adapter', line: 'legacy' },
@@ -105,9 +134,20 @@ export interface BuiltinInstall {
   constructionArgs?: Record<string, string>;
 }
 
+/** A token this close to its expiry is refreshed before the call that would use it. */
+const REFRESH_WINDOW_MS = 60_000;
+
 /** The install's credential, read and written back through the encrypted
- *  store (cipher and payload exactly as the connect flow stored them). */
-function storedCredential(definition: ModuleDefinition, install: BuiltinInstall, secrets: SecretsFamily): ModuleCredential {
+ *  store (cipher and payload exactly as the connect flow stored them). An
+ *  OAuth credential about to expire is refreshed first, through the family
+ *  (one refresh at a time across processes, the write-back a compare-and-swap),
+ *  so the module is only ever handed a token that works. */
+function storedCredential(
+  definition: ModuleDefinition,
+  install: BuiltinInstall,
+  secrets: SecretsFamily,
+  refresher?: () => Refresher,
+): ModuleCredential {
   const declared = definition.credentials[0];
   const displayName = definition.kind === 'adapter' ? definition.manifest.displayName : definition.name;
   if (declared === undefined) return noCredential(`module ${definition.name} declares no credential`);
@@ -117,7 +157,18 @@ function storedCredential(definition: ModuleDefinition, install: BuiltinInstall,
   }
   return {
     name: declared.name,
-    fields: async () => (await secrets.resolve(ref)).fields,
+    fields: async () => {
+      const record = await secrets.resolve(ref);
+      if (declared.kind !== 'oauth2' || refresher === undefined || !expiresWithin(record.fields, REFRESH_WINDOW_MS)) return record.fields;
+      try {
+        return (await secrets.refresh(ref, { seenVersion: record.version, refresher: refresher() })).fields;
+      } catch (error) {
+        // The family's message names the credential and the provider's answer
+        // with every secret value taken out.
+        logger.error(`[${displayName}] token refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`${displayName} token refresh failed`);
+      }
+    },
     update: async (fields) => {
       await secrets.update(ref, fields);
     },
@@ -135,8 +186,9 @@ function harnessBaseUrl(definition: AdapterModuleDefinition, teamId: TeamId): st
 
 /** A module line's adapter module, loaded in process for one install. */
 export function loadBuiltinModule(definition: AdapterModuleDefinition, install: BuiltinInstall): InProcessAdapterModule {
+  const line = moduleLineOf(definition.manifest.adapterType);
   const secrets = createSecretsFamily({
-    backend: postgresSecrets({ teamId: install.teamId }),
+    backend: postgresSecrets({ teamId: install.teamId, ...(line?.payloadShape !== undefined ? { shape: line.payloadShape } : {}) }),
     warn: (message) => logger.warn(message),
   });
   const unavailable = (what: string) =>
@@ -144,9 +196,9 @@ export function loadBuiltinModule(definition: AdapterModuleDefinition, install: 
   const baseUrlOverride = harnessBaseUrl(definition, install.teamId);
   return adapterInProcess(definition, {
     tenant: install.teamId,
-    credential: storedCredential(definition, install, secrets),
+    credential: storedCredential(definition, install, secrets, line?.refresher),
     log: logger,
-    files: refusingFiles(unavailable('ctx.files')),
+    files: platformFiles(install.teamId),
     kv: refusingKv(unavailable('ctx.kv')),
     ...(baseUrlOverride !== undefined ? { baseUrlOverride } : {}),
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
@@ -167,7 +219,12 @@ export function builtinAdapterFactory(
 ): (input: BuiltinInstall) => Adapter {
   const entry = moduleLineOf(adapterType);
   if (entry === undefined) return legacy;
-  return (install) => loadBuiltinModule(entry.load(), install).adapter;
+  return (install) => {
+    const { adapter } = loadBuiltinModule(entry.load(), install);
+    // A file the module returns names the install that owns it, as every
+    // adapter-owned file on the platform does.
+    return install.credentialsId !== undefined ? nameFileOwner(adapter, install.credentialsId) : adapter;
+  };
 }
 
 /** A registry poll source for a built-in: the module's declared poll when its
