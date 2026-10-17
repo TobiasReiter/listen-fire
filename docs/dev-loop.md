@@ -486,7 +486,7 @@ that phone's team, so wire `pnpm dev:whatsapp setup` first (it creates a
 `phone_number` row → the dev-loop user + a whatsapp movement trigger).
 `--media` is the interesting path: Meta delivers media by *id*, which the
 dispatcher downloads out-of-band. The wrapper first seeds the bytes (a 1×1
-PNG for `image`, a tiny PDF for `document`) into the **fake Meta media
+PNG for `image`, a one-page PDF with a text layer for `document` — `apps/fake-channels/assets/dev-document.pdf`, so extraction reads real text) into the **fake Meta media
 endpoint** (`POST /whatsapp/media`), then fires the webhook. The dispatcher
 resolves them through the real path because the dev loop points
 `WHATSAPP_GRAPH_BASE_URL` at `${FAKE_CHANNELS_URL}/whatsapp/graph` (two
@@ -645,6 +645,13 @@ stored credential's token suffixes changed to the newly issued ones (token
 values are shown by their last characters only). `--fail-next` makes the next
 n token calls fail without spending the refresh token. Control routes:
 `POST /oauth/control/{config,mint,expire}`, `GET /oauth/control/state`.
+
+The provider's tokens live in the fake-channels store (a file under
+`apps/fake-channels/test-harness-data/`), so they survive a stack restart. The
+credential lives in the dev database, which outlives any one store (a new
+worktree, `dev:inspect --reset`); `pnpm dev:oauth setup` therefore signs an
+existing credential in again, in place, when the provider no longer knows its
+refresh token (it prints `resignedIn: true`).
 
 ### `pnpm dev:link <subcommand>`
 

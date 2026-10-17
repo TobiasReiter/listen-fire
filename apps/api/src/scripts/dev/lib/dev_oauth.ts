@@ -53,18 +53,8 @@ export async function fakeOAuthControl(route: 'config' | 'expire', body: Record<
 }
 
 /** Sign in against the fake provider through the real auth client (authorize
- *  redirect, code exchange) and store the tokens as a Dropbox credential. */
-export async function ensureDevLoopDropboxCredential(input: { teamId: string }): Promise<{ id: string; created: boolean }> {
-  const qb = getAutomationsQb(['external_service_credentials']);
-  const existing = await qb
-    .selectFrom('external_service_credentials')
-    .where('team_id', '=', input.teamId as TeamId)
-    .where('type', '=', ExternalServiceType.DROPBOX)
-    .where('name', '=', DEV_LOOP_DROPBOX_CREDENTIAL_NAME)
-    .select('id')
-    .executeTakeFirst();
-  if (existing) return { id: existing.id, created: false };
-
+ *  redirect, code exchange). */
+async function signInAgainstFakeProvider() {
   const fakeBaseUrl = fakeChannelsUrl();
   const authClient = new DropboxAuthClient({
     clientId: process.env.DROPBOX_CLIENT_ID || 'dev-loop-dropbox-client',
@@ -78,11 +68,47 @@ export async function ensureDevLoopDropboxCredential(input: { teamId: string }):
     throw new Error(`The fake OAuth consent at ${fakeBaseUrl} did not redirect back (${consent.status}). Is fake-channels running?`);
   }
   const back = new URL(location);
-  const tokens = await authClient.codeToToken({
+  return authClient.codeToToken({
     state: back.searchParams.get('state') ?? '',
     code: back.searchParams.get('code') ?? '',
   });
+}
 
+/** Sign in against the fake provider and store the tokens as a Dropbox
+ *  credential. The credential lives in the dev database, which outlives any one
+ *  fake-channels store (a fresh checkout, a reset), so an existing credential
+ *  whose refresh token the provider no longer knows is signed in again in place:
+ *  setup stays idempotent and the first refresh after it succeeds. */
+export async function ensureDevLoopDropboxCredential(input: {
+  teamId: string;
+}): Promise<{ id: string; created: boolean; resignedIn: boolean }> {
+  const qb = getAutomationsQb(['external_service_credentials']);
+  const existing = await qb
+    .selectFrom('external_service_credentials')
+    .where('team_id', '=', input.teamId as TeamId)
+    .where('type', '=', ExternalServiceType.DROPBOX)
+    .where('name', '=', DEV_LOOP_DROPBOX_CREDENTIAL_NAME)
+    .select('id')
+    .executeTakeFirst();
+  if (existing) {
+    const secrets = createSecretsFamily({ backend: postgresSecrets({ shape: camelTokenPayloadShape, teamId: input.teamId }) });
+    const { fields, version } = await secrets.resolve(existing.id);
+    const known = (await fakeOAuthState()).refresh.some((r) => r.id === fields.refresh_token && r.active);
+    if (known) return { id: existing.id, created: false, resignedIn: false };
+    const tokens = await signInAgainstFakeProvider();
+    await secrets.writeBack(
+      existing.id,
+      {
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+        expires_at: new Date(tokens.expiresAt).toISOString(),
+      },
+      version,
+    );
+    return { id: existing.id, created: false, resignedIn: true };
+  }
+
+  const tokens = await signInAgainstFakeProvider();
   const id = randomUUID() as ExternalServiceCredentialsId;
   await qb
     .insertInto('external_service_credentials')
@@ -94,7 +120,7 @@ export async function ensureDevLoopDropboxCredential(input: { teamId: string }):
       team_id: input.teamId as TeamId,
     } as never)
     .execute();
-  return { id, created: true };
+  return { id, created: true, resignedIn: false };
 }
 
 async function devLoopDropboxCredentialIds(teamId: string): Promise<string[]> {

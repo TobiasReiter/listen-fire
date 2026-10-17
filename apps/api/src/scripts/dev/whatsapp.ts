@@ -100,6 +100,38 @@ function wa_reply(m: <wa-[:\`Message\`]->>) {
 listen to wa {} fire wa_reply
 `;
 
+// Reads a document attached to the message through the file-text seam (a PDF's
+// text layer needs no OCR) and posts what it says. Proof of the document path:
+// `pnpm dev:inject whatsapp --media --media-type document`, then `dev:inspect slack`.
+const WHATSAPP_DOCUMENT_MOVEMENT = `
+import { whatsapp, slack } from adapters
+import { \`Dev Loop Slack\` } from credentials
+
+wa   = connect whatsapp
+chat = connect slack using \`Dev Loop Slack\`
+
+node ExtractedShape: "the relevant information in the content" {
+  node company: "each company named in the attached document" {
+    name: <text> "the company's name"
+    round: <text> "the funding round and amount the document names, if any"
+  }
+}
+
+function wa_document_intake(m: <wa-[:\`Message\`]->>) {
+  found = extractOne([m-[:Attachments]->.\`File\`], ExtractedShape)
+  if (found != null) {
+    found-[c:company]-> {
+      chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
+        write ch-[:Messages]-> {
+          Message: "WhatsApp document: \${c.name} \${c.round}"
+        }
+      }
+    }
+  }
+}
+
+listen to wa {} fire wa_document_intake
+`;
 
 /** Idempotently map `phone` → the dev-loop user so `resolveSenderTeam` finds a
  *  team for the inbound sender. */
@@ -157,6 +189,7 @@ async function main() {
   const programs = [
     { source: WHATSAPP_INTAKE_MOVEMENT },
     { source: WHATSAPP_REPLY_MOVEMENT },
+    { source: WHATSAPP_DOCUMENT_MOVEMENT },
   ];
   const movements = [];
   for (const program of programs) {

@@ -1476,6 +1476,14 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - An inbound pull cursor (a notify-then-pull source's) is kept only by the SQLite store; a
   Postgres store refuses it, because the hosted product keeps it on a webhook subscription row lf
   has no counterpart for.
+### ev4-cleanup
+- Dev loop: `pnpm dev:oauth setup` signs an existing Dropbox credential in again when the fake
+  OAuth provider no longer knows its refresh token (a fresh checkout, a reset), so the first
+  refresh after setup succeeds. An injected WhatsApp document is now a PDF with a text layer, and
+  `pnpm dev:whatsapp setup` also provisions `wa_document_intake`, which extracts from it.
+- `pnpm checks:corpus`: the reader pass over the still incomplete corpus no longer prints an
+  upgrade-rate failure (the floor is checked on the final pass), and the pinned test-only language
+  version 99 is accepted rather than warned about.
 
 ## [v0.11.0] - 2026-10-12
 
