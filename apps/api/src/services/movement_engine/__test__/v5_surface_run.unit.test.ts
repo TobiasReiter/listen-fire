@@ -274,3 +274,26 @@ describe('count from version 5', () => {
     expect(recorded.at(-1)).toMatchObject({ engine: 'rust' });
   });
 });
+
+// From version 5 an empty or blank text reads as no number (JavaScript's
+// `Number("")` made it 0).
+describe('a number read from an empty text from version 5', () => {
+  const outcome = async (source: string, version: LanguageVersion): Promise<string> => {
+    try {
+      await runMovement(inputOf(source, version, `run-number-${version}`));
+      return 'ran';
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+  const v5 = V5(
+    '  empty = Number.parse("")',
+    '  blank = Number.parse("  ")',
+    '  fail("read ${empty == null} ${blank == null} ${Number.parse(" 12 ")}")',
+  );
+
+  it('reads null end to end on the Rust engine', async () => {
+    expect(await outcome(v5, 5)).toContain('read true true 12');
+    expect(recorded.at(-1)).toMatchObject({ engine: 'rust' });
+  });
+});
