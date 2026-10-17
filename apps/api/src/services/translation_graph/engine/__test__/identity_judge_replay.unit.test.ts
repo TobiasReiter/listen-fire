@@ -257,10 +257,10 @@ function handCases(): ReplayCase[] {
     { name: 'empty asserted record renders (no fields)', env: {}, operation: 'judge', input: { ...base, asserted: { a: null, b: '' } }, model: [verdict(0, 0.9)], jev: [] },
     { name: 'arbitrate: one exact candidate needs no model', env: {}, operation: 'arbitrate', input: { ...base, constraints: { any: [{ all: [{ field: 'domain' }] }] } }, model: [], jev: [] },
     { name: 'arbitrate: lone fuzzy goes to the judge', env: {}, operation: 'arbitrate', input: { ...base, candidates: [two[1]], constraints: { any: [{ all: [{ field: 'domain', fuzzy: true }] }] } }, model: [verdict(null, 0.99)], jev: [] },
-    { name: 'arbitrate: judge unavailable is reported', env: {}, operation: 'arbitrate', input: { ...base, constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] } }, model: [{ throws: 'overloaded' }], jev: [] },
+    { name: 'arbitrate: judge unavailable is reported', env: {}, operation: 'arbitrate', input: { ...base, asserted: { name: 'Acme Inc', domain: 'x.com' }, constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] } }, model: [{ throws: 'overloaded' }], jev: [] },
     { name: 'arbitrate: lone candidate under exact-only constraints', env: {}, operation: 'arbitrate', input: { ...base, candidates: [two[1]], constraints: { any: [{ all: [{ field: 'company' }] }] } }, model: [], jev: [] },
-    { name: 'metered: judge answer is wrapped', env: {}, operation: 'metered', input: { ...base, constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] } }, model: [verdict(0, 0.9)], jev: [] },
-    { name: 'metered: unavailable judge is carried', env: {}, operation: 'metered', input: { ...base, constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] } }, model: [{ throws: 'boom' }], jev: [] },
+    { name: 'metered: judge answer is wrapped', env: {}, operation: 'metered', input: { ...base, asserted: { name: 'Acme Inc', domain: 'x.com' }, constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] } }, model: [verdict(0, 0.9)], jev: [] },
+    { name: 'metered: unavailable judge is carried', env: {}, operation: 'metered', input: { ...base, asserted: { name: 'Acme Inc', domain: 'x.com' }, constraints: { any: [{ all: [{ field: 'name', fuzzy: true }] }] } }, model: [{ throws: 'boom' }], jev: [] },
   ];
 }
 

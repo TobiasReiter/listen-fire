@@ -2995,8 +2995,8 @@
     "operation": "arbitrate",
     "input": {
       "asserted": {
-        "name": "Acme",
-        "domain": "acme.com"
+        "name": "Acme Inc",
+        "domain": "x.com"
       },
       "candidates": [
         {
@@ -3040,11 +3040,20 @@
     "jev": [],
     "expected": {
       "outcome": {
-        "result": 0
+        "result": null
       },
-      "modelCalls": [],
+      "modelCalls": [
+        {
+          "name": "tg_entity_match",
+          "model": "claude-sonnet-5",
+          "system": "You are an entity resolution system for a data sync pipeline.\n\nA translation graph wants to write a record to a target system. The target system already\ncontains one or more candidate records that may represent the same real-world entity as\nthe asserted record. Decide which (if any) of the candidates IS the same entity.\n\nConsider property values: names, identifiers, domains, emails, dates. Names may differ\nslightly between systems (e.g. \"Acme Corp\" vs \"Acme Corporation\") — but if the\ndistinguishing fields (domain, email, primary contact) disagree, the candidates are\ndifferent entities even when names match closely.\n\nIf multiple candidates look like the same entity as each other, that's a pre-existing\nduplicate problem in the target system. Pick the candidate that best matches the\nasserted record and flag it via reasoning — don't decline just because the target system\nis messy.\n\nIf genuinely uncertain (none of the candidates clearly matches; multiple look equally\nplausible with no tiebreaker), return null. The pipeline will create a new record\nrather than risk an incorrect merge.\n\nRespond with: {\"match_index\": <number or null>, \"confidence\": <0-1>, \"reasoning\": \"<explanation>\"}",
+          "user": "Record type: company\n\nAsserted record:\n- name: Acme Inc\n- domain: x.com\n\nCandidates:\n[Candidate 0]\n- name: Acme\n- domain: acme.com\n\n[Candidate 1]\n- name: Acme Corp\n- domain: acme.io"
+        }
+      ],
       "jevCalls": [],
-      "unavailable": []
+      "unavailable": [
+        "overloaded"
+      ]
     }
   },
   {
@@ -3097,8 +3106,8 @@
     "operation": "metered",
     "input": {
       "asserted": {
-        "name": "Acme",
-        "domain": "acme.com"
+        "name": "Acme Inc",
+        "domain": "x.com"
       },
       "candidates": [
         {
@@ -3151,7 +3160,14 @@
           "cost": []
         }
       },
-      "modelCalls": [],
+      "modelCalls": [
+        {
+          "name": "tg_entity_match",
+          "model": "claude-sonnet-5",
+          "system": "You are an entity resolution system for a data sync pipeline.\n\nA translation graph wants to write a record to a target system. The target system already\ncontains one or more candidate records that may represent the same real-world entity as\nthe asserted record. Decide which (if any) of the candidates IS the same entity.\n\nConsider property values: names, identifiers, domains, emails, dates. Names may differ\nslightly between systems (e.g. \"Acme Corp\" vs \"Acme Corporation\") — but if the\ndistinguishing fields (domain, email, primary contact) disagree, the candidates are\ndifferent entities even when names match closely.\n\nIf multiple candidates look like the same entity as each other, that's a pre-existing\nduplicate problem in the target system. Pick the candidate that best matches the\nasserted record and flag it via reasoning — don't decline just because the target system\nis messy.\n\nIf genuinely uncertain (none of the candidates clearly matches; multiple look equally\nplausible with no tiebreaker), return null. The pipeline will create a new record\nrather than risk an incorrect merge.\n\nRespond with: {\"match_index\": <number or null>, \"confidence\": <0-1>, \"reasoning\": \"<explanation>\"}",
+          "user": "Record type: company\n\nAsserted record:\n- name: Acme Inc\n- domain: x.com\n\nCandidates:\n[Candidate 0]\n- name: Acme\n- domain: acme.com\n\n[Candidate 1]\n- name: Acme Corp\n- domain: acme.io"
+        }
+      ],
       "jevCalls": [],
       "unavailable": []
     }
@@ -3162,8 +3178,8 @@
     "operation": "metered",
     "input": {
       "asserted": {
-        "name": "Acme",
-        "domain": "acme.com"
+        "name": "Acme Inc",
+        "domain": "x.com"
       },
       "candidates": [
         {
@@ -3208,11 +3224,19 @@
     "expected": {
       "outcome": {
         "result": {
-          "index": 0,
+          "index": null,
+          "judgeUnavailable": "boom",
           "cost": []
         }
       },
-      "modelCalls": [],
+      "modelCalls": [
+        {
+          "name": "tg_entity_match",
+          "model": "claude-sonnet-5",
+          "system": "You are an entity resolution system for a data sync pipeline.\n\nA translation graph wants to write a record to a target system. The target system already\ncontains one or more candidate records that may represent the same real-world entity as\nthe asserted record. Decide which (if any) of the candidates IS the same entity.\n\nConsider property values: names, identifiers, domains, emails, dates. Names may differ\nslightly between systems (e.g. \"Acme Corp\" vs \"Acme Corporation\") — but if the\ndistinguishing fields (domain, email, primary contact) disagree, the candidates are\ndifferent entities even when names match closely.\n\nIf multiple candidates look like the same entity as each other, that's a pre-existing\nduplicate problem in the target system. Pick the candidate that best matches the\nasserted record and flag it via reasoning — don't decline just because the target system\nis messy.\n\nIf genuinely uncertain (none of the candidates clearly matches; multiple look equally\nplausible with no tiebreaker), return null. The pipeline will create a new record\nrather than risk an incorrect merge.\n\nRespond with: {\"match_index\": <number or null>, \"confidence\": <0-1>, \"reasoning\": \"<explanation>\"}",
+          "user": "Record type: company\n\nAsserted record:\n- name: Acme Inc\n- domain: x.com\n\nCandidates:\n[Candidate 0]\n- name: Acme\n- domain: acme.com\n\n[Candidate 1]\n- name: Acme Corp\n- domain: acme.io"
+        }
+      ],
       "jevCalls": [],
       "unavailable": []
     }
