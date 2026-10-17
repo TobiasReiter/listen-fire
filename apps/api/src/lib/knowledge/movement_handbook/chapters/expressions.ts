@@ -204,20 +204,19 @@ roster = [
   { Name: "Alan",  Theme: "Health" },
 ]
 
-themes = Text.join(map(roster, (r) => "\${r.Name} (\${r.Theme})"), ", ")
-
-node Mention: "each company named, weighed against the team's own themes: \${themes}" {
+node Mention: "each company named, weighed against the team's own themes" {
   name: <text> "the company's name"
 }
 
 function \`Match Mentions\`(m: <inbox-[:Email]->>) {
+  themes = Text.join(map(roster, (r) => "\${r.Name} (\${r.Theme})"), ", ")
   byName = List.keyBy(roster, (r) => r.Name)
   found  = extract([m.Body], Mention)
 
   owner = byName.Ada
   if (owner == null) { fail("no such teammate on the roster") }
   map(found, (c) => {
-    write crm-[:Companies]-> { unique by (FUZZY Name), Name: c.name, Description ?: "flagged by \${owner.Name}" }
+    write crm-[:Companies]-> { unique by (FUZZY Name), Name: c.name, Description ?: "flagged by \${owner.Name}; team themes: \${themes}" }
   })
 }
 \`\`\`
@@ -325,7 +324,7 @@ pieces = Text.chunks(coalesce(text, ""), { size: 40000, overlap: 2000 })
 - \`extract(pieces, Shape)\` is one extraction reading every piece; \`map(pieces, (p) => extract([p], Shape))\` is one per piece (extraction, *long-documents*).`,
   engineClaims: [
     {
-      construct: 'a file-scope table of dict-literal rows, map + Text.join into an extraction description, List.keyBy as a lookup',
+      construct: 'a file-scope table of dict-literal rows, map + Text.join inside the function body, List.keyBy as a lookup',
       status: 'runs',
       probe: `
 import { \`@lf/email\` as email, \`@lf/attio\` as attio } from adapters
@@ -340,20 +339,19 @@ roster = [
   { Name: "Alan",  Theme: "Health" },
 ]
 
-themes = Text.join(map(roster, (r) => "\${r.Name} (\${r.Theme})"), ", ")
-
-node Mention: "each company named, weighed against the team's own themes: \${themes}" {
+node Mention: "each company named, weighed against the team's own themes" {
   name: <text> "the company's name"
 }
 
 function \`Match Mentions\`(m: <inbox-[:Email]->>) {
+  themes = Text.join(map(roster, (r) => "\${r.Name} (\${r.Theme})"), ", ")
   byName = List.keyBy(roster, (r) => r.Name)
   found  = extract([m.Body], Mention)
 
   owner = byName.Ada
   if (owner == null) { fail("no such teammate on the roster") }
   map(found, (c) => {
-    write crm-[:Companies]-> { unique by (FUZZY Name), Name: c.name, Description ?: "flagged by \${owner.Name}" }
+    write crm-[:Companies]-> { unique by (FUZZY Name), Name: c.name, Description ?: "flagged by \${owner.Name}; team themes: \${themes}" }
   })
 }
 `,

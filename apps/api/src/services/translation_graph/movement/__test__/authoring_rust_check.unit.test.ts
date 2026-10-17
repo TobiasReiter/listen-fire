@@ -99,6 +99,15 @@ describe('validation by the checker the run is held to', () => {
     });
   }
 
+  it('refuses a file-level call once, as MOV_FILE_VALUE_RUNS, from version 5; version 4 keeps the engine note', () => {
+    const source = 'import { fetch_url } from plugins\npage = fetch_url(url: "https://example.com")\n';
+    const v5 = diagnose(source, 5, true).validation.diagnostics.map((d) => d.code);
+    expect(v5).toContain('MOV_FILE_VALUE_RUNS');
+    expect(v5).not.toContain('MOV_ENGINE_UNSUPPORTED');
+    const v4 = diagnose(source, 4, true).validation.diagnostics.map((d) => d.code);
+    expect(v4).toContain('MOV_ENGINE_UNSUPPORTED');
+  });
+
   it('keeps the TypeScript checker for version 4, the snapshot in hand', () => {
     const { validation, checkers: used } = diagnose(programs['an unknown field'] ?? '', 4, true);
     expect(used).toEqual({ rust: 0, typescript: 1 });

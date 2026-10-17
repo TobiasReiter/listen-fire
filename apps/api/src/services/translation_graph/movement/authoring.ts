@@ -194,9 +194,10 @@ export function diagnoseMovementSource(
     };
   }
 
+  const checkedInRust = options.snapshot !== undefined && since(languageVersion, RUST_ENGINE_FROM_VERSION);
   const upgrading = options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {};
   const collected: Diagnostic[] = [
-    ...(options.snapshot !== undefined && since(languageVersion, RUST_ENGINE_FROM_VERSION)
+    ...(checkedInRust
       ? checkSourceInRust(source, options.snapshot, { languageVersion, ...upgrading })
       : checkProgram(program, options.catalog, {
           languageVersion,
@@ -218,6 +219,9 @@ export function diagnoseMovementSource(
     languageVersion,
     ...(options.resolveFile !== undefined ? { resolveFile: options.resolveFile } : {}),
   })) {
+    // From v5 the Rust checker refuses a file-level call as MOV_FILE_VALUE_RUNS,
+    // which says why and what to do; the scan's note would only repeat it.
+    if (checkedInRust && construct === 'file-level calls') continue;
     collected.push({
       code: 'MOV_ENGINE_UNSUPPORTED',
       message: `the engine does not support ${construct} yet — remove it to save this file live`,
