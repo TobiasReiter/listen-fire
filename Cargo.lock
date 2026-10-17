@@ -561,18 +561,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "jsonrepair"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbd084aab201d699b6da54bc10fbedf1ab92c984eeb306d40546fa675184ec06"
-dependencies = [
- "memchr",
- "thiserror",
-]
-
-[[package]]
-name = "lf-host"
-version = "0.1.0"
+name = "lf"
+version = "0.11.0"
 dependencies = [
  "base64",
  "bytes",
@@ -583,7 +573,6 @@ dependencies = [
  "hyper-util",
  "indexmap",
  "jiff",
- "jsonrepair",
  "movement-checker",
  "movement-engine",
  "movement-parser",
@@ -1139,26 +1128,6 @@ name = "synstructure"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "thiserror"
-version = "2.0.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "2.0.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",

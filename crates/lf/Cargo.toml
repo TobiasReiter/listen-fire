@@ -1,0 +1,68 @@
+[package]
+name = "lf"
+# The release version: a tag lf-v<version> must name it (lf-release.yml
+# refuses a tag that does not), and `lf --version` prints it.
+version = "0.11.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+description = "The local run host as one Rust binary: the `lf` command (plans/cloud-native-2026-10-06/22_everywhere_plan.md #7)."
+
+# A native binary only: the WASM build names its packages (-p movement-engine,
+# -p movement-parser), so this crate and its dependencies never enter it.
+[[bin]]
+name = "lf"
+path = "src/main.rs"
+
+[dependencies]
+movement-parser = { path = "../movement-parser" }
+# The checker with its native zone database: the same one the engine's
+# artifact answers zones from.
+movement-checker = { path = "../movement-checker" }
+# The engine, natively: a segment runs in this process, its requests served
+# by the run host here (src/segment.rs), with the native environment
+# services (zones, URLs, Unicode data) the engine's default feature links.
+movement-engine = { path = "../movement-engine" }
+serde = { version = "1", features = ["derive"] }
+# As the parser's. `preserve_order` must stay off: features unify across the
+# workspace, and the parser's sorted output depends on it being off.
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
+serde_yaml = "0.9"
+# Objects in insertion order (src/json.rs).
+indexmap = "2"
+# Single-threaded: one host process, one thread, every wait an await.
+tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "io-std", "net", "time", "signal", "sync"] }
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+# The inbound doors' signature schemes, and a callback id's base64url.
+hmac = "0.13"
+base64 = "0.22"
+http-body-util = "0.1"
+bytes = "1"
+# SQLite linked in, so the binary needs no system library.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# The run host's Postgres backend (src/pg_store.rs): the hosted product's
+# automations tables. Every value crosses as text, so no type features.
+tokio-postgres = "0.7"
+# Random bytes: a callback id (`newCallbackId`), and a sign-in's state and
+# PKCE verifier (src/oauth2.rs).
+getrandom = "0.4"
+uuid = { version = "1", features = ["v4"] }
+# A park's library text is named by its sha-256 (`parkSources`).
+sha2 = "0.11"
+# The engine's pin: ISO instants written as `Date.toISOString` writes them.
+jiff = { version = "=0.2.16", default-features = false, features = ["std"] }
+# HTTPS out (src/anthropic.rs to the model provider, src/http_out.rs to a
+# token endpoint): pure-Rust TLS on the system-free root set, so the binary
+# still needs no system library.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+# Secrets (src/oauth2.rs, src/oauth_redirect.rs): URLs parsed and query
+# strings written as WHATWG URL / URLSearchParams do, and the random state
+# and PKCE verifier of a sign-in.
+url = "2"
+
+[dev-dependencies]
+# Paused time: a test of the wall clock's grace runs in no time.
+tokio = { version = "1", features = ["test-util"] }

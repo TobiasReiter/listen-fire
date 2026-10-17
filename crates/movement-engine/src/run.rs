@@ -2793,11 +2793,15 @@ mod tests {
         let mut segment = crate::begin(&input.to_string()).unwrap();
         let mut seen = Vec::new();
         let mut step = segment.start().unwrap();
+        // Requests in flight together (a combinator's arms) are answered in
+        // the order they were made.
+        let mut outstanding = std::collections::VecDeque::new();
         loop {
             match step {
                 Step::Done(done) => return (done, seen),
                 Step::Pending(pending) => {
-                    let request = pending.into_iter().next().expect("one request at a time");
+                    outstanding.extend(pending);
+                    let request = outstanding.pop_front().expect("a request to answer");
                     let answer = crate::read_answer(&serve(&request).to_string()).unwrap();
                     seen.push(request.clone());
                     step = segment.answer(request.id, answer).unwrap();
@@ -3132,6 +3136,16 @@ mod tests {
         assert_eq!(code(limited(body, json!({ "maxCollectionItems": 1 }))), "MOVENG_LIMIT_COLLECTION_SIZE");
         let done = limited(body, json!({ "maxResultBytes": 10 }));
         assert_eq!(done["thrown"]["code"], json!("MOVENG_LIMIT_RESULT_SIZE"), "{done}");
+    }
+
+    /// An ordinary failure an `onError` would forgive is never reported in
+    /// place of a limit met beside it, so the limit is never forgiven.
+    #[test]
+    fn a_limit_met_in_one_arm_outranks_an_earlier_arms_forgivable_failure() {
+        let body = "  a = \"xxxx\"\n  r = map([1], (n) => {\n    both = all(() => {\n      fail(\"boom\")\n    }, () => {\n      return \"${a}${a}\"\n    })\n    return both\n  }, { onError: \"ignore\" })";
+        assert!(limited(body, json!({})).get("result").is_some(), "{}", limited(body, json!({})));
+        let done = limited(body, json!({ "maxTextBytes": 6 }));
+        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_LIMIT_TEXT_SIZE"), "{done}");
     }
 
     #[test]
@@ -3479,6 +3493,31 @@ mod tests {
         };
         assert!(!seen.iter().any(|s| s.starts_with("park.sink")), "{seen:?}");
         assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
+    }
+
+    /// What an adapter call's module answered it spent is charged at once:
+    /// the segment's next priced call already meets the cap it took the run to.
+    #[test]
+    fn an_adapter_calls_cost_counts_against_the_cap_within_the_segment() {
+        let source = "import { email } from adapters\nimport { fetchUrl } from plugins\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n  page = fetchUrl(s)\n}";
+        let mut catalog = serde_json::from_str::<Json>(CATALOG).unwrap();
+        catalog["plugins"] = json!({ "fetch_url": { "args": ["url"], "requiredArgs": ["url"], "priced": true, "output": { "kind": "value", "type": "text" } } });
+        let mut input = segment_input(source, json!(["o", []]), &[]);
+        input["catalog"] = catalog;
+        input["spend"] = json!({ "priorMicrodollars": 0, "capBaselineMicrodollars": 0, "capMicrodollars": 1_000 });
+        let fetched = RefCell::new(0);
+        let (done, _) = drive_input(input, |request| match (request.family, request.method.as_str()) {
+            ("adapters", "call") => json!({ "value": { "result": "Acme", "cost": [{ "source": "adapter:scraper", "microdollars": 1_500 }] } }),
+            ("llm.transforms", "invoke") => {
+                *fetched.borrow_mut() += 1;
+                json!({ "value": wire(json!({ "text": "page" })) })
+            }
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+            _ => plain_host(json!({}))(request),
+        });
+        assert_eq!(*fetched.borrow(), 0, "the priced call was refused: {done}");
+        assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1500.0 }), "{done}");
+        assert_eq!(done["cost"], json!([{ "source": "adapter:scraper", "microdollars": 1500.0 }]), "{done}");
     }
 
     /// A run that meets its cost cap pauses before the statement that would

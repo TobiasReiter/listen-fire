@@ -677,7 +677,7 @@ impl Run<'_> {
                 ));
             }
             // Closed over the head's own scope, once for the hop.
-            let pushdown = self.pushdown_args(step, &read, scope, span).await;
+            let pushdown = self.pushdown_args(step, &read, scope, span).await?;
             let mut next = Vec::new();
             for (aliases, cursor) in &paths {
                 let kept = self.fetch(&cursor.position(), step, &read, Fetch { pushdown: &pushdown, paged: read.streams }, scope, span).await?;
@@ -917,7 +917,7 @@ impl Run<'_> {
                 &format!("source adapter '{}' cannot traverse incoming edges", read.adapter_type),
             ));
         }
-        let pushdown = self.pushdown_args(step, &read, scope, span).await;
+        let pushdown = self.pushdown_args(step, &read, scope, span).await?;
         let kept = self.fetch(start, step, &read, Fetch { pushdown: &pushdown, paged: read.streams }, scope, span).await?;
         self.ordered(kept, step, scope, span).await
     }
@@ -925,10 +925,10 @@ impl Run<'_> {
     /// What one hop's fetch is asked beyond its edge (`closedHopPushdown`):
     /// its WHERE closed over the scope, its ORDER BY and LIMIT where they go
     /// with it.
-    async fn pushdown_args(&self, step: &EdgeStep, read: &Read, scope: &Rc<Scope>, span: &Js) -> Vec<(String, Js)> {
+    async fn pushdown_args(&self, step: &EdgeStep, read: &Read, scope: &Rc<Scope>, span: &Js) -> Result<Vec<(String, Js)>, Failure> {
         let pushdown = order_limit::hop_pushdown(step);
-        let substitutions = self.closed_over(&pushdown, step, read, scope, span).await;
-        pushdown.members(&substitutions)
+        let substitutions = self.closed_over(&pushdown, step, read, scope, span).await?;
+        Ok(pushdown.members(&substitutions))
     }
 
     /// One hop's fetch from `start`, through the read wrapper's `getRelated`
@@ -1036,7 +1036,7 @@ impl Run<'_> {
     /// with its pushdown, every record it answered (the gate and the WHERE
     /// are the caller's).
     pub(crate) async fn related(&self, start: &Js, step: &EdgeStep, read: &Rc<Read>, scope: &Rc<Scope>, span: &Js) -> Result<Vec<Rc<Landed>>, Failure> {
-        let pushdown = self.pushdown_args(step, read, scope, span).await;
+        let pushdown = self.pushdown_args(step, read, scope, span).await?;
         let mut args = vec![("fieldId", Js::str(step.edge_type_id.clone())), ("direction", Js::str(direction_text(step.direction)))];
         args.extend(pushdown.iter().map(|(k, v)| (k.as_str(), v.clone())));
         Ok(self
@@ -1105,7 +1105,8 @@ impl Run<'_> {
     /// the hop's own record stays a reference — its alias, a bare field, a
     /// bare name on an edge that can carry inline properties — as does
     /// anything not bound to a scalar, an ambient, and a read that fails
-    /// here (the engine reads it again per record and reports it there).
+    /// here (the engine reads it again per record and reports it there) —
+    /// except a limit met, which ends the segment here.
     async fn closed_over<'s>(
         &self,
         pushdown: &order_limit::Pushdown<'s>,
@@ -1113,8 +1114,8 @@ impl Run<'_> {
         read: &Read,
         scope: &Rc<Scope>,
         span: &Js,
-    ) -> Vec<Substitution<'s>> {
-        let Some(where_) = pushdown.where_ else { return Vec::new() };
+    ) -> Result<Vec<Substitution<'s>>, Failure> {
+        let Some(where_) = pushdown.where_ else { return Ok(Vec::new()) };
         let bound = |name: &str| -> Option<Js> {
             if step.alias.as_deref() == Some(name) {
                 return None;
@@ -1137,6 +1138,7 @@ impl Run<'_> {
                     Some(root) if step.alias.as_deref() != Some(root.as_str()) => {
                         match self.evaluate_in(leaf, scope, Some(span.clone()), None).await {
                             Ok(evaluated) => order_limit::pushable_scalar(&evaluated.value),
+                            Err(Stop::Thrown(Failure::Limit(limit))) => return Err(Failure::Limit(limit)),
                             Err(_) => None,
                         }
                     }
@@ -1148,7 +1150,7 @@ impl Run<'_> {
                 substitutions.push(Substitution { leaf, value });
             }
         }
-        substitutions
+        Ok(substitutions)
     }
 
     /// `hopFilterKeeps`: the WHERE over one landed record, the hop's alias
@@ -1244,7 +1246,7 @@ impl Run<'_> {
                     &format!("source adapter '{}' cannot traverse incoming edges", read.adapter_type),
                 ));
             }
-            let pushdown = self.pushdown_args(step, read, scope, span).await;
+            let pushdown = self.pushdown_args(step, read, scope, span).await?;
             let mut next = Vec::new();
             for cursor in &landed {
                 let kept = self.fetch(&cursor.position(), step, read, Fetch { pushdown: &pushdown, paged: false }, scope, span).await?;

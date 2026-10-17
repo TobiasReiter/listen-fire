@@ -239,7 +239,7 @@ impl Run<'_> {
         let request = host::park::commit_await_park(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?, CALLBACK_AWAIT_TYPE, &key);
         self.ask(request).await.map_err(Stop::Thrown)?;
         let again = self.first_matching_call(&id, filter, scope).await.map(|call| call.is_some());
-        self.wake_if_resolved(CALLBACK_AWAIT_TYPE, &key, again).await;
+        self.wake_if_resolved(CALLBACK_AWAIT_TYPE, &key, again).await?;
         self.trace(TraceEntry::Gate { outcome: false });
         Err(Stop::Parked(address))
     }
@@ -292,7 +292,8 @@ impl Run<'_> {
     /// more now that the park is durable; resolved, the run is woken. A
     /// re-check that cannot answer leaves the run parked, and a wake that
     /// cannot be queued leaves the park as durable as before: both logged.
-    async fn wake_if_resolved(&self, adapter_type: &str, key: &Json, resolved: Result<bool, Stop>) {
+    /// A re-check that met a limit ends the segment, as a limit anywhere does.
+    async fn wake_if_resolved(&self, adapter_type: &str, key: &Json, resolved: Result<bool, Stop>) -> Result<(), Stop> {
         let fields = |error: Option<String>| {
             let mut fields = serde_json::Map::new();
             fields.insert("adapterType".into(), Json::String(adapter_type.into()));
@@ -303,6 +304,7 @@ impl Run<'_> {
             fields
         };
         match resolved {
+            Err(stop @ Stop::Thrown(Failure::Limit(_))) => return Err(stop),
             Err(stop) => {
                 self.log_with_team("error", "[MovementEngine] await re-check after parking failed; the run stays parked without a wake", fields(Some(stop_message(&stop))), "correlationKey");
             }
@@ -313,6 +315,7 @@ impl Run<'_> {
                 }
             }
         }
+        Ok(())
     }
 
     /// The await on a written record's edge (`interpretAwait`'s signal wake
@@ -401,7 +404,7 @@ impl Run<'_> {
                 let request = host::park::commit_await_park(self.segment(), &address, self.encode(&state).map_err(Stop::Thrown)?, &parked_type, &key);
                 self.ask(request).await.map_err(Stop::Thrown)?;
                 let again = self.check_landing(&raw, &adapter_type, &point, filter, scope).await.map(|checked| !matches!(checked, Checked::Wait(_)));
-                self.wake_if_resolved(&parked_type, &key, again).await;
+                self.wake_if_resolved(&parked_type, &key, again).await?;
                 self.trace(TraceEntry::Gate { outcome: false });
                 Err(Stop::Parked(address))
             }

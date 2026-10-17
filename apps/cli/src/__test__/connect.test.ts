@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -445,4 +445,16 @@ test('lf credential refuses to write a credential from the environment, which is
   const taken = await lf(dir, ['credential', 'add', '--module', 'acme_crm', 'envy'], { env, answers: ['x', ''] }).done;
   assert.equal(taken.code, 1);
   assert.match(taken.out, /already a credential "envy"/);
+});
+
+test('lf connect of a core module with no settings (@lf/judge, @lf/local-files) writes no secrets entry', () => {
+  const dir = project(STATIC, 'acme:\n  external: acme_crm\n  token: t\n');
+  const before = readFileSync(join(dir, '.lf/secrets.yaml'), 'utf8');
+  for (const module of ['@lf/judge', '@lf/local-files']) {
+    const [command, args] = lfCommand(['connect', module]);
+    const run = spawnSync(command, args, { cwd: dir, encoding: 'utf8', input: '', env: { ...process.env, NODE_NO_WARNINGS: '1' } });
+    assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+    assert.match(run.stdout, new RegExp(`connected ${module}: it has no settings to keep`));
+  }
+  assert.equal(readFileSync(join(dir, '.lf/secrets.yaml'), 'utf8'), before);
 });

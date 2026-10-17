@@ -34,7 +34,9 @@ lf and the TypeScript host read each engine limit from the environment, as they 
 ## How each is kept
 
 - **Steps are the CPU bound.** The engine reads no clock (it runs as WASM, and must stay deterministic), so it counts work instead: one step per statement, one per expression evaluated. Members of a collection op are expressions, so a loop over a list pays per member.
-- **The wall clock is the host's.** The engine hands control back to its host at every statement (the cancel gate asks the host). So the host checks its deadline between requests, and the step budget bounds the work between two of them. Past the deadline the host serves nothing more and answers the engine nothing more. The requests already at the host finish first, so a write is never cut off half-sent to its module; then the segment fails.
+- **The wall clock is the host's.** The engine hands control back to its host at every statement (the cancel gate asks the host). So the host checks its deadline between requests, and the step budget bounds the work between two of them. Past the deadline the host feeds the engine nothing more, and no write is cut off half-sent; then the segment fails.
+  - lf: what is still in flight gets a five-second grace to finish. After the grace, a read or a model call still waiting is dropped, and a write to an external system (a record created, updated, deleted, linked or unlinked, or an event subscription changed) is waited for to its end.
+  - The TypeScript host: the requests already at the host finish first.
 - **Sizes are checked on every value an expression produces.** A value is checked for its own size, not its members' (each member was checked when it was produced). So a text doubled in a loop fails as soon as it passes the limit.
 - **The result size is checked once, as the segment ends.** It replaces the result with the limit error; the cost lines still go back, because that money is spent.
 - **Call depth was already there.** Only named calls nest; an expression makes no call.

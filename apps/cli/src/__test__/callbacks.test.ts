@@ -109,3 +109,65 @@ test('lf cancel: a parked run is settled failed with the reason, and its callbac
   assert.equal(twice.code, 1, twice.out);
   assert.match(twice.out, /is failed; there is nothing to cancel/);
 });
+
+/** Another lf process stepping the run, as the state file records it: the
+ *  run's lease, held until `release` is called. */
+function holdLease(dir: string, runId: string): { release(): void } {
+  const db = new DatabaseSync(join(dir, '.lf', 'state.db'));
+  const held = db.prepare("update run set lease_token = 'another-lf', lease_until = '2999-01-01T00:00:00.000Z' where id = ? and lease_token is null").run(runId);
+  assert.equal(held.changes, 1, 'the run was free to lease');
+  return {
+    release() {
+      db.prepare("update run set lease_token = null, lease_until = null where id = ? and lease_token = 'another-lf'").run(runId);
+      db.close();
+    },
+  };
+}
+
+function runStatus(dir: string, runId: string): string | undefined {
+  const db = new DatabaseSync(join(dir, '.lf', 'state.db'));
+  try {
+    return (db.prepare('select status from run where id = ?').get(runId) as { status: string } | undefined)?.status;
+  } finally {
+    db.close();
+  }
+}
+
+test('lf call while another lf process holds the run: the call is recorded, its body waits, and the next resume runs it', () => {
+  const dir = project('callback');
+  const runId = runIdOf(lf(dir, 'run', '--event', 'events/company_created.json').out);
+  const { id } = minted(dir);
+  const lease = holdLease(dir, runId);
+  try {
+    const called = lf(dir, 'call', id, '--body', values(dir, 'note.json', { note: 'later' }));
+    assert.equal(called.code, 0, called.out);
+    assert.match(called.out, /being stepped by another lf process/);
+    assert.equal(companies(dir).length, 1, 'no body yet');
+  } finally {
+    lease.release();
+  }
+  const resumed = lf(dir, 'resume');
+  assert.equal(resumed.code, 0, resumed.out);
+  assert.deepEqual(companies(dir).slice(1), ['Body later', 'Approved later']);
+});
+
+test('lf cancel of a run another process is stepping: the request is recorded for its holder, and the next segment stops at its first statement', () => {
+  const dir = project('callback');
+  const runId = runIdOf(lf(dir, 'run', '--event', 'events/company_created.json').out);
+  const lease = holdLease(dir, runId);
+  try {
+    const requested = lf(dir, 'cancel', runId);
+    assert.equal(requested.code, 0, requested.out);
+    assert.match(requested.out, /cancel requested; another lf process is stepping it/);
+    assert.equal(runStatus(dir, runId), 'parked', 'the holder settles it, not the canceller');
+  } finally {
+    lease.release();
+  }
+  // A segment entered now (the callback's body) is stopped by the engine at
+  // its first statement, before the body writes, and the run settles failed.
+  const called = lf(dir, 'call', minted(dir).id, '--body', values(dir, 'note.json', { note: 'too late' }));
+  assert.equal(called.code, 1, called.out);
+  assert.match(called.out, /callback:approve failed — 0 write\(s\)/);
+  assert.equal(companies(dir).length, 1, `the body wrote nothing: ${JSON.stringify(companies(dir))}`);
+  assert.match(lf(dir, 'runs').out, new RegExp(`${runId} .* callback:approve failed`), called.out);
+});

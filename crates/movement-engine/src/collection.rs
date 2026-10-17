@@ -503,7 +503,7 @@ impl Run<'_> {
                     }
                     Err(other) => {
                         let mut failure = failure.borrow_mut();
-                        if failure.as_ref().is_none_or(|(earliest, _)| index < *earliest) {
+                        if failure.as_ref().is_none_or(|(earliest, held)| reported_over(&other, index, held, *earliest)) {
                             *failure = Some((index, other));
                         }
                     }
@@ -816,6 +816,19 @@ pub(crate) fn is_member_failure(failure: &Failure) -> bool {
         Failure::Engine { .. } => true,
         Failure::Host(error) => !matches!(error.detail.get("name").and_then(serde_json::Value::as_str), Some("AdapterCallCeilingExceeded" | "RunLeaseLost" | "RunCancelledSignal")),
         Failure::CapExceeded(_) | Failure::CallDepth { .. } | Failure::Limit(_) => false,
+    }
+}
+
+/// Whether `new`, of the member (or arm) at `new_at`, is the failure an op
+/// reports over `held`, of the one at `held_at`: a limit met outranks any
+/// other failure, since nothing may forgive it and an ordinary failure
+/// reported in its place could be; otherwise the earliest one's.
+pub(crate) fn reported_over(new: &Stop, new_at: usize, held: &Stop, held_at: usize) -> bool {
+    let limit = |stop: &Stop| matches!(stop, Stop::Thrown(Failure::Limit(_)));
+    match (limit(new), limit(held)) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => new_at < held_at,
     }
 }
 

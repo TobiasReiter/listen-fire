@@ -342,9 +342,11 @@ type AdapterMethod =
 
 request: { segmentId: string; instance: string; method: AdapterMethod; args: object }
 answer:
-  | { result: unknown }
-  | { error: HostCallError & { kind: 'call_ceiling' | 'adapter_error' } }
+  | { result: unknown; cost?: CostLine[] }
+  | { error: HostCallError & { kind: 'call_ceiling' | 'adapter_error' }; cost?: CostLine[] }
 ```
+
+- **`cost`** is what the module answered the call spent on a paid service (its answer's `cost`, one `adapter:<label>` line per label), failed call or not. The engine charges it to its ledger as the answer arrives, so the segment's next priced call already meets the cap the call took the run to. A host that does not carry it charges the run's spend itself, which the cap sees from the next segment.
 
 - **`args` and `result`** are the adapter protocol's `params` and `result` for the method (`packages/engine-contracts/protocol.ts`, `METHODS`; prose in [`adapter-protocol.md`](adapter-protocol.md)). Three spellings are this boundary's own:
   - `describe` takes `{ typeId: string }`; a method with no input takes `{}`.

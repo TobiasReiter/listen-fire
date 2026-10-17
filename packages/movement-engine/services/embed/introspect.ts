@@ -1,7 +1,7 @@
 // What an embedder's catalog reads of a live adapter: its entry points and
 // each one's descriptor, projected into the checker's instance schema. The
 // hosted product caches this per install (instance_cache.ts) and lf asks each
-// external the same two questions (crates/lf-host check.rs); an embedder asks
+// external the same two questions (crates/lf check.rs); an embedder asks
 // them of the adapter it loaded in process.
 
 import type { InstanceSchema } from 'movement-lang';

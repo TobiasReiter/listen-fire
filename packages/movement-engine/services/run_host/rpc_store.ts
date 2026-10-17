@@ -2,7 +2,7 @@
 // (store.ts) forwarded over the process's stdin/stdout, one JSON-RPC 2.0
 // message per line. It is how the contract suite (contract.ts), written once
 // in TypeScript, holds a backend in another language to the same meaning —
-// `lf-host --contract-store <state.db>` (crates/lf-host) first.
+// `lf --contract-store <state.db>` (crates/lf) first.
 //
 // A method is `<family>.<method>` as `RunHostStore` names it, its params the
 // method's one input object, its result the method's answer; the callback

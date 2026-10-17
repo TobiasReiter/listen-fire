@@ -3,7 +3,7 @@
   "private": true,
   "license": "Apache-2.0",
   "version": "0.0.1",
-  "description": "Test harness for the `lf` binary (crates/lf-host): drives the built binary against the example project. Contains no lf runtime.",
+  "description": "Test harness for the `lf` binary (crates/lf): drives the built binary against the example project. Contains no lf runtime.",
   "engines": {
     "node": "22.20.0"
   },
