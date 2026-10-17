@@ -5905,11 +5905,6 @@ exports[`the cost cap in the Rust engine fails on the cap where the sink cannot 
           "remainingMicrodollars": 1000,
         },
       },
-      {
-        "budget": {
-          "remainingMicrodollars": -500,
-        },
-      },
     ],
     "attio": [
       [
@@ -6117,11 +6112,6 @@ exports[`the cost cap in the Rust engine fails on the cap where the sink cannot 
       {
         "budget": {
           "remainingMicrodollars": 1000,
-        },
-      },
-      {
-        "budget": {
-          "remainingMicrodollars": -500,
         },
       },
     ],
@@ -6770,11 +6760,6 @@ exports[`the cost cap in the Rust engine meets a cap the run has spent exactly, 
       {
         "budget": {
           "remainingMicrodollars": 1000,
-        },
-      },
-      {
-        "budget": {
-          "remainingMicrodollars": 0,
         },
       },
     ],
@@ -7439,13 +7424,7 @@ exports[`the cost cap in the Rust engine meets a cap the run has spent exactly, 
         },
       ],
     ],
-    "asked": [
-      {
-        "budget": {
-          "remainingMicrodollars": -200,
-        },
-      },
-    ],
+    "asked": [],
     "attio": [
       [
         "describe",
@@ -7676,11 +7655,6 @@ exports[`the cost cap in the Rust engine pauses at a capped PLAIN write whose se
       {
         "budget": {
           "remainingMicrodollars": 1000,
-        },
-      },
-      {
-        "budget": {
-          "remainingMicrodollars": -500,
         },
       },
     ],
@@ -8032,11 +8006,6 @@ exports[`the cost cap in the Rust engine pauses at the cap: the pause, suspensio
       {
         "budget": {
           "remainingMicrodollars": 1000,
-        },
-      },
-      {
-        "budget": {
-          "remainingMicrodollars": -500,
         },
       },
     ],
@@ -8592,13 +8561,7 @@ exports[`the cost cap in the Rust engine resumes from its operator what it suspe
         },
       ],
     ],
-    "asked": [
-      {
-        "budget": {
-          "remainingMicrodollars": -500,
-        },
-      },
-    ],
+    "asked": [],
     "attio": [
       [
         "describe",

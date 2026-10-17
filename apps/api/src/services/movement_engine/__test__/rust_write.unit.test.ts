@@ -1522,8 +1522,9 @@ describe('the cost cap in the Rust engine', () => {
     { adapterType: 'attio', externalId: 'co-1', data: { name: 'Acme Inc' } },
     { adapterType: 'attio', externalId: 'co-2', data: { name: 'Acme Labs' } },
   ];
-  /** A judge that spends `microdollars` a call, refused as the host's meter
-   *  refuses (lib/run_spend.rust): once the budget is spent, before it starts. */
+  /** A judge that spends `microdollars` a call and never refuses: the engine
+   *  itself refuses it once the run has spent its cap, so a host that ignores
+   *  the budget cannot be overspent (docs/contracts/run-limits.md). */
   const judge =
     (microdollars: number) =>
     (asked: unknown[]) =>
@@ -1531,13 +1532,6 @@ describe('the cost cap in the Rust engine', () => {
       input: Parameters<NonNullable<NonNullable<TestHostOverrides['llm']>['arbitrateEntities']>>[0],
     ) => {
       asked.push({ budget: input.budget });
-      const remaining = input.budget.remainingMicrodollars;
-      if (remaining !== null && remaining <= 0) {
-        return {
-          error: { kind: 'budget' as const, message: "this run's cost budget is spent" },
-          cost: [],
-        };
-      }
       return { index: 0, cost: [{ source: 'model:judge', microdollars }] };
     };
   const capped = (c: Partial<Case> = {}): Case => ({
@@ -1681,7 +1675,8 @@ describe('the cost cap in the Rust engine', () => {
       parkedAddress: 's2.b0.s0',
       spentMicrodollars: 1_500,
     });
-    expect(rust.asked).toHaveLength(2);
+    // The second judge is refused by the engine, never asked of the host.
+    expect(rust.asked).toHaveLength(1);
     expect(rust.limitPauses).toEqual([
       { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 },
     ]);
