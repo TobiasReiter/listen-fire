@@ -160,6 +160,21 @@ export function attioRoutes(store: EntityStore): Router {
     res.json({ data: members.map((m) => m.data) });
   });
 
+  r.get('/v2/workspace_members/:memberId', (req, res) => {
+    const member = store
+      .list(SVC, 'workspace_member')
+      .find((m) => (m.data.id as { workspace_member_id?: string } | undefined)?.workspace_member_id === req.params.memberId);
+    if (!member) return res.status(404).json({ status_code: 404, type: 'invalid_request_error', code: 'not_found', message: 'Workspace member not found' });
+    res.json({ data: member.data });
+  });
+
+  r.delete('/v2/objects/:objectId/records/:recordId', (req, res) => {
+    const key = `record:${req.params.objectId}`;
+    if (!store.get(SVC, key, req.params.recordId)) return res.status(404).json({ status_code: 404, code: 'not_found', message: 'Record not found' });
+    store.delete(SVC, key, req.params.recordId);
+    res.json({});
+  });
+
   // Records
   r.get('/v2/objects/:objectId/records/:recordId', (req, res) => {
     const record = store.get(SVC, `record:${req.params.objectId}`, req.params.recordId);
@@ -560,6 +575,10 @@ export function attioRoutes(store: EntityStore): Router {
   // Webhooks (no-op for test)
   r.post('/v2/webhooks', (_req, res) => {
     res.json({ data: { id: { workspace_id: 'test', webhook_id: 'fake' }, status: 'active', secret: 'fake-secret' } });
+  });
+
+  r.patch('/v2/webhooks/:webhookId', (req, res) => {
+    res.json({ data: { id: { workspace_id: 'test', webhook_id: req.params.webhookId }, status: 'active', subscriptions: req.body?.data?.subscriptions ?? [] } });
   });
 
   r.delete('/v2/webhooks/:webhookId', (_req, res) => {
