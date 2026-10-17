@@ -8,37 +8,55 @@
 // inbound.ts, consumed by its `preprocessInbound` and the shared-bot
 // classifier) — this provider carries only registration metadata.
 //
-// Verification (services/inbound/legacy_signature_headers.ts): Telegram doesn't
-// HMAC-sign webhooks, and a bring-your-own bot is registered without a secret
-// token, so its deliveries are accepted on the unguessable URL (the
-// bot-token-in-URL is itself the shared secret in Telegram's model).
+// Verification: the platform registers a team's own bot with a random
+// `secret_token` (stored as the subscription secret); the module's manifest
+// declares `telegram_secret_token`, so a delivery without it is refused.
+
+import { randomBytes } from 'node:crypto';
+import { z } from 'zod';
+
+import { TelegramClient } from '@lf/telegram/write';
 
 import type { WebhookProvider, WebhookRegistration } from './interface';
+import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
+
+import { decryptToken } from '../../../lib/credentials';
+import { getAutomationsQb } from '../../../lib/kysely';
 
 const telegramProvider: WebhookProvider = {
-  // Telegram webhooks are registered by calling the bot's own `setWebhook`
-  // method (an API call), so in principle this is auto-registerable. v1 keeps
-  // registration manual — the operator (or a future setup flow) calls
-  // setWebhook out of band — so we mirror the Slack manual stance.
-  canRegisterViaApi: false,
+  canRegisterViaApi: true,
 
   defaultEventTypes: ['message'],
 
-  setupInstructions: [
-    'Telegram webhooks are registered against your bot via the Bot API:',
-    '1. Create a bot with @BotFather and copy its token.',
-    '2. Call setWebhook with the Webhook URL above:',
-    '   https://api.telegram.org/bot<token>/setWebhook?url=<Webhook URL>',
-    '3. Telegram will POST an Update JSON to the URL for each message your bot receives.',
-  ].join('\n'),
+  async registerSubscription(input): Promise<WebhookRegistration> {
+    const client = await telegramClientFor(input.credentialsId);
+    const secret = randomBytes(32).toString('hex');
+    await client.setWebhook({ url: input.targetUrl, secretToken: secret });
+    return { secret };
+  },
 
-
-
-  async registerSubscription(): Promise<WebhookRegistration> {
-    // Manual mode — no source-issued id; the subscription is identified by its
-    // row id (the path segment in the webhook URL).
-    return { secret: '' };
+  async deregisterSubscription(input): Promise<void> {
+    const client = await telegramClientFor(input.credentialsId);
+    await client.deleteWebhook();
   },
 };
+
+const telegramCredential = z.object({
+  botToken: z.string().optional(),
+  baseUrl: z.string().url().optional(),
+});
+
+async function telegramClientFor(credentialsId: string): Promise<TelegramClient> {
+  const cred = await getAutomationsQb(['external_service_credentials'])
+    .selectFrom('external_service_credentials')
+    .where('id', '=', credentialsId as ExternalServiceCredentialsId)
+    .select(['id', 'credentials'])
+    .executeTakeFirstOrThrow();
+  const { botToken, baseUrl } = telegramCredential.parse(JSON.parse(await decryptToken(cred.credentials, cred.id)));
+  if (botToken === undefined || botToken.trim() === '') {
+    throw new Error("This Telegram credential connects the platform's shared bot, which has no webhook of its own to register.");
+  }
+  return new TelegramClient(botToken, baseUrl, fetch);
+}
 
 export { telegramProvider };

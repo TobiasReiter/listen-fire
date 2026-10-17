@@ -17,6 +17,7 @@ export const SECRETS = {
   valuations: 'golden-valuations-secret-0001',
   knowledge: 'golden-knowledge-secret-0001',
   remote: 'golden-remote-secret-0001',
+  telegramBring: 'golden-telegram-byo-secret-0001',
   telegramShared: 'golden-telegram-shared-secret-0001',
   /** Resend / Svix: whsec_ prefix, base64 key. */
   resend: `whsec_${Buffer.from('golden-resend-svix-key-0001').toString('base64')}`,

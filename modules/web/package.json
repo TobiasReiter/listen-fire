@@ -18,6 +18,7 @@
   "dependencies": {
     "#shared": "workspace:@listen-fire/shared@*",
     "engine-contracts": "workspace:*",
+    "file-text": "workspace:*",
     "module-kit": "workspace:*",
     "movement-engine": "workspace:*",
     "movement-lang": "workspace:*",

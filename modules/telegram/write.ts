@@ -125,6 +125,20 @@ export class TelegramClient {
     return this.call<TelegramSentMessage>('sendMessage', args);
   }
 
+  /** Point the bot's webhook at `url`; Telegram echoes `secretToken` in
+   *  `X-Telegram-Bot-Api-Secret-Token` on every delivery. */
+  async setWebhook(args: { url: string; secretToken: string; allowedUpdates?: string[] }): Promise<boolean> {
+    return this.call<boolean>('setWebhook', {
+      url: args.url,
+      secret_token: args.secretToken,
+      ...(args.allowedUpdates !== undefined ? { allowed_updates: args.allowedUpdates } : {}),
+    });
+  }
+
+  async deleteWebhook(): Promise<boolean> {
+    return this.call<boolean>('deleteWebhook', {});
+  }
+
   /** Resolve a `file_id` to a `File` (carrying the `file_path` the bytes live
    *  at). The first half of the two-step download (`getFile` → fetch path). */
   async getFile(fileId: string): Promise<TelegramFile> {

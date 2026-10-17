@@ -39,9 +39,16 @@ describe('built-ins come from the registry', () => {
     for (const b of left) expect(index.some((e) => e.name === b.name)).toBe(false);
   });
 
+  it('every section of the builtins chapter is headed by a name an author writes', () => {
+    const written = new Set(searchableBuiltins().map(builtinName));
+    for (const entry of index.filter((e) => e.anchor?.startsWith('builtins#'))) {
+      expect(written.has(entry.name)).toBe(true);
+    }
+  });
+
   it('a built-in with a section of its own borrows its example from it', () => {
     const join = index.find((e) => e.name === 'Text.join');
-    expect(join?.anchor).toBe('builtins#JOIN');
+    expect(join?.anchor).toBe('builtins#Text.join');
     expect(join?.example).toMatch(/Text\.join\(/);
   });
 });
@@ -49,6 +56,12 @@ describe('built-ins come from the registry', () => {
 describe('ranking', () => {
   it('finds a built-in by what it does', () => {
     expect(top('join text').slice(0, 2)).toContain('Text.join');
+  });
+
+  it('finds a built-in by its old registry name, and never shows that name', () => {
+    const hit = top('TEXT.SERIALISE')[0];
+    expect(hit).toBe('Json.stringify');
+    expect(JSON.stringify(index.find((e) => e.name === hit))).not.toMatch(/SERIALISE/);
   });
 
   it('finds a built-in by name, whatever its case', () => {

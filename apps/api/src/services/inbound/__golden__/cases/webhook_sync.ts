@@ -75,6 +75,8 @@ const attioArrange = () => {
 
 const PATH = (provider: string, id = 'sub-1') => `/api/public/webhook-sync/${provider}/${id}`;
 
+const TG_BRING = { 'x-telegram-bot-api-secret-token': SECRETS.telegramBring };
+
 export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
   // ── Attio: the default header chain ─────────────────────────────────────
   {
@@ -408,42 +410,44 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
     request: post(PATH('slack'), json(SLACK_EVENT), (body) => ({ 'x-webhook-signature': hmacHex(SECRETS.slackBring, body) })),
   },
 
-  // ── Telegram (bring-your-own bot): no signature, callback_query branch ───
+  // ── Telegram (bring-your-own bot): secret token header, callback_query branch ───
   {
-    id: 'telegram-message-unsigned',
-    note: 'Telegram BYO has no signature check at all; the URL is the credential.',
+    id: 'telegram-message-with-secret-token',
+    note: 'A team bot registered with a secret_token: Telegram echoes it in x-telegram-bot-api-secret-token, and the delivery is accepted.',
     arrange: () => {
-      givenSubscription({ provider: 'TELEGRAM', webhook_secret: '' });
+      givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring });
       givenTrigger({ kind: 'TELEGRAM' });
     },
-    request: post(PATH('telegram'), json({ update_id: 1, message: { message_id: 5, text: 'hi', chat: { id: 9 }, from: { id: 3 } } })),
+    request: post(PATH('telegram'), json({ update_id: 1, message: { message_id: 5, text: 'hi', chat: { id: 9 }, from: { id: 3 } } }), TG_BRING),
   },
   {
     id: 'telegram-callback-query-fires-callback',
     note: 'A button tap carrying a callback id fires it, answers the tap, retires the keyboard, and ends the delivery (no events).',
-    arrange: () => givenSubscription({ provider: 'TELEGRAM', webhook_secret: '' }),
+    arrange: () => givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring }),
     request: post(
       PATH('telegram'),
       json({ update_id: 2, callback_query: { id: 'cbq-1', data: 'cb_golden0001', message: { message_id: 11, chat: { id: 9 } } } }),
+      TG_BRING,
     ),
   },
   {
     id: 'telegram-callback-query-not-served-keeps-keyboard',
     note: 'A tap on an already-closed callback answers the tap but leaves the keyboard.',
     arrange: () => {
-      givenSubscription({ provider: 'TELEGRAM', webhook_secret: '' });
+      givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring });
       world.fireCallback = () => ({ kind: 'closed', callback: GOLDEN_CALLBACK });
     },
     request: post(
       PATH('telegram'),
       json({ update_id: 2, callback_query: { id: 'cbq-2', data: 'cb_golden0001', message: { message_id: 11, chat: { id: 9 } } } }),
+      TG_BRING,
     ),
   },
   {
     id: 'telegram-callback-query-firing-throws',
     note: 'A firing that throws is acked to the tapper as a failure; the delivery still ends handled with 200.',
     arrange: () => {
-      givenSubscription({ provider: 'TELEGRAM', webhook_secret: '' });
+      givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring });
       world.fireCallback = () => {
         throw new Error('ledger down');
       };
@@ -451,19 +455,41 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
     request: post(
       PATH('telegram'),
       json({ update_id: 2, callback_query: { id: 'cbq-3', data: 'cb_golden0001', message: { message_id: 11, chat: { id: 9 } } } }),
+      TG_BRING,
     ),
   },
   {
     id: 'telegram-callback-query-foreign-data-falls-through',
     note: 'A callback_query whose data is not ours is not handled here; the delivery continues to the adapter like any update.',
     arrange: () => {
-      givenSubscription({ provider: 'TELEGRAM', webhook_secret: '' });
+      givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring });
       givenTrigger({ kind: 'TELEGRAM' });
     },
     request: post(
       PATH('telegram'),
       json({ update_id: 2, callback_query: { id: 'cbq-4', data: 'something-else', message: { message_id: 11, chat: { id: 9 } } } }),
+      TG_BRING,
     ),
+  },
+  {
+    id: 'telegram-missing-secret-token-refused',
+    note: 'A team bot delivery without the secret-token header is refused.',
+    arrange: () => {
+      givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring });
+      givenTrigger({ kind: 'TELEGRAM' });
+    },
+    request: post(PATH('telegram'), json({ update_id: 1, message: { message_id: 5, text: 'hi', chat: { id: 9 }, from: { id: 3 } } })),
+  },
+  {
+    id: 'telegram-wrong-secret-token-refused',
+    note: 'A wrong secret-token header is refused.',
+    arrange: () => {
+      givenSubscription({ provider: 'TELEGRAM', webhook_secret: SECRETS.telegramBring });
+      givenTrigger({ kind: 'TELEGRAM' });
+    },
+    request: post(PATH('telegram'), json({ update_id: 1, message: { message_id: 5, text: 'hi', chat: { id: 9 }, from: { id: 3 } } }), {
+      'x-telegram-bot-api-secret-token': 'wrong',
+    }),
   },
 
   // ── WhatsApp (bring-your-own number) ────────────────────────────────────

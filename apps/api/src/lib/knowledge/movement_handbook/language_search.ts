@@ -43,7 +43,7 @@ export interface LanguageEntry {
   /** A function's signature, or a concept's or recipe's short text. */
   detail: string;
   example?: string;
-  /** A route `readHandbook` serves (`builtins#JOIN`, `front#identity`). */
+  /** A route `readHandbook` serves (`builtins#Text.join`, `front#identity`). */
   anchor?: string;
 }
 
@@ -183,6 +183,18 @@ function isRetired(entry: Builtin): boolean {
   return entry.summary.startsWith('RETIRED') || spelling(entry)?.oldOnly === true;
 }
 
+/** The registry's name for each built-in an author writes under another one
+ *  (`JOIN` for `Text.join`): searched as an alias so an author who remembers
+ *  the old name still finds it, and never shown. */
+function registryAliases(): Map<string, string> {
+  const aliases = new Map<string, string>();
+  for (const entry of searchableBuiltins()) {
+    const written = builtinName(entry);
+    if (written !== entry.name) aliases.set(written, entry.name);
+  }
+  return aliases;
+}
+
 /** The documented built-ins: every registry entry except the retired ones. */
 export function searchableBuiltins(): Builtin[] {
   return standardLibrary().filter((entry) => !isRetired(entry));
@@ -220,13 +232,13 @@ function splitFirstSentence(text: string): { first: string; rest: string } {
 function builtinEntries(builtinsChapter: Chapter | undefined): LanguageEntry[] {
   const sections = new Set(builtinsChapter ? listChapterSections(builtinsChapter.content) : []);
   return searchableBuiltins().map((entry) => {
-    const sectioned = sections.has(entry.name);
-    const slice =
-      sectioned && builtinsChapter ? sliceChapterSection(builtinsChapter.content, entry.name) : undefined;
+    const name = builtinName(entry);
+    const sectioned = sections.has(name);
+    const slice = sectioned && builtinsChapter ? sliceChapterSection(builtinsChapter.content, name) : undefined;
     const example = slice?.ok ? firstCodeBlock(slice.content) : undefined;
-    const anchor = sectioned ? `builtins#${entry.name}` : BUILTIN_HOME[entry.name];
+    const anchor = sectioned ? `builtins#${name}` : BUILTIN_HOME[entry.name];
     return {
-      name: builtinName(entry),
+      name,
       kind: 'function' as const,
       purpose: builtinSummary(entry),
       detail: builtinSignature(entry),
@@ -343,7 +355,7 @@ export function searchTokens(text: string): string[] {
 }
 
 /** How well `entry` answers `query`: name words count most, then purpose, then body. */
-export function scoreEntry(entry: LanguageEntry, query: string): number {
+export function scoreEntry(entry: LanguageEntry, query: string, aliases = registryAliases()): number {
   const wanted = [...new Set(searchTokens(query))];
   if (wanted.length === 0) return 0;
   // A family's namespace (`TEXT.`, `DATE.`) is where a function lives, not
@@ -352,7 +364,10 @@ export function scoreEntry(entry: LanguageEntry, query: string): number {
   const dot = entry.kind === 'function' ? entry.name.lastIndexOf('.') : -1;
   const name = new Set(searchTokens(entry.name.slice(dot + 1)));
   const purpose = new Set(searchTokens(entry.purpose));
-  const body = new Set(searchTokens(`${entry.name.slice(0, Math.max(dot, 0))} ${entry.detail} ${entry.example ?? ''}`));
+  const alias = entry.kind === 'function' ? aliases.get(entry.name) : undefined;
+  const body = new Set(
+    searchTokens(`${entry.name.slice(0, Math.max(dot, 0))} ${alias ?? ''} ${entry.detail} ${entry.example ?? ''}`),
+  );
   let score = 0;
   for (const word of wanted) {
     if (name.has(word)) score += 5;
@@ -372,9 +387,10 @@ export interface LanguageSearchResult {
 
 /** The best few entries for `query`, optionally of one kind. */
 export function searchLanguage(input: { query: string; kind?: LanguageSearchKind }): LanguageSearchResult {
+  const aliases = registryAliases();
   const scored = languageIndex()
     .filter((entry) => input.kind === undefined || entry.kind === input.kind)
-    .map((entry, order) => ({ entry, order, score: scoreEntry(entry, input.query) }))
+    .map((entry, order) => ({ entry, order, score: scoreEntry(entry, input.query, aliases) }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || a.order - b.order)
     .slice(0, MAX_RESULTS);

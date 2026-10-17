@@ -5,7 +5,7 @@ export const reference: Chapter = {
   title: 'Reference — the whole surface on one page (forms, operators, modifiers, pitfalls)',
   content: `## Reference — the whole surface on one page
 
-A terse lookup, not a lesson. The teaching chapters explain *why*; this one is for refreshing a single rule mid-author — the exact spelling of an operator, the write modifiers, the \`unique by\` forms, a traversal head. Learn the language from the other chapters; come back here to check a detail. For one function's full entry — signature, presence, ordering, an example — the \`builtins\` chapter has a section per function (\`builtins#SUM\` for \`List.sum\`).
+A terse lookup, not a lesson. The teaching chapters explain *why*; this one is for refreshing a single rule mid-author — the exact spelling of an operator, the write modifiers, the \`unique by\` forms, a traversal head. Learn the language from the other chapters; come back here to check a detail. For one function's full entry — signature, presence, ordering, an example — the \`builtins\` chapter has a section per function (\`builtins#List.sum\`).
 
 ### top-level
 

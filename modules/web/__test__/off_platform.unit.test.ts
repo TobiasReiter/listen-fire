@@ -2,11 +2,15 @@
 // browser. An address that needs one fails, naming what is missing, instead of
 // coming back as nothing (which a movement would read as an empty page).
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { noCredential, pluginsInProcess, refusingFiles, refusingKv } from 'module-kit';
 
 import { webModule } from '../index';
 import { isDocumentSourceAddress } from '../standalone';
 
+const DECK = path.join(__dirname, '../../../packages/file-text/__test__/__fixtures__/deck.pptx');
 const quiet = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined };
 
 const fetched: string[] = [];
@@ -18,6 +22,12 @@ const web = pluginsInProcess(webModule, {
   kv: refusingKv('none'),
   fetch: (async (url: string | URL | Request) => {
     fetched.push(String(url));
+    if (String(url).endsWith('.pptx')) {
+      return new Response(readFileSync(DECK), {
+        status: 200,
+        headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation' },
+      });
+    }
     return new Response('<html><body>never asked</body></html>', { status: 200, headers: { 'content-type': 'text/html' } });
   }) as typeof fetch,
   validateResults: true,
@@ -42,6 +52,13 @@ describe('@lf/web off the platform', () => {
       "needs the platform's gated-document browser and document store, which is not available off the platform",
     );
     expect(fetched).toEqual([]);
+  });
+
+  it('reads a plain PowerPoint link through the file-text package', async () => {
+    const result = await fetchUrl('https://example.com/files/deck.pptx');
+    expect(fetched).toEqual(['https://example.com/files/deck.pptx']);
+    expect(JSON.stringify(result)).toMatch(/\S{3,}/);
+    expect(JSON.stringify(result)).not.toContain('never asked');
   });
 
   it('knows the platform’s document sources', () => {
