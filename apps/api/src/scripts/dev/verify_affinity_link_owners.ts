@@ -95,15 +95,15 @@ async function snapshot(adapter: AffinityAdapter): Promise<CatalogSnapshot> {
 const HEAD = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 `;
 
 /** The acceptance: the library's write with every field, then the owners
  *  attached by walking the names — no name enumerated in the program. */
 const ADD_AND_OWN = `${HEAD}
-movement sync(e: <crm-[:\`Organization\`]->>) {
+function sync(e: <crm-[:\`Organization\`]->>) {
   d = node { owners: [node { name: "Grace Graph" }, node { name: "Ivan Internal" }] }
-  crm-[org:\`Organization\` WHERE \`Domain\` == "graphredesign.co"]-> {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "graphredesign.co"]-> {
     entry = write org-[:\`List Entries\`]-> {
       listName: "Pipeline",
       \`Deal Stage\`: "Sourced",
@@ -119,8 +119,8 @@ movement sync(e: <crm-[:\`Organization\`]->>) {
 
 /** Taking one back off: the handle `match` binds is what `unlink` severs. */
 const DROP_ONE = `${HEAD}
-movement sync(e: <crm-[:\`Organization\`]->>) {
-  crm-[org:\`Organization\` WHERE \`Domain\` == "graphredesign.co"]-> {
+function sync(e: <crm-[:\`Organization\`]->>) {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "graphredesign.co"]-> {
     entry = write org-[:\`List Entries\`]-> { listName: "Pipeline", \`Next Step\`: "Partner call" }
     leaving = match entry-[:\`Owners\`]-> { \`Full name\`: "Ivan Internal" }
     unlink entry -[:\`Owners\`]-> leaving

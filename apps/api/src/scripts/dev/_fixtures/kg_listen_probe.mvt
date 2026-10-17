@@ -1,9 +1,9 @@
 import { kg } from adapters
 import { `Dev Loop Knowledge` } from credentials
 
-graph = kg(credentials: `Dev Loop Knowledge`)
+graph = connect kg using `Dev Loop Knowledge`
 
-movement kg_listen_probe(change: <graph-[:`Record Change` WHERE `type` == "Organisation" AND `action` == "record.created"]->>) {
+function kg_listen_probe(change: <graph-[:`Record Change` WHERE `type` == "Organisation" AND `action` == "record.created"]->>) {
   change-[org:Record]-> {
     write graph-[:Person]-> {
       Name: "Echo Of ${org.Name}"

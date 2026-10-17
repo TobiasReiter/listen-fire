@@ -1,50 +1,50 @@
 import { manual, dealroom, slack } from adapters
 import { `Dev Loop Dealroom`, `Dev Loop Slack` } from credentials
 
-runs = manual()
-dr   = dealroom(credentials: `Dev Loop Dealroom`)
-chat = slack(credentials: `Dev Loop Slack`)
+runs = connect manual
+dr   = connect dealroom using `Dev Loop Dealroom`
+chat = connect slack using `Dev Loop Slack`
 
-movement dealroom_query_probe(go: <runs-[:Invocation]->>) {
-  chat-[ch:Channels WHERE `Name` == "dealflow"]-> {
-    dr-[byName:Companies WHERE `Name` == "Nimbusly"]-> {
-      rounds  = JOIN(byName-[r:`Funding Rounds` ORDER BY `Date` ASC]->.`Round`, ", ")
-      backers = JOIN(byName-[i:Investors ORDER BY `Name` ASC]->.`Name`, ", ")
-      team    = JOIN(byName-[t:Team ORDER BY `Name` ASC]->.`Name`, ", ")
+function dealroom_query_probe(go: <runs-[:Invocation]->>) {
+  chat-[ch:Channels WHERE ch.`Name` == "dealflow"]-> {
+    dr-[byName:Companies WHERE byName.`Name` == "Nimbusly"]-> {
+      rounds  = Text.join(byName-[r:`Funding Rounds` ORDER BY r.`Date` ASC]->.`Round`, ", ")
+      backers = Text.join(byName-[i:Investors ORDER BY i.`Name` ASC]->.`Name`, ", ")
+      team    = Text.join(byName-[t:Team ORDER BY t.`Name` ASC]->.`Name`, ", ")
       write ch-[:Messages]-> {
         Message: "by name: ${byName.`Name`} (${byName.`Website URL`}) rounds=[${rounds}] investors=[${backers}] team=[${team}]"
       }
     }
 
-    dr-[byDomain:Companies WHERE `Website` == "vaultwise.de"]-> {
+    dr-[byDomain:Companies WHERE byDomain.`Website` == "vaultwise.de"]-> {
       write ch-[:Messages]-> {
         Message: "by domain: ${byDomain.`Name`} (${byDomain.`Website`} / ${byDomain.`Website URL`}) funding=${byDomain.`Total Funding`}"
       }
     }
 
-    byIndustry = JOIN(dr-[c:Companies WHERE `Industries` CONTAINS "HealthTech" ORDER BY `Name` ASC]->.`Name`, ", ")
+    byIndustry = Text.join(dr-[c:Companies WHERE c.`Industries` CONTAINS "HealthTech" ORDER BY c.`Name` ASC]->.`Name`, ", ")
     write ch-[:Messages]-> {
       Message: "by industry HealthTech: ${byIndustry}"
     }
 
-    topFunded = JOIN(dr-[c2:Companies ORDER BY `Total Funding` DESC LIMIT 3]->.`Name`, ", ")
+    topFunded = Text.join(dr-[c2:Companies ORDER BY c2.`Total Funding` DESC LIMIT 3]->.`Name`, ", ")
     write ch-[:Messages]-> {
       Message: "top funded: ${topFunded}"
     }
 
-    byCity = JOIN(dr-[c3:Companies WHERE `HQ Country` == "Germany" ORDER BY `Name` ASC]->.`HQ City`, ", ")
+    byCity = Text.join(dr-[c3:Companies WHERE c3.`HQ Country` == "Germany" ORDER BY c3.`Name` ASC]->.`HQ City`, ", ")
     write ch-[:Messages]-> {
       Message: "HQ in Germany: ${byCity}"
     }
 
-    dr-[inv:Investors WHERE `Name` == "Northbridge Ventures"]-> {
-      funds = JOIN(inv-[f:Funds ORDER BY `Name` ASC]->.`Name`, ", ")
+    dr-[inv:Investors WHERE inv.`Name` == "Northbridge Ventures"]-> {
+      funds = Text.join(inv-[f:Funds ORDER BY f.`Name` ASC]->.`Name`, ", ")
       write ch-[:Messages]-> {
         Message: "investor ${inv.`Name`} funds=[${funds}]"
       }
     }
 
-    dr-[co:Companies WHERE `Name` == "Nimbusly"]-> {
+    dr-[co:Companies WHERE co.`Name` == "Nimbusly"]-> {
       co-[tm:Team]-> {
         tm-[p:Person]-> {
           write ch-[:Messages]-> {

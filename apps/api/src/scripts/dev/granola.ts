@@ -60,17 +60,17 @@ const GRANOLA_MOVEMENT = `
 import { granola, slack } from adapters
 import { \`Dev Loop Granola\`, \`Dev Loop Slack\` } from credentials
 
-gr   = granola(credentials: \`Dev Loop Granola\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+gr   = connect granola using \`Dev Loop Granola\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement granola_intake(note: <gr-[:\`Meeting Note\`]->>) {
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+function granola_intake(note: <gr-[:\`Meeting Note\`]->>) {
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "Granola note: \${note.\`Title\`} — owner \${note.\`Note Owner Email\`}"
     }
   }
   note-[a:Attendees]-> {
-    chat-[ch2:Channels WHERE \`Name\` == "dealflow"]-> {
+    chat-[ch2:Channels WHERE ch2.\`Name\` == "dealflow"]-> {
       write ch2-[:Messages]-> {
         Message: "Attendee on \${note.\`Title\`}: \${a.\`Email\`}"
       }

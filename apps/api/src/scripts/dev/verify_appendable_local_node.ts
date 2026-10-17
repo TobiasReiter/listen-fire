@@ -34,21 +34,21 @@ const FAKE_CHANNELS_URL = process.env.FAKE_CHANNELS_URL || 'http://localhost:555
 const SOURCE = `import { manual, slack } from adapters
 import { \`Dev Loop Slack\` } from credentials
 
-runs = manual()
-chat = slack(credentials: \`Dev Loop Slack\`)
+runs = connect manual
+chat = connect slack using \`Dev Loop Slack\`
 
 function ${MOVEMENT_NAME}(go: <runs-[:Invocation]->>) {
   sent = node { messages: <chat-[:Channels]->-[:Messages]->> }
 
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
-    if go.\`Text\` == "urgent" {
-      first = write ch-[:Messages]-> { Message: "A big one just landed." }
-      link sent -[:messages]-> first
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
+    if (go.\`Text\` == "urgent") {
+      urgent = write ch-[:Messages]-> { Message: "A big one just landed." }
+      link sent -[:messages]-> urgent
       second = write ch-[:Messages]-> { Message: "Worth a look today." }
       link sent -[:messages]-> second
     } else {
-      only = write ch-[:Messages]-> { Message: "A new company just landed." }
-      link sent -[:messages]-> only
+      single = write ch-[:Messages]-> { Message: "A new company just landed." }
+      link sent -[:messages]-> single
     }
   }
 

@@ -45,16 +45,16 @@ function program(input: { note: string; crmEvents: string[] }): string {
   return `import { attio, slack } from adapters
 import { \`Dev Loop Attio\`, \`Dev Loop Slack\` } from credentials
 
-crm  = attio(credentials: \`Dev Loop Attio\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+crm  = connect attio using \`Dev Loop Attio\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement latency_intake(sm: <chat-[:Message]->>) {
+function latency_intake(sm: <chat-[:Message]->>) {
   co = write crm-[:Companies]-> {
     unique by (\`Name\`)
     Name:        sm.\`Message\`
     Description: "${input.note}"
   }
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "New company in Attio: \${co.externalId}"
     }
@@ -63,10 +63,10 @@ movement latency_intake(sm: <chat-[:Message]->>) {
 
 listen to chat { events: ["message"] } fire latency_intake
 
-movement latency_watch(ev: <crm-[:\`Webhook Event\`]->>) {
-  if ev IS <crm-[:\`Webhook Event\` WHERE \`action\` == "record.created"]->> {
+function latency_watch(ev: <crm-[:\`Webhook Event\`]->>) {
+  if (ev is <crm-[:\`Webhook Event\` WHERE \`action\` == "record.created"]->>) {
     ev-[co:Companies]-> {
-      chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+      chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
         write ch-[:Messages]-> {
           Message: "Changed: \${co.\`Name\`}"
         }

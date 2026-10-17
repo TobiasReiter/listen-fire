@@ -138,12 +138,12 @@ const CANARY_NAME = 'Team announcements';
 const CANARY_SOURCE = `import { manual, slack } from adapters
 import { \`Dev Loop Slack\` } from credentials
 
-runs = manual()
-chat = slack(credentials: \`Dev Loop Slack\`)
+runs = connect manual
+chat = connect slack using \`Dev Loop Slack\`
 
 function \`Team Announcement\`(go: <runs-[:Invocation]->>) {
-  general = ONLY(chat-[ch:Channels WHERE \`Name\` == "general"]->)
-  if general == null { ERROR("no #general channel") }
+  general = only(chat-[ch:Channels WHERE ch.\`Name\` == "general"]->)
+  if (general == null) { fail("no #general channel") }
   write general-[:Messages]-> { Message: go.\`Text\` }
 }
 

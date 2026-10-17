@@ -34,16 +34,16 @@ const RACE_CANCEL = `
 import { manual, ask, slack } from adapters
 import { \`Dev Loop Slack\` } from credentials
 
-runs = manual()
-questions = ask()
-chat = slack(credentials: \`Dev Loop Slack\`)
+runs = connect manual
+questions = connect ask
+chat = connect slack using \`Dev Loop Slack\`
 
-movement race_cancel_probe(go: <runs-[:Invocation]->>) {
+function race_cancel_probe(go: <runs-[:Invocation]->>) {
   q = write questions-[:Provide]-> {
     Prompt: "Which way?"
     \`Answer Type\`: "text"
   }
-  chat-[ch:Channels WHERE \`Name\` == "general"]-> {
+  chat-[ch:Channels WHERE ch.\`Name\` == "general"]-> {
     write ch-[:Messages]-> {
       Message: "race: open \${q.Url}"
     }
@@ -51,15 +51,15 @@ movement race_cancel_probe(go: <runs-[:Invocation]->>) {
 
   r = race(
     () => {
-      a = await FIRST(q-[:Response]->)
+      a = await first(q-[:Response]->)
       return a.Answer
     },
     () => { await sleep(30s) },
   )
 
-  chat-[ch2:Channels WHERE \`Name\` == "general"]-> {
+  chat-[ch2:Channels WHERE ch2.\`Name\` == "general"]-> {
     write ch2-[:Messages]-> {
-      Message: "race: answered=\${COALESCE(AT(r, 0), "timeout")}"
+      Message: "race: answered=\${coalesce(r[0], "timeout")}"
     }
   }
 }
@@ -77,28 +77,31 @@ const LANG_SURFACE = `
 import { manual, slack } from adapters
 import { \`Dev Loop Slack\` } from credentials
 
-runs = manual()
-chat = slack(credentials: \`Dev Loop Slack\`)
+runs = connect manual
+chat = connect slack using \`Dev Loop Slack\`
 
 type Thesis = <"Consumer" | "Infra" | "Health">
 
-movement lang_surface_probe(go: <runs-[:Invocation]->>) {
-  found = extract from [go.\`Text\`] {
-    node finding: "each company mentioned" {
-      headline: <text> "one line about it"
-      thesis:   <Thesis> "which thesis it fits"
-    }
+node FoundShape: "the relevant information in the content" {
+  node finding: "each company mentioned" {
+    headline: <text> "one line about it"
+    thesis: <Thesis> "which thesis it fits"
   }
+}
 
-  rows     = found-[f:finding]-> { return { thesis: COALESCE(f.thesis, "Consumer"), line: COALESCE(f.headline, "") } }
-  by       = GROUPBY(rows, (r) => { return COALESCE(AT(r, "thesis"), "Consumer") })
-  theses   = MEMBERS(<Thesis>)
-  sections = MAP(theses, (th) => { return "\${th}=\${COUNT(COALESCE(AT(by, th), []))}" })
+function lang_surface_probe(go: <runs-[:Invocation]->>) {
+  found = extractOne([go.\`Text\`], FoundShape)
+  if (found != null) {
+    rows     = found-[f:finding]-> { return { thesis: coalesce(f.thesis, "Consumer"), line: coalesce(f.headline, "") } }
+    by       = List.groupBy(rows, (r) => { return coalesce(r["thesis"], "Consumer") })
+    theses   = members(<Thesis>)
+    sections = map(theses, (th) => { return "\${th}=\${count(coalesce(by[th], []))}" })
 
-  channel = ONLY(chat-[ch:Channels WHERE \`Name\` == "general"]->)
-  if channel == null { ERROR("no #general channel") }
-  write channel-[:Messages]-> {
-    Message: "lang \${DATE.FORMAT(@current_date, "MMMM D, YYYY")} | \${JOIN(sections, " ")}"
+    channel = only(chat-[ch:Channels WHERE ch.\`Name\` == "general"]->)
+    if (channel == null) { fail("no #general channel") }
+    write channel-[:Messages]-> {
+      Message: "lang \${Date.format(@current_date, "MMMM D, YYYY")} | \${Text.join(sections, " ")}"
+    }
   }
 }
 

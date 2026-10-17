@@ -99,9 +99,9 @@ async function snapshot(adapter: AffinityAdapter): Promise<CatalogSnapshot> {
 const SWEEP = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 
-movement sweep(e: <crm-[:\`Organization\`]->>) {
+function sweep(e: <crm-[:\`Organization\`]->>) {
   crm-[org:\`Organization\`]-> {
     org-[le:\`List Entries\`]-> { }
   }

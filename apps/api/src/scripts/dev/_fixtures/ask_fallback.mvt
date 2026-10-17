@@ -1,43 +1,43 @@
 import { manual, attio, slack, ask } from adapters
 import { `Dev Loop Attio`, `Dev Loop Slack` } from credentials
 
-runs = manual()
-crm  = attio(credentials: `Dev Loop Attio`)
-chat = slack(credentials: `Dev Loop Slack`)
-asks = ask()
+runs = connect manual
+crm  = connect attio using `Dev Loop Attio`
+chat = connect slack using `Dev Loop Slack`
+asks = connect ask
 
 # Timeout, reminder and escalation are COMPOSED from race + sleep: one arm waits
 # for the answer and hands it back, the other posts a reminder at 10s and holds
 # the deadline to 20s. Only the arm that settles first fills its slot, so a null
 # first slot IS the timeout branch.
-movement ask_fallback_demo(go: <runs-[:Invocation]->>) {
+function ask_fallback_demo(go: <runs-[:Invocation]->>) {
   q = write asks-[:Check]-> { Prompt: "Pursue this deal?" }
-  chat-[ch:Channels WHERE `Name` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.`Name` == "dealflow"]-> {
     write ch-[:Messages]-> { Message: "Pursue? answer here: ${q.Url}" }
   }
 
-  r = await race([
+  r = race(
     () => {
-      a = await FIRST(q-[:Response]->)
+      a = await first(q-[:Response]->)
       return a.Answer
     },
     () => {
       await sleep(10s)
-      chat-[ch2:Channels WHERE `Name` == "portfolio"]-> {
+      chat-[ch2:Channels WHERE ch2.`Name` == "portfolio"]-> {
         write ch2-[:Messages]-> { Message: "Still need you — reminder: ${q.Url}" }
       }
       await sleep(10s)
     },
-  ])
+  )
 
-  decision = AT(r, 0)
-  if decision == TRUE {
+  decision = r[0]
+  if (decision == true) {
     write crm-[:Companies]-> { unique by (`Domains`), Domains: "pursued.example", Name: "PURSUED" }
   }
-  if decision == FALSE {
+  if (decision == false) {
     write crm-[:Companies]-> { unique by (`Domains`), Domains: "declined.example", Name: "DECLINED" }
   }
-  if decision == null {
+  if (decision == null) {
     write crm-[:Companies]-> { unique by (`Domains`), Domains: "timedout.example", Name: "TIMED-OUT-DEFAULT-FALSE" }
   }
 }

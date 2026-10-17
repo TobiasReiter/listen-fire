@@ -252,24 +252,24 @@ async function seed(): Promise<{ owners: number[]; founders: number[] }> {
 const HEAD = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 `;
 
 /** The two dedup reads: is this company already ours, and is this contact? Both
  *  narrow at the source — Affinity substring-matches `term` against a company's
  *  name and domain and a person's name and address. */
 const DEDUP = `${HEAD}
-movement \`Dedup Check\`(e: <crm-[:\`Organization\`]->>) {
-  crm-[o:\`Organization\` WHERE \`Domain\` == "${DOMAIN}"]-> {
+function \`Dedup Check\`(e: <crm-[:\`Organization\`]->>) {
+  crm-[o:\`Organization\` WHERE o.\`Domain\` == "${DOMAIN}"]-> {
     known = o.\`Name\`
   }
-  crm-[p:\`Person\` WHERE \`Email\` == "${FOUNDERS[0].email}"]-> {
+  crm-[p:\`Person\` WHERE p.\`Email\` == "${FOUNDERS[0].email}"]-> {
     contact = p.\`Full name\`
   }
 }`;
 
 const UPSERT = `${HEAD}
-movement \`Upsert Deal\`(e: <crm-[:\`Organization\`]->>) {
+function \`Upsert Deal\`(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> {
     \`Name\`: "${ORG_NAME}"
     \`Domain\`: "${DOMAIN}"
@@ -280,10 +280,10 @@ movement \`Upsert Deal\`(e: <crm-[:\`Organization\`]->>) {
     \`Deal Stage\` ?: "Sourced"
     \`Deal Source\` ?: "Inbound"
   }
-  first = match entry-[:\`Owners\`]-> { \`Email\`: "${OWNERS[0].email}" }
-  link entry -[:\`Owners\`]-> first
-  second = match entry-[:\`Owners\`]-> { \`Email\`: "${OWNERS[1].email}" }
-  link entry -[:\`Owners\`]-> second
+  ownerOne = match entry-[:\`Owners\`]-> { \`Email\`: "${OWNERS[0].email}" }
+  link entry -[:\`Owners\`]-> ownerOne
+  ownerTwo = match entry-[:\`Owners\`]-> { \`Email\`: "${OWNERS[1].email}" }
+  link entry -[:\`Owners\`]-> ownerTwo
   write org-[:\`Founders\`]-> {
     \`First name\` ?: "${FOUNDERS[0].first}"
     \`Last name\` ?: "${FOUNDERS[0].last}"
@@ -299,7 +299,7 @@ movement \`Upsert Deal\`(e: <crm-[:\`Organization\`]->>) {
 /** (a) Two set-if-empty writes at the same field of the same entry, in ONE run.
  *  The second one's read has to see what the first one wrote. */
 const FILL_TWICE = `${HEAD}
-movement \`Fill Twice\`(e: <crm-[:\`Organization\`]->>) {
+function \`Fill Twice\`(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> { \`Name\`: "${ORG_NAME}", \`Domain\`: "${DOMAIN}" }
   write org-[:\`List Entries\`]-> { listName: "${LIST_NAME}", \`Deal Stage\` ?: "First" }
   write org-[:\`List Entries\`]-> { listName: "${LIST_NAME}", \`Deal Stage\` ?: "Second" }
@@ -308,7 +308,7 @@ movement \`Fill Twice\`(e: <crm-[:\`Organization\`]->>) {
 /** (b) The other direction: a real change after a read in the same run must
  *  still land — a memo that never expires suppresses it as a no-op. */
 const FILL_THEN_CHANGE = `${HEAD}
-movement \`Fill Then Change\`(e: <crm-[:\`Organization\`]->>) {
+function \`Fill Then Change\`(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> { \`Name\`: "${ORG_NAME}", \`Domain\`: "${DOMAIN}" }
   write org-[:\`List Entries\`]-> { listName: "${LIST_NAME}", \`Deal Stage\` ?: "First" }
   write org-[:\`List Entries\`]-> { listName: "${LIST_NAME}", \`Deal Stage\`: "Changed" }

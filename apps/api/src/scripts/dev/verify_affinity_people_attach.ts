@@ -125,14 +125,14 @@ async function snapshot(adapter: AffinityAdapter): Promise<CatalogSnapshot> {
 const HEADER = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 `;
 
 /** The production shape: the org is found by name, the person hangs off it by
  *  the built-in `People` edge, and every field is set-if-empty — so against a
  *  person who already carries them, nothing of the person's own is sent. */
 const ATTACH = `${HEADER}
-movement attach(e: <crm-[:\`Organization\`]->>) {
+function attach(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> {
     \`Name\`: "${ORG_NAME}"
   }
@@ -146,7 +146,7 @@ movement attach(e: <crm-[:\`Organization\`]->>) {
 /** The same suppressed person write with no parent at all — the other half of
  *  the story: nothing to send, and nothing to attach it to. */
 const ROOTED = `${HEADER}
-movement rooted(e: <crm-[:\`Organization\`]->>) {
+function rooted(e: <crm-[:\`Organization\`]->>) {
   write crm-[:\`Person\`]-> {
     \`First name\` ?: "${FIRST}"
     \`Last name\` ?: "${LAST}"
@@ -157,7 +157,7 @@ movement rooted(e: <crm-[:\`Organization\`]->>) {
 /** One field genuinely different — the write the engine has always sent, still
  *  reading `update` with its parent alongside. */
 const RENAME = `${HEADER}
-movement rename(e: <crm-[:\`Organization\`]->>) {
+function rename(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> {
     \`Name\`: "${ORG_NAME}"
   }
@@ -171,7 +171,7 @@ movement rename(e: <crm-[:\`Organization\`]->>) {
  *  `link` must reach the SAME association a linked write makes, because it is
  *  the same code — and `unlink` must take it back. */
 const LINK = `${HEADER}
-movement joinUp(e: <crm-[:\`Organization\`]->>) {
+function joinUp(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> {
     \`Name\`: "${ORG_NAME}"
   }
@@ -184,7 +184,7 @@ movement joinUp(e: <crm-[:\`Organization\`]->>) {
 }`;
 
 const UNLINK = `${HEADER}
-movement partWays(e: <crm-[:\`Organization\`]->>) {
+function partWays(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> {
     \`Name\`: "${ORG_NAME}"
   }
@@ -200,7 +200,7 @@ movement partWays(e: <crm-[:\`Organization\`]->>) {
  *  adding a company to a list; an entry that already exists IS its (list,
  *  member) pair, so there is nothing to point at a different list. */
 const LINK_ENTRY = `${HEADER}
-movement joinList(e: <crm-[:\`Organization\`]->>) {
+function joinList(e: <crm-[:\`Organization\`]->>) {
   org = write crm-[:\`Organization\`]-> {
     \`Name\`: "${ORG_NAME}"
   }

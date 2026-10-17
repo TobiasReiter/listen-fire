@@ -101,17 +101,17 @@ const FIXTURE_MOVEMENT = `
 import { email, attio, slack } from adapters
 import { \`Dev Loop Attio\`, \`Dev Loop Slack\` } from credentials
 
-inbox = email()
-crm   = attio(credentials: \`Dev Loop Attio\`)
-chat  = slack(credentials: \`Dev Loop Slack\`)
+inbox = connect email
+crm   = connect attio using \`Dev Loop Attio\`
+chat  = connect slack using \`Dev Loop Slack\`
 
-movement dealflow_intake(m: <inbox-[:Email]->>) {
+function dealflow_intake(m: <inbox-[:Email]->>) {
   co = write crm-[:Companies]-> {
     unique by (\`Name\`)
     Name:        m.\`Subject\`
     Description: "Introduced by \${m.\`From\`}"
   }
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "New company in Attio: \${m.\`Subject\`} (record \${co.externalId})"
     }
@@ -120,10 +120,10 @@ movement dealflow_intake(m: <inbox-[:Email]->>) {
 
 listen to inbox { key: "dealflow-intake" } fire dealflow_intake
 
-movement dealflow_reply(sm: <chat-[:Message]->>) {
+function dealflow_reply(sm: <chat-[:Message]->>) {
   write sm-[:Replies]-> {
     Message: "Noted: \${sm.\`Message\`}"
-    File: FILE("Summary of: \${sm.\`Message\`}", "text")
+    File: File.from("Summary of: \${sm.\`Message\`}", "text")
   }
 }
 

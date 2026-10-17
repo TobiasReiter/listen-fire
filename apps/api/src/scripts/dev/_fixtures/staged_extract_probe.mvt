@@ -1,27 +1,30 @@
 import { manual, kg } from adapters
 import { `Dev Loop Knowledge` } from credentials
-import { fetch_url } from plugins
+import { fetchUrl as fetch_url } from plugins
 
-runs = manual()
-graph = kg(credentials: `Dev Loop Knowledge`)
+runs = connect manual
+graph = connect kg using `Dev Loop Knowledge`
 
-movement staged_extract_probe(go: <runs-[:Invocation]->>) {
-  found = extract from [go.`Text`] {
-    node entry: "each company named in the text" {
-      name: "the company's name"
-      url:  "the company's web address, if one is given"
-    } through [fetch_url(url: url)] {
-      description: "one line on what the company does"
-    }
-  }
+node Entry: "each company named in the text" {
+  name: <text> "the company's name"
+  url:  <text> "the company's web address, if one is given"
+}
 
-  found-[e:entry]-> {
+node Description: "what the company's own page says" {
+  description: <text> "one line on what the company does"
+}
+
+function staged_extract_probe(go: <runs-[:Invocation]->>) {
+  entries = extract([go.`Text`], Entry)
+  map(entries, (e) => {
+    page = fetch_url(e.url)
+    about = extractOne([page], Description)
     write graph-[:Organisation]-> {
-      Name: e.`name`
-      Website: e.`url`
-      Sector: e.`description`
+      Name: e.name
+      Website: e.url
+      Sector: coalesce(about.description, "unknown")
     }
-  }
+  })
 }
 
 listen to runs {} fire staged_extract_probe

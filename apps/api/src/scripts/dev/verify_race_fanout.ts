@@ -57,11 +57,11 @@ const MOVEMENT = `
 import { telegram, ask, attio } from adapters
 import { \`Dev Loop Telegram\`, \`Dev Loop Attio\` } from credentials
 
-tg = telegram(credentials: \`Dev Loop Telegram\`)
-questions = ask()
-crm = attio(credentials: \`Dev Loop Attio\`)
+tg = connect telegram using \`Dev Loop Telegram\`
+questions = connect ask
+crm = connect attio using \`Dev Loop Attio\`
 
-movement race_fanout_probe(m: <tg-[:\`Message\`]->>) {
+function race_fanout_probe(m: <tg-[:\`Message\`]->>) {
   names = crm-[c:Companies]-> {
     return c.\`Name\`
   }
@@ -70,19 +70,19 @@ movement race_fanout_probe(m: <tg-[:\`Message\`]->>) {
     Options: names
   }
   write m-[:Replies]-> {
-    Text: "pick one of \${COUNT(names)}: \${q.Url}"
+    Text: "pick one of \${count(names)}: \${q.Url}"
   }
 
   w = race(
     () => {
-      a = await FIRST(q-[:Response]->)
+      a = await first(q-[:Response]->)
       return a.Answer
     },
     () => { await sleep(2d) },
   )
 
   write m-[:Replies]-> {
-    Text: "won=\${COALESCE(AT(w, 0), "timeout")}"
+    Text: "won=\${coalesce(w[0], "timeout")}"
   }
 }
 

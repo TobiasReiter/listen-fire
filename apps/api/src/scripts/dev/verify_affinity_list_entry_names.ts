@@ -83,13 +83,13 @@ async function snapshot(adapter: AffinityAdapter): Promise<CatalogSnapshot> {
 const PRELUDE = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 `;
 
 async function check(snap: CatalogSnapshot, body: string): Promise<string[]> {
   const source = `${PRELUDE}
-movement sync() {
-  crm-[org:\`Organization\` WHERE \`Domain\` == "graphredesign.co"]-> {
+function sync() {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "graphredesign.co"]-> {
 ${body}
   }
 }`;

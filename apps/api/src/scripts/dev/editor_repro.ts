@@ -35,16 +35,16 @@ const DEFAULT_SOURCE = `
 import { email, attio } from adapters
 import { \`Dev Loop Attio\` } from credentials
 
-inbox = email()
-crm   = attio(credentials: \`Dev Loop Attio\`)
+inbox = connect email
+crm   = connect attio using \`Dev Loop Attio\`
 
-movement editor_repro(m: <inbox-[:Email]->>) {
+function editor_repro(m: <inbox-[:Email]->>) {
   co = write crm-[:Companies]-> {
     unique by (\`Name\`)
     Name:        m.\`Subject\`
     Description: "Introduced by \${m.\`From\`}"
   }
-  ERROR("\${co.externalId}")
+  fail("\${co.externalId}")
 }
 
 listen to inbox { key: "editor-repro" } fire editor_repro

@@ -62,13 +62,13 @@ function dealroomFile(scope: { round?: string; industry?: string } = {}): string
 import { dealroom, slack } from adapters
 import { \`Dev Loop Dealroom\`, \`Dev Loop Slack\` } from credentials
 
-dr   = dealroom(credentials: \`Dev Loop Dealroom\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+dr   = connect dealroom using \`Dev Loop Dealroom\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement dealroom_round_intake(round: <dr-[:\`Funding Round\`]->>) {
+function dealroom_round_intake(round: <dr-[:\`Funding Round\`]->>) {
   round-[co:\`Company\`]-> {
-    backers = JOIN(round-[ri:\`Investors\` ORDER BY \`Name\` ASC]->.\`Name\`, ", ")
-    chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+    backers = Text.join(round-[ri:\`Investors\` ORDER BY ri.\`Name\` ASC]->.\`Name\`, ", ")
+    chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
       write ch-[:Messages]-> {
         Message: "Dealroom round: \${co.\`Name\`} raised \${round.\`Round\`} (\${round.\`Amount\`} \${round.\`Currency\`}) from \${backers}"
       }
