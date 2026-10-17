@@ -14,6 +14,9 @@
 //     profile address or a document source (a deck host, a data room, a file
 //     the platform keeps) fails, naming what is not available off the
 //     platform; a page whose body is not HTML or text is not kept.
+//   - A plain PDF, PowerPoint or spreadsheet link is fetched and read through
+//     the file-text package (a PDF's text layer; a scanned one has no OCR
+//     here and reads as nothing).
 //
 // `ctx.config.baseUrlOverride` stands in for api.brightdata.com and Anthropic
 // alike, so a test serves both from one fake.
@@ -21,14 +24,36 @@
 import type { WireCredentialDeclarationShape } from 'engine-contracts';
 import type { ModuleContext } from 'module-kit';
 
+import { Readable } from 'node:stream';
+
 import { z } from 'zod';
+import { makeFileTextResolver, type FileTextReader } from 'file-text';
 import type { ChatCall, ChatModelName } from 'movement-engine/public/anthropic';
 import type { FetchedResource, SearchResult, WebTools } from './tools';
 
 import { anthropicClient, anthropicKeyedChatProvider, type LlmUsage } from 'movement-engine/public/anthropic';
 import { costMicrodollars, models } from 'movement-engine/public/anthropic';
-import { FULLY_SUPPORTED_DOCUMENT_REGEXES, NOTION_REGEX } from '#shared/constants/document_sources';
+import { FULLY_SUPPORTED_DOCUMENT_REGEXES, NOTION_REGEX, PDF_REGEX, PPTX_REGEX, XLSX_REGEX } from '#shared/constants/document_sources';
 import { isLinkedInUrl, looksLikeNonHtmlAddress } from './addresses';
+
+/** The files read as text off the platform: the address or the response's
+ *  type says it is a PDF, a PowerPoint deck or a spreadsheet. */
+const READABLE_FILE_ADDRESS = /\.(?:pdf|pptx|xlsx)$/i;
+const READABLE_FILE_TYPE = /pdf|presentationml|spreadsheetml/i;
+
+function isReadableFileAddress(url: string): boolean {
+  try {
+    return READABLE_FILE_ADDRESS.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+interface DownloadedFile {
+  name: string;
+  contentType: string;
+  bytes: Buffer;
+}
 
 const BRIGHT_DATA = 'https://api.brightdata.com';
 const PAGE_CHAR_LIMIT = 50_000;
@@ -48,8 +73,14 @@ type Fields = Readonly<Record<string, string>>;
 
 /** The addresses the platform reads through its document sources (a browser
  *  for gated decks and data rooms, a store that keeps the file). Canva's edit
- *  links are read as its view links there, so any design link is one. */
-const DOCUMENT_SOURCES = [...FULLY_SUPPORTED_DOCUMENT_REGEXES, NOTION_REGEX, /^https:\/\/www\.canva\.com\/design\//];
+ *  links are read as its view links there, so any design link is one. A plain
+ *  PDF, PowerPoint or spreadsheet link is not one: it is fetched and read here. */
+const PLAIN_FILE_LINKS = [PDF_REGEX, PPTX_REGEX, XLSX_REGEX];
+const DOCUMENT_SOURCES = [
+  ...FULLY_SUPPORTED_DOCUMENT_REGEXES.filter((source) => !PLAIN_FILE_LINKS.includes(source)),
+  NOTION_REGEX,
+  /^https:\/\/www\.canva\.com\/design\//,
+];
 
 export function isDocumentSourceAddress(url: string): boolean {
   return DOCUMENT_SOURCES.some((source) => source.test(url));
@@ -98,20 +129,52 @@ export async function standaloneTools(ctx: ModuleContext): Promise<WebTools> {
     });
   }
 
-  async function scrape(url: string): Promise<string> {
-    if (looksLikeNonHtmlAddress(url)) return '';
+  async function get(url: string): Promise<Response> {
     const zone = fields.brightDataUnlockerZone;
     const response =
       fields.brightDataAccessToken && zone
         ? await brightDataRequest(zone, url)
         : await ctx.fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(PAGE_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText} fetching ${url}`);
+    return response;
+  }
+
+  async function scrape(url: string): Promise<string> {
+    if (looksLikeNonHtmlAddress(url)) return '';
+    const response = await get(url);
     const type = response.headers.get('content-type') ?? '';
     if (type && !/html|text|xml|json/i.test(type)) {
       await response.body?.cancel().catch(() => undefined);
       return '';
     }
     return pageText(await response.text());
+  }
+
+  const readFile: FileTextReader<DownloadedFile> = makeFileTextResolver<DownloadedFile>({
+    openBytes: async (file) => ({ stream: Readable.from(file.bytes), size: file.bytes.length }),
+    ocrPdf: async () => ({ unreadable: 'extraction_failed', detail: 'a scanned PDF needs OCR, which is not available off the platform' }),
+    transcribe: async () => {
+      throw new Error('@lf/web: audio is not read off the platform');
+    },
+    analyzeSheet: ({ temperature, system, userMessage }) =>
+      models_.anthropicChat({ model: 'claude-sonnet-5', temperature, system, userMessage, label: 'excel-semantic-analysis' }),
+    rawText: { getOrCreateId: async () => undefined },
+    logger: ctx.log,
+  });
+
+  /** A file link's text, or null when none could be read (said on the log). */
+  async function fileText(url: string, response: Response): Promise<string | null> {
+    const file: DownloadedFile = {
+      name: decodeURIComponent(new URL(url).pathname.split('/').pop() ?? ''),
+      contentType: response.headers.get('content-type') ?? '',
+      bytes: Buffer.from(await response.arrayBuffer()),
+    };
+    const read = await readFile({ file });
+    if ('unreadable' in read) {
+      ctx.log.warn('@lf/web: a linked file could not be read', { url, reason: read.unreadable, detail: read.detail });
+      return null;
+    }
+    return read.text;
   }
 
   async function search(query: string): Promise<{ items: SearchResult[] }> {
@@ -152,7 +215,21 @@ export async function standaloneTools(ctx: ModuleContext): Promise<WebTools> {
     async fetchResource(url): Promise<FetchedResource | null> {
       if (isLinkedInUrl(url)) throw new NotAvailableOffPlatform(`reading the LinkedIn profile ${url}`, PROFILE_READER);
       if (isDocumentSourceAddress(url)) throw new NotAvailableOffPlatform(`reading the document at ${url}`, DOCUMENT_BROWSER);
-      let content = await scrape(url);
+      let content: string;
+      if (isReadableFileAddress(url) || !looksLikeNonHtmlAddress(url)) {
+        const response = await get(url);
+        const type = response.headers.get('content-type') ?? '';
+        if (isReadableFileAddress(url) || READABLE_FILE_TYPE.test(type)) {
+          content = (await fileText(url, response)) ?? '';
+        } else if (type && !/html|text|xml|json/i.test(type)) {
+          await response.body?.cancel().catch(() => undefined);
+          return null;
+        } else {
+          content = pageText(await response.text());
+        }
+      } else {
+        return null;
+      }
       if (!content || content.trim().length < 50) return null;
       if (content.length > PAGE_CHAR_LIMIT) content = content.slice(0, PAGE_CHAR_LIMIT);
       return { url, content, file: null };
