@@ -36,7 +36,7 @@ import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
 import { logger } from 'movement-engine/public/log';
-import { GranolaAdapter, GranolaClient, pollGranola } from '@lf/granola';
+import { GranolaAdapter, GranolaClient, pollGranola } from '@listen-fire/granola';
 import { getAdapter, getPollSource } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
 import { recordingServer, replayingServer, type Exchange } from '../../__test__/parity/exchange';

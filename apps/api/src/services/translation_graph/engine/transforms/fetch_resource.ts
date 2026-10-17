@@ -10,7 +10,7 @@
 import type { FetchedSegment } from './url-fetch';
 import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource';
 
-import { describeError } from '@lf/web';
+import { describeError } from '@listen-fire/web';
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
 import { isBudgetExhausted } from 'movement-engine/public/models';

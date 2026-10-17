@@ -9,7 +9,7 @@ import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { EvertraceApiClient, evertraceCredsParser } from '@lf/evertrace';
+import { EvertraceApiClient, evertraceCredsParser } from '@listen-fire/evertrace';
 import { logger } from 'movement-engine/public/log';
 
 /**

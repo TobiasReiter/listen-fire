@@ -32,8 +32,8 @@ import { getAutomationsQb } from '../../../lib/kysely';
 import {
   affinityCredsParser,
   getAffinityClient,
-} from '@lf/affinity/api_client';
-import { AFFINITY_SUBSCRIBABLE_EVENTS } from '@lf/affinity/inbound';
+} from '@listen-fire/affinity/api_client';
+import { AFFINITY_SUBSCRIBABLE_EVENTS } from '@listen-fire/affinity/inbound';
 
 const affinityProvider: WebhookProvider = {
   canRegisterViaApi: true,

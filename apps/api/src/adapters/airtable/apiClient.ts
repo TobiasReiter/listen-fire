@@ -7,7 +7,7 @@
 import type { z } from 'zod';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AirtableAPIClient, airtableCredsParser, fieldParser, type AirtableTokens } from '@lf/airtable/api_client';
+import { AirtableAPIClient, airtableCredsParser, fieldParser, type AirtableTokens } from '@listen-fire/airtable/api_client';
 import { logger } from 'movement-engine/public/log';
 import { services } from '../registry';
 import { encryptToken } from '../../lib/credentials';

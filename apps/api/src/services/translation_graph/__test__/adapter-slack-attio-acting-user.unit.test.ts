@@ -67,7 +67,7 @@ jest.mock('../../../adapters/slack/webApi/apiClient', () => ({
 
 // ── Attio `client.fetch` mock ────────────────────────────────────────────
 const attioFetch = jest.fn();
-jest.mock('@lf/attio/api_client', () => ({
+jest.mock('@listen-fire/attio/api_client', () => ({
   ...jest.requireActual<object>('@lf/attio/api_client'),
   getAttioClient: () => ({ fetch: attioFetch }),
   attioCredsParser: { safeParse: (v: unknown) => ({ success: true, data: v }) },

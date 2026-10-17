@@ -22,7 +22,7 @@ jest.mock('../../../lib/anthropic', () => ({
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { SlackAdapter, SLACK_MESSAGE_TYPE_ID } from '../adapters/slack';
-import { composeSlackMessage } from '@lf/slack/compose';
+import { composeSlackMessage } from '@listen-fire/slack/compose';
 import { platformSlackChat } from '../adapters/slack';
 
 const TEAM_ID = 'team-1' as TeamId;

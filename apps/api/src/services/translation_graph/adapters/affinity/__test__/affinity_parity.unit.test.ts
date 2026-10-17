@@ -42,7 +42,7 @@ import type { ModuleModels } from 'module-kit';
 import { serveModule } from 'module-kit';
 import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
-import { affinityModule } from '@lf/affinity';
+import { affinityModule } from '@listen-fire/affinity';
 import { createAffinityAdapter } from '..';
 import { getAdapter } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';

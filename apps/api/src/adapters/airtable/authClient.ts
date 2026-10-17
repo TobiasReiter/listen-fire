@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { logger } from 'movement-engine/public/log';
 import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector } from 'movement-engine/public/secrets';
-import { airtableOAuth2 } from '@lf/airtable/oauth';
+import { airtableOAuth2 } from '@listen-fire/airtable/oauth';
 
 /** How an Airtable credential is connected: the declaration Airtable's module
  *  manifest makes. */
-export { airtableOAuth2 } from '@lf/airtable/oauth';
+export { airtableOAuth2 } from '@listen-fire/airtable/oauth';
 
 const airtableTokenResponseSchema = z.object({
   access_token: z.string(),

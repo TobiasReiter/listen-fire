@@ -52,9 +52,9 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 (`ev4-*`), have the detail.
 ### r-embed
 
-- Embedding: a product can let its customers write and run movements in its own process ([docs/embedding.md](docs/embedding.md), [`examples/embed-saas`](examples/embed-saas)). New entry `@lf/engine/public/embed` (the in-process host, adapter introspection, the listen routing table, priced model clients); `RunInput.limits` carries the segment limits from a TypeScript host, and `movement.wasm` is rebuilt so they hold.
-- The packages are ready to publish (not published): `@lf/engine` (was `movement-engine`), `@lf/engine-contracts`, `@lf/module-kit`, `@lf/movement-lang`, `@lf/shared`, `@lf/file-text`, `@lf/model-providers` and every `@lf/<module>`, each 0.11.0, built to `dist/` with declarations by `scripts/build-packages.cjs` on `pnpm pack`. Sources still import the old spellings through workspace aliases; `pnpm --filter` takes the new names.
-- Merged onto r-boundary: the published `@lf/engine` serves only `public/*` (its `publishConfig.exports`); in the workspace the internals still resolve only under the `movement-engine-internals` condition. The engine's own tests reach internals by relative path, not the old package name.
+- Embedding: a product can let its customers write and run movements in its own process ([docs/embedding.md](docs/embedding.md), [`examples/embed-saas`](examples/embed-saas)). New entry `@listen-fire/engine/public/embed` (the in-process host, adapter introspection, the listen routing table, priced model clients); `RunInput.limits` carries the segment limits from a TypeScript host, and `movement.wasm` is rebuilt so they hold.
+- The packages are ready to publish (not published): `@listen-fire/engine` (was `movement-engine`), `@listen-fire/engine-contracts`, `@listen-fire/module-kit`, `@listen-fire/movement-lang`, `@listen-fire/shared`, `@listen-fire/file-text`, `@listen-fire/model-providers` and every `@lf/<module>`, each 0.11.0, built to `dist/` with declarations by `scripts/build-packages.cjs` on `pnpm pack`. Sources still import the old spellings through workspace aliases; `pnpm --filter` takes the new names.
+- Merged onto r-boundary: the published `@listen-fire/engine` serves only `public/*` (its `publishConfig.exports`); in the workspace the internals still resolve only under the `movement-engine-internals` condition. The engine's own tests reach internals by relative path, not the old package name.
 
 ### r-retire
 

@@ -3,15 +3,15 @@
 // movement is checked when saved and run when one of its events happens.
 // Everything here comes from the engine's public entries and the module kit.
 
-import { tenantIdOf, type RunInput } from '@lf/engine-contracts';
-import { runMovement, checkPinnedInRust, parsePinned, type MovementRunResult } from '@lf/engine/public/movement-engine';
-import { inProcessHost, introspectAdapter, collectFileListeners, pricedModels, type FileListener, type ModelClient } from '@lf/engine/public/embed';
-import { buildCatalogSnapshot } from '@lf/engine/public/catalog';
-import { eventMatchesTriggerScope, triggerEventOf } from '@lf/engine/public/inbound';
-import { createMemoryVault, createSecretsFamily, type MemoryVault } from '@lf/engine/public/secrets';
-import type { Adapter, DiscriminableEvent } from '@lf/engine/public/adapter';
-import type { EngineHost } from '@lf/engine/public/host';
-import { adapterInProcess, memoryKv, refusingFiles, secretsCredential, type ModuleLog } from '@lf/module-kit';
+import { tenantIdOf, type RunInput } from '@listen-fire/engine-contracts';
+import { runMovement, checkPinnedInRust, parsePinned, type MovementRunResult } from '@listen-fire/engine/public/movement-engine';
+import { inProcessHost, introspectAdapter, collectFileListeners, pricedModels, type FileListener, type ModelClient } from '@listen-fire/engine/public/embed';
+import { buildCatalogSnapshot } from '@listen-fire/engine/public/catalog';
+import { eventMatchesTriggerScope, triggerEventOf } from '@listen-fire/engine/public/inbound';
+import { createMemoryVault, createSecretsFamily, type MemoryVault } from '@listen-fire/engine/public/secrets';
+import type { Adapter, DiscriminableEvent } from '@listen-fire/engine/public/adapter';
+import type { EngineHost } from '@listen-fire/engine/public/host';
+import { adapterInProcess, memoryKv, refusingFiles, secretsCredential, type ModuleLog } from '@listen-fire/module-kit';
 
 import { CompanyStore, crmModule } from './crm';
 

@@ -14,11 +14,11 @@
   "main": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@listen-fire/shared": "workspace:@lf/shared@*",
+    "@listen-fire/shared": "workspace:*",
     "@prisma/client": "5.22.0",
     "kysely": "0.27.4",
-    "movement-engine": "workspace:@lf/engine@*",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "story-view": "workspace:*",
     "typescript": "5.5.4",
     "zod": "4.1.12"

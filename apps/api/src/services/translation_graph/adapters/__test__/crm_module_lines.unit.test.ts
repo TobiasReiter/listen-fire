@@ -27,7 +27,7 @@ import { defineModule, type ModuleCredential } from 'module-kit';
 import { BaseAdapter } from 'module-kit/adapter/base';
 import { createMemoryVault } from 'movement-engine/public/secrets';
 import { verifyInbound } from 'movement-engine/public/inbound';
-import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
+import { AIRTABLE_MANIFEST } from '@listen-fire/airtable/manifest';
 import { LEGACY_SIGNATURE_HEADERS } from '../../../inbound/legacy_signature_headers';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
 import { BUILTIN_MODULES, builtinModuleInboundVerifier, loadBuiltinModule, type BuiltinModuleLine } from '../builtin_modules';

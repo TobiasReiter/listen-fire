@@ -1,5 +1,5 @@
 {
-  "name": "@lf/engine",
+  "name": "@listen-fire/engine",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "The movement engine and its host contract, moved out of apps/api so every shell (the hosted product, the `lf` command line) runs the same engine: the TypeScript engine, the Rust engine's shim, the EngineHost families, and the adapter and model types they reach. Paths mirror apps/api/src so the move stayed mechanical. Its own tests borrow apps/api's jest runner (jest.config.borrowed.cjs); engine tests that need the platform still live in apps/api. Embedders reach it only through public/* (the exports map); the internals resolve only under the `movement-engine-internals` condition, which only test runners set",
@@ -27,9 +27,9 @@
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",
-    "@lf/engine-contracts": "workspace:^",
-    "@lf/movement-lang": "workspace:^",
-    "@lf/shared": "workspace:^",
+    "@listen-fire/engine-contracts": "workspace:^",
+    "@listen-fire/movement-lang": "workspace:^",
+    "@listen-fire/shared": "workspace:^",
     "exponential-backoff": "3.1.1",
     "google-auth-library": "10.3.0",
     "jsonrepair": "3.8.0",
@@ -38,11 +38,11 @@
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "#shared": "workspace:@lf/shared@*",
+    "#shared": "workspace:@listen-fire/shared@*",
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
-    "engine-contracts": "workspace:@lf/engine-contracts@*",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "engine-contracts": "workspace:@listen-fire/engine-contracts@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "typescript": "5.5.4"
   },
   "repository": {

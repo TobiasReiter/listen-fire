@@ -8,21 +8,21 @@ A working example is in [`examples/embed-saas`](../examples/embed-saas): a small
 
 | package | what it is |
 |---|---|
-| `@lf/engine` | The engine and its host contract. Reached only through its public entries, `@lf/engine/public/<entry>`. |
-| `@lf/engine-contracts` | The data the engine is handed: a run's input, the tenant id, the event, the parked state, the module protocol. |
-| `@lf/module-kit` | How a module is defined (`defineModule`) and loaded, in your process or served as a process. |
-| `@lf/movement-lang` | The language: parser, checker, catalog types. The engine depends on it. |
-| `@lf/model-providers` | Model vendors beyond Anthropic (OpenAI, Gemini, Claude on Vertex). Optional. |
-| `@lf/file-text` | A file's text: PDF, decks, spreadsheets, audio. Optional. |
+| `@listen-fire/engine` | The engine and its host contract. Reached only through its public entries, `@listen-fire/engine/public/<entry>`. |
+| `@listen-fire/engine-contracts` | The data the engine is handed: a run's input, the tenant id, the event, the parked state, the module protocol. |
+| `@listen-fire/module-kit` | How a module is defined (`defineModule`) and loaded, in your process or served as a process. |
+| `@listen-fire/movement-lang` | The language: parser, checker, catalog types. The engine depends on it. |
+| `@listen-fire/model-providers` | Model vendors beyond Anthropic (OpenAI, Gemini, Claude on Vertex). Optional. |
+| `@listen-fire/file-text` | A file's text: PDF, decks, spreadsheets, audio. Optional. |
 | `@lf/<name>` | Ready-made modules: `@lf/attio`, `@lf/slack`, `@lf/google-sheets`, `@lf/web`, and the rest. |
 
 Every package has the same version as the engine. Node 22 or later. With TypeScript, use `moduleResolution` `node16`, `nodenext` or `bundler` (plain `node` works too, through the packages' `typesVersions`).
 
 ```sh
-npm install @lf/engine @lf/engine-contracts @lf/module-kit
+npm install @listen-fire/engine @listen-fire/engine-contracts @listen-fire/module-kit
 ```
 
-The public entries of `@lf/engine` you will use:
+The public entries of `@listen-fire/engine` you will use:
 
 | entry | for |
 |---|---|
@@ -48,7 +48,7 @@ The public entries of `@lf/engine` you will use:
 A movement reaches your product through a module: an adapter over your own data. Define it once with the module kit.
 
 ```ts
-import { defineModule } from '@lf/module-kit';
+import { defineModule } from '@listen-fire/module-kit';
 
 export const crm = defineModule({
   kind: 'adapter',
@@ -61,7 +61,7 @@ export const crm = defineModule({
 
 Load it in your process for one tenant with `adapterInProcess(crm, host)`. The `host` is the module's context: the tenant, its credential, a log, files, and a small store of its own (`kv`). `secretsCredential` reads the credential from your secrets; `memoryKv` keeps module state in memory. Set `validateResults: true` while you develop: every answer is checked against the protocol.
 
-The ready-made modules (`@lf/attio`, `@lf/slack`, …) load the same way. A module can also run as its own process (`serve-module`, in `@lf/module-kit`), reached over the module protocol (`public/modules`); see [docs/contracts/adapter-protocol.md](contracts/adapter-protocol.md).
+The ready-made modules (`@lf/attio`, `@lf/slack`, …) load the same way. A module can also run as its own process (`serve-module`, in `@listen-fire/module-kit`), reached over the module protocol (`public/modules`); see [docs/contracts/adapter-protocol.md](contracts/adapter-protocol.md).
 
 ## 2. The catalog
 
@@ -133,7 +133,7 @@ The host has the same slots as `lf.yaml`'s `core:` section. You fill each with y
 | models | `ai(…)` and `extract(…)` calls | `llm: pricedModels({ client, extractCall })`. A client answers `{ parsedJson }` and may report what it cost. The Anthropic clients are `makeAnthropicLlmClient` and `makeAnthropicExtractCallClient` (`public/models`), over `anthropicClient` (`public/anthropic`). |
 | judge | whether a written record is one already there, when the rules alone cannot tell | `llm.arbitrateEntities`. Absent: such a write fails, naming it. |
 | store | parks: `await`, `sleep`, callbacks | `park.sink`, `park.wake`, `park.bindings`, `park.callbacks`, with the run-host store (`public/run-host`) behind them. Absent: a movement that parks fails. Your store must pass the contract suite in `public/testing`. |
-| files | reading a file's text, rendering a file | `files.resolveFileText` (`@lf/file-text` reads PDFs, decks and sheets), `files.render`. |
+| files | reading a file's text, rendering a file | `files.resolveFileText` (`@listen-fire/file-text` reads PDFs, decks and sheets), `files.render`. |
 
 Two more pieces are yours and have safe defaults:
 

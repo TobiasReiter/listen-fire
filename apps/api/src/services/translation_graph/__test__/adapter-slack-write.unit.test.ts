@@ -6,7 +6,7 @@
  */
 
 import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
-import type { SlackWriteHost } from '@lf/slack/write';
+import type { SlackWriteHost } from '@listen-fire/slack/write';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 
@@ -16,13 +16,13 @@ import {
   SLACK_FILE_TYPE_ID,
   SLACK_REACTION_TYPE_ID,
 } from '../adapters/slack';
-import { SLACK_CHANNEL_TYPE_ID } from '@lf/slack/read_graph';
+import { SLACK_CHANNEL_TYPE_ID } from '@listen-fire/slack/read_graph';
 import {
   addReaction,
   createUnifiedMessage,
   reactionAnchorFromParent,
   replyAnchorFromParent,
-} from '@lf/slack/write';
+} from '@listen-fire/slack/write';
 
 
 /** What a write reaches beyond Slack, for these tests: the mock client's

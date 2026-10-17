@@ -10,7 +10,7 @@ import './write_failure_alerts';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { AffinityAdapter, affinityCredsParser, getAffinityClient, type AffinityAPIClient } from '@lf/affinity';
+import { AffinityAdapter, affinityCredsParser, getAffinityClient, type AffinityAPIClient } from '@listen-fire/affinity';
 import { logger } from 'movement-engine/public/log';
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
@@ -18,8 +18,8 @@ import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording'
 import { hostedModels } from '../module_host';
 import { platformModuleFiles } from '../../engine/files/module_files';
 
-export { AFFINITY_ADAPTER_TYPE } from '@lf/affinity/types';
-export { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
+export { AFFINITY_ADAPTER_TYPE } from '@listen-fire/affinity/types';
+export { AFFINITY_MANIFEST } from '@listen-fire/affinity/manifest';
 
 async function legacyClient(input: { teamId: TeamId; credentialsId: string }): Promise<AffinityAPIClient> {
   const row = await getAutomationsQb(['external_service_credentials'])

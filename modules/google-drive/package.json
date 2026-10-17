@@ -1,5 +1,5 @@
 {
-  "name": "@lf/google-drive",
+  "name": "@listen-fire/google-drive",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "Google Drive (granted folders and files: their children, fields and bytes; folder and file creates, uploads included) as a module. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
@@ -16,17 +16,17 @@
   "types": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@lf/engine": "workspace:^",
-    "@lf/google-sheets": "workspace:^",
-    "@lf/module-kit": "workspace:^",
+    "@listen-fire/engine": "workspace:^",
+    "@listen-fire/google-sheets": "workspace:^",
+    "@listen-fire/module-kit": "workspace:^",
     "googleapis": "164.1.0",
     "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
-    "module-kit": "workspace:@lf/module-kit@*",
-    "movement-engine": "workspace:@lf/engine@*",
+    "module-kit": "workspace:@listen-fire/module-kit@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
     "typescript": "5.5.4"
   },
   "repository": {

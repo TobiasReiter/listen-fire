@@ -1,5 +1,5 @@
 {
-  "name": "@lf/shared",
+  "name": "@listen-fire/shared",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "Shared library for Listen-Fire code to be used across client and server",

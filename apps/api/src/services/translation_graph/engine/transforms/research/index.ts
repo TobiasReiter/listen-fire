@@ -5,14 +5,14 @@
 
 import type { PluginManifest, TransformImpl } from '../registry';
 
-import { research as researchIn, researchPlugin } from '@lf/web/research';
+import { research as researchIn, researchPlugin } from '@listen-fire/web/research';
 import { importIdentifier } from 'movement-engine/public/catalog';
 import { RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 import { hosted, legacyImpl } from '../hosted_tools';
 import { RESEARCH_HANDBOOK_SECTION } from './research_handbook_section';
 
-export * from '@lf/web/research/contract';
-export { configuredEngine } from '@lf/web/research';
+export * from '@listen-fire/web/research/contract';
+export { configuredEngine } from '@listen-fire/web/research';
 
 export const RESEARCH_PLUGIN_MANIFEST: PluginManifest = {
   pluginName: RESEARCH_PLUGIN.signature.name,

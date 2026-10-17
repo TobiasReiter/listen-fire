@@ -23,7 +23,7 @@ jest.mock('../../../lib/kysely', () => {
 });
 
 const createdSubscriptions: unknown[] = [];
-jest.mock('@lf/affinity/api_client', () => ({
+jest.mock('@listen-fire/affinity/api_client', () => ({
   affinityCredsParser: { parse: (v: unknown) => v },
   getAffinityClient: () => ({
     createWebhookSubscription: async (args: unknown) => {

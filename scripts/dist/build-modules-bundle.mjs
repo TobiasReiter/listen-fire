@@ -27,6 +27,7 @@ const WORKSPACE = {
   'engine-contracts': 'packages/engine-contracts',
   'movement-engine': 'packages/movement-engine',
   'movement-lang': 'packages/movement-lang',
+  'file-text': 'packages/file-text',
   '#shared': 'packages/shared',
   '@listen-fire/shared': 'packages/shared',
 };

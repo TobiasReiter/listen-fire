@@ -8,7 +8,7 @@ import type { Adapter } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { DropboxAdapter, DropboxClient, type DropboxClientSource } from '@lf/dropbox';
+import { DropboxAdapter, DropboxClient, type DropboxClientSource } from '@listen-fire/dropbox';
 import { z } from 'zod';
 import { logger } from 'movement-engine/public/log';
 import { decryptToken } from '../../../../lib/credentials';
@@ -19,7 +19,7 @@ import { readHandedFile } from 'module-kit';
 import { ownedFilesAdapter } from 'movement-engine/public/modules';
 import { platformModuleFiles } from '../../engine/files/module_files';
 
-export { DROPBOX_ADAPTER_TYPE, DROPBOX_MANIFEST } from '@lf/dropbox';
+export { DROPBOX_ADAPTER_TYPE, DROPBOX_MANIFEST } from '@listen-fire/dropbox';
 
 /** The stored payload, `baseUrl` being the test-harness redirect slot
  *  `injectFakeBaseUrl` fills for the dev-loop team. */

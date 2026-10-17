@@ -8,7 +8,7 @@
 import type { FileRef } from 'engine-contracts';
 import type { TransformImpl } from './registry';
 
-import { runWebPlugin, withTools, type WebPlugin, type WebTools } from '@lf/web';
+import { runWebPlugin, withTools, type WebPlugin, type WebTools } from '@listen-fire/web';
 import { documentStoreFileRef } from 'movement-engine/public/files';
 import { logger } from 'movement-engine/public/log';
 import { services } from '../../../../adapters/registry';

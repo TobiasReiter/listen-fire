@@ -9,9 +9,9 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
 import type { WebhookEvent } from '../../../webhook_sync/providers/interface';
 import type { Adapter, DiscriminableEvent, FileRef } from 'movement-engine/public/adapter';
-import type { SlackComposeChat, SlackSources } from '@lf/slack';
+import type { SlackComposeChat, SlackSources } from '@listen-fire/slack';
 
-import { SLACK_MESSAGE_EVENT_TYPES, SlackAdapter as SlackModuleAdapter, composeSlackMessage } from '@lf/slack';
+import { SLACK_MESSAGE_EVENT_TYPES, SlackAdapter as SlackModuleAdapter, composeSlackMessage } from '@listen-fire/slack';
 import { getSlackClient, slackCredsParser } from '../../../../adapters/slack/webApi/apiClient';
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import { decryptToken } from '../../../../lib/credentials';
@@ -20,7 +20,7 @@ import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../../lib/recording'
 import { logger } from 'movement-engine/public/log';
 import { streamFileRef } from '../../engine/files/retrieve';
 
-export * from '@lf/slack/types';
+export * from '@listen-fire/slack/types';
 export {
   SLACK_FILE_TYPE_ID,
   SLACK_MANIFEST,
@@ -34,7 +34,7 @@ export {
   SLACK_REACTION_EVENT_TYPES,
   SLACK_REACTION_TYPE_ID,
   type SlackFileRecord,
-} from '@lf/slack';
+} from '@listen-fire/slack';
 
 /** The composition function's model on the platform: its routed, metered
  *  chat (lazily required: its transitive Prisma dependency stays out of unit

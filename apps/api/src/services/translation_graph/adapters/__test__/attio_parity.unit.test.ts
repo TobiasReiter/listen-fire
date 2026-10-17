@@ -37,7 +37,7 @@ import type { AddressInfo } from 'node:net';
 import { serveModule } from 'module-kit';
 import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
-import { attioModule, forgetAttioCatalogs } from '@lf/attio';
+import { attioModule, forgetAttioCatalogs } from '@listen-fire/attio';
 import { createAttioAdapter } from '../attio';
 import { getAdapter } from '../registry';
 import { BUILTIN_MODULES, type BuiltinModuleLine } from '../builtin_modules';

@@ -6,9 +6,9 @@
 
 import type { OAuth2Client } from 'google-auth-library';
 
-import { GoogleDriveClient as ModuleDriveClient } from '@lf/google-drive/drive_client';
+import { GoogleDriveClient as ModuleDriveClient } from '@listen-fire/google-drive/drive_client';
 
-export { DRIVE_FOLDER_MIME, type DriveItem } from '@lf/google-drive/drive_client';
+export { DRIVE_FOLDER_MIME, type DriveItem } from '@listen-fire/google-drive/drive_client';
 
 class GoogleDriveClient extends ModuleDriveClient {
   /** `baseUrl` is the test-harness redirect (fake-channels). */

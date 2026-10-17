@@ -9,7 +9,7 @@ import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import { GranolaClient, granolaCredsParser } from '@lf/granola';
+import { GranolaClient, granolaCredsParser } from '@listen-fire/granola';
 import { logger } from 'movement-engine/public/log';
 
 /**

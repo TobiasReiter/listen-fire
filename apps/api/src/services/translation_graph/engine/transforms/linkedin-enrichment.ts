@@ -5,7 +5,7 @@
 
 import type { PluginManifest, TransformImpl } from './registry';
 
-import { linkedinEnrichmentPlugin } from '@lf/web';
+import { linkedinEnrichmentPlugin } from '@listen-fire/web';
 import { importIdentifier } from 'movement-engine/public/catalog';
 import { LINKEDIN_ENRICHMENT_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';

@@ -37,7 +37,7 @@ import type { AddressInfo } from 'node:net';
 import { serveModule } from 'module-kit';
 import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
-import { airtableModule } from '@lf/airtable';
+import { airtableModule } from '@listen-fire/airtable';
 import { createAirtableAdapter } from '..';
 import { getAdapter } from '../../registry';
 import { BUILTIN_MODULES, type BuiltinModuleLine } from '../../builtin_modules';

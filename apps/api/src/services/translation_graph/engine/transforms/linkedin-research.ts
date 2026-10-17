@@ -6,7 +6,7 @@
 import type { PluginManifest, TransformImpl } from './registry';
 
 import { LINKEDIN_RESEARCH_HANDBOOK_SECTION } from './linkedin_research_handbook_section';
-import { linkedinResearchPlugin } from '@lf/web';
+import { linkedinResearchPlugin } from '@listen-fire/web';
 import { importIdentifier } from 'movement-engine/public/catalog';
 import { LINKEDIN_RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';

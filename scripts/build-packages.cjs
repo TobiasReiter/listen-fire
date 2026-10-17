@@ -9,7 +9,7 @@
 // so a compile never re-emits a neighbour's sources; the order below is the
 // dependency order. The sources import a neighbour by its workspace spelling
 // (`movement-engine/public/host`, `#shared/…`); the emitted files are
-// rewritten to the published name (`@lf/engine/public/host`), so an installed
+// rewritten to the published name (`@listen-fire/engine/public/host`), so an installed
 // package finds its neighbour by the name npm installed it under.
 //
 //   node scripts/build-packages.cjs                 every package
@@ -42,14 +42,14 @@ const PACKAGES = [
 
 /** The workspace spelling each package is imported by, beside its published name. */
 const SPELLINGS = {
-  'movement-engine': '@lf/engine',
-  'engine-contracts': '@lf/engine-contracts',
-  'module-kit': '@lf/module-kit',
-  'file-text': '@lf/file-text',
-  'model-providers': '@lf/model-providers',
-  'movement-lang': '@lf/movement-lang',
-  '@listen-fire/shared': '@lf/shared',
-  '#shared': '@lf/shared',
+  'movement-engine': '@listen-fire/engine',
+  'engine-contracts': '@listen-fire/engine-contracts',
+  'module-kit': '@listen-fire/module-kit',
+  'file-text': '@listen-fire/file-text',
+  'model-providers': '@listen-fire/model-providers',
+  'movement-lang': '@listen-fire/movement-lang',
+  '@listen-fire/shared': '@listen-fire/shared',
+  '#shared': '@listen-fire/shared',
 };
 
 const manifestOf = (dir) => JSON.parse(fs.readFileSync(path.join(ROOT, dir, 'package.json'), 'utf8'));

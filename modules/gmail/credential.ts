@@ -22,7 +22,7 @@ import type { WireCredentialDeclarationShape } from 'engine-contracts';
 import type { CredentialFields, ModuleContext } from 'module-kit';
 import type { OAuth2Declaration } from 'movement-engine/public/secrets';
 
-import { GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT } from '@lf/google-sheets/google_oauth';
+import { GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT } from '@listen-fire/google-sheets/google_oauth';
 
 import { GMAIL_CONNECT_METHODS, GMAIL_SCOPES, GmailApiClient, GmailApiError, type GmailConnectMethod, type GmailScope } from './api_client';
 import type { GmailClientSource } from './adapter';

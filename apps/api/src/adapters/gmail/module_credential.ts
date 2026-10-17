@@ -26,7 +26,7 @@ import type { ExternalServiceCredentialsId } from '../../generated/kysely/automa
 import type { PayloadShape } from '../../services/credentials/secrets_postgres';
 
 import { z } from 'zod';
-import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '@lf/gmail/api_client';
+import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from '@listen-fire/gmail/api_client';
 import { createSecretsFamily, expiresWithin, oauth2Refresher, type SecretsFamily } from 'movement-engine/public/secrets';
 import { logger } from 'movement-engine/public/log';
 

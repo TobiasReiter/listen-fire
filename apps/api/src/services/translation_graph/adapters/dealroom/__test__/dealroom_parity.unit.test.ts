@@ -38,7 +38,7 @@ import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/s
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
 import { getAdapter, getPollSource } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
-import { DealroomApiClient, DealroomAdapter, pollDealroom } from '@lf/dealroom';
+import { DealroomApiClient, DealroomAdapter, pollDealroom } from '@listen-fire/dealroom';
 import { logger } from 'movement-engine/public/log';
 import { recordingServer, replayingServer, type Exchange } from '../../__test__/parity/exchange';
 import { bootFakeDealroom } from './parity/fake_dealroom';

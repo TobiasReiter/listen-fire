@@ -1,5 +1,5 @@
 {
-  "name": "@lf/google-sheets",
+  "name": "@listen-fire/google-sheets",
   "license": "Apache-2.0",
   "version": "0.11.0",
   "description": "Google Sheets (granted spreadsheets: their tables, tabs, named cells and cells) as a module: read, append, unique-by overwrite, create and share. Loaded in process by the platform, served by serve-module everywhere else. Also the Google OAuth constants every Google module shares (google_oauth.ts). Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
@@ -16,22 +16,22 @@
   "types": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@lf/engine": "workspace:^",
-    "@lf/engine-contracts": "workspace:^",
-    "@lf/module-kit": "workspace:^",
-    "@lf/movement-lang": "workspace:^",
-    "@lf/shared": "workspace:^",
+    "@listen-fire/engine": "workspace:^",
+    "@listen-fire/engine-contracts": "workspace:^",
+    "@listen-fire/module-kit": "workspace:^",
+    "@listen-fire/movement-lang": "workspace:^",
+    "@listen-fire/shared": "workspace:^",
     "exponential-backoff": "3.1.1",
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "#shared": "workspace:@lf/shared@*",
+    "#shared": "workspace:@listen-fire/shared@*",
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
-    "engine-contracts": "workspace:@lf/engine-contracts@*",
-    "module-kit": "workspace:@lf/module-kit@*",
-    "movement-engine": "workspace:@lf/engine@*",
-    "movement-lang": "workspace:@lf/movement-lang@*",
+    "engine-contracts": "workspace:@listen-fire/engine-contracts@*",
+    "module-kit": "workspace:@listen-fire/module-kit@*",
+    "movement-engine": "workspace:@listen-fire/engine@*",
+    "movement-lang": "workspace:@listen-fire/movement-lang@*",
     "typescript": "5.5.4"
   },
   "repository": {

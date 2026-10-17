@@ -74,7 +74,7 @@ async function runOne(crm: Crm, mode: Mode): Promise<Record<string, number>> {
   const adapterFor = (round: number): Adapter => {
     const tenant = `team-${round % 4}`;
     if (crm === 'affinity') {
-      const m: typeof import('@lf/affinity') = require('@lf/affinity');
+      const m: typeof import('@listen-fire/affinity') = require('@listen-fire/affinity');
       if (mode === 'legacy') {
         return new m.AffinityAdapter({ tenant, client: async () => m.getAffinityClient('dev-loop-affinity-key', provider.url), models, files, fetch });
       }
@@ -82,7 +82,7 @@ async function runOne(crm: Crm, mode: Mode): Promise<Record<string, number>> {
       return kit.adapterInProcess(m.affinityModule, { tenant, credential: { name: 'affinity', fields: async () => fields, update: async () => {} }, log: quiet, files, kv, models, validateResults: mode === 'validated' }).adapter;
     }
     if (crm === 'airtable') {
-      const m: typeof import('@lf/airtable') = require('@lf/airtable');
+      const m: typeof import('@listen-fire/airtable') = require('@listen-fire/airtable');
       if (mode === 'legacy') {
         const client = new m.AirtableAPIClient({ baseUrl: provider.url, tokens: { accessToken: async () => 'dev-loop-airtable-token', refresh: async () => {} } });
         return new m.AirtableAdapter({ tenant, client: async () => client, files });
@@ -90,7 +90,7 @@ async function runOne(crm: Crm, mode: Mode): Promise<Record<string, number>> {
       const fields = { access_token: 'dev-loop-airtable-token', refresh_token: 'r', baseUrl: provider.url };
       return kit.adapterInProcess(m.airtableModule, { tenant, credential: { name: 'airtable', fields: async () => fields, update: async () => {} }, log: quiet, files, kv, models, validateResults: mode === 'validated' }).adapter;
     }
-    const m: typeof import('@lf/attio') = require('@lf/attio');
+    const m: typeof import('@listen-fire/attio') = require('@listen-fire/attio');
     if (mode === 'legacy') {
       return new m.AttioAdapter({ tenant, client: async () => m.getAttioClient('dev-loop-attio-token', provider.url), files, fetch });
     }

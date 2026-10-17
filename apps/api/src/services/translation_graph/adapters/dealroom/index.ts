@@ -7,10 +7,10 @@
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { PollSource } from '../../poll_source';
 
-import { DEALROOM_POLL_INTERVAL_SECONDS, DealroomAdapter, pollDealroom, type DealroomClientSource } from '@lf/dealroom';
+import { DEALROOM_POLL_INTERVAL_SECONDS, DealroomAdapter, pollDealroom, type DealroomClientSource } from '@listen-fire/dealroom';
 import { resolveDealroomClient } from './client';
 
-export { DEALROOM_ADAPTER_TYPE, DEALROOM_MANIFEST } from '@lf/dealroom';
+export { DEALROOM_ADAPTER_TYPE, DEALROOM_MANIFEST } from '@listen-fire/dealroom';
 
 function legacyClient(input: { teamId: TeamId; credentialsId?: string }): DealroomClientSource {
   return async () => {

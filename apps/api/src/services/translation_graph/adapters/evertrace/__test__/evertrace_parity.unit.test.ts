@@ -38,7 +38,7 @@ import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
 import { logger } from 'movement-engine/public/log';
-import { EvertraceAdapter, EvertraceApiClient, pollEvertrace } from '@lf/evertrace';
+import { EvertraceAdapter, EvertraceApiClient, pollEvertrace } from '@listen-fire/evertrace';
 import { getAdapter, getPollSource } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
 import { recordingServer, replayingServer, type Exchange } from '../../__test__/parity/exchange';
