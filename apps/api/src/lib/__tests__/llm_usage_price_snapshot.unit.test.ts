@@ -68,7 +68,7 @@ function snapshot(): Record<string, number[]> {
   );
 }
 
-const FIXTURE = join(__dirname, 'fixtures', 'price_snapshot.json');
+const FIXTURE = join(__dirname, '__fixtures__', 'price_snapshot.json');
 
 it('prices every model to the microdollar exactly as the pinned fixture', () => {
   const actual = snapshot();
