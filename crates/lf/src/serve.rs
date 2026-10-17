@@ -59,6 +59,38 @@ pub fn host_token() -> Option<&'static str> {
     HOST_TOKEN.get().map(String::as_str)
 }
 
+/// Outside `lf serve` (a plain `lf run`, `resume`, `drain`, …): a loopback
+/// listener with the models door alone, so a module can still ask the
+/// host for a model call.
+static MODELS_DOOR_URL: OnceLock<String> = OnceLock::new();
+
+/// Where the externals this process starts reach its doors (LF_HOST_URL).
+pub fn externals_host_url() -> Option<&'static str> {
+    host_url().or_else(|| MODELS_DOOR_URL.get().map(String::as_str))
+}
+
+/// Open the models door alone, unless this process already serves its doors.
+pub async fn open_models_door(credentials: &crate::secrets::Credentials) -> Result<(), String> {
+    if externals_host_url().is_some() {
+        return Ok(());
+    }
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|e| format!("the models door: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let _ = HOST_TOKEN.set(crate::http_out::hex(&crate::http_out::random_bytes(24)?));
+    let _ = MODELS_DOOR_URL.set(format!("http://127.0.0.1:{port}"));
+    let credentials = Rc::new(credentials.clone());
+    tokio::task::spawn_local(crate::http::serve(listener, MAX_BODY_BYTES, move |request| {
+        let credentials = credentials.clone();
+        async move {
+            if request.method == "POST" && matches!(segments(&request.path, "/api/public/adapter/").as_deref(), Some([_, "models"])) {
+                return models_door(&credentials, &request).await;
+            }
+            Response::json(404, &Js::Obj(obj! { "error" => Js::str("not_found"), "message" => Js::str("outside lf serve, lf serves only the models door") }))
+        }
+    }));
+    Ok(())
+}
+
 /// `lf serve [--port N]`: until SIGINT or SIGTERM.
 pub async fn run(project: Project, ephemeral: bool, store: &StoreSpec, port: Option<&str>) -> Result<i32, String> {
     let port = match port {
@@ -217,7 +249,7 @@ async fn route(session: &Session, poke: &Notify, request: Request) -> Result<Res
         return callback_door(session, poke, &decoded(id)?, &request).await;
     }
     if let Some([_, "models"]) = segments(&request.path, "/api/public/adapter/").as_deref() {
-        return Ok(models_door(session, &request).await);
+        return Ok(models_door(session.credentials(), &request).await);
     }
 
     let notify = || poke.notify_one();
@@ -246,8 +278,9 @@ async fn route(session: &Session, poke: &Notify, request: Request) -> Result<Res
 }
 
 /// The models door: a model call by the models slot's module, for an
-/// external this process started (it holds LF_HOST_TOKEN).
-async fn models_door(session: &Session, request: &Request) -> Response {
+/// external this process started (it holds LF_HOST_TOKEN). Served by `lf
+/// serve`'s listener, and alone outside it (`open_models_door`).
+async fn models_door(credentials: &crate::secrets::Credentials, request: &Request) -> Response {
     let presented = request.headers.iter().find(|(k, _)| k == "authorization").map(|(_, v)| v.as_str());
     let expected = host_token().map(|t| format!("Bearer {t}"));
     if expected.is_none() || presented != expected.as_deref() {
@@ -257,7 +290,7 @@ async fn models_door(session: &Session, request: &Request) -> Response {
         Ok(body) => body,
         Err(e) => return Response::json(400, &Js::Obj(obj! { "error" => Js::str("bad_request"), "message" => Js::Str(e) })),
     };
-    match crate::llm_calls::host_model_call(&body, session.credentials()).await {
+    match crate::llm_calls::host_model_call(&body, credentials).await {
         Ok(answer) => Response::json(200, &answer),
         Err(message) => Response::json(502, &Js::Obj(obj! { "error" => Js::str("model_call_failed"), "message" => Js::Str(message) })),
     }

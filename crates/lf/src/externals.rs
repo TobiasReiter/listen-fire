@@ -433,7 +433,7 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("PORT", "0")
-        .envs(crate::serve::host_url().map(|url| ("LF_HOST_URL", url)))
+        .envs(crate::serve::externals_host_url().map(|url| ("LF_HOST_URL", url)))
         .envs(crate::serve::host_token().map(|token| ("LF_HOST_TOKEN", token)))
         .envs(external.manifest.env.iter().map(|(k, v)| (k, v.replace("{lf}", &lf))))
         .stdin(Stdio::null())

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -153,6 +153,70 @@ test('lf run: lf.yaml maxRunCostUsd pauses a run at its cap; lf resume carries o
     assert.equal(fake.received.length, 2, resumed.out);
     assert.match(JSON.stringify(fake.received[1]?.body.messages), /Shorten:/);
     assert.ok(companies(dir).includes(ANSWER), `${companies(dir).join(', ')}\n${resumed.out}`);
+  } finally {
+    fake.close();
+  }
+});
+
+// A process module that asks the host for a model call (`ctx.models`): under a
+// plain `lf run` too, not only `lf serve`, lf serves the models door and
+// tells the externals it starts where it is (LF_HOST_URL, LF_HOST_TOKEN).
+test('lf run: a plugin module asks the host for a model call through the models door', async () => {
+  const fake = await fakeAnthropic();
+  try {
+    const dir = project();
+    appendFileSync(join(dir, '.lf/secrets.yaml'), `\nanthropic:\n  external: "@lf/anthropic"\n  api_key: test-key\n  base_url: ${fake.url}\n`);
+    mkdirSync(join(dir, 'externals/greeter'));
+    writeFileSync(join(dir, 'externals/greeter/lf-external.yaml'), 'name: greeter\nkind: plugin\nmodule: ./greeter.ts\n');
+    writeFileSync(
+      join(dir, 'externals/greeter/greeter.ts'),
+      `module.exports = {
+  kind: 'plugin',
+  name: '@acme/greeter',
+  credentials: [],
+  plugins: [{
+    priced: false,
+    signature: {
+      name: 'greet',
+      description: 'A welcome line for a company, written by the host\\'s model.',
+      params: [{ name: 'name', type: { kind: 'string' }, required: true }],
+      dataDependency: 'none',
+      additions: {},
+      effects: {},
+      output: { kind: 'value', type: { kind: 'string' } },
+    },
+  }],
+  create: (ctx: { models: { chat(input: { label: string; system: string; userMessage: string }): Promise<string> } }) => ({
+    invokePlugin: async ({ config }: { config: Record<string, unknown> }) => ({
+      text: await ctx.models.chat({ label: 'greeter.greet', system: 'You write welcome lines.', userMessage: \`Greet \${String(config.name)}\` }),
+    }),
+  }),
+};
+`,
+    );
+    rmSync(join(dir, 'movements/companies.mvt'));
+    writeFileSync(
+      join(dir, 'movements/greeted.mvt'),
+      [
+        'import { acme_crm } from adapters',
+        'import { `@acme/greeter` as greeter } from plugins',
+        'import { acme } from credentials',
+        '',
+        'crm = connect acme_crm using acme',
+        '',
+        'function greet_it(company: <crm-[:Company]->>) {',
+        '  write crm-[:Company]-> { Name: greeter.greet(company.Name) }',
+        '}',
+        '',
+        'listen to crm { events: ["company.created"] } fire greet_it',
+        '',
+      ].join('\n'),
+    );
+    const run = await lfAsync(dir, 'run', '--event', 'events/company_created.json');
+    assert.equal(run.code, 0, run.out);
+    assert.equal(fake.received.length, 1, run.out);
+    assert.match(JSON.stringify(fake.received[0]?.body.messages), /Greet Vireo Robotics/);
+    assert.ok(companies(dir).includes(ANSWER), `${companies(dir).join(', ')}\n${run.out}`);
   } finally {
     fake.close();
   }
