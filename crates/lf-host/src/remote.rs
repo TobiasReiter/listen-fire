@@ -178,6 +178,11 @@ pub struct SegmentAdapters<'s> {
 }
 
 impl<'s> SegmentAdapters<'s> {
+    /// The project's externals, credentials and tenant this segment calls with.
+    pub fn externals(&self) -> &'s Externals<'s> {
+        self.externals
+    }
+
     pub fn new(segment_id: &str, externals: &'s Externals<'s>) -> SegmentAdapters<'s> {
         SegmentAdapters {
             segment_id: segment_id.to_string(),

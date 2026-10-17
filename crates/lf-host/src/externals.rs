@@ -1,8 +1,10 @@
 //! Externals: the project's installed modules (a folder each under the
 //! externals folder, with an `lf-external.yaml`), read and started as the
-//! TypeScript lf does (apps/cli/src/externals.ts). An adapter external is a
-//! process speaking adapter protocol 2 over HTTP: started with `PORT=0`, it
-//! prints `listening <port>`.
+//! TypeScript lf does (apps/cli/src/externals.ts). An external is a process
+//! speaking adapter protocol 2 over HTTP: started with `PORT=0`, it prints
+//! `listening <port>`. A `module` external is served by `serve-module` (the
+//! module kit's runner; `LF_SERVE_MODULE` names another command). A plugin
+//! external serves a package of plugins instead of an adapter.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,6 +38,9 @@ pub struct ExternalManifest {
     pub protocol: u64,
     pub command: Option<Vec<String>>,
     pub url: Option<String>,
+    /// A module (a path relative to the folder, or a package) served by
+    /// `serve-module`.
+    pub module: Option<String>,
     pub auth: Option<Auth>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -83,8 +88,9 @@ pub fn scan_externals(project: &Project) -> Result<Vec<External>, String> {
         let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         let manifest: ExternalManifest = serde_yaml::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
         validate(&manifest).map_err(|issue| format!("{}: {issue}", file.display()))?;
-        if manifest.kind == "adapter" && manifest.command.is_none() && manifest.url.is_none() {
-            return Err(format!("{}: an adapter external needs a `command` or a `url`", file.display()));
+        let reaches = [manifest.command.is_some(), manifest.url.is_some(), manifest.module.is_some()].iter().filter(|r| **r).count();
+        if reaches != 1 {
+            return Err(format!("{}: an external needs exactly one of `command`, `url` or `module`", file.display()));
         }
         found.push(External { dir, manifest });
     }
@@ -122,8 +128,38 @@ pub struct RunningExternal {
     /// `runtimeCapabilities`, as it answered them.
     pub runtime_capabilities: Js,
     pub webhook_event_type_id: Option<String>,
+    /// The package of plugins it serves (`plugins`: `{ package, plugins }`).
+    pub plugins: Option<Js>,
     /// The started process; killed when this is dropped.
     _child: Option<Child>,
+}
+
+impl RunningExternal {
+    pub fn is_plugin(&self) -> bool {
+        self.external.manifest.kind == "plugin"
+    }
+
+    /// Whether it serves `plugin` (either spelling).
+    pub fn serves_plugin(&self, plugin: &str) -> bool {
+        let spelled = plugin.replace('-', "_");
+        plugin_entries(self.plugins.as_ref()).iter().any(|(name, _)| name.replace('-', "_") == spelled)
+    }
+}
+
+/// The `{ name, spec }` entries of a plugins declaration, in order.
+pub fn plugin_entries(declared: Option<&Js>) -> Vec<(String, Js)> {
+    declared
+        .and_then(|d| d.get("plugins"))
+        .and_then(Js::as_array)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|entry| Some((entry.get("name")?.as_str()?.to_string(), entry.get("spec")?.clone())))
+        .collect()
+}
+
+/// The plugin external that serves `plugin`.
+pub fn plugin_external_for<'r>(running: &'r [RunningExternal], plugin: &str) -> Option<&'r RunningExternal> {
+    running.iter().find(|r| r.serves_plugin(plugin))
 }
 
 /// The `Authorization` secret a call to this external carries.
@@ -153,13 +189,10 @@ async fn call(external: &External, base_url: &str, credentials: &Credentials, te
     Ok(post_rpc(Call { base_url, bearer, team_id: tenant, method, cache_scope_id: "<none>", params }).await?)
 }
 
-/// Start (or reach) every adapter external and read its manifest.
+/// Start (or reach) every external and read its manifest.
 pub async fn start_externals(project: &Project, externals: &[External], credentials: &Credentials, tenant: &str) -> Result<Vec<RunningExternal>, String> {
     let mut running = Vec::new();
     for external in externals {
-        if external.manifest.kind != "adapter" {
-            continue;
-        }
         let (base_url, child) = reach(project, external).await?;
         let name = &external.manifest.name;
         let raw = call(external, &base_url, credentials, tenant, "manifest", json!({})).await?;
@@ -172,7 +205,10 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
         }
         let manifest = WireManifest::read(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?;
         if manifest.adapter_type != *name {
-            return Err(format!("external folder \"{name}\" serves adapter \"{}\"; the names must agree", manifest.adapter_type));
+            return Err(format!("external folder \"{name}\" serves \"{}\"; the names must agree", manifest.adapter_type));
+        }
+        if external.manifest.kind == "plugin" && manifest.plugins.is_none() {
+            return Err(format!("external \"{name}\" is a plugin external, but its manifest declares no plugins"));
         }
         running.push(RunningExternal {
             external: external.clone(),
@@ -182,6 +218,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             methods: manifest.methods,
             runtime_capabilities: manifest.runtime_capabilities,
             webhook_event_type_id: manifest.webhook_event_type_id,
+            plugins: manifest.plugins,
             _child: child,
         });
     }
@@ -196,6 +233,7 @@ struct WireManifest {
     methods: Vec<String>,
     runtime_capabilities: Js,
     webhook_event_type_id: Option<String>,
+    plugins: Option<Js>,
 }
 
 impl WireManifest {
@@ -232,8 +270,34 @@ impl WireManifest {
             "resources" => capabilities.and_then(|c| c.get("resources")).cloned().unwrap_or(Js::Null),
         });
         let webhook_event_type_id = raw.get("webhookEventTypeId").and_then(Js::as_str).map(str::to_string);
-        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)?, methods, runtime_capabilities, webhook_event_type_id })
+        let plugins = plugins_declaration(raw, &methods)?;
+        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)?, methods, runtime_capabilities, webhook_event_type_id, plugins })
     }
+}
+
+/// `WirePluginsDeclaration`, paired with `invokePlugin` as the manifest
+/// schema pairs them: a package tag and at least one `{ name, spec }`.
+fn plugins_declaration(raw: &Js, methods: &[String]) -> Result<Option<Js>, String> {
+    let lists = methods.iter().any(|m| m == "invokePlugin");
+    let Some(declared) = raw.get("plugins") else {
+        return if lists { Err("plugins: lists `invokePlugin` in methods but declares no `plugins`".into()) } else { Ok(None) };
+    };
+    if !lists {
+        return Err("methods: declares `plugins` but does not list `invokePlugin` in methods".into());
+    }
+    if !declared.get("package").and_then(Js::as_str).is_some_and(|p| !p.is_empty()) {
+        return Err("plugins.package: expected a non-empty string".into());
+    }
+    let entries = declared.get("plugins").and_then(Js::as_array).ok_or("plugins.plugins: expected an array")?;
+    if entries.is_empty() {
+        return Err("plugins.plugins: expected at least one plugin".into());
+    }
+    for entry in entries {
+        if !entry.get("name").and_then(Js::as_str).is_some_and(|n| !n.is_empty()) || !matches!(entry.get("spec"), Some(Js::Obj(_))) {
+            return Err("plugins.plugins: expected { name, spec } entries".into());
+        }
+    }
+    Ok(Some(declared.clone()))
 }
 
 /// `WireListenDeclarations.parse`: the three declarations, unknown keys stripped.
@@ -274,7 +338,15 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
     if let Some(url) = &external.manifest.url {
         return Ok((url.clone(), None));
     }
-    let Some((command, args)) = external.manifest.command.as_deref().and_then(<[String]>::split_first) else {
+    let served: Vec<String>;
+    let command_line = match &external.manifest.module {
+        Some(module) => {
+            served = vec![std::env::var("LF_SERVE_MODULE").ok().filter(|c| !c.is_empty()).unwrap_or_else(|| "serve-module".into()), module.clone()];
+            Some(served.as_slice())
+        }
+        None => external.manifest.command.as_deref(),
+    };
+    let Some((command, args)) = command_line.and_then(<[String]>::split_first) else {
         return Err(format!("external \"{name}\" has no command"));
     };
     let state_dir = project.lf_dir.join("externals").join(name);
@@ -325,6 +397,21 @@ mod tests {
         assert_eq!(listening_port("listening 5557"), Some(5557));
         assert_eq!(listening_port("listening 80 on all"), Some(80));
         assert_eq!(listening_port("ready"), None);
+    }
+
+    #[test]
+    fn a_plugins_declaration_pairs_with_invoke_plugin() {
+        let declared = r#""plugins": { "package": "@lf/web", "plugins": [{ "name": "fetch-url", "spec": { "args": ["url"] } }] }"#;
+        let with = |methods: &str, plugins: bool| {
+            let body = if plugins { format!("{{ {declared} }}") } else { "{}".to_string() };
+            plugins_declaration(&Js::parse(body.as_bytes()).unwrap(), &methods.split(',').filter(|m| !m.is_empty()).map(str::to_string).collect::<Vec<_>>())
+        };
+        assert!(with("manifest,invokePlugin", true).unwrap().is_some());
+        assert_eq!(with("manifest", false).unwrap(), None);
+        assert!(with("manifest", true).unwrap_err().contains("does not list `invokePlugin`"));
+        assert!(with("manifest,invokePlugin", false).unwrap_err().contains("declares no `plugins`"));
+        let empty = Js::parse(br#"{ "plugins": { "package": "@lf/web", "plugins": [] } }"#).unwrap();
+        assert!(plugins_declaration(&empty, &["invokePlugin".to_string()]).unwrap_err().contains("at least one"));
     }
 
     #[test]
