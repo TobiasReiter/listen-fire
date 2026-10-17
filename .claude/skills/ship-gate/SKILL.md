@@ -27,6 +27,12 @@ Gates everything accumulated on local main since the last gate.
      Add `--maxWorkers=4` on the command line: the unit config pins
      `maxWorkers: 1` for interactive runs, and a gate leg of ~240 suites at
      ~12s each takes ~50 min serially (seen 2026-10-05).
+   - The checks corpus (every gate, whatever the chunk touched): in
+     packages/movement-lang, `pnpm checks:corpus` (about 16 min). It runs the
+     three corpus-wide checks that CI does not, because the checks pin holds
+     no program text and only a harvest of the test suites finds it: the
+     checker regression's full replay (0 drifted), the upgrade floor, and
+     reachability. It exits non-zero on any of them.
    - Two tiers of test scope:
      - **Chunk gate** (every gate): only the dirs the chunk touched, plus
        the language-version conformance corpora when the chunk touched the
