@@ -9,89 +9,22 @@
 //   4. create-only updateRecord / deleteRecord throw.
 //   5. resolveEntity — bridge-only (linked_object dedup, else 0 candidates).
 //
-// The Drive client is mocked by overriding the adapter's private getClient;
-// fake-channels is never hit. Module-scope deps that crash at load are stubbed
-// exactly as the Airtable / Sheets adapter tests do.
-
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-
-jest.mock('movement-engine/services/logger', () => ({
-  logger: {
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  },
-}));
-
-jest.mock('../../../../../lib/recording', () => ({
-  isTestHarnessTeam: () => false,
-  injectFakeBaseUrl: (p: unknown) => p,
-}));
-
-// The real driveClient pulls in googleapis + google-auth-library, which crash
-// at module load in jest. The adapter references `GoogleDriveClient` as a value
-// (constructed inside getClient — overridden in tests), so stub it as a no-op.
-jest.mock('../../../../../adapters/google/driveClient', () => ({
-  GoogleDriveClient: class {},
-}));
-
-// The upload path fetches `fileRef.dataUrl`; stub the registry so the import
-// resolves without booting the connector graph (the byte path no longer
-// touches `services.document`).
-jest.mock('../../../../../adapters/registry', () => ({
-  services: { google: undefined },
-}));
-
-// types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
-// the leaf — the adapter consumes it only at type level.
-jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret, extend: ret, merge: ret,
-    pick: ret, omit: ret, partial: ret, describe: ret, or: ret, and: ret, min: ret,
-  });
-  return {
-    traversalStepSchema: stub,
-    fieldRefSchema: stub,
-    expressionSchema: stub,
-    filterExpressionSchema: stub,
-    webhookGraphOutputConfigSchema: stub,
-  };
-});
-
-jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret,
-  });
-  return {
-    isEdgeToEntry: (entry: { kind?: string }) => entry?.kind === 'edge_to',
-    storedUniquenessConstraintsSchema: stub,
-  };
-});
+// The Drive client is a fake the adapter is constructed with; fake-channels
+// is never hit. A handed file's bytes come from a fake reader.
 
 import { Readable } from 'node:stream';
 
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
+import type { ModuleLog } from 'module-kit';
+import type { GoogleDriveClient } from '../drive_client';
 import type {
   ResolveEntityInput,
   WriteInput,
   UpdateInput,
   DeleteInput,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
-import { GoogleDriveAdapter } from '../index';
-import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
+import { refusingKv } from 'module-kit';
+import { GoogleDriveAdapter } from '../adapter';
 import {
   DISPLAY_NAME_BY_KIND,
   structuredIdFor,
@@ -111,6 +44,11 @@ const FILE_TYPE = DISPLAY_NAME_BY_KIND.file;
 
 const PARENT_FOLDER = 'fldrPARENT01';
 
+const quiet: ModuleLog = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+
+/** The bytes the host holds for a handed file, by its name. */
+const handedFiles = new Map<string, string>([['report.pdf', 'file-bytes']]);
+
 interface FakeClientCalls {
   findFolder: Array<{ name: string; parentId: string }>;
   createFolder: Array<{ name: string; parentId: string }>;
@@ -123,8 +61,14 @@ function makeAdapter(options?: { existingFolderId?: string }): {
   calls: FakeClientCalls;
 } {
   const adapter = new GoogleDriveAdapter({
-    teamId: 'team-drive' as TeamId,
-    credentialsId: 'creds-1',
+    client: async () => fakeClient as unknown as GoogleDriveClient,
+    kv: refusingKv('no grants in these tests'),
+    readFile: async (ref) => {
+      const bytes = handedFiles.get(ref.name ?? '');
+      if (bytes === undefined) throw new Error(`no bytes for ${ref.name ?? 'an unnamed file'}`);
+      return new Uint8Array(Buffer.from(bytes));
+    },
+    log: quiet,
   });
   const calls: FakeClientCalls = {
     findFolder: [],
@@ -151,8 +95,6 @@ function makeAdapter(options?: { existingFolderId?: string }): {
       return { id: 'fileNEW01', webViewLink: 'https://drive.google.com/file/d/fileNEW01' };
     },
   };
-  (adapter as unknown as { getClient: () => Promise<typeof fakeClient> }).getClient = async () =>
-    fakeClient;
   return { adapter, calls };
 }
 
@@ -348,12 +290,10 @@ describe('GoogleDriveAdapter.createRecord — file (one noun, two byte channels)
 
   it('File streams the bytes its descriptor is redeemed for', async () => {
     const { adapter, calls } = makeAdapter();
-    const store = installMemoryDocumentStore();
-
     await adapter.createRecord({
       recordType: FILE_TYPE,
       fields: {
-        file: store.file('file-bytes', { name: 'report.pdf', contentType: 'application/pdf' }),
+        file: { __brand: 'FileRef', name: 'report.pdf', contentType: 'application/pdf', source: { store: 'document', objectUri: 'mem://report' } },
       },
       mutationContext: {} as never,
       parentLinks: [{ recordType: FOLDER_TYPE, externalId: PARENT_FOLDER, edgeName: 'Files' }],

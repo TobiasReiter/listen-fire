@@ -128,8 +128,9 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Google Drive adapter — create-only write target (v3-output parity).
   // Source-side triggers (snapshot/poll) are deferred — Drive has no v3
   // input — so it appears as a target in the editor picker, not a source.
-  [GOOGLE_DRIVE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
+  [GOOGLE_DRIVE_ADAPTER_TYPE]: builtinAdapterFactory(GOOGLE_DRIVE_ADAPTER_TYPE, ({ teamId, credentialsId }) =>
     createGoogleDriveAdapter({ teamId, credentialsId }),
+  ),
   // Dropbox adapter — create-only write target (v3-output parity). Source-side
   // triggers (snapshot/poll) are deferred — Dropbox has no v3 input — so it
   // appears as a target in the editor picker, not a source.

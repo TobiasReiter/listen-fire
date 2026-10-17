@@ -27,13 +27,9 @@
 // outside the grant; wiring the honest hop is a recorded follow-up
 // (plans/2026-07-10-adapter-entry-positions/9_graph_explorer.md).
 
-import type {
-  SchemaEntryPoint,
-  SchemaFieldDescriptor,
-  SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
+import type { SchemaEntryPoint, SchemaFieldDescriptor, SchemaTypeDescriptor } from 'movement-engine/public/catalog';
 
-import { META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE } from 'movement-engine/public/catalog';
 import { DISPLAY_NAME_BY_KIND, structuredIdFor } from './types';
 
 export const DRIVE_FOLDER_TYPE = DISPLAY_NAME_BY_KIND.folder;

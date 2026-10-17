@@ -22,7 +22,8 @@
 
 import { Readable } from 'node:stream';
 
-import type { GoogleDriveClient } from '../../../../adapters/google/driveClient';
+import type { ModuleLog } from 'module-kit';
+import type { GoogleDriveClient } from './drive_client';
 import type {
   DeleteInput,
   DeleteResult,
@@ -33,25 +34,27 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
-import type { LinkedObject } from '../../../../generated/kysely/knowledge/LinkedObject';
+} from 'movement-engine/public/adapter';
 
-import { logger } from 'movement-engine/services/logger';
-import { singleParentLink } from 'movement-engine/services/translation_graph/adapter';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
+import { singleParentLink } from 'movement-engine/public/adapter';
+import { hasFileSource } from 'movement-engine/public/files';
 import {
   GOOGLE_DRIVE_ADAPTER_TYPE,
   driveUrl,
   requireStructuredId,
 } from './types';
 
+/** The bytes of a file the write was handed (at its url, else through the
+ *  host: module-kit `readHandedFile`). */
+export type ReadHandedFile = (ref: FileRef) => Promise<Uint8Array>;
+
 // ── createRecord — dispatch on type ───────────────────────────────────────────
 
 export async function createRecord(input: {
   client: GoogleDriveClient;
-  /** The team whose run is writing — a `File` value is redeemed for it. */
-  teamId: TeamId;
+  /** How a `File` value's bytes are read. */
+  readFile: ReadHandedFile;
+  log: ModuleLog;
   write: WriteInput;
 }): Promise<WriteResult> {
   // `recordType` is the pretty type name; recover the write kind from the static
@@ -83,9 +86,10 @@ function resolveParentId(write: WriteInput): string | undefined {
  *  by name within the parent precedes creation, exactly as v3 does. */
 async function createFolder(input: {
   client: GoogleDriveClient;
+  log: ModuleLog;
   write: WriteInput;
 }): Promise<WriteResult> {
-  const { client, write } = input;
+  const { client, log, write } = input;
   const folderName = String(write.fields.name ?? write.fields.title ?? 'Untitled');
   const parentId = resolveParentId(write);
   if (!parentId) {
@@ -98,7 +102,7 @@ async function createFolder(input: {
   // Tier 1: search by name within parent (tier-0 bridge dedup is resolveEntity).
   const existingId = await client.findFolder({ name: folderName, parentId });
   if (existingId) {
-    logger.info(`[GDrive] Found existing folder "${folderName}" → ${existingId}`);
+    log.info(`[GDrive] Found existing folder "${folderName}" → ${existingId}`);
     return {
       adapterType: GOOGLE_DRIVE_ADAPTER_TYPE,
       externalId: existingId,
@@ -107,7 +111,7 @@ async function createFolder(input: {
   }
 
   const folder = await client.createFolder({ name: folderName, parentId });
-  logger.info(`[GDrive] Created folder "${folderName}" → ${folder.id}`);
+  log.info(`[GDrive] Created folder "${folderName}" → ${folder.id}`);
   return {
     adapterType: GOOGLE_DRIVE_ADAPTER_TYPE,
     externalId: folder.id,
@@ -123,10 +127,11 @@ async function createFolder(input: {
  *  guess (one value must not mean two facts). */
 async function createFile(input: {
   client: GoogleDriveClient;
-  teamId: TeamId;
+  readFile: ReadHandedFile;
+  log: ModuleLog;
   write: WriteInput;
 }): Promise<WriteResult> {
-  const { client, teamId, write } = input;
+  const { client, readFile, log, write } = input;
   const parentId = resolveParentId(write);
   if (!parentId) {
     throw new Error(
@@ -153,8 +158,8 @@ async function createFile(input: {
   }
 
   return hasContent
-    ? createDocument({ client, write, parentId })
-    : createUpload({ client, teamId, write, parentId });
+    ? createDocument({ client, log, write, parentId })
+    : createUpload({ client, readFile, log, write, parentId });
 }
 
 /** The Google-Doc channel: import the PROVIDED text as a Doc (`files.create`
@@ -162,15 +167,16 @@ async function createFile(input: {
  *  body's field mappings (AI() / property reads) — no LLM runs here. */
 async function createDocument(input: {
   client: GoogleDriveClient;
+  log: ModuleLog;
   write: WriteInput;
   parentId: string;
 }): Promise<WriteResult> {
-  const { client, write, parentId } = input;
+  const { client, log, write, parentId } = input;
   const title = String(write.fields.name ?? write.fields.title ?? 'Document');
   const content = String(write.fields.content);
 
   const doc = await client.createDocument({ name: title, content, parentId });
-  logger.info(`[GDrive] Created document "${title}" → ${doc.id}`);
+  log.info(`[GDrive] Created document "${title}" → ${doc.id}`);
   return {
     adapterType: GOOGLE_DRIVE_ADAPTER_TYPE,
     externalId: doc.id,
@@ -179,9 +185,9 @@ async function createDocument(input: {
 }
 
 /** The File-typed value the engine delivers for the `File` field — a
- *  branded `FileRef` descriptor (adapter.ts), redeemed for its bytes here on
- *  the host side, with `name` / `contentType` metadata top-level. Inline
- *  `content` is the fallback for text composed in the program body. */
+ *  `FileRef` descriptor, whose bytes are read at its url or through the host,
+ *  with `name` / `contentType` metadata top-level. Inline `content` is the
+ *  fallback for text composed in the program body. */
 interface FileValue extends FileRef {
   url?: string | null;
   content?: string;
@@ -199,11 +205,12 @@ function asFileValue(raw: unknown): FileValue | string | null {
  *  field. */
 async function createUpload(input: {
   client: GoogleDriveClient;
-  teamId: TeamId;
+  readFile: ReadHandedFile;
+  log: ModuleLog;
   write: WriteInput;
   parentId: string;
 }): Promise<WriteResult> {
-  const { client, write, parentId } = input;
+  const { client, log, write, parentId } = input;
   const fileValue = asFileValue(write.fields.file);
   if (fileValue == null) {
     throw new Error(
@@ -212,7 +219,7 @@ async function createUpload(input: {
     );
   }
 
-  const resolved = await resolveUploadStream(fileValue, input.teamId);
+  const resolved = await resolveUploadStream(fileValue, input.readFile);
   const name =
     String(write.fields.name ?? '') ||
     (typeof fileValue === 'object' ? fileValue.name : undefined) ||
@@ -224,7 +231,7 @@ async function createUpload(input: {
     stream: resolved.stream,
     mimeType: resolved.contentType,
   });
-  logger.info(`[GDrive] Uploaded "${name}" → ${result.id}`);
+  log.info(`[GDrive] Uploaded "${name}" → ${result.id}`);
   return {
     adapterType: GOOGLE_DRIVE_ADAPTER_TYPE,
     externalId: result.id,
@@ -233,22 +240,19 @@ async function createUpload(input: {
 }
 
 /** Resolve a `file` field value to a readable stream + mime type. Preferred:
- *  the FileRef's bytes, redeemed for the team (`streamFileRef`, P5). Fallback:
- *  inline string content composed in the program body. */
+ *  the file's bytes (at its url, or redeemed by the host). Fallback: inline
+ *  string content composed in the program body. */
 async function resolveUploadStream(
   fileValue: FileValue | string,
-  teamId: TeamId,
+  readFile: ReadHandedFile,
 ): Promise<{ stream: Readable; contentType: string | undefined }> {
   if (typeof fileValue === 'string') {
     return { stream: Readable.from(fileValue), contentType: 'text/plain' };
   }
 
-  if (hasFileSource(fileValue)) {
-    const resolved = await streamFileRef(fileValue, { teamId });
-    return {
-      stream: resolved.stream,
-      contentType: resolved.contentType ?? fileValue.contentType ?? undefined,
-    };
+  if (typeof fileValue.url === 'string' || hasFileSource(fileValue)) {
+    const bytes = await readFile(fileValue);
+    return { stream: Readable.from([Buffer.from(bytes)]), contentType: fileValue.contentType ?? undefined };
   }
 
   if (typeof fileValue.content === 'string') {

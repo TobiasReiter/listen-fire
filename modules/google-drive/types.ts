@@ -80,19 +80,3 @@ export function driveUrl(id: string, type: 'folder' | 'file'): string {
     ? `https://drive.google.com/drive/folders/${id}`
     : `https://drive.google.com/file/d/${id}`;
 }
-
-// ── Credential parser ──────────────────────────────────────────────────────
-// Mirrors `googleCredsParser` from `adapters/google/authClient` so the adapter
-// validates the decrypted payload at its own boundary. `baseUrl` is the
-// test-harness redirect slot injected by `injectFakeBaseUrl` (fake-channels'
-// gdrive mount for the dev-loop team — it becomes the googleapis rootUrl).
-import { z } from 'zod';
-
-export const googleDriveAdapterCredsParser = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-  expiresAt: z.number(),
-  baseUrl: z.string().url().optional(),
-});
-
-export type GoogleDriveAdapterCreds = z.infer<typeof googleDriveAdapterCredsParser>;

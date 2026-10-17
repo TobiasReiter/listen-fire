@@ -35,6 +35,7 @@ COPY packages/model-providers/package.json packages/model-providers/
 COPY packages/module-kit/package.json packages/module-kit/
 COPY modules/dealroom/package.json modules/dealroom/
 COPY modules/google-sheets/package.json modules/google-sheets/
+COPY modules/google-drive/package.json modules/google-drive/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/
