@@ -72,7 +72,7 @@ jobs:
       - name: Smoke test (a binary that runs on this runner)
         if: "!matrix.zig && matrix.target == 'aarch64-apple-darwin'"
         run: |
-          bin=target/${{ matrix.target }}/release/lf-host
+          bin=target/${{ matrix.target }}/release/lf
           "$bin" init "$RUNNER_TEMP/starter"
           "$bin" check --dir "$RUNNER_TEMP/starter"
       - name: Archive
@@ -81,7 +81,7 @@ jobs:
           version="${GITHUB_REF_NAME:-dry-run}"
           name="${version}-${{ matrix.target }}"
           mkdir -p "dist/$name/bin" "dist/$name/share/lf"
-          cp "target/${{ matrix.target }}/release/lf-host" "dist/$name/bin/lf"
+          cp "target/${{ matrix.target }}/release/lf" "dist/$name/bin/lf"
           node scripts/dist/build-modules-bundle.mjs "dist/$name/share/lf/modules" ${{ matrix.os }} ${{ matrix.cpu }} ${{ matrix.libc }}
           rm -f "dist/$name/share/lf/modules/package-lock.json"
           cp LICENSE NOTICE "dist/$name/"

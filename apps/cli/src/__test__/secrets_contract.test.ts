@@ -1,7 +1,11 @@
 // The secrets family's contract suite (packages/movement-engine/services/
-// secrets/contract.ts) against lf's stores: a plain secrets file, a SOPS file
-// (through a stand-in `sops` that keeps the plaintext beside the file, and
-// through the real sops + age when both are installed), and the environment.
+// secrets/contract.ts) against the Rust lf's stores, driven over its
+// stdio JSON-RPC bridge (`lf --contract-secrets`) by `RpcSecretsBackend`:
+// the same cases lf's own stores pass (secrets_contract.test.ts) — a plain
+// secrets file, a SOPS file through a stand-in `sops` and through the real
+// sops + age when both are installed, and the environment. A sibling is a
+// second lf process on the same store, so the lock file is what keeps
+// two refreshes from both spending the token.
 
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -12,7 +16,8 @@ import { randomUUID } from 'node:crypto';
 import { stringify } from 'yaml';
 import { secretsContractCases, type SecretsContractBackend } from 'movement-engine/public/secrets-testing';
 import type { SecretFields } from 'movement-engine/public/secrets';
-import { envSecrets, fileSecrets } from '../secrets';
+import { lfBinary } from './lf_bin';
+import { RpcSecretsBackend } from './rpc_secrets';
 
 const newName = () => `c${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 
@@ -20,10 +25,19 @@ function entry(name: string, fields: SecretFields): string {
   return stringify({ [name]: { external: 'acme_crm', ...fields } });
 }
 
-function fileBackend(path: string, append: (text: string) => void): SecretsContractBackend {
+/** Every process a case started, closed when it ends. */
+type Opened = RpcSecretsBackend[];
+
+function open(opened: Opened, target: string): RpcSecretsBackend {
+  const backend = new RpcSecretsBackend(lfBinary(), target);
+  opened.push(backend);
+  return backend;
+}
+
+function fileBackend(opened: Opened, path: string, append: (text: string) => void): SecretsContractBackend {
   return {
-    backend: fileSecrets(path),
-    sibling: () => fileSecrets(path),
+    backend: open(opened, path),
+    sibling: () => open(opened, path),
     seed: async (fields) => {
       const name = newName();
       append(entry(name, fields));
@@ -65,42 +79,44 @@ function onPath(command: string): boolean {
   return spawnSync('which', [command], { encoding: 'utf8' }).status === 0;
 }
 
-function suite(label: string, make: () => SecretsContractBackend, options: { skip?: string; path?: string } = {}): void {
+function suite(label: string, make: (opened: Opened) => SecretsContractBackend, options: { skip?: string; path?: string } = {}): void {
   for (const contractCase of secretsContractCases) {
     test(`${label}: ${contractCase.name}`, { ...(options.skip !== undefined ? { skip: options.skip } : {}) }, async () => {
       const savedPath = process.env.PATH;
       if (options.path !== undefined) process.env.PATH = `${options.path}:${savedPath}`;
+      const opened: Opened = [];
       try {
-        await contractCase.run(make());
+        await contractCase.run(make(opened));
       } finally {
         process.env.PATH = savedPath;
+        await Promise.all(opened.map((b) => b.close()));
       }
     });
   }
 }
 
-suite('plain file', () => {
+suite('Rust plain file', (opened) => {
   const path = join(mkdtempSync(join(tmpdir(), 'lf-secrets-plain-')), 'secrets.yaml');
   writeFileSync(path, '# a comment that survives\n');
-  return fileBackend(path, (text) => appendFileSync(path, text));
+  return fileBackend(opened, path, (text) => appendFileSync(path, text));
 });
 
 const standIn = sopsStandIn();
 suite(
-  'SOPS file (stand-in sops)',
-  () => {
+  'Rust SOPS file (stand-in sops)',
+  (opened) => {
     const path = join(mkdtempSync(join(tmpdir(), 'lf-secrets-sops-')), 'secrets.yaml');
     writeFileSync(path, 'sops:\n  version: 3.9.0\n');
     writeFileSync(`${path}.plain`, '');
-    return fileBackend(path, (text) => appendFileSync(`${path}.plain`, text));
+    return fileBackend(opened, path, (text) => appendFileSync(`${path}.plain`, text));
   },
   { path: standIn },
 );
 
 const realSops = onPath('sops') && onPath('age-keygen');
 suite(
-  'SOPS file (sops + age)',
-  () => {
+  'Rust SOPS file (sops + age)',
+  (opened) => {
     const dir = mkdtempSync(join(tmpdir(), 'lf-secrets-age-'));
     const keys = join(dir, 'keys.txt');
     const made = spawnSync('age-keygen', ['-o', keys], { encoding: 'utf8' });
@@ -116,7 +132,7 @@ suite(
     };
     encrypt();
     return {
-      ...fileBackend(path, () => undefined),
+      ...fileBackend(opened, path, () => undefined),
       seed: async (fields) => {
         const name = newName();
         plain[name] = { external: 'acme_crm', ...fields };
@@ -125,18 +141,28 @@ suite(
       },
     };
   },
-  realSops ? {} : { skip: 'sops and age-keygen are not installed here; the stand-in sops suite covers lf\'s side of the calls' },
+  realSops ? {} : { skip: "sops and age-keygen are not installed here; the stand-in sops suite covers lf's side of the calls" },
 );
 
-suite('environment (read-only)', () => {
-  const env: NodeJS.ProcessEnv = {};
+suite('Rust environment (read-only)', (opened) => {
+  const env: Array<[string, string]> = [];
+  const handles: RpcSecretsBackend[] = [];
+  const handle = () => {
+    const backend = open(opened, 'env');
+    handles.push(backend);
+    // A sibling starts with what was seeded before it.
+    void Promise.all(env.map(([key, value]) => backend.setEnv(key, value)));
+    return backend;
+  };
   return {
-    backend: envSecrets(env),
-    sibling: () => envSecrets(env),
+    backend: handle(),
+    sibling: handle,
     seed: async (fields) => {
       const name = newName();
-      env[`LF_SECRET__${name.toUpperCase()}__EXTERNAL`] = 'acme_crm';
-      for (const [field, value] of Object.entries(fields)) env[`LF_SECRET__${name.toUpperCase()}__${field.toUpperCase()}`] = value;
+      const vars: Array<[string, string]> = [[`LF_SECRET__${name.toUpperCase()}__EXTERNAL`, 'acme_crm']];
+      for (const [field, value] of Object.entries(fields)) vars.push([`LF_SECRET__${name.toUpperCase()}__${field.toUpperCase()}`, value]);
+      env.push(...vars);
+      await Promise.all(handles.flatMap((h) => vars.map(([key, value]) => h.setEnv(key, value))));
       return name;
     },
     missingRef: () => 'missing',

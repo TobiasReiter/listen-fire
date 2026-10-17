@@ -1,6 +1,6 @@
 # Getting started with `lf`
 
-`lf` runs movements from a project folder on your machine. The commands below are as they exist now; the Rust binary is built as `lf-host` (`cargo build -p lf-host`) and takes the same commands, except that `init` is only in the TypeScript `lf` (`pnpm --filter lf-cli lf`) for now.
+`lf` runs movements from a project folder on your machine. Build it with `cargo build --release -p lf-host` (the binary is `target/release/lf`), or install a release.
 
 ## 1. Make a project
 

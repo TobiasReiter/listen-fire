@@ -836,7 +836,7 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
         }
         // Families lf-host does not serve yet: the run fails naming them.
         "park.bindings.record" | "park.bindings.findBoundCounterpart" | "park.bindings.delete" => {
-            Err(failure(format!("{label}: lf-host keeps no record bindings yet; use the TypeScript lf for a movement that binds records")))
+            Err(failure(format!("{label}: lf keeps no record bindings yet")))
         }
         _ => return Err(Fault(format!("the host has no route for {label}"))),
     })

@@ -116,10 +116,10 @@ test('lf run: a model call with no provider key fails naming the secrets entry',
   assert.match(run.out, /a model call needs a provider key/);
 });
 
-// Rust lf only: the TypeScript lf is frozen and reads no cost cap. As on the
+// As on the
 // platform, a run that meets its cap pauses before the priced call that would
 // go over it, and an explicit resume carries on with its usage reset.
-test('lf run: lf.yaml maxRunCostUsd pauses a run at its cap; lf resume carries on', { skip: process.env.LF_BIN === undefined }, async () => {
+test('lf run: lf.yaml maxRunCostUsd pauses a run at its cap; lf resume carries on', async () => {
   const fake = await fakeAnthropic();
   try {
     const dir = project();

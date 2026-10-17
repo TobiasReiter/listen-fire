@@ -3,18 +3,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { localIdentity } from '../host';
-import type { FileRef } from 'engine-contracts';
-import { redeemFileRef } from 'movement-engine/services/translation_graph/engine/files/redeem';
-import { localDocumentStore } from '../documents';
-import { localFileText } from '../files';
-import { loadProject, initProject } from '../project';
-import { loadSecrets, refreshCredential, type Credential } from '../secrets';
 import { lfCommand } from './example';
 
 const EXAMPLE = resolve(__dirname, '../../../../examples/lf-acme');
@@ -148,27 +141,6 @@ test('a SOPS file is read with sops -d and the refresh goes back through sops se
   }
 });
 
-test('with sops unavailable, an encrypted credential is refused before the refresh token is spent', async () => {
-  const token = await tokenServer({ access_token: 'fresh-token' });
-  const savedPath = process.env.PATH;
-  try {
-    const path = join(mkdtempSync(join(tmpdir(), 'lf-secrets-')), 'lf.yaml');
-    writeFileSync(path, 'acme:\n  external: acme_crm\nsops:\n  version: 3.9.0\n');
-    const credential: Credential = {
-      name: 'acme',
-      external: 'acme_crm',
-      fields: { refresh_token: 'r1', token_url: token.url },
-      origin: { file: { path, encrypted: true }, envFields: new Set() },
-    };
-    process.env.PATH = mkdtempSync(join(tmpdir(), 'lf-nopath-'));
-    await assert.rejects(refreshCredential(credential), /credential "acme".*lf\.yaml.*sops/);
-    assert.equal(token.forms.length, 0);
-  } finally {
-    process.env.PATH = savedPath;
-    token.close();
-  }
-});
-
 test('a field from the environment is refreshed for this process only, with one warning', async () => {
   const token = await tokenServer({ access_token: 'fresh-token' });
   try {
@@ -223,25 +195,12 @@ test('a credential the program imports but nothing configures is named, with the
   assert.match(check.out, /companies\.mvt:2:\d+ error MISSING_CREDENTIAL credential "acme"/);
 });
 
-test('the acting user is lf.yaml\'s, overridden by LF_USER / LF_USER_EMAIL, else the OS user', () => {
-  const configured = { name: 'Ada', email: 'ada@example.com' };
-  assert.deepEqual(localIdentity(configured, {}), { principal: { id: 'local:Ada', display: 'Ada' }, email: 'ada@example.com' });
-  assert.deepEqual(localIdentity(configured, { LF_USER: 'bob', LF_USER_EMAIL: 'bob@x.io' }), {
-    principal: { id: 'local:bob', display: 'bob' },
-    email: 'bob@x.io',
-  });
-  assert.match(localIdentity({}, {}).email ?? '', /@localhost$/);
-
-  const dir = project();
-  writeFileSync(join(dir, 'lf.yaml'), `${readFileSync(join(dir, 'lf.yaml'), 'utf8')}user: { name: Ada, email: ada@example.com }\n`);
-  assert.deepEqual(loadProject(dir).user, configured);
-});
-
 test('lf init writes the user field commented, and the file still loads', () => {
   const dir = mkdtempSync(join(tmpdir(), 'lf-init-'));
-  initProject(dir);
+  const init = spawnSync(...lfCommand(['init', dir]), { encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
   assert.match(readFileSync(join(dir, 'lf.yaml'), 'utf8'), /# user: \{ name:/);
-  assert.deepEqual(loadProject(dir).user, {});
+  assert.equal(spawnSync(...lfCommand(['check', '--dir', dir]), { encoding: 'utf8' }).status, 0);
 });
 
 test('READ of a FILE() artifact reads the stored text through resolveFileText', async () => {
@@ -255,45 +214,4 @@ test('READ of a FILE() artifact reads the stored text through resolveFileText', 
   assert.equal(run.code, 0, run.out);
   const state = readFileSync(join(dir, '.lf/externals/acme_crm/state.json'), 'utf8');
   assert.match(state, /"Name": "hello Vireo Robotics"/);
-});
-
-test('resolveFileText: text and json are read; a real PDF, a handle out of the folder, an external\'s file and a missing file are not', async () => {
-  const dir = project();
-  const documents = localDocumentStore(join(dir, '.lf'));
-  const read = (file: FileRef) => localFileText({ file, redeem: () => redeemFileRef(file, { tenantId: 'local', documents }) });
-  const stored = (name: string, bytes: string | Buffer, contentType?: string) =>
-    documents.put({ tenantId: 'local', bytes: Buffer.from(bytes), name, contentType: contentType ?? '' });
-  assert.deepEqual(await read(await stored('a.txt', 'hi', 'text/plain')), { text: 'hi' });
-  assert.deepEqual(await read(await stored('a.json', '{"a":1}', 'application/json')), { text: '{"a":1}' });
-  assert.deepEqual(await read(await stored('a.csv', 'x,y')), { text: 'x,y' });
-  // `files.render` stores a "pdf" as its text.
-  assert.deepEqual(await read(await stored('r.pdf', 'plain', 'application/pdf')), { text: 'plain' });
-  assert.deepEqual(await read(await stored('real.pdf', Buffer.from('%PDF-1.7\n…'), 'application/pdf')), {
-    unreadable: 'unsupported_type',
-    detail: 'lf cannot extract text from a PDF yet',
-  });
-  assert.equal('unreadable' in (await read(await stored('p.png', 'x', 'image/png'))), true);
-
-  writeFileSync(join(dir, 'secret.txt'), 'nope');
-  const outside = await read({ __brand: 'FileRef', name: 'secret.txt', source: { store: 'document', objectUri: 'lf-files:../../secret.txt' } });
-  assert.equal((outside as { unreadable?: string }).unreadable, 'bytes_unavailable');
-
-  // An external's file is redeemed from the external that owns it; none is reachable here.
-  const external = await read({ __brand: 'FileRef', name: 'x.txt', source: { adapterType: 'acme_crm', handle: 'h' } });
-  assert.equal((external as { unreadable?: string }).unreadable, 'bytes_unavailable');
-
-  const gone = await stored('gone.txt', 'x', 'text/plain');
-  const goneSource = gone.source;
-  assert.ok(goneSource !== undefined && 'objectUri' in goneSource);
-  rmSync(join(dir, '.lf/files', goneSource.objectUri.replace(/^lf-files:/, '')));
-  assert.equal((await read(gone) as { unreadable?: string }).unreadable, 'bytes_unavailable');
-  await documents.close();
-});
-
-test('loadSecrets: environment names are matched lowercased and malformed ones are refused', () => {
-  const dir = project({ secrets: null });
-  const credentials = loadSecrets(loadProject(dir), { LF_SECRET__Acme__EXTERNAL: 'acme_crm', LF_SECRET__ACME__TOKEN: 't' });
-  assert.deepEqual(credentials.get('acme')?.fields, { token: 't' });
-  assert.throws(() => loadSecrets(loadProject(dir), { LF_SECRET__ACME: 'x' }), /LF_SECRET__<CREDENTIAL>__<FIELD>/);
-  assert.throws(() => loadSecrets(loadProject(dir), { LF_SECRET__ACME__TOKEN: 'x' }), /LF_SECRET__ACME__EXTERNAL is not set/);
 });

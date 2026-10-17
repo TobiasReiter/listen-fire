@@ -291,13 +291,13 @@ fn user_name() -> String {
 
 pub const COMMANDS: &[&str] = &["connect", "credential", "completion"];
 
-pub const USAGE: &str = "  lf-host connect [<module>] [--url <server url>]     set a module up: install it, its server and webhook secrets, its OAuth app (no module: list the ones known)
-  lf-host credential add --module <module> [<name>] [--credential <declared>]   a user credential for the module: sign in at the provider, or its fields
-  lf-host credential update <name> [--no-reauthorize]   sign in again and edit its fields
-  lf-host credential delete <name>
-  lf-host credential list
+pub const USAGE: &str = "  lf connect [<module>] [--url <server url>]     set a module up: install it, its server and webhook secrets, its OAuth app (no module: list the ones known)
+  lf credential add --module <module> [<name>] [--credential <declared>]   a user credential for the module: sign in at the provider, or its fields
+  lf credential update <name> [--no-reauthorize]   sign in again and edit its fields
+  lf credential delete <name>
+  lf credential list
     signing in: --redirect-port N (the port your app registered)  --no-browser  --headless (paste the redirect back)  --public (through lf serve at publicUrl)
-  lf-host completion <bash|zsh|fish>   a shell's tab completion for lf-host (subcommands, modules, credentials)";
+  lf completion <bash|zsh|fish>   a shell's tab completion for lf (subcommands, modules, credentials)";
 
 #[derive(Default)]
 struct Line {
