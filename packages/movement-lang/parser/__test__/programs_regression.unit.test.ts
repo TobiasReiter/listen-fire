@@ -28,7 +28,8 @@ type ProgramRecord =
   | { source: string; version: number; error: { message: string; loc: { line: number; col: number } } };
 
 const FIXTURE = `${__dirname}/__fixtures__/programs.json`;
-const KNOWN_VERSIONS = [1, 2, 3, 4];
+// 99 is the future version the language-version tests parse under, pinned on purpose.
+const KNOWN_VERSIONS = [1, 2, 3, 4, 5, 99];
 
 const { createHash } = require('crypto') as {
   createHash(algorithm: 'sha256'): { update(data: string): { digest(encoding: 'hex'): string } };
