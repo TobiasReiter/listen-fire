@@ -163,14 +163,46 @@ describe('resolveAdapter — remote fallback', () => {
     expect(mockCreateRemoteAdapter).toHaveBeenCalledTimes(1);
   });
 
-  it('fails loudly when the run names a credential other than the install\'s own', async () => {
+  it("sends the connection's provider credential, refreshed with the install's OAuth app", async () => {
+    const own = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+    const alice = 'ffffffff-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+    const row = remoteRow('acme_crm', own);
+    row.manifest = {
+      ...row.manifest,
+      credentials: [{ name: 'oauth', kind: 'oauth2', fields: [], oauth2: { authorizeUrl: 'https://p.test/a', tokenUrl: 'https://p.test/t' } }],
+    } as never;
     mockHasAdapter.mockReturnValue(false);
-    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'));
+    mockGetRemoteAdapter.mockResolvedValue(row);
+    mockCredRow
+      .mockResolvedValueOnce({ id: own, credentials: Buffer.from('enc'), app_id: 'acme_crm' })
+      .mockResolvedValueOnce({ app_id: 'acme_crm', declared_credential: 'oauth' });
+    mockDecryptToken.mockResolvedValue(JSON.stringify({ secret: 'server-secret', oauthClients: { oauth: { clientId: 'app', clientSecret: 'app-secret' } } }));
+    mockCreateRemoteAdapter.mockReturnValue({ adapterType: 'acme_crm' });
+
+    await resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM, credentialsId: alice });
+
+    const arg = mockCreateRemoteAdapter.mock.calls[0][0] as {
+      secret: string;
+      config: { credentialsId: string };
+      credential: { name: string; ref: string; client: { clientId: string; clientSecret: string } };
+    };
+    expect(arg.secret).toBe('server-secret');
+    expect(arg.config.credentialsId).toBe(alice);
+    expect(arg.credential).toMatchObject({ name: 'oauth', ref: alice, client: { clientId: 'app', clientSecret: 'app-secret' } });
+  });
+
+  it("refuses a connection's credential that belongs to another module", async () => {
+    const own = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+    mockHasAdapter.mockReturnValue(false);
+    mockGetRemoteAdapter.mockResolvedValue(remoteRow('acme_crm', own));
+    mockCredRow
+      .mockResolvedValueOnce({ id: own, credentials: Buffer.from('enc'), app_id: 'acme_crm' })
+      .mockResolvedValueOnce({ app_id: 'hubspot', declared_credential: 'oauth' });
+    mockDecryptToken.mockResolvedValue(JSON.stringify({ secret: 's' }));
 
     await expect(
       resolveAdapter({ adapterType: 'acme_crm', teamId: TEAM, credentialsId: 'ffffffff-e5f6-4a7b-8c9d-0e1f2a3b4c5d' }),
-    ).rejects.toThrow(/"acme_crm" serves only its own installed credential/);
-    expect(mockDecryptToken).not.toHaveBeenCalled();
+    ).rejects.toThrow(/is not a acme_crm credential; it is not sent/);
     expect(mockCreateRemoteAdapter).not.toHaveBeenCalled();
   });
 

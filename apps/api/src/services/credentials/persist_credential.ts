@@ -58,6 +58,12 @@ interface PersistCredentialInput {
    * the credential, so a second app of the same type is told apart.
    */
   appId?: string | null;
+  /**
+   * For a remote module's provider credential: the credential it fills among
+   * those the module declares (the `declared_credential` column; `appId` is
+   * then the module's slug). Omitted → null, as on every other row.
+   */
+  declaredCredential?: string;
 }
 
 /**
@@ -114,6 +120,7 @@ export async function persistCredential(input: PersistCredentialInput): Promise<
         // Explicit appId wins; else the type's default (Slack → 'listen-fire', the
         // modern app). Pre-existing legacy rows keep their null (read as legacy).
         app_id: input.appId ?? defaultAppIdForType(input.type) ?? null,
+        declared_credential: input.declaredCredential ?? null,
         team_id: input.teamId,
         user_id: input.userId,
       })

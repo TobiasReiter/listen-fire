@@ -1028,6 +1028,9 @@ export interface CredentialRow {
   id: string;
   name: string;
   type: string;
+  /** For a module's provider credential: the module it belongs to and the
+   *  declared credential it fills. Absent on every other row. */
+  module?: { adapterType: string; credential: string };
 }
 
 /**
@@ -1039,7 +1042,7 @@ export interface CredentialRow {
 export function credentialImportNames(input: {
   rows: CredentialRow[];
   manifests: Pick<AdapterManifest, 'adapterType' | 'requiredCredentialType'>[];
-}): Record<string, { id: string; rowName: string; adapters: string[] }> {
+}): Record<string, { id: string; rowName: string; adapters: string[]; credential?: string }> {
   const adaptersByType = new Map<string, string[]>();
   for (const m of input.manifests) {
     if (!m.requiredCredentialType) continue;
@@ -1047,8 +1050,15 @@ export function credentialImportNames(input: {
     list.push(m.adapterType);
     adaptersByType.set(m.requiredCredentialType, list);
   }
-  const out: Record<string, { id: string; rowName: string; adapters: string[] }> = {};
+  const out: Record<string, { id: string; rowName: string; adapters: string[]; credential?: string }> = {};
   for (const row of input.rows) {
+    // A module's provider credential belongs to its module alone, whatever
+    // the module's install declares now: a connection naming it for another
+    // module, or for a declaration the module dropped, is refused at check.
+    if (row.module !== undefined) {
+      out[row.name] = { id: row.id, rowName: row.name, adapters: [row.module.adapterType], credential: row.module.credential };
+      continue;
+    }
     const adapters = adaptersByType.get(row.type) ?? [];
     if (adapters.length === 0) continue;
     out[row.name] = { id: row.id, rowName: row.name, adapters };
