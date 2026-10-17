@@ -13,6 +13,7 @@ import type { Adapter } from 'movement-engine/public/adapter';
 import type {
   AdapterModuleDefinition,
   CredentialFields,
+  ModuleDefinition,
   ModuleContext,
   ModuleCredential,
   ModuleFiles,
@@ -25,7 +26,7 @@ import type {
   PollInput,
 } from './define';
 
-import { moduleManifest } from './manifest';
+import { moduleManifest, type LoadedModule } from './manifest';
 
 /** What a host hands a module it loads in process. */
 export interface ModuleHost {
@@ -144,10 +145,22 @@ export interface InProcessAdapterModule {
   runPeriodic?(name: string): Promise<void>;
 }
 
+/** Each definition's manifest, checked the first time it is loaded: a host
+ *  loads a module per install, and its declarations do not change between. */
+const manifests = new WeakMap<ModuleDefinition, WireManifestResultShape>();
+
+function checkedManifest(loaded: LoadedModule): WireManifestResultShape {
+  const known = manifests.get(loaded.definition);
+  if (known !== undefined) return known;
+  const manifest = moduleManifest(loaded);
+  manifests.set(loaded.definition, manifest);
+  return manifest;
+}
+
 /** Load an adapter module in process, over the host's context. */
 export function adapterInProcess(definition: AdapterModuleDefinition, host: ModuleHost): InProcessAdapterModule {
   const instance = definition.create(moduleContext(host));
-  const manifest = moduleManifest({ kind: 'adapter', definition, instance });
+  const manifest = checkedManifest({ kind: 'adapter', definition, instance });
   const check = <T>(method: MethodName, answer: T): T => (host.validateResults ? validated(definition.name, method, answer) : answer);
   const { poll, runPeriodic } = instance;
   return {
@@ -174,7 +187,7 @@ export interface InProcessPluginModule {
 /** Load a plugin module in process, over the host's context. */
 export function pluginsInProcess(definition: PluginModuleDefinition, host: ModuleHost): InProcessPluginModule {
   const instance = definition.create(moduleContext(host));
-  const manifest = moduleManifest({ kind: 'plugin', definition, instance });
+  const manifest = checkedManifest({ kind: 'plugin', definition, instance });
   return {
     manifest,
     invoke: async (input) => {

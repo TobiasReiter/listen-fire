@@ -4,7 +4,7 @@
 // read by the next one. `ctx.config.baseUrlOverride` (the dev loop's fake)
 // wins over the credential's own base URL.
 
-import { defineModule, type ModuleContext } from 'module-kit';
+import { defineModule, type CredentialFields, type ModuleContext } from 'module-kit';
 
 import { DealroomApiClient, dealroomCredsParser } from './api_client';
 import { DealroomAdapter, type DealroomClientSource } from './adapter';
@@ -13,18 +13,25 @@ import { DEALROOM_POLL_INTERVAL_SECONDS, pollDealroom } from './poll';
 
 /** The client the context's credential reaches Dealroom with. */
 export function dealroomClientFrom(ctx: ModuleContext): DealroomClientSource {
+  // The client for the fields last read: a host hands back the same fields
+  // until the credential changes, so one client serves until then.
+  let last: { fields: CredentialFields; client: DealroomApiClient } | undefined;
   return async () => {
-    const parsed = dealroomCredsParser.safeParse(await ctx.credential.fields());
+    const fields = await ctx.credential.fields();
+    if (last?.fields === fields) return last.client;
+    const parsed = dealroomCredsParser.safeParse(fields);
     if (!parsed.success) {
       throw new Error('Dealroom: the connected credential holds no API key. Connect Dealroom.');
     }
     const baseUrl = ctx.config.baseUrlOverride ?? parsed.data.baseUrl;
-    return new DealroomApiClient({
+    const client = new DealroomApiClient({
       apiKey: parsed.data.apiKey,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
       fetch: ctx.fetch,
       log: ctx.log,
     });
+    last = { fields, client };
+    return client;
   };
 }
 
