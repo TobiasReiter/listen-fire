@@ -3,3 +3,4 @@ packages:
   - "packages/*"
   - "modules/*"
   - "tools/*"
+  - "examples/embed-saas"
