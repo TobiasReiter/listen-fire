@@ -702,6 +702,93 @@ exports[`binding kinds parked and resumed parks a sourcePosition and resumes it 
 }
 `;
 
+exports[`parks resumed awaits an edge of a record it walked to, asking by that record's own id and data 1`] = `
+{
+  "appends": [
+    [
+      {
+        "kind": "gate",
+        "outcome": false,
+      },
+    ],
+  ],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {
+        "Prompt": "q",
+      },
+      "recordId": "check-7",
+    },
+    {
+      "edge": "Response",
+      "headData": {
+        "Prompt": "q",
+      },
+      "recordId": "check-7",
+    },
+  ],
+  "bodies": [],
+  "events": [
+    [
+      "commitAwaitPark",
+      {
+        "adapterType": "kg",
+        "address": "s1",
+        "correlationKey": "ck:check-7",
+      },
+    ],
+  ],
+  "parked": true,
+  "parkedAddress": "s1",
+  "trace": [
+    {
+      "kind": "gate",
+      "outcome": false,
+    },
+  ],
+  "wakes": [],
+  "writes": [],
+}
+`;
+
+exports[`parks resumed awaits an edge of a record it walked to, asking by that record's own id and data 2`] = `
+{
+  "appends": [],
+  "awaited": [
+    {
+      "edge": "Response",
+      "headData": {
+        "Prompt": "q",
+      },
+      "recordId": "check-7",
+    },
+  ],
+  "bodies": [
+    {
+      "payload": {
+        "a": true,
+      },
+    },
+  ],
+  "events": [],
+  "trace": [],
+  "wakes": [],
+  "writes": [
+    {
+      "externalId": "note-1",
+      "outcome": "create",
+      "recordType": "note",
+      "writtenValues": {
+        "payload": {
+          "a": true,
+        },
+      },
+    },
+  ],
+}
+`;
+
 exports[`parks resumed defers a race’s settlement under a batch resume, then settles it once 1`] = `
 {
   "appends": [
