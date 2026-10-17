@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::json::Js;
 use crate::pg_store::PgStore;
+use crate::project::{Project, ProjectStore};
 use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, Store};
 
 /// The tenant a SQLite state file's rows belong to (`LOCAL_TENANT`).
@@ -60,6 +61,26 @@ impl StoreSpec {
             None if team.is_some() => Err("--team names a Postgres store's tenant; pass --store postgres://…".into()),
             None => Ok(StoreSpec::Sqlite(lf_dir.join("state.db"))),
         }
+    }
+
+    /// lf.yaml's `store:` as a spec: written out, or read from the
+    /// environment variable or the secrets entry (its `url` field) it names.
+    pub fn of_project(project: &Project, env: &[(String, String)]) -> std::result::Result<Option<String>, String> {
+        Ok(Some(match &project.store {
+            None => return Ok(None),
+            Some(ProjectStore::Spec(spec)) => spec.clone(),
+            Some(ProjectStore::Env(name)) => env
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| format!("lf.yaml's store reads the environment variable {name}, which is not set"))?,
+            Some(ProjectStore::Credential(name)) => {
+                let credentials = crate::secrets::load_secrets(project, env)?;
+                let credential = credentials.iter().find(|c| &c.name == name).ok_or_else(|| format!("lf.yaml's store reads the secrets entry \"{name}\", which the secrets file does not have"))?;
+                credential.fields.get("url").filter(|v| !v.is_empty()).cloned().ok_or_else(|| format!("the secrets entry \"{name}\" has no `url` field, which lf.yaml's store reads"))?
+            }
+        }))
     }
 
     /// How the store is named in a message: a Postgres URL without its password.

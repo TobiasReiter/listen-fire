@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
 use tokio_postgres::types::ToSql;
-use tokio_postgres::{Client, NoTls, Row};
+use tokio_postgres::{Client, Row};
 
 use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore};
 use crate::json::Js;
@@ -76,7 +76,11 @@ fn lf_status(status: String) -> String {
 fn failed(error: tokio_postgres::Error) -> StoreError {
     StoreError::Backend(match error.as_db_error() {
         Some(db) => format!("postgres: {}", db.message()),
-        None => format!("postgres: {error}"),
+        // The cause too: a refused certificate says why only there.
+        None => match std::error::Error::source(&error) {
+            Some(cause) => format!("postgres: {error}: {cause}"),
+            None => format!("postgres: {error}"),
+        },
     })
 }
 
@@ -182,7 +186,11 @@ impl PgStore {
                     Err(e) => return drop(sent.send(Err(StoreError::Backend(format!("no runtime for the connection: {e}"))))),
                 };
                 runtime.block_on(async move {
-                    match tokio_postgres::connect(&url, NoTls).await {
+                    let (config, tls) = match crate::pg_tls::config_of(&url) {
+                        Ok(read) => read,
+                        Err(message) => return drop(sent.send(Err(StoreError::Backend(message)))),
+                    };
+                    match config.connect(tls).await {
                         Ok((client, connection)) => {
                             if sent.send(Ok(client)).is_ok() {
                                 // Ends when the client drops (or the server goes).

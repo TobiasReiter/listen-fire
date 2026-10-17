@@ -55,6 +55,7 @@ mod oauth2;
 mod oauth_redirect;
 mod park_files;
 mod pg_store;
+mod pg_tls;
 mod project;
 mod prompt;
 mod protocol;
@@ -334,7 +335,11 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
 
 /// Where a command keeps its run state: `--store`, else lf.yaml's `store:`, else `.lf/state.db`.
 fn store_of(args: &Args, project: &project::Project) -> Result<backend::StoreSpec, String> {
-    backend::StoreSpec::of_command(args.store.as_deref(), project.store.as_deref(), &project.root, &project.lf_dir, args.team.as_deref())
+    let named = match args.store {
+        Some(_) => None,
+        None => backend::StoreSpec::of_project(project, &connect::process_env())?,
+    };
+    backend::StoreSpec::of_command(args.store.as_deref(), named.as_deref(), &project.root, &project.lf_dir, args.team.as_deref())
 }
 
 fn main() {
