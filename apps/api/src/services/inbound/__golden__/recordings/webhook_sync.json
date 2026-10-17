@@ -1789,14 +1789,15 @@
     "effects": []
   },
   {
-    "id": "telegram-message-unsigned",
+    "id": "telegram-message-with-secret-token",
     "door": "webhook_sync",
-    "note": "Telegram BYO has no signature check at all; the URL is the credential.",
+    "note": "A team bot registered with a secret_token: Telegram echoes it in x-telegram-bot-api-secret-token, and the delivery is accepted.",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/telegram/sub-1",
       "headers": {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-byo-secret-0001"
       },
       "body": "{\"update_id\":1,\"message\":{\"message_id\":5,\"text\":\"hi\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
     },
@@ -1875,7 +1876,8 @@
       "method": "POST",
       "path": "/api/public/webhook-sync/telegram/sub-1",
       "headers": {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-byo-secret-0001"
       },
       "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-1\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
     },
@@ -1918,7 +1920,8 @@
       "method": "POST",
       "path": "/api/public/webhook-sync/telegram/sub-1",
       "headers": {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-byo-secret-0001"
       },
       "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-2\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
     },
@@ -1955,7 +1958,8 @@
       "method": "POST",
       "path": "/api/public/webhook-sync/telegram/sub-1",
       "headers": {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-byo-secret-0001"
       },
       "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-3\",\"data\":\"cb_golden0001\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
     },
@@ -1992,7 +1996,8 @@
       "method": "POST",
       "path": "/api/public/webhook-sync/telegram/sub-1",
       "headers": {
-        "content-type": "application/json"
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "golden-telegram-byo-secret-0001"
       },
       "body": "{\"update_id\":2,\"callback_query\":{\"id\":\"cbq-4\",\"data\":\"something-else\",\"message\":{\"message_id\":11,\"chat\":{\"id\":9}}}}"
     },
@@ -2062,6 +2067,51 @@
         "kind": "notify_work"
       }
     ]
+  },
+  {
+    "id": "telegram-missing-secret-token-refused",
+    "door": "webhook_sync",
+    "note": "A team bot delivery without the secret-token header is refused.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"update_id\":1,\"message\":{\"message_id\":5,\"text\":\"hi\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "telegram-wrong-secret-token-refused",
+    "door": "webhook_sync",
+    "note": "A wrong secret-token header is refused.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/telegram/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "wrong"
+      },
+      "body": "{\"update_id\":1,\"message\":{\"message_id\":5,\"text\":\"hi\",\"chat\":{\"id\":9},\"from\":{\"id\":3}}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
   },
   {
     "id": "whatsapp-good-signature-via-x-hub-signature-256",

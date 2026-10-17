@@ -67,10 +67,14 @@ export const telegramModule = defineModule({
       ],
     },
   ],
-  // No `inbound`: a team's own bot is registered with Telegram without a
-  // secret token, so its deliveries carry nothing to verify and the door's
-  // unguessable URL is the secret (the frozen built-in table says so).
-  // Declaring `telegram_secret_token` would refuse every one of them.
+  // A team's own bot is registered by the platform with a random
+  // `secret_token`, which Telegram echoes on every delivery; a delivery
+  // without it is refused.
+  inbound: {
+    providerKey: 'telegram',
+    scheme: 'telegram_secret_token',
+    signatureHeaders: ['x-telegram-bot-api-secret-token'],
+  },
   create: (ctx) => new TelegramAdapter(telegramSourcesFrom(ctx)),
 });
 

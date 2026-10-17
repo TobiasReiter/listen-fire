@@ -29,9 +29,8 @@ export const LEGACY_SIGNATURE_HEADERS: Readonly<Record<string, InboundVerifier>>
   NATIVE_VALUATIONS: { scheme: 'attio', signatureHeaders: SHARED_CHAIN },
   [NATIVE_KNOWLEDGE_PROVIDER_KEY]: { scheme: 'attio', signatureHeaders: SHARED_CHAIN },
   SLACK: { scheme: 'slack_v0', signatureHeaders: ['x-slack-signature'] },
-  // A bring-your-own bot's webhook is registered without a secret token; the
-  // unguessable URL is the shared secret in Telegram's model.
-  TELEGRAM: { verifyInbound: () => true },
+  // A team's own bot is registered by the platform with a random secret token.
+  TELEGRAM: { scheme: 'telegram_secret_token', signatureHeaders: ['x-telegram-bot-api-secret-token'] },
   // Meta's header only, keyed with the Meta app's secret.
   INBOUND_WHATSAPP: { scheme: 'hmac_sha256_hex', signatureHeaders: ['x-hub-signature-256'] },
 });
