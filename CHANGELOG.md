@@ -478,6 +478,13 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 
 ### Security
 
+- WhatsApp deliveries to a subscription's own webhook address (`/api/public/webhook-sync/inbound_whatsapp/...`)
+  are now checked the way Meta signs them: the `X-Hub-Signature-256` header, keyed with
+  `WHATSAPP_WEBHOOK_SECRET`, the same secret the main WhatsApp address uses. A missing or wrong
+  signature, or no `WHATSAPP_WEBHOOK_SECRET` set at all, gets a 401 and nothing is delivered. Set
+  `WHATSAPP_WEBHOOK_SECRET` if you point Meta at a subscription address. The main WhatsApp address
+  also now answers a signed delivery for some other Meta product with 200 instead of leaving the
+  request hanging.
 - A credential is never a value, on every language version (`MOV_CREDENTIAL_NOT_A_VALUE`). Its name
   is allowed only as the `credentials:` argument where an integration is set up; the host resolves
   it there. Every other use is refused when you save: bound to a name, read with a dot, put in a

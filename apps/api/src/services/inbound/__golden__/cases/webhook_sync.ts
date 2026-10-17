@@ -6,6 +6,7 @@ import { createHmac } from 'node:crypto';
 
 import type { GoldenCase } from '../harness';
 
+import { withEnv } from '../env';
 import { SECRETS, hmacBase64, hmacHex, slackSignature } from '../secrets';
 import { GOLDEN_CALLBACK, world } from '../world';
 import { REMOTE_SIGNATURE_HEADER_FOR_CASES } from './names';
@@ -466,23 +467,45 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
   },
 
   // ── WhatsApp (bring-your-own number) ────────────────────────────────────
+  // Meta signs with the platform's WhatsApp app secret in x-hub-signature-256,
+  // exactly as at the default door; the subscription's own secret plays no part.
   {
-    id: 'whatsapp-good-signature-via-x-webhook-signature',
-    note: 'sha256=<hex> over the raw body, in x-webhook-signature (the only header of the chain that fits).',
+    id: 'whatsapp-good-signature-via-x-hub-signature-256',
+    note: "Meta's sha256=<hex> over the raw body with the platform app secret, in x-hub-signature-256, is delivered.",
     arrange: () => {
       givenSubscription({ provider: 'INBOUND_WHATSAPP', webhook_secret: SECRETS.whatsappSub });
       givenTrigger({ kind: 'INBOUND_WHATSAPP' });
     },
     request: post(PATH('inbound_whatsapp'), json(META_TEXT), (body) => ({
+      'x-hub-signature-256': `sha256=${hmacHex(SECRETS.whatsappApp, body)}`,
+    })),
+  },
+  {
+    id: 'whatsapp-subscription-secret-refused',
+    note: "A digest keyed with the subscription's own secret, in either header, is 401: the app secret is the only key.",
+    arrange: () => givenSubscription({ provider: 'INBOUND_WHATSAPP', webhook_secret: SECRETS.whatsappSub }),
+    request: post(PATH('inbound_whatsapp'), json(META_TEXT), (body) => ({
+      'x-hub-signature-256': `sha256=${hmacHex(SECRETS.whatsappSub, body)}`,
       'x-webhook-signature': `sha256=${hmacHex(SECRETS.whatsappSub, body)}`,
     })),
   },
   {
-    id: 'whatsapp-meta-header-not-read',
-    note: "Meta's own x-hub-signature-256 is not in this door's header chain, so a correctly signed delivery carrying only it is 401.",
+    id: 'whatsapp-missing-signature',
+    note: 'No x-hub-signature-256 is 401, even with a valid digest in x-webhook-signature.',
     arrange: () => givenSubscription({ provider: 'INBOUND_WHATSAPP', webhook_secret: SECRETS.whatsappSub }),
     request: post(PATH('inbound_whatsapp'), json(META_TEXT), (body) => ({
-      'x-hub-signature-256': `sha256=${hmacHex(SECRETS.whatsappSub, body)}`,
+      'x-webhook-signature': `sha256=${hmacHex(SECRETS.whatsappApp, body)}`,
+    })),
+  },
+  {
+    id: 'whatsapp-no-app-secret-refuses',
+    note: 'With no platform app secret configured nothing proves the sender; 401 even for a digest keyed with the empty string.',
+    arrange: () => {
+      givenSubscription({ provider: 'INBOUND_WHATSAPP', webhook_secret: SECRETS.whatsappSub });
+      return withEnv({ WHATSAPP_WEBHOOK_SECRET: undefined });
+    },
+    request: post(PATH('inbound_whatsapp'), json(META_TEXT), (body) => ({
+      'x-hub-signature-256': `sha256=${hmacHex('', body)}`,
     })),
   },
   {
@@ -493,7 +516,7 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
       givenTrigger({ kind: 'INBOUND_WHATSAPP' });
     },
     request: post(PATH('inbound_whatsapp'), json(META_INTERACTIVE), (body) => ({
-      'x-webhook-signature': `sha256=${hmacHex(SECRETS.whatsappSub, body)}`,
+      'x-hub-signature-256': `sha256=${hmacHex(SECRETS.whatsappApp, body)}`,
     })),
   },
 

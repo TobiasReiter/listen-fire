@@ -2062,15 +2062,15 @@
     ]
   },
   {
-    "id": "whatsapp-good-signature-via-x-webhook-signature",
+    "id": "whatsapp-good-signature-via-x-hub-signature-256",
     "door": "webhook_sync",
-    "note": "sha256=<hex> over the raw body, in x-webhook-signature (the only header of the chain that fits).",
+    "note": "Meta's sha256=<hex> over the raw body with the platform app secret, in x-hub-signature-256, is delivered.",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
       "headers": {
         "content-type": "application/json",
-        "x-webhook-signature": "sha256=9792522b99cc9661ce717989e60d761aafb9baedb10a9af599b77b98166d9376"
+        "x-hub-signature-256": "sha256=25755849cd2c90917acb8df743d9e0ce73adf9c1cc82799325fc29dba41aed2b"
       },
       "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.1\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"hi\"}}]}}]}]}"
     },
@@ -2167,15 +2167,62 @@
     ]
   },
   {
-    "id": "whatsapp-meta-header-not-read",
+    "id": "whatsapp-subscription-secret-refused",
     "door": "webhook_sync",
-    "note": "Meta's own x-hub-signature-256 is not in this door's header chain, so a correctly signed delivery carrying only it is 401.",
+    "note": "A digest keyed with the subscription's own secret, in either header, is 401: the app secret is the only key.",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
       "headers": {
         "content-type": "application/json",
-        "x-hub-signature-256": "sha256=9792522b99cc9661ce717989e60d761aafb9baedb10a9af599b77b98166d9376"
+        "x-hub-signature-256": "sha256=9792522b99cc9661ce717989e60d761aafb9baedb10a9af599b77b98166d9376",
+        "x-webhook-signature": "sha256=9792522b99cc9661ce717989e60d761aafb9baedb10a9af599b77b98166d9376"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.1\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"hi\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "whatsapp-missing-signature",
+    "door": "webhook_sync",
+    "note": "No x-hub-signature-256 is 401, even with a valid digest in x-webhook-signature.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-webhook-signature": "sha256=25755849cd2c90917acb8df743d9e0ce73adf9c1cc82799325fc29dba41aed2b"
+      },
+      "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.1\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"hi\"}}]}}]}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "whatsapp-no-app-secret-refuses",
+    "door": "webhook_sync",
+    "note": "With no platform app secret configured nothing proves the sender; 401 even for a digest keyed with the empty string.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-hub-signature-256": "sha256=69aaba55565b641a163ea6b75780e4cc6374568c01728871e3c968761dc1968b"
       },
       "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"contacts\":[{\"wa_id\":\"15550002222\",\"profile\":{\"name\":\"Ada\"}}],\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.1\",\"timestamp\":\"1760702400\",\"type\":\"text\",\"text\":{\"body\":\"hi\"}}]}}]}]}"
     },
@@ -2198,7 +2245,7 @@
       "path": "/api/public/webhook-sync/inbound_whatsapp/sub-1",
       "headers": {
         "content-type": "application/json",
-        "x-webhook-signature": "sha256=0c69ac91260d773dfa60c54f9d2747d0d879821968ed3b8ccd89c4ddf6552432"
+        "x-hub-signature-256": "sha256=8b017046ed5b2c383da0d68ae0b166f67cfa236359379a330911e8c17877197a"
       },
       "body": "{\"object\":\"whatsapp_business_account\",\"entry\":[{\"id\":\"waba-1\",\"changes\":[{\"field\":\"messages\",\"value\":{\"metadata\":{\"display_phone_number\":\"15550001111\",\"phone_number_id\":\"pn-1\"},\"messages\":[{\"from\":\"15550002222\",\"id\":\"wamid.2\",\"timestamp\":\"1760702400\",\"type\":\"interactive\",\"interactive\":{\"type\":\"button_reply\",\"button_reply\":{\"id\":\"cb_golden0001\",\"title\":\"Approve\"}}}]}}]}]}"
     },

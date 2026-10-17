@@ -494,9 +494,9 @@ export const whatsappCases: GoldenCase[] = define('whatsapp', [
     ),
   },
   {
-    id: 'other-object-never-answers',
-    note: 'A signed body whose object is not whatsapp_business_account is never answered at all (the request hangs until the sender gives up).',
-    request: { ...post('/api/public/whatsapp/webhook', json({ object: 'page', entry: [] }), metaSig(SECRETS.whatsappApp)), abortAfterMs: 400 },
+    id: 'other-object-acked',
+    note: 'A signed body whose object is not whatsapp_business_account is acked 200 and nothing is delivered (Meta retries anything else).',
+    request: post('/api/public/whatsapp/webhook', json({ object: 'page', entry: [] }), metaSig(SECRETS.whatsappApp)),
   },
   {
     id: 'unsigned-door-refuses-without-secret',

@@ -282,9 +282,9 @@
     "effects": []
   },
   {
-    "id": "other-object-never-answers",
+    "id": "other-object-acked",
     "door": "whatsapp",
-    "note": "A signed body whose object is not whatsapp_business_account is never answered at all (the request hangs until the sender gives up).",
+    "note": "A signed body whose object is not whatsapp_business_account is acked 200 and nothing is delivered (Meta retries anything else).",
     "request": {
       "method": "POST",
       "path": "/api/public/whatsapp/webhook",
@@ -295,9 +295,12 @@
       "body": "{\"object\":\"page\",\"entry\":[]}"
     },
     "response": {
-      "status": 0,
-      "headers": {},
-      "body": "no response within 400 ms"
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "EVENT_RECEIVED"
     },
     "effects": []
   },
