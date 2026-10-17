@@ -35,7 +35,7 @@ pub const TEAM: &str = "local";
 
 /// The host methods this host serves, by path: the engine asks an optional
 /// one only of a host that lists it. A cost-cap pause (`commitLimitPause`)
-/// is not served, as the TypeScript lf does not serve it either.
+/// is not served (a cap met inside a segment is read as `RunCostCapExceeded`, below).
 const SERVES: &[&str] = &[
     "segment.open",
     "segment.close",
@@ -895,7 +895,7 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
                 "text" => ("movement-artifact.txt", "text/plain"),
                 _ => return Err(Fault("files.render type is \"pdf\" or \"text\"".into())),
             };
-            // THIN: a "pdf" is stored as its text, as the TypeScript lf stores it.
+            // THIN: a "pdf" is stored as its text; lf renders no PDF.
             match host.documents.put(TEAM, content.as_bytes(), name, content_type) {
                 Ok(descriptor) => {
                     let mut wire = host.wire.borrow_mut();

@@ -1,8 +1,8 @@
 //! The engine's model requests, answered: `llm.client.call` (the extraction
 //! keyword's and `AI()`'s call), `llm.extractCall.call` (the extraction
 //! call's, its prompt as blocks with cache breakpoints) and
-//! `llm.arbitrateEntities`. A port of apps/cli `models.ts` over movement-engine
-//! `llm_clients.ts` and `metered.ts`: each call runs under its request's
+//! `llm.arbitrateEntities`. As movement-engine's `llm_clients.ts` and
+//! `metered.ts` make them: each call runs under its request's
 //! budget, is priced from the shared price table and answers what it spent, and
 //! a call refused past its budget answers the refusal as data.
 

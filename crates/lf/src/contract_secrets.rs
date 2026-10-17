@@ -2,8 +2,8 @@
 //! stores (src/secret_stores.rs) served over stdin/stdout, one JSON-RPC 2.0
 //! message per line, so the TypeScript secrets contract suite (movement-engine
 //! services/secrets/contract.ts) holds this binary's stores to the meaning
-//! every store has — the same cases the TypeScript lf's file and environment
-//! stores pass. The client is apps/cli/src/__test__/rpc_secrets.ts.
+//! every store has — the same cases the platform's secret stores
+//! pass. The client is apps/cli/src/__test__/rpc_secrets.ts.
 //!
 //!   resolve { ref }                            → { fields, version } | null
 //!   writeBack { ref, fields, expectedVersion } → { kind, record | current, why? }

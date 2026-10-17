@@ -15,6 +15,7 @@
 //!   sources       lf.park_library_source
 //!   callbacks     lf.callback
 //!   pull cursors  lf.inbound_checkpoint
+//!   receipts      lf.event_receipt
 //!   lf's runs     lf.trigger_run (below)
 //!
 //! Held to the hosted backend's meaning by the run host's contract suite
@@ -118,7 +119,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 /// The store's own schema, in order. Each runs once, in its own
 /// transaction, under an advisory lock so two setups never race; the
 /// applied ones are recorded in `lf.schema_migration`.
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("pg_store_schema_1.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("pg_store_schema_1.sql")), (2, include_str!("pg_store_schema_2.sql"))];
 
 /// The advisory lock the migrations run under: "lf-store" as a number.
 const MIGRATION_LOCK: i64 = 0x6c66_2d73_746f_7265;
@@ -974,6 +975,14 @@ impl RunHostStore for PgStore {
             &[&self.tenant, &subscription_id, &text],
         )?;
         Ok(())
+    }
+
+    fn claim_event(&self, listen: &str, key: &str) -> Result<bool> {
+        let inserted = self.execute(
+            "insert into lf.event_receipt (team_id, listen, key) values ($1::text::uuid, $2::text, $3::text) on conflict do nothing",
+            &[&self.tenant, &listen, &key],
+        )?;
+        Ok(inserted == 1)
     }
 }
 

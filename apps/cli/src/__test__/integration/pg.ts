@@ -41,7 +41,8 @@ export function freshTeam(): { team: string; clear(): void } {
       psql(`delete from lf.trigger_run where team_id = '${team}';
             delete from lf.work where team_id = '${team}';
             delete from lf.park_library_source where team_id = '${team}';
-            delete from lf.inbound_checkpoint where team_id = '${team}';`);
+            delete from lf.inbound_checkpoint where team_id = '${team}';
+            delete from lf.event_receipt where team_id = '${team}';`);
     },
   };
 }

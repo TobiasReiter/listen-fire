@@ -1,5 +1,5 @@
-//! The document store's local backend: the project's `.lf/files/` folder, as
-//! the TypeScript lf keeps it (apps/cli/src/documents.ts). A stored
+//! The document store's local backend: the project's `.lf/files/` folder
+//! (@lf/local-files, the files slot's module). A stored
 //! document's handle is `lf-files:<key>`, its key the path under
 //! `.lf/files/`. Exposing a file (for an external that fetches it across the
 //! JSON wire) copies it under `exposed/` and serves it at `/files/<id>`:

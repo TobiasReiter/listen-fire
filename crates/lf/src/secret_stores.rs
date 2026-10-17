@@ -1,5 +1,4 @@
-//! lf's secrets stores, as the TypeScript lf keeps them (apps/cli/src/
-//! secrets.ts): a secrets file (plain YAML, rewritten in place with its
+//! lf's secrets stores: a secrets file (plain YAML, rewritten in place with its
 //! comments and order kept; or SOPS, read with `sops -d` and changed with
 //! `sops set` / `sops unset`, never decrypted onto disk), the environment
 //! (read-only: a write-back is kept for this process and reported once), and

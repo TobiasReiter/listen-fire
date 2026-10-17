@@ -1,7 +1,7 @@
 //! `lf check`: every diagnostic the project's files have, by the Rust
 //! checker natively (the same `check_source` the engine artifact's
 //! `check_program` export runs), against the catalog the externals answer.
-//! Output and exit code are the TypeScript `lf check`'s (apps/cli/src/main.rs).
+//! Its output: one line per diagnostic, then a count; exit 1 when any is an error.
 
 use std::io::Write;
 
@@ -103,7 +103,7 @@ pub async fn open_checking(project: &Project) -> Result<Opened, String> {
     for r in running.iter().filter(|r| !r.is_plugin()) {
         schemas.insert(r.external.manifest.name.clone(), describe_external(r, &credentials).await?);
     }
-    // Scanned again after the externals start, as the TypeScript session does.
+    // Scanned again after the externals start: one may have written a movement file.
     let files = scan_movements(project)?;
     let catalog = catalog_of(&running, &schemas, &credentials, &files);
     Ok(Opened::Ready(Checking { files, catalog, _running: running }))

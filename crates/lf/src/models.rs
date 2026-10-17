@@ -1,7 +1,7 @@
 //! Which models a run may name, what a model call costs, and the provider
-//! key. The TypeScript lf's registry, price table and credential name
-//! (movement-engine `lib/models/registry.ts` and `pricing.ts`, apps/cli
-//! `secrets.ts`): the price table is the very file the TypeScript reads, and
+//! key: the hosted engine's registry and price table (movement-engine
+//! `lib/models/registry.ts` and `pricing.ts`). The price table is the very
+//! file the hosted engine reads, and
 //! a test keeps the model names equal to the registry's.
 
 use std::collections::{BTreeMap, HashSet};

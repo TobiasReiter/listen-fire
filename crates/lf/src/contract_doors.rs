@@ -2,8 +2,7 @@
 //! inbound core) served over HTTP on a loopback port, the world they read
 //! arranged over stdin/stdout JSON-RPC, so the TypeScript inbound contract
 //! suite (movement-engine `services/inbound/contract.ts`) holds them to the
-//! cases every host's doors pass. As the suite's backend over the TypeScript
-//! lf (apps/cli inbound_contract.test.ts): the world's providers and installs
+//! cases every host's doors pass (apps/cli inbound_contract.test.ts). The world's providers and installs
 //! become externals and credentials, the suite's adapter reads each delivery
 //! (`{ events?, wake?, checkpoint? }`), and the store calls are observed, and
 //! the suite's faults injected, around lf's own stores over a scratch state

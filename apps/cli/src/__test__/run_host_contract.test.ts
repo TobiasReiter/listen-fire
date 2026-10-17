@@ -1,13 +1,15 @@
 // The run host's contract suite (packages/movement-engine/services/run_host/
-// contract.ts) against the Rust lf's SQLite backend, driven over its
-// stdio JSON-RPC bridge (`lf --contract-store`) by `RpcStoreBackend`:
-// the same cases the hosted Postgres backend is
-// held to (the live state families, the callbacks and the cancel cases), one
-// fresh state file per case.
+// contract.ts) against lf's SQLite backend, driven over its stdio JSON-RPC
+// bridge (`lf --contract-store`) by `RpcStoreBackend`: the same cases the
+// hosted Postgres backend is held to (the live state families, the callbacks
+// and the cancel cases), one fresh state file per case. Then the same cases
+// through a third-party store module filling a project's store slot
+// (`lf --contract-store-slot`): lf drives the module over the store wire,
+// and the module (store_module/forward.mjs) forwards to `lf --contract-store`.
 
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -20,11 +22,26 @@ import { RpcStoreBackend } from 'movement-engine/services/run_host/rpc_store';
 // The tenant every local run belongs to.
 const LOCAL_TENANT = 'local';
 import { lfBinary } from './lf_bin';
+import { withStoreModule } from './store_module/project';
 
+/** A project whose store slot a store module fills, its state in `path`. */
+function storeModuleProject(path: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'lf-contract-slot-'));
+  writeFileSync(join(dir, 'lf.yaml'), 'engine: 0.11.0\n');
+  withStoreModule(dir, path);
+  return dir;
+}
+
+const bridges = [
+  { over: 'the SQLite store', args: (path: string) => ['--contract-store', path] },
+  { over: 'a store module', args: (path: string) => ['--contract-store-slot', '--dir', storeModuleProject(path)] },
+];
+
+for (const bridge of bridges)
 for (const contractCase of [...runHostContractCases, ...callbackContractCases, ...cancelContractCases]) {
-  test(contractCase.name, async () => {
+  test(`${bridge.over}: ${contractCase.name}`, async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'lf-contract-')), 'state.db');
-    const backend = new RpcStoreBackend(lfBinary(), ['--contract-store', path]);
+    const backend = new RpcStoreBackend(lfBinary(), bridge.args(path));
     const records: RecordsContractBackend = {
       store: backend.store,
       callbacks: backend.callbacks,

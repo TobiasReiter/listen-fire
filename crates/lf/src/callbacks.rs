@@ -1,8 +1,7 @@
 //! The callbacks a run mints: the rules a call is judged and recorded by
 //! (movement-engine `services/run_host/callbacks.ts`) over the store
 //! trait's callback family (crate::backend), and the SQLite state file's
-//! implementation of that family (the TypeScript lf keeps it in
-//! apps/cli/src/state.ts). A door (`POST /api/cb/<id>`, `lf call`) records a
+//! implementation of that family. A door (`POST /api/cb/<id>`, `lf call`) records a
 //! call; the run's body then runs under the run's lease (crate::runs).
 //!
 //! A call's life: validated first, so a bad payload never consumes a

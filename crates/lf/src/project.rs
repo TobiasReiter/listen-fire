@@ -1,7 +1,6 @@
 //! A project is a folder with `lf.yaml` at its root: the engine version it is
 //! pinned to, where its movement files live, and its externals folder. `.lf/`
-//! beside it holds what the host keeps (state, files, secrets). The same file
-//! format the TypeScript lf reads (apps/cli/src/project.ts), read the same way.
+//! beside it holds what the host keeps (state, files, secrets).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,7 +19,7 @@ pub const CURRENT_ENGINE_VERSION: &str = "0.11.0";
 /// versions 1–4 run only on the hosted TypeScript engine.
 pub const FIRST_LF_LANGUAGE_VERSION: u32 = 5;
 
-// Unknown keys are ignored, as the TypeScript schema strips them.
+// Unknown keys are ignored, so a newer lf.yaml still loads.
 #[derive(Deserialize)]
 struct ProjectFile {
     engine: String,
@@ -164,7 +163,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
     }
     let path = dir.join(PROJECT_FILE);
     let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    // An empty file reads as an empty mapping, as the TypeScript `parse(…) ?? {}` does.
+    // An empty file reads as an empty mapping: every key at its default.
     let value: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let value = if value.is_null() { serde_yaml::Value::Mapping(Default::default()) } else { value };
     let file: ProjectFile = serde_yaml::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -187,14 +186,20 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
             path.display()
         ));
     }
-    let core = crate::core::CoreChoice::of(&file.core, &path.display().to_string())?;
+    let externals_dir = dir.join(&file.externals);
+    // The externals folder is read only when `core:` names a module lf does not build in.
+    let installed = match file.core.values().all(|name| crate::core::builtin(name).is_some()) {
+        true => Vec::new(),
+        false => crate::externals::core_modules_in(&externals_dir)?,
+    };
+    let core = crate::core::CoreChoice::of(&file.core, &installed, &path.display().to_string())?;
     let language_version = language_version_of_engine(&file.engine)?;
     refuse_below_lf(language_version, &path.display().to_string(), "run `lf upgrade`")?;
     let lf_dir = dir.join(".lf");
     fs::create_dir_all(&lf_dir).map_err(|e| format!("{}: {e}", lf_dir.display()))?;
     Ok(Project {
         movements_dir: dir.join(&file.movements),
-        externals_dir: dir.join(&file.externals),
+        externals_dir,
         lf_dir,
         engine: file.engine,
         language_version,

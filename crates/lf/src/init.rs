@@ -1,5 +1,5 @@
-//! `lf init [dir]`: scaffold a starter project (as the TypeScript lf's
-//! `initProject`, plus one movement that checks clean with no external).
+//! `lf init [dir]`: scaffold a starter project (lf.yaml, the movements and
+//! externals folders, and one movement that checks clean with no external).
 //! Existing files are never overwritten; a re-run reports what it made.
 
 use std::fs;

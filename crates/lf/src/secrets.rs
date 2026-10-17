@@ -1,5 +1,4 @@
-//! Secrets, read where the TypeScript lf reads them (apps/cli/src/secrets.ts):
-//! the file (`LF_SECRETS_FILE`, else `<project>/.lf/secrets.yaml`, else
+//! Secrets, read in order: the file (`LF_SECRETS_FILE`, else `<project>/.lf/secrets.yaml`, else
 //! `~/.config/lf/secrets.yaml`; a SOPS file is read with `sops -d`), then the
 //! environment field by field (`LF_SECRET__<CREDENTIAL>__<FIELD>`).
 //!

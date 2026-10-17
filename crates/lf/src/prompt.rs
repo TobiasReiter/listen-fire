@@ -1,5 +1,4 @@
-//! Questions on the terminal for `lf connect` and `lf credential`, as the
-//! TypeScript lf asks them (apps/cli/src/prompt.ts). Answers are read a line
+//! Questions on the terminal for `lf connect` and `lf credential`. Answers are read a line
 //! at a time, so a script (or a test) can pipe them in; on a terminal a
 //! secret's answer is not echoed.
 

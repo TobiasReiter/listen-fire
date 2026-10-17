@@ -34,7 +34,7 @@ pub struct ProjectionInput<'a> {
 pub struct Projection {
     pub schema: Js,
     /// What the projection left out and why. The hosted product reports
-    /// these; lf discards them, as the TypeScript lf does.
+    /// these; lf discards them.
     pub notes: Vec<String>,
 }
 
@@ -646,7 +646,7 @@ fn edge_schema(reference: &Js, target: Option<&str>, polymorphic: bool, field_id
 }
 
 /// The projection over an adapter's own introspection answers, as
-/// `describeExternal` asks it (apps/cli/src/externals.ts).
+/// `lf check` and a session ask it of each adapter external (crate::check `describe_external`).
 pub fn describe_external_schema(adapter_type: &str, entries: &[Js], descriptors: &IndexMap<String, Js>) -> Js {
     instance_schema_from_descriptors(&ProjectionInput {
         adapter_type,

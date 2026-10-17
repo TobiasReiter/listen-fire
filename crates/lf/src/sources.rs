@@ -1,5 +1,4 @@
-//! The project's movement files, scanned as the TypeScript lf scans them
-//! (apps/cli/src/sources.ts `scanMovements`): every `.mvt` under the movements
+//! The project's movement files: every `.mvt` under the movements
 //! folder, entries in sorted order, folders walked depth first.
 
 use std::fs;

@@ -1,6 +1,5 @@
 //! Externals: the project's installed modules (a folder each under the
-//! externals folder, with an `lf-external.yaml`), read and started as the
-//! TypeScript lf does (apps/cli/src/externals.ts). An external is a process
+//! externals folder, with an `lf-external.yaml`), read and started. An external is a process
 //! speaking adapter protocol 2 over HTTP: started with `PORT=0`, it prints
 //! `listening <port>`. A `module` external is served by `serve-module` (the
 //! module kit's runner; `LF_SERVE_MODULE` names another command). A plugin
@@ -47,6 +46,12 @@ pub struct ExternalManifest {
     pub webhook: Option<WebhookBlock>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// A `core` module's slot (crate::core).
+    pub slot: Option<String>,
+    /// A `core` module's settings, prompted by `lf connect` (an adapter's
+    /// come from its manifest answer).
+    #[serde(default)]
+    pub settings: Vec<crate::core::Setting>,
 }
 
 /// `webhook:` — the protocol's own scheme, keyed by one of the install's fields.
@@ -83,12 +88,35 @@ pub struct External {
     pub manifest: ExternalManifest,
 }
 
+/// The adapters and plugin packages the host starts and calls over the
+/// protocol: every installed folder but the core modules.
 pub fn scan_externals(project: &Project) -> Result<Vec<External>, String> {
-    if !project.externals_dir.exists() {
+    Ok(scan_folders(&project.externals_dir)?.into_iter().filter(|e| e.manifest.kind != CORE_KIND).collect())
+}
+
+/// The core modules run as processes (`kind: core`) installed in `dir`,
+/// the project's externals folder.
+pub fn core_modules_in(dir: &Path) -> Result<Vec<crate::core::CoreModule>, String> {
+    Ok(scan_folders(dir)?
+        .into_iter()
+        .filter(|e| e.manifest.kind == CORE_KIND)
+        .map(|e| crate::core::CoreModule {
+            slot: e.manifest.slot.as_deref().and_then(crate::core::Slot::of).expect("a core manifest's slot is validated"),
+            settings: std::borrow::Cow::Owned(e.manifest.settings),
+            process: Some(crate::core::ProcessModule { command: e.manifest.command.unwrap_or_default(), env: e.manifest.env, dir: e.dir }),
+            name: std::borrow::Cow::Owned(e.manifest.name),
+        })
+        .collect())
+}
+
+const CORE_KIND: &str = "core";
+
+fn scan_folders(externals_dir: &Path) -> Result<Vec<External>, String> {
+    if !externals_dir.exists() {
         return Ok(Vec::new());
     }
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&project.externals_dir)
-        .map_err(|e| format!("{}: {e}", project.externals_dir.display()))?
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(externals_dir)
+        .map_err(|e| format!("{}: {e}", externals_dir.display()))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
         .map(|entry| entry.path())
@@ -118,8 +146,19 @@ fn validate(manifest: &ExternalManifest) -> Result<(), String> {
     if manifest.name.is_empty() {
         return Err("name: Too small: expected string to have >=1 characters".into());
     }
-    if manifest.kind != "adapter" && manifest.kind != "plugin" {
-        return Err(format!("kind: expected \"adapter\" or \"plugin\", got \"{}\"", manifest.kind));
+    if !["adapter", "plugin", CORE_KIND].contains(&manifest.kind.as_str()) {
+        return Err(format!("kind: expected \"adapter\", \"plugin\" or \"core\", got \"{}\"", manifest.kind));
+    }
+    if manifest.kind == CORE_KIND {
+        let slots: Vec<&str> = crate::core::Slot::ALL.iter().map(|s| s.name()).collect();
+        if manifest.slot.as_deref().and_then(crate::core::Slot::of).is_none() {
+            return Err(format!("slot: a core module names the slot it fills ({})", slots.join(", ")));
+        }
+        if manifest.command.is_none() {
+            return Err("command: a core module is started by its `command` and spoken to over its stdin and stdout".into());
+        }
+    } else if manifest.slot.is_some() || !manifest.settings.is_empty() {
+        return Err("slot and settings are a core module's (`kind: core`); an adapter declares its settings in its manifest answer".into());
     }
     if manifest.protocol != 2 {
         return Err("protocol: expected 2".into());
@@ -393,7 +432,7 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("PORT", "0")
-        .envs(crate::serve::host_url().map(|url| ("LF_HOST_URL", url)))
+        .envs(crate::serve::externals_host_url().map(|url| ("LF_HOST_URL", url)))
         .envs(crate::serve::host_token().map(|token| ("LF_HOST_TOKEN", token)))
         .envs(external.manifest.env.iter().map(|(k, v)| (k, v.replace("{lf}", &lf))))
         .stdin(Stdio::null())
@@ -447,8 +486,8 @@ fn bundled_module(module: &str) -> Option<String> {
 }
 
 /// How a `module` external is served: `LF_SERVE_MODULE` when set, else the
-/// module kit's `serve-module` as the TypeScript lf finds it
-/// (`require.resolve('module-kit/bin/serve-module.cjs')`): the project's
+/// module kit's `serve-module`, found as node's
+/// `require.resolve('module-kit/bin/serve-module.cjs')` finds it: the project's
 /// node_modules (its `.bin` shim, or the package's script under node), then
 /// the workspace lf was built in.
 fn serve_module_command(project: &Project, external: &str) -> Result<Vec<String>, String> {
