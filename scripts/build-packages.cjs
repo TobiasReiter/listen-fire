@@ -14,8 +14,13 @@
 //
 //   node scripts/build-packages.cjs                 every package
 //   node scripts/build-packages.cjs <dir>           that package and what it depends on
+//   node scripts/build-packages.cjs --restore <dir> put the package's own package.json back
 //
-// `pnpm pack` in a package runs it for that package (its `prepack`).
+// `pnpm pack` in a package runs it for that package (its `prepack`), and
+// `--restore` after (its `postpack`). While packing, the manifest loses its
+// workspace aliases (`#shared`, `movement-engine`, ...): they are devDependencies
+// that only make the monorepo's source imports resolve, and `#shared` is not a
+// package name a registry should be handed.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -87,6 +92,18 @@ function walk(dir) {
   });
 }
 
+/** A published `main`, `types` or exact `exports` target the build did not produce would only fail for an installer. */
+function assertPublishedEntriesExist(dir) {
+  const { publishConfig = {} } = manifestOf(dir);
+  const targets = [publishConfig.main, publishConfig.types];
+  for (const [subpath, target] of Object.entries(publishConfig.exports ?? {})) {
+    if (subpath.includes('*')) continue;
+    targets.push(...(typeof target === 'string' ? [target] : Object.values(target)));
+  }
+  const missing = targets.filter((target) => typeof target === 'string' && !fs.existsSync(path.join(ROOT, dir, target)));
+  if (missing.length > 0) throw new Error(`${dir} publishes ${missing.join(', ')}, which its build did not produce`);
+}
+
 function build({ dir, assets = [] }) {
   const at = path.join(ROOT, dir);
   const dist = path.join(at, 'dist');
@@ -150,10 +167,35 @@ function build({ dir, assets = [] }) {
     fs.writeFileSync(target, fs.readFileSync(path.join(at, source), 'utf8').replace(/require\('\.\.\/(\w+)\.ts'\)/g, "require('../$1.js')"));
     fs.chmodSync(target, 0o755);
   }
+  assertPublishedEntriesExist(dir);
   process.stdout.write(`built ${manifestOf(dir).name} (${dir}/dist)\n`);
 }
 
-const only = process.argv[2];
+const MANIFEST_BACKUP = 'package.json.unpacked';
+
+function stripWorkspaceAliases(dir) {
+  const file = path.join(ROOT, dir, 'package.json');
+  const backup = path.join(ROOT, dir, MANIFEST_BACKUP);
+  if (fs.existsSync(backup)) throw new Error(`${dir}/${MANIFEST_BACKUP} exists: a pack did not finish; run build-packages.cjs --restore ${dir}`);
+  const manifest = manifestOf(dir);
+  const { devDependencies = {} } = manifest;
+  const kept = Object.fromEntries(Object.entries(devDependencies).filter(([, range]) => !String(range).startsWith('workspace:')));
+  fs.copyFileSync(file, backup);
+  fs.writeFileSync(file, `${JSON.stringify({ ...manifest, devDependencies: kept }, null, 2)}\n`);
+}
+
+function restoreManifest(dir) {
+  const backup = path.join(ROOT, dir, MANIFEST_BACKUP);
+  if (fs.existsSync(backup)) fs.renameSync(backup, path.join(ROOT, dir, 'package.json'));
+}
+
+const restoring = process.argv[2] === '--restore';
+const only = restoring ? process.argv[3] : process.argv[2];
+if (restoring) {
+  restoreManifest(path.relative(ROOT, path.resolve(only)));
+  process.exit(0);
+}
 const targets = only === undefined ? PACKAGES : closureOf(path.relative(ROOT, path.resolve(only)));
 if (targets.length === 0) throw new Error(`${only} is not a publishable package`);
 targets.forEach(build);
+if (only !== undefined) stripWorkspaceAliases(path.relative(ROOT, path.resolve(only)));
