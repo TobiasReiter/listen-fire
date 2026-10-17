@@ -1,4 +1,4 @@
-// `lf-host drain`, the scale-from-zero worker, over a Postgres store: runs
+// `lf drain`, the scale-from-zero worker, over a Postgres store: runs
 // parked on the example's hour-long sleep, then two workers draining the
 // one queue at once, judged two hours on. Every run is resumed exactly
 // once: by one worker, its follow-up written once, its work row gone.
@@ -12,7 +12,7 @@ import { cpSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { companies, project } from '../example';
-import { lfHostBinary } from '../lf_host';
+import { lfBinary } from '../lf_bin';
 import { freshTeam, POSTGRES_URL, psql } from './pg';
 
 const RUNS = 6;
@@ -20,7 +20,7 @@ const TWO_HOURS_MS = String(2 * 60 * 60_000);
 
 function lfHost(dir: string, args: string[], env: Record<string, string> = {}): Promise<{ code: number; out: string }> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(lfHostBinary(), args, { cwd: dir, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(lfBinary(), args, { cwd: dir, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
@@ -36,7 +36,7 @@ test('two drain workers resume every parked run exactly once', async () => {
     const dir = project();
     const fired: string[] = [];
     for (let i = 0; i < RUNS; i++) {
-      const run = spawnSync(lfHostBinary(), ['run', '--event', 'events/company_created.json', ...store], { cwd: dir, encoding: 'utf8' });
+      const run = spawnSync(lfBinary(), ['run', '--event', 'events/company_created.json', ...store], { cwd: dir, encoding: 'utf8' });
       assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
       const id = /^run (\S+) companies:welcome parked/m.exec(run.stdout)?.[1];
       assert.ok(id !== undefined, run.stdout);
@@ -63,8 +63,8 @@ test('two drain workers resume every parked run exactly once', async () => {
     // reports the whole of it, as the same run over the SQLite file does.
     const traced = drained.flatMap((worker) => [...worker.out.matchAll(/^run \S+ companies:welcome completed .* (\d+) trace entr/gm)].map((m) => m[1]));
     const local = project();
-    assert.equal(spawnSync(lfHostBinary(), ['run', '--event', 'events/company_created.json'], { cwd: local, encoding: 'utf8' }).status, 0);
-    const resumedLocally = spawnSync(lfHostBinary(), ['resume'], { cwd: local, encoding: 'utf8', env: { ...process.env, LF_CLOCK_AHEAD_MS: TWO_HOURS_MS } });
+    assert.equal(spawnSync(lfBinary(), ['run', '--event', 'events/company_created.json'], { cwd: local, encoding: 'utf8' }).status, 0);
+    const resumedLocally = spawnSync(lfBinary(), ['resume'], { cwd: local, encoding: 'utf8', env: { ...process.env, LF_CLOCK_AHEAD_MS: TWO_HOURS_MS } });
     const sqliteTrace = /^run \S+ companies:welcome completed .* (\d+) trace entr/m.exec(resumedLocally.stdout)?.[1];
     assert.ok(sqliteTrace !== undefined && Number(sqliteTrace) > 0, resumedLocally.stdout);
     assert.deepEqual(traced, Array(RUNS).fill(sqliteTrace), drained.map((w) => w.out).join('\n---\n'));

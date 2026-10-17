@@ -1,9 +1,8 @@
 // The fake CRM (`fake_crm_adapter.ts`) as an lf external: a plain process
 // that serves it behind the wire protocol on PORT (0: any free port) and
 // prints `listening <port>`, the way lf starts an external it is handed in an
-// `lf-external.yaml`. It lets the TypeScript lf and the Rust lf-host run the
-// same movements against the reference protocol-v2 adapter and be compared
-// (apps/cli/src/__test__/lf_host_parity.test.ts). Its ledger is in memory:
+// `lf-external.yaml`. It lets `lf` run movements against the reference
+// protocol-v2 adapter. Its ledger is in memory:
 // it lives as long as the lf process that started it.
 
 import { FAKE_CRM_SECRET, startFakeCrmServer } from './fake_crm_adapter';

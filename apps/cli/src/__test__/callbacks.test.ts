@@ -7,9 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { companies, externalPort, lf, project, served } from './example';
-import { localCancelGate } from '../parks';
-import { State } from '../state';
 
 /** The callback the fixture's run wrote into the CRM: its id and its url. */
 function minted(dir: string): { id: string; url: string } {
@@ -54,27 +53,6 @@ test('lf call: a mismatch is refused and consumes nothing; the call runs its bod
   assert.deepEqual(companies(dir).slice(1), ['Body ship it', 'Approved ship it'], 'the body ran once');
 });
 
-test('lf call while another lf process holds the run: the body waits on its row, and the next drain runs it', async () => {
-  const dir = project('callback');
-  const runId = runIdOf(lf(dir, 'run', '--event', 'events/company_created.json').out);
-  const { id } = minted(dir);
-  const state = new State(join(dir, '.lf', 'state.db'));
-  try {
-    const held = await state.store.leases.claim({ runId, ttlMs: 60_000 });
-    assert.ok(held);
-    const called = lf(dir, 'call', id, '--body', values(dir, 'note.json', { note: 'later' }));
-    assert.equal(called.code, 0, called.out);
-    assert.match(called.out, /being stepped by another lf process/);
-    assert.equal(companies(dir).length, 1, 'no body yet');
-    await state.store.leases.release({ runId, token: held.token });
-  } finally {
-    state.close();
-  }
-  const resumed = lf(dir, 'resume');
-  assert.equal(resumed.code, 0, resumed.out);
-  assert.deepEqual(companies(dir).slice(1), ['Body later', 'Approved later']);
-});
-
 test('lf serve: the callback door at POST /api/cb/<id> answers as the hosted door does, under lf.yaml\'s publicUrl', async () => {
   const dir = project('callback');
   writeFileSync(join(dir, 'lf.yaml'), `${readFileSync(join(dir, 'lf.yaml'), 'utf8')}\npublicUrl: https://lf.example.test/\n`);
@@ -117,11 +95,12 @@ test('lf cancel: a parked run is settled failed with the reason, and its callbac
   assert.equal(cancelled.code, 0, cancelled.out);
   assert.match(cancelled.out, new RegExp(`run ${runId} cancelled`));
   assert.match(lf(dir, 'runs').out, new RegExp(`${runId} .* callback:approve failed`));
-  const state = new State(join(dir, '.lf', 'state.db'));
+  const db = new DatabaseSync(join(dir, '.lf', 'state.db'));
   try {
-    assert.deepEqual(JSON.parse(state.run(runId)?.outcome ?? 'null'), { error: 'no longer needed' });
+    const row = db.prepare('select outcome from run where id = ?').get(runId) as { outcome: string } | undefined;
+    assert.deepEqual(JSON.parse(row?.outcome ?? 'null'), { error: 'no longer needed' });
   } finally {
-    state.close();
+    db.close();
   }
   const call = lf(dir, 'call', id, '--body', values(dir, 'note.json', { note: 'late' }));
   assert.equal(call.code, 1, call.out);
@@ -129,32 +108,4 @@ test('lf cancel: a parked run is settled failed with the reason, and its callbac
   const twice = lf(dir, 'cancel', runId);
   assert.equal(twice.code, 1, twice.out);
   assert.match(twice.out, /is failed; there is nothing to cancel/);
-});
-
-test('lf cancel of a run another process is stepping: its gate reads the request, and the engine stops the next segment at its first boundary', async () => {
-  const dir = project('callback');
-  const runId = runIdOf(lf(dir, 'run', '--event', 'events/company_created.json').out);
-  const state = new State(join(dir, '.lf', 'state.db'));
-  try {
-    const gate = localCancelGate(state, runId);
-    assert.equal(await gate.cancelled(), false);
-    const held = await state.store.leases.claim({ runId, ttlMs: 60_000 });
-    assert.ok(held);
-    const requested = lf(dir, 'cancel', runId);
-    assert.equal(requested.code, 0, requested.out);
-    assert.match(requested.out, /cancel requested; another lf process is stepping it/);
-    assert.equal(await gate.cancelled(), true);
-    assert.equal(await gate.cancelledNow(), true);
-    assert.equal(state.run(runId)?.status, 'parked', 'the holder settles it, not the canceller');
-    await state.store.leases.release({ runId, token: held.token });
-  } finally {
-    state.close();
-  }
-  // A segment entered now (the callback's body) is stopped by the engine at
-  // its first boundary, before the body writes, and the run settles failed.
-  const called = lf(dir, 'call', minted(dir).id, '--body', values(dir, 'note.json', { note: 'too late' }));
-  assert.equal(called.code, 1, called.out);
-  assert.match(called.out, /callback:approve failed — 0 write\(s\)/);
-  assert.equal(companies(dir).length, 1, `the body wrote nothing: ${JSON.stringify(companies(dir))}`);
-  assert.match(lf(dir, 'runs').out, new RegExp(`${runId} .* callback:approve failed`), called.out);
 });

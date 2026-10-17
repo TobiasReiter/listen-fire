@@ -1,5 +1,5 @@
-# The Rust lf as one container image: `lf-host serve` (the webhook and callback
-# doors) and `lf-host drain` (workers) are the same image with a different command.
+# The Rust lf as one container image: `lf serve` (the webhook and callback
+# doors) and `lf drain` (workers) are the same image with a different command.
 #
 # Build context is the repository root:
 #   docker build -f deploy/lf/Dockerfile -t lf .
@@ -12,7 +12,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates crates
 RUN cargo build --release --locked -p lf-host \
-  && cp target/release/lf-host /lf-host
+  && cp target/release/lf /lf
 
 # The built-in modules run under node (serve-module): install only the module
 # kit's and dealroom's closure of the workspace.
@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv/lf
 COPY --from=modules-build /srv/lf /srv/lf
-COPY --from=lf-build /lf-host /usr/local/bin/lf-host
+COPY --from=lf-build /lf /usr/local/bin/lf
 COPY deploy/lf/project /srv/lf/project
 
 ENV LF_BIND=0.0.0.0 PORT=8080
@@ -38,4 +38,4 @@ EXPOSE 8080
 WORKDIR /srv/lf/project
 # Run state is in Postgres (LF_STORE_URL), so the container keeps nothing: it
 # can be stopped and replaced at any time.
-CMD ["sh", "-c", "exec lf-host serve --port ${PORT}"]
+CMD ["sh", "-c", "exec lf serve --port ${PORT}"]

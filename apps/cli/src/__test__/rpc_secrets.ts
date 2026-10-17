@@ -1,7 +1,7 @@
 // A secrets store another process serves: `SecretsBackend` (movement-engine
 // services/secrets/family.ts) forwarded over the process's stdin/stdout, one
 // JSON-RPC 2.0 message per line — how the secrets contract suite, written
-// once in TypeScript, holds the Rust lf-host's stores (`lf-host
+// once in TypeScript, holds the Rust lf's stores (`lf
 // --contract-secrets <file | env>`) to the same meaning as lf's own. The
 // transport is the run host bridge's (`RpcStoreBackend`).
 

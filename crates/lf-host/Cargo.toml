@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 license = "Apache-2.0"
-description = "The local run host as one Rust binary: the end state of `lf` (plans/cloud-native-2026-10-06/22_everywhere_plan.md #7). Named lf-host until it replaces the TypeScript lf."
+description = "The local run host as one Rust binary: the `lf` command (plans/cloud-native-2026-10-06/22_everywhere_plan.md #7)."
 
 # A native binary only: the WASM build names its packages (-p movement-engine,
 # -p movement-parser), so this crate and its dependencies never enter it.
 [[bin]]
-name = "lf-host"
+name = "lf"
 path = "src/main.rs"
 
 [dependencies]

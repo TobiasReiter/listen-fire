@@ -1,21 +1,16 @@
 // The example project (examples/lf-acme), copied into a temporary folder per
-// test, and the real `lf` entry point run against it. `LF_BIN=<executable>`
-// runs the tests against another binary instead (the Rust lf-host:
-// `LF_BIN=target/debug/lf-host`), so one set of tests holds both.
+// test, and the real `lf` binary (lf_bin.ts) run against it.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { lfBinary } from './lf_bin';
 
-export const LF = resolve(__dirname, '../../bin/lf.cjs');
-
-/** The command and arguments that run `lf <args>`: the TypeScript entry
- *  point under this Node, or the executable `LF_BIN` names. */
+/** The command and arguments that run `lf <args>`. */
 export function lfCommand(args: readonly string[]): [string, string[]] {
-  const bin = process.env.LF_BIN;
-  return bin !== undefined && bin !== '' ? [resolve(bin), [...args]] : [process.execPath, [LF, ...args]];
+  return [lfBinary(), [...args]];
 }
 export const EXAMPLE = resolve(__dirname, '../../../../examples/lf-acme');
 

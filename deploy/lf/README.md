@@ -1,9 +1,9 @@
 # Deploying lf to a scale-from-zero platform
 
-The image (`deploy/lf/Dockerfile`, built from the repository root) holds one binary, `lf-host`, plus the built-in Dealroom module. Two commands make the whole deployment:
+The image (`deploy/lf/Dockerfile`, built from the repository root) holds one binary, `lf`, plus the built-in Dealroom module. Two commands make the whole deployment:
 
-- **`lf-host serve --port $PORT`** is the doors: webhooks at `/hooks/<external>/<install>` and OAuth callbacks. It also drains due work while it is up. Run it as a container behind HTTPS.
-- **`lf-host drain --until-idle --max-seconds N`** is a worker. It claims due work rows, runs them, and exits when none is due or after N seconds. Run it as a job.
+- **`lf serve --port $PORT`** is the doors: webhooks at `/hooks/<external>/<install>` and OAuth callbacks. It also drains due work while it is up. Run it as a container behind HTTPS.
+- **`lf drain --until-idle --max-seconds N`** is a worker. It claims due work rows, runs them, and exits when none is due or after N seconds. Run it as a job.
 
 The container keeps no state. Everything lives in Postgres, so any container can be stopped or replaced at any time, and any number of workers can drain at once (each row is claimed by one worker, each run stepped by whoever holds its lease).
 
@@ -18,7 +18,7 @@ The container keeps no state. Everything lives in Postgres, so any container can
 ## The platform shape
 
 1. Deploy the image as a service running its default command, with minimum instances at least 1 (or 0 if the platform wakes a container on the first request and senders retry webhooks), HTTPS in front, and `LF_STORE_URL` set.
-2. Deploy the same image as a job whose command is `lf-host drain --until-idle --max-seconds 55`, with the same `LF_STORE_URL`. Trigger it:
+2. Deploy the same image as a job whose command is `lf drain --until-idle --max-seconds 55`, with the same `LF_STORE_URL`. Trigger it:
    - on a schedule (every minute) for timers and awaits to wake, or
    - by queue depth, where the platform can scale jobs on a Postgres query: start one worker per few due rows.
 3. A worker that finds nothing due exits at once, so a frequent schedule costs little.

@@ -1,5 +1,5 @@
-//! `lf-host completion <bash|zsh|fish>`: a shell's tab completion, printed to
-//! be sourced (`source <(lf-host completion bash)`, or saved where the shell
+//! `lf completion <bash|zsh|fish>`: a shell's tab completion, printed to
+//! be sourced (`source <(lf completion bash)`, or saved where the shell
 //! loads completions). It completes the subcommands and their flags, and asks
 //! the binary itself for what depends on the project in the current folder:
 //! `completion --list modules` (the installed externals and the `@lf/*`
@@ -50,7 +50,7 @@ fn program_name() -> String {
     std::env::args()
         .next()
         .and_then(|arg0| Path::new(&arg0).file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "lf-host".into())
+        .unwrap_or_else(|| "lf".into())
 }
 
 fn listed(list: &str, dir: &Path) -> Vec<String> {

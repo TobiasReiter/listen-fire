@@ -22,4 +22,4 @@ services:
   drain:
     <<: *lf
     # What a scheduler does on a platform: short drains, started again and again.
-    command: ["sh", "-c", "while true; do lf-host drain --until-idle --max-seconds 55; sleep 5; done"]
+    command: ["sh", "-c", "while true; do lf drain --until-idle --max-seconds 55; sleep 5; done"]

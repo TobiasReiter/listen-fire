@@ -50,6 +50,10 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-retire
+
+- The Rust binary is now `lf` (Cargo bin `lf`, from package `lf-host`; usage text, release workflow, container image and docs follow). The TypeScript `lf` is gone: `apps/cli` is only the test harness that drives the built binary (`LF_BIN`, default `target/debug/lf`). Tests that compared the two were dropped.
+
 ### r-deploy
 
 - A container image for the Rust `lf` (`deploy/lf/`): `lf-host serve` for the webhook and callback doors and `lf-host drain --until-idle --max-seconds N` for workers, on the Postgres store (`LF_STORE_URL`, TLS). A compose file for a local trial and a page on scale-from-zero platforms. `serve` listens on the address `LF_BIND` names (default loopback).

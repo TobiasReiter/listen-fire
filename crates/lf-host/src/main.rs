@@ -1,31 +1,29 @@
-//! `lf-host` — the local run host as one Rust binary, growing toward the sole
-//! `lf` (plans/cloud-native-2026-10-06/22_everywhere_plan.md #7). Named
-//! `lf-host` until it replaces the TypeScript `lf` (apps/cli), whose commands,
-//! project format, state file and output it keeps.
+//! `lf` — the local run host as one Rust binary: the `lf` command
+//! (plans/cloud-native-2026-10-06/22_everywhere_plan.md #7).
 //!
-//!   lf-host init [dir]                       scaffold a starter project
-//!   lf-host check [--dir <project>]          the TypeScript `lf check`
-//!   lf-host run --event <file> [--dry-run]   route an event to its listens and run each
-//!   lf-host resume [<run-id>]                step a parked run, or drain due work and every parked run
-//!   lf-host upgrade [--check] [--all]        rewrite the movement files into the current language version
-//!   lf-host runs                             the runs, most recent first
-//!   lf-host drain [--until-idle] [--max-seconds N]  a worker over the work queue (scale from zero)
-//!   lf-host serve [--port N]                 the inbound doors, the callback door and the work drain
-//!   lf-host call <callback-id> [--body <values.json>]
-//!   lf-host cancel <run-id> [--reason <text>]
-//!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
-//!   lf-host connect [<module>]               set a module up (src/connect.rs)
-//!   lf-host credential add|update|delete|list   user credentials (src/credential_cmd.rs)
-//!   lf-host completion <bash|zsh|fish>       the shell's tab completion
-//!   lf-host --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
-//!   lf-host --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
-//!   lf-host --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
+//!   lf init [dir]                       scaffold a starter project
+//!   lf check [--dir <project>]          every diagnostic the project's files have
+//!   lf run --event <file> [--dry-run]   route an event to its listens and run each
+//!   lf resume [<run-id>]                step a parked run, or drain due work and every parked run
+//!   lf upgrade [--check] [--all]        rewrite the movement files into the current language version
+//!   lf runs                             the runs, most recent first
+//!   lf drain [--until-idle] [--max-seconds N]  a worker over the work queue (scale from zero)
+//!   lf serve [--port N]                 the inbound doors, the callback door and the work drain
+//!   lf call <callback-id> [--body <values.json>]
+//!   lf cancel <run-id> [--reason <text>]
+//!   lf catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
+//!   lf connect [<module>]               set a module up (src/connect.rs)
+//!   lf credential add|update|delete|list   user credentials (src/credential_cmd.rs)
+//!   lf completion <bash|zsh|fish>       the shell's tab completion
+//!   lf --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
+//!   lf --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
+//!   lf --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!
 //! `run`, `resume`, `runs`, `drain`, `serve`, `call` and `cancel` keep run
 //! state where `--store <spec>` (or lf.yaml's `store:`) says: a SQLite file,
 //! `.lf/state.db` by default, or a Postgres database (`postgres://…`) with the
 //! hosted product's schema.
-//!   lf-host --project-schema                 one schema projection, stdin to stdout (a parity probe)
+//!   lf --project-schema                 one schema projection, stdin to stdout (a parity probe)
 //!
 //! Single-threaded: one tokio thread, every wait an await.
 
@@ -80,18 +78,18 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <init|check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
-       lf-host run --event <file.json> [--dry-run]
-       lf-host run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
-       lf-host resume [<run-id>]
-       lf-host drain [--until-idle] [--max-seconds <n>]
-       lf-host serve [--port N]
-       lf-host call <callback-id> [--body <values.json>]
-       lf-host cancel <run-id> [--reason <text>]
-       lf-host --contract-store <state.db|postgres://…> [--team <uuid>]
-       lf-host --contract-secrets <secrets file | env>
-       lf-host --contract-doors
-       lf-host --project-schema
+const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
+       lf run --event <file.json> [--dry-run]
+       lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
+       lf resume [<run-id>]
+       lf drain [--until-idle] [--max-seconds <n>]
+       lf serve [--port N]
+       lf call <callback-id> [--body <values.json>]
+       lf cancel <run-id> [--reason <text>]
+       lf --contract-store <state.db|postgres://…> [--team <uuid>]
+       lf --contract-secrets <secrets file | env>
+       lf --contract-doors
+       lf --project-schema
   init      scaffold a starter project in the folder (default: the current one): lf.yaml, a movement, .gitignore
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
@@ -272,7 +270,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             let project = load()?;
             let store = store_of(&args, &project)?;
             if args.ephemeral && matches!(store, backend::StoreSpec::Postgres { .. }) {
-                eprintln!("lf-host: --ephemeral keeps its run state in a temporary file; it does not take a Postgres --store");
+                eprintln!("lf: --ephemeral keeps its run state in a temporary file; it does not take a Postgres --store");
                 return Ok(2);
             }
             let session = runs::open_session(project, args.ephemeral, &store).await?;
@@ -345,7 +343,7 @@ fn main() {
     let code = match runtime.block_on(tokio::task::LocalSet::new().run_until(run(argv))) {
         Ok(code) => code,
         Err(message) => {
-            eprintln!("lf-host: {message}");
+            eprintln!("lf: {message}");
             1
         }
     };

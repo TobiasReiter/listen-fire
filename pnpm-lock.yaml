@@ -593,9 +593,6 @@ importers:
       movement-engine:
         specifier: workspace:*
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       tsx:
         specifier: 4.21.0
         version: 4.21.0

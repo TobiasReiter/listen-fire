@@ -1,6 +1,9 @@
 // The run host's contract suite (packages/movement-engine/services/run_host/
-// contract.ts) against lf's SQLite backend: the same cases the hosted
-// Postgres backend is held to, one fresh state file per case.
+// contract.ts) against the Rust lf's SQLite backend, driven over its
+// stdio JSON-RPC bridge (`lf --contract-store`) by `RpcStoreBackend`:
+// the same cases the hosted Postgres backend is
+// held to (the live state families, the callbacks and the cancel cases), one
+// fresh state file per case.
 
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -13,36 +16,33 @@ import {
   runHostContractCases,
   type RecordsContractBackend,
 } from 'movement-engine/services/run_host/contract';
-import { LOCAL_TENANT } from '../host';
-import { localRunRecords } from '../parks';
-import { State } from '../state';
-
-function backendOf(state: State): RecordsContractBackend {
-  return {
-    store: state.store,
-    callbacks: state.callbacks,
-    runs: localRunRecords(state),
-    teamId: LOCAL_TENANT,
-    newRun: async () => {
-      const id = randomUUID();
-      state.startRun({ id, file: 'f', movement: 'm', started_at: new Date().toISOString(), input: '{}' });
-      return id;
-    },
-    requestCancel: async ({ runId, reason }) => {
-      state.requestCancel(runId, reason);
-    },
-    runStatus: async (runId) => state.run(runId)?.status ?? 'missing',
-    completeRun: async (runId) => state.settleRun(runId, 'completed', null, new Date().toISOString()),
-  };
-}
+import { RpcStoreBackend } from 'movement-engine/services/run_host/rpc_store';
+// The tenant every local run belongs to.
+const LOCAL_TENANT = 'local';
+import { lfBinary } from './lf_bin';
 
 for (const contractCase of [...runHostContractCases, ...callbackContractCases, ...cancelContractCases]) {
   test(contractCase.name, async () => {
-    const state = new State(join(mkdtempSync(join(tmpdir(), 'lf-contract-')), 'state.db'));
+    const path = join(mkdtempSync(join(tmpdir(), 'lf-contract-')), 'state.db');
+    const backend = new RpcStoreBackend(lfBinary(), ['--contract-store', path]);
+    const records: RecordsContractBackend = {
+      store: backend.store,
+      callbacks: backend.callbacks,
+      runs: backend.runs,
+      teamId: LOCAL_TENANT,
+      newRun: async () => {
+        const id = randomUUID();
+        await backend.startRun({ id, file: 'f', movement: 'm', startedAt: new Date().toISOString(), input: '{}' });
+        return id;
+      },
+      requestCancel: (input) => backend.requestCancel(input),
+      runStatus: (runId) => backend.runStatus(runId),
+      completeRun: (runId) => backend.completeRun(runId),
+    };
     try {
-      await contractCase.run(backendOf(state));
+      await contractCase.run(records);
     } finally {
-      state.close();
+      await backend.close();
     }
   });
 }
