@@ -50,6 +50,9 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-boundary
+
+- The platform reaches the engine only through its public entries (`movement-engine/public/*`): 603 internal imports in apps/api (plus apps/cli and model-providers) now name a public entry, the guard's baseline is empty, ESLint refuses an internal import, and the package's `exports` map refuses one at run time. Engine tests still in apps/api reach internals under the test runners' `movement-engine-internals` condition.
 ### r-deploy
 
 - A container image for the Rust `lf` (`deploy/lf/`): `lf-host serve` for the webhook and callback doors and `lf-host drain --until-idle --max-seconds N` for workers, on the Postgres store (`LF_STORE_URL`, TLS). A compose file for a local trial and a page on scale-from-zero platforms. `serve` listens on the address `LF_BIND` names (default loopback).

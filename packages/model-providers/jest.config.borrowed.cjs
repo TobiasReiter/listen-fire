@@ -10,6 +10,9 @@ module.exports = {
   rootDir: __dirname,
   testMatch: ['**/*.unit.test.ts'],
   testEnvironment: 'node',
+  // Its tests mock engine internals, which the engine's exports map resolves
+  // only under this condition.
+  testEnvironmentOptions: { customExportConditions: ['node', 'node-addons', 'movement-engine-internals'] },
   maxWorkers: 1,
   clearMocks: true,
   // Sources are the truth: resolve `.ts` before any stray compiled `.js`.

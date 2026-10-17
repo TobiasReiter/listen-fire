@@ -16,6 +16,9 @@ export default {
   // Transpile only: types are owned by `pnpm code:type-check`.
   transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
+  // Engine tests that still live here reach engine internals, which the
+  // package's exports map resolves only under this condition.
+  testEnvironmentOptions: { customExportConditions: ['node', 'node-addons', 'movement-engine-internals'] },
   // Inert env defaults so the suite loads env-reading modules (prisma, adapters)
   // without a real .env and without touching real systems. See the file header.
   setupFiles: ['<rootDir>/src/test/test-env-defaults.ts'],

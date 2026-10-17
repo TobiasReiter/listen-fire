@@ -3,9 +3,16 @@
   "private": true,
   "license": "Apache-2.0",
   "version": "0.0.1",
-  "description": "The movement engine and its host contract, moved out of apps/api so every shell (the hosted product, the `lf` command line) runs the same engine: the TypeScript engine, the Rust engine's shim, the EngineHost families, and the adapter and model types they reach. Paths mirror apps/api/src so the move stayed mechanical. Its tests still live in apps/api",
+  "description": "The movement engine and its host contract, moved out of apps/api so every shell (the hosted product, the `lf` command line) runs the same engine: the TypeScript engine, the Rust engine's shim, the EngineHost families, and the adapter and model types they reach. Paths mirror apps/api/src so the move stayed mechanical. Embedders reach it only through public/* (the exports map); the internals resolve only under the `movement-engine-internals` condition, which only test runners set, for the engine tests that still live in apps/api",
   "engines": {
     "node": "22.20.0"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./public/*": "./public/*.ts",
+    "./*": {
+      "movement-engine-internals": "./*.ts"
+    }
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit"
