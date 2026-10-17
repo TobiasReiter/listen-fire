@@ -26,6 +26,7 @@
 
 import type { PluginManifest, TransformImpl } from './registry';
 
+import { BUNDLED_PLUGINS } from 'movement-engine/public/plugins';
 import { getTransform, registerTransform } from './registry';
 import { vcUrlRetrievalImpl, VC_URL_RETRIEVAL_PLUGIN_MANIFEST } from './vc-url-retrieval';
 import { fetchUrlImpl, FETCH_URL_PLUGIN_MANIFEST } from './fetch-url';
@@ -105,6 +106,34 @@ function assertManifestsMatchBundledTransforms(): void {
 }
 
 assertManifestsMatchBundledTransforms();
+
+/**
+ * The host implements exactly the plugins the engine package declares, each
+ * under its declared signature: the checker and the engine read the
+ * declarations, so an implementation of something undeclared would never be
+ * called, and a declaration with no implementation would check clean and then
+ * answer nothing.
+ */
+function assertImplementationsMatchDeclarations(): void {
+  for (const declaration of BUNDLED_PLUGINS) {
+    const impl = BUNDLED_TRANSFORMS.find((t) => t.signature.name === declaration.signature.name);
+    if (impl === undefined) {
+      throw new Error(`Declared plugin '${declaration.signature.name}' has no bundled implementation.`);
+    }
+    if (impl.signature !== declaration.signature || (impl.priced === true) !== declaration.priced) {
+      throw new Error(
+        `Bundled plugin '${declaration.signature.name}' is implemented under a signature or price other than its declaration's.`,
+      );
+    }
+  }
+  for (const impl of BUNDLED_TRANSFORMS) {
+    if (!BUNDLED_PLUGINS.some((d) => d.signature.name === impl.signature.name)) {
+      throw new Error(`Bundled transform '${impl.signature.name}' is not a declared plugin.`);
+    }
+  }
+}
+
+assertImplementationsMatchDeclarations();
 
 /** Every bundled plugin's manifest — the enumeration surface for the
  *  Plugins page and other catalogues. Pure and construction-free. */

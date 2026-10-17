@@ -163,15 +163,6 @@ jest.mock('../../adapters/registry', () => ({
   },
 }));
 
-jest.mock('../../engine/transforms/register-bundled', () => ({
-  registerBundledTransforms: () => {},
-}));
-
-jest.mock('../../engine/transforms/registry', () => ({
-  getTransform: () => undefined,
-  listTransforms: () => [],
-}));
-
 jest.mock('../../adapters/resolve', () => ({ resolveAdapter: jest.fn() }));
 
 const resolveAdapterMock = resolveAdapter as jest.Mock;

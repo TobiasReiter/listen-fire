@@ -1,0 +1,1176 @@
+{
+  "registeredPluginSpecs": {
+    "vc_url_retrieval": {
+      "args": [
+        "email"
+      ],
+      "priced": true,
+      "argTypes": {
+        "text": "text",
+        "email": "text"
+      },
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedArgs": [
+        {
+          "name": "text",
+          "required": true
+        }
+      ],
+      "output": {
+        "kind": "records",
+        "fields": {
+          "name": "text",
+          "url": "text",
+          "file": {
+            "kind": "maybeAbsent",
+            "of": "file"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      },
+      "earlierOutputs": [
+        {
+          "before": 2,
+          "output": {
+            "kind": "value",
+            "type": {
+              "kind": "maybeAbsent",
+              "of": "text"
+            }
+          }
+        }
+      ]
+    },
+    "fetch_url": {
+      "args": [
+        "url",
+        "email",
+        "password"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text",
+        "email": "text",
+        "password": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ]
+      },
+      "output": {
+        "kind": "value",
+        "type": {
+          "kind": "maybeAbsent",
+          "of": "text"
+        }
+      }
+    },
+    "linkedin_enrichment": {
+      "args": [],
+      "priced": true,
+      "argTypes": {},
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedByExtraction": true,
+      "output": {
+        "kind": "record",
+        "fields": {
+          "linkedin_url": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin_profile": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "linkedin_research": {
+      "args": [
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "activity_summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_role": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_organisation": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "web_research": {
+      "args": [
+        "name",
+        "context",
+        "website",
+        "linkedin"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "website": "text",
+        "linkedin": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "research": {
+      "args": [
+        "name",
+        "context",
+        "questions",
+        "website",
+        "linkedin",
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "questions": "text",
+        "website": "text",
+        "linkedin": "text",
+        "url": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "dossier": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    }
+  },
+  "snapshotPlugins": {
+    "vc_url_retrieval": {
+      "args": [
+        "email"
+      ],
+      "priced": true,
+      "argTypes": {
+        "text": "text",
+        "email": "text"
+      },
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedArgs": [
+        {
+          "name": "text",
+          "required": true
+        }
+      ],
+      "output": {
+        "kind": "records",
+        "fields": {
+          "name": "text",
+          "url": "text",
+          "file": {
+            "kind": "maybeAbsent",
+            "of": "file"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      },
+      "earlierOutputs": [
+        {
+          "before": 2,
+          "output": {
+            "kind": "value",
+            "type": {
+              "kind": "maybeAbsent",
+              "of": "text"
+            }
+          }
+        }
+      ]
+    },
+    "fetch_url": {
+      "args": [
+        "url",
+        "email",
+        "password"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text",
+        "email": "text",
+        "password": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ]
+      },
+      "output": {
+        "kind": "value",
+        "type": {
+          "kind": "maybeAbsent",
+          "of": "text"
+        }
+      }
+    },
+    "linkedin_enrichment": {
+      "args": [],
+      "priced": true,
+      "argTypes": {},
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedByExtraction": true,
+      "output": {
+        "kind": "record",
+        "fields": {
+          "linkedin_url": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin_profile": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "linkedin_research": {
+      "args": [
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "activity_summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_role": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_organisation": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "web_research": {
+      "args": [
+        "name",
+        "context",
+        "website",
+        "linkedin"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "website": "text",
+        "linkedin": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "research": {
+      "args": [
+        "name",
+        "context",
+        "questions",
+        "website",
+        "linkedin",
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "questions": "text",
+        "website": "text",
+        "linkedin": "text",
+        "url": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "dossier": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    }
+  },
+  "liveCatalog": {
+    "fetch_url": {
+      "args": [
+        "url",
+        "email",
+        "password"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text",
+        "email": "text",
+        "password": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ]
+      },
+      "output": {
+        "kind": "value",
+        "type": {
+          "kind": "maybeAbsent",
+          "of": "text"
+        }
+      }
+    },
+    "fetch-url": {
+      "args": [
+        "url",
+        "email",
+        "password"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text",
+        "email": "text",
+        "password": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ]
+      },
+      "output": {
+        "kind": "value",
+        "type": {
+          "kind": "maybeAbsent",
+          "of": "text"
+        }
+      }
+    },
+    "linkedin_enrichment": {
+      "args": [],
+      "priced": true,
+      "argTypes": {},
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedByExtraction": true,
+      "output": {
+        "kind": "record",
+        "fields": {
+          "linkedin_url": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin_profile": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "linkedin-enrichment": {
+      "args": [],
+      "priced": true,
+      "argTypes": {},
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedByExtraction": true,
+      "output": {
+        "kind": "record",
+        "fields": {
+          "linkedin_url": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin_profile": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "linkedin_research": {
+      "args": [
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "activity_summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_role": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_organisation": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "linkedin-research": {
+      "args": [
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "url": "text"
+      },
+      "requiredArgs": [
+        "url"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "activity_summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_role": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "current_organisation": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "activity_sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "research": {
+      "args": [
+        "name",
+        "context",
+        "questions",
+        "website",
+        "linkedin",
+        "url"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "questions": "text",
+        "website": "text",
+        "linkedin": "text",
+        "url": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "summary": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "confidence": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "sources": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "linkedin": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "dossier": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "vc_url_retrieval": {
+      "args": [
+        "email"
+      ],
+      "priced": true,
+      "argTypes": {
+        "text": "text",
+        "email": "text"
+      },
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedArgs": [
+        {
+          "name": "text",
+          "required": true
+        }
+      ],
+      "output": {
+        "kind": "records",
+        "fields": {
+          "name": "text",
+          "url": "text",
+          "file": {
+            "kind": "maybeAbsent",
+            "of": "file"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      },
+      "earlierOutputs": [
+        {
+          "before": 2,
+          "output": {
+            "kind": "value",
+            "type": {
+              "kind": "maybeAbsent",
+              "of": "text"
+            }
+          }
+        }
+      ]
+    },
+    "vc-url-retrieval": {
+      "args": [
+        "email"
+      ],
+      "priced": true,
+      "argTypes": {
+        "text": "text",
+        "email": "text"
+      },
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "fedArgs": [
+        {
+          "name": "text",
+          "required": true
+        }
+      ],
+      "output": {
+        "kind": "records",
+        "fields": {
+          "name": "text",
+          "url": "text",
+          "file": {
+            "kind": "maybeAbsent",
+            "of": "file"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      },
+      "earlierOutputs": [
+        {
+          "before": 2,
+          "output": {
+            "kind": "value",
+            "type": {
+              "kind": "maybeAbsent",
+              "of": "text"
+            }
+          }
+        }
+      ]
+    },
+    "web_research": {
+      "args": [
+        "name",
+        "context",
+        "website",
+        "linkedin"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "website": "text",
+        "linkedin": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    },
+    "web-research": {
+      "args": [
+        "name",
+        "context",
+        "website",
+        "linkedin"
+      ],
+      "priced": true,
+      "argTypes": {
+        "name": "text",
+        "context": "text",
+        "website": "text",
+        "linkedin": "text"
+      },
+      "requiredArgs": [
+        "name"
+      ],
+      "effects": {
+        "reads": [
+          "the web"
+        ],
+        "ai": true
+      },
+      "output": {
+        "kind": "record",
+        "fields": {
+          "website": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          },
+          "text": {
+            "kind": "maybeAbsent",
+            "of": "text"
+          }
+        }
+      }
+    }
+  },
+  "diagnostics": {
+    "fetch_url no argument v4 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'fetch_url' is missing the required argument 'url'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 18,
+        "sourceLine": "  r = fetch_url()"
+      }
+    ],
+    "fetch_url no argument v5 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'fetch_url' is missing the required argument 'url'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 18,
+        "sourceLine": "  r = fetch_url()"
+      }
+    ],
+    "fetch_url no argument v5 rust": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'fetch_url' is missing the required argument 'url'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 18,
+        "sourceLine": "  r = fetch_url()"
+      }
+    ],
+    "fetch_url every argument v4 typescript": [],
+    "fetch_url every argument v5 typescript": [],
+    "fetch_url every argument v5 rust": [],
+    "linkedin_enrichment no argument v4 typescript": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'linkedin_enrichment' runs on what an extraction gives it and takes nothing of its own, so it only makes sense as a stage of one — write it in a 'through [ … ]' (`extract from [ … ] through [linkedin_enrichment] { … }`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 28,
+        "sourceLine": "  r = linkedin_enrichment()"
+      }
+    ],
+    "linkedin_enrichment no argument v5 typescript": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'linkedin_enrichment' is missing the argument 'record' — a plugin's inputs are its arguments, by position (`linkedin_enrichment(record)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 28,
+        "sourceLine": "  r = linkedin_enrichment()"
+      }
+    ],
+    "linkedin_enrichment no argument v5 rust": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'linkedin_enrichment' is missing the argument 'record' — a plugin's inputs are its arguments, by position (`linkedin_enrichment(record)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 28,
+        "sourceLine": "  r = linkedin_enrichment()"
+      }
+    ],
+    "linkedin_enrichment every argument v4 typescript": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'linkedin_enrichment' runs on what an extraction gives it and takes nothing of its own, so it only makes sense as a stage of one — write it in a 'through [ … ]' (`extract from [ … ] through [linkedin_enrichment] { … }`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 28,
+        "sourceLine": "  r = linkedin_enrichment()"
+      }
+    ],
+    "linkedin_enrichment every argument v5 typescript": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'linkedin_enrichment' is missing the argument 'record' — a plugin's inputs are its arguments, by position (`linkedin_enrichment(record)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 28,
+        "sourceLine": "  r = linkedin_enrichment()"
+      }
+    ],
+    "linkedin_enrichment every argument v5 rust": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'linkedin_enrichment' is missing the argument 'record' — a plugin's inputs are its arguments, by position (`linkedin_enrichment(record)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 28,
+        "sourceLine": "  r = linkedin_enrichment()"
+      }
+    ],
+    "linkedin_research no argument v4 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'linkedin_research' is missing the required argument 'url'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 26,
+        "sourceLine": "  r = linkedin_research()"
+      }
+    ],
+    "linkedin_research no argument v5 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'linkedin_research' is missing the required argument 'url'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 26,
+        "sourceLine": "  r = linkedin_research()"
+      }
+    ],
+    "linkedin_research no argument v5 rust": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'linkedin_research' is missing the required argument 'url'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 26,
+        "sourceLine": "  r = linkedin_research()"
+      }
+    ],
+    "linkedin_research every argument v4 typescript": [],
+    "linkedin_research every argument v5 typescript": [],
+    "linkedin_research every argument v5 rust": [],
+    "research no argument v4 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'research' is missing the required argument 'name'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 17,
+        "sourceLine": "  r = research()"
+      }
+    ],
+    "research no argument v5 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'research' is missing the required argument 'name'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 17,
+        "sourceLine": "  r = research()"
+      }
+    ],
+    "research no argument v5 rust": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'research' is missing the required argument 'name'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 17,
+        "sourceLine": "  r = research()"
+      }
+    ],
+    "research every argument v4 typescript": [],
+    "research every argument v5 typescript": [],
+    "research every argument v5 rust": [],
+    "vc_url_retrieval no argument v4 typescript": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'vc_url_retrieval' is missing the argument 'text' — inside a 'through [ … ]' the extraction supplies it, so a call on its own has to say it (`vc_url_retrieval(text: …)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 25,
+        "sourceLine": "  r = vc_url_retrieval()"
+      }
+    ],
+    "vc_url_retrieval no argument v5 typescript": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'vc_url_retrieval' is missing the argument 'text' — a plugin's inputs are its arguments, by position (`vc_url_retrieval(text)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 25,
+        "sourceLine": "  r = vc_url_retrieval()"
+      }
+    ],
+    "vc_url_retrieval no argument v5 rust": [
+      {
+        "code": "MOV_PLUGIN_FED_BY_EXTRACTION",
+        "message": "'vc_url_retrieval' is missing the argument 'text' — a plugin's inputs are its arguments, by position (`vc_url_retrieval(text)`).",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 25,
+        "sourceLine": "  r = vc_url_retrieval()"
+      }
+    ],
+    "vc_url_retrieval every argument v4 typescript": [],
+    "vc_url_retrieval every argument v5 typescript": [],
+    "vc_url_retrieval every argument v5 rust": [],
+    "web_research no argument v4 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'web_research' is missing the required argument 'name'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 21,
+        "sourceLine": "  r = web_research()"
+      }
+    ],
+    "web_research no argument v5 typescript": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'web_research' is missing the required argument 'name'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 21,
+        "sourceLine": "  r = web_research()"
+      }
+    ],
+    "web_research no argument v5 rust": [
+      {
+        "code": "MOV_THROUGH_ARG_MISSING",
+        "message": "'web_research' is missing the required argument 'name'",
+        "severity": "error",
+        "line": 3,
+        "col": 7,
+        "endLine": 3,
+        "endCol": 21,
+        "sourceLine": "  r = web_research()"
+      }
+    ],
+    "web_research every argument v4 typescript": [],
+    "web_research every argument v5 typescript": [],
+    "web_research every argument v5 rust": []
+  }
+}

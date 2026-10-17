@@ -32,7 +32,6 @@ import { z } from 'zod';
 
 import type { PluginManifest, TransformImpl, TransformOutput } from './registry';
 import type { SearchHit } from './search_hygiene';
-import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { anthropicChatStructured } from '../../../../lib/anthropic';
 import { runFields } from '../../../../lib/llm_usage';
@@ -51,95 +50,12 @@ import {
 } from './search_hygiene';
 import { WEB_RESEARCH_HANDBOOK_SECTION } from './web_research_handbook_section';
 import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
-
-// ── Signature ─────────────────────────────────────────────────────────────
-
-export const WEB_RESEARCH_SIGNATURE: TransformSignature = {
-  name: 'web-research',
-  description:
-    "Find a company's own website from its name and what a message said about it, and fetch it. Stands down for a record that already carries a link.",
-  params: [
-    {
-      name: 'name',
-      type: { kind: 'string' },
-      required: true,
-      description:
-        'The name to research. Normally a field an earlier stage extracted, so each record is ' +
-        'researched from its own name.',
-    },
-    {
-      name: 'context',
-      type: { kind: 'string' },
-      description:
-        'What the message said about it — a description, a sector, a location, the people ' +
-        'behind it. This is what tells the company apart from every other use of the word, ' +
-        'and without it nothing is searched for at all.',
-    },
-    {
-      name: 'website',
-      type: { kind: 'string' },
-      description:
-        "The record's web address, when it has one. Pass it so this stands down: a record " +
-        'that already has a link needs no research, and nothing is searched or fetched for it.',
-    },
-    {
-      name: 'linkedin',
-      type: { kind: 'string' },
-      description:
-        "The record's LinkedIn address, when it has one. Pass it for the same reason as " +
-        '`website` — the profile is a better source than a search, and the profile plugin ' +
-        'has it covered.',
-    },
-  ],
-  // The name and the context are fields the enclosing extract produced, so
-  // this only makes sense as a stage of an extraction.
-  dataDependency: 'extracted_context',
-  // Searches, fetches one page, and asks a model twice — to plan the queries
-  // and to confirm the candidate.
-  effects: { reads: ['the web'], ai: true },
-  additions: {
-    properties: {
-      website: { kind: 'string' },
-    },
-    // The same record `fetch-url` emits, so a stage behind either of them
-    // reads the page the same way.
-    edges: {
-      fetchedUrl: {
-        target: {
-          kind: 'record',
-          fields: {
-            name: { kind: 'string' },
-            url: { kind: 'string' },
-            file: { kind: 'file' },
-            text: { kind: 'string' },
-          },
-        },
-      },
-    },
-  },
-  // Both halves of what it did: the address it settled on, and the page it
-  // fetched from there. Either can be missing — a record that already carried a
-  // link makes this stand down, and a search that found nothing fetches nothing.
-  output: {
-    kind: 'record',
-    fields: {
-      website: {
-        type: { kind: 'string' },
-        optional: true,
-        description: "The company's own web address, as found.",
-      },
-      text: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'The text of the page it fetched from that address.',
-      },
-    },
-  },
-};
+import { implementing } from './registry';
+import { WEB_RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 
 export const WEB_RESEARCH_PLUGIN_MANIFEST: PluginManifest = {
-  pluginName: WEB_RESEARCH_SIGNATURE.name,
-  importName: importIdentifier(WEB_RESEARCH_SIGNATURE.name),
+  pluginName: WEB_RESEARCH_PLUGIN.signature.name,
+  importName: importIdentifier(WEB_RESEARCH_PLUGIN.signature.name),
   displayName: 'Find the website',
   description:
     'The fallback for a record that arrived with no link: it works out a ' +
@@ -147,13 +63,13 @@ export const WEB_RESEARCH_PLUGIN_MANIFEST: PluginManifest = {
     'checks the site really is that company, and loads it. Pass the record’s ' +
     'link fields as well and it stands down whenever one of them is filled, so ' +
     'it only spends anything on the records nothing else could reach.',
-  params: WEB_RESEARCH_SIGNATURE.params,
+  params: WEB_RESEARCH_PLUGIN.signature.params,
   contextAdditions:
     'Adds the resolved web address to the record, plus the page it loaded — ' +
     'the same fetched page a targeted fetch adds. Adds nothing at all when the ' +
     'message said too little to search on, or when no site could be confirmed ' +
     'as that company’s.',
-  additions: WEB_RESEARCH_SIGNATURE.additions,
+  additions: WEB_RESEARCH_PLUGIN.signature.additions,
   handbookSection: WEB_RESEARCH_HANDBOOK_SECTION,
 };
 
@@ -215,9 +131,7 @@ function text(value: unknown): string {
 }
 
 export const webResearchImpl: TransformImpl = {
-  signature: WEB_RESEARCH_SIGNATURE,
-  // Every fetch, search and model call it makes is paid for.
-  priced: true,
+  ...implementing(WEB_RESEARCH_PLUGIN),
   run: async (input): Promise<TransformOutput> => {
     if (input.kind !== 'context-dependent') {
       throw new Error(`web-research: expected context-dependent input, got ${input.kind}`);

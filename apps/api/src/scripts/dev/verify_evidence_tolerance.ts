@@ -25,7 +25,7 @@ import {
   type ExtractNodeSpec,
 } from 'movement-engine/services/movement_engine/extraction';
 import { NO_PROVENANCE } from 'movement-engine/services/movement_engine/provenance';
-import { registeredPluginSpecs } from '../../services/translation_graph/movement/catalog';
+import { bundledPluginSpecs } from 'movement-engine/public/plugins';
 
 const span: Span = { start: { line: 1, col: 1 }, end: { line: 1, col: 1 } };
 
@@ -103,7 +103,7 @@ async function main(): Promise<void> {
           throw new Error('this replay invokes no plugin');
         },
       },
-      plugins: registeredPluginSpecs(),
+      plugins: bundledPluginSpecs(),
       evalSlot: async () => ({
         value: 'Fifty LinkedIn lines, posted by U0TESTUSER01.',
         provenance: NO_PROVENANCE,

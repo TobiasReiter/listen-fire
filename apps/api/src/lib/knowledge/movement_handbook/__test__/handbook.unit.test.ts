@@ -23,7 +23,7 @@ import {
   KG_SUBSCRIBABLE_EVENTS,
 } from '../../../../services/translation_graph/adapters/knowledge_graph';
 import adapterSchemas from './adapter_schemas.fixture.json';
-import { registeredPluginSpecs } from '../../../../services/translation_graph/movement/catalog';
+import { bundledPluginSpecs } from 'movement-engine/public/plugins';
 import { proseViolations } from './prose_rules';
 import { chapterRoute } from 'movement-engine/lib/handbook_section';
 import { frontPageClaims } from '../front_page';
@@ -433,7 +433,7 @@ const HANDBOOK_CATALOG: Catalog = mockCatalog({
   // The real registry, not a hand-kept copy: a chapter teaching an argument
   // the plugin doesn't accept fails here rather than passing against a
   // literal someone remembered to update.
-  plugins: registeredPluginSpecs(),
+  plugins: bundledPluginSpecs(),
 });
 
 /**
@@ -543,7 +543,7 @@ function catalogFor(probe: string): Catalog {
     credentials: Object.fromEntries(
       Object.entries(CREDENTIAL_ADAPTERS).map(([name, adapter]) => [name, { adapter }]),
     ),
-    plugins: registeredPluginSpecs(),
+    plugins: bundledPluginSpecs(),
   });
 }
 

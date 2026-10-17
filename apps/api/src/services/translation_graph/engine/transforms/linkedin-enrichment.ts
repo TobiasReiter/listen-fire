@@ -22,7 +22,6 @@
 import type { PersonContext, ResolvedField } from './extracted_fields';
 import type { TransformImpl, TransformOutput } from './registry';
 import type { PluginManifest } from './registry';
-import type { TransformSignature } from 'movement-engine/services/translation_graph/types';
 
 import { services } from '../../../../adapters/registry';
 import { anthropicChat } from '../../../../lib/anthropic';
@@ -32,54 +31,9 @@ import { logger } from 'movement-engine/services/logger';
 import { WebSearchService, resolveWebSearchProvider } from '../../../web_search';
 import { resolvePersonContext } from './extracted_fields';
 import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { implementing } from './registry';
+import { LINKEDIN_ENRICHMENT_PLUGIN } from 'movement-engine/public/plugins';
 
-
-// ── Signature ─────────────────────────────────────────────────────────────
-
-/**
- * Public signature — surfaced through the registry.
- *
- * `extractedContext` is consumed at runtime (not declared as a param);
- * the engine threads it through from the enclosing `#extract`. The
- * transform expects an object whose values are label/value pairs
- * describing the person — e.g. `{ name: { label, value }, … }` — but
- * also handles the flat `{ label: value }` shape the legacy plugin
- * worked with.
- */
-export const LINKEDIN_ENRICHMENT_SIGNATURE: TransformSignature = {
-  name: 'linkedin-enrichment',
-  description:
-    'For an identified person without a LinkedIn profile, find their profile — searching the web for it unless the person already carries the address — and attach the profile URL and page content.',
-  params: [],
-  dataDependency: 'extracted_context',
-  // Searches for a profile and fetches the page, and asks a model whether the
-  // result is the right person.
-  effects: { reads: ['the web'], ai: true },
-  additions: {
-    properties: {
-      linkedin_url: { kind: 'string' },
-      linkedin_profile: { kind: 'string' },
-    },
-  },
-  // What a call hands back from language version 5, where the record a stage
-  // fed it is the call's argument. Before 5 nothing can call it — it is fed
-  // only by an extraction — so this is read by version 5 alone.
-  output: {
-    kind: 'record',
-    fields: {
-      linkedin_url: {
-        type: { kind: 'string' },
-        optional: true,
-        description: "The person's LinkedIn profile address, when a confident match was found.",
-      },
-      linkedin_profile: {
-        type: { kind: 'string' },
-        optional: true,
-        description: 'The text of that profile page.',
-      },
-    },
-  },
-};
 
 /**
  * Static manifest — the catalogue-facing declaration, registered alongside
@@ -88,19 +42,19 @@ export const LINKEDIN_ENRICHMENT_SIGNATURE: TransformSignature = {
  * movement writes: `import { linkedin_enrichment } from plugins`.
  */
 export const LINKEDIN_ENRICHMENT_PLUGIN_MANIFEST: PluginManifest = {
-  pluginName: LINKEDIN_ENRICHMENT_SIGNATURE.name,
-  importName: importIdentifier(LINKEDIN_ENRICHMENT_SIGNATURE.name),
+  pluginName: LINKEDIN_ENRICHMENT_PLUGIN.signature.name,
+  importName: importIdentifier(LINKEDIN_ENRICHMENT_PLUGIN.signature.name),
   displayName: 'LinkedIn lookup',
   description:
     'For a person you have just extracted, finds their LinkedIn profile and ' +
     'attaches the address and the page. Searches the web for the profile ' +
     'unless the person already carries its address, which it reads instead.',
-  params: LINKEDIN_ENRICHMENT_SIGNATURE.params,
+  params: LINKEDIN_ENRICHMENT_PLUGIN.signature.params,
   contextAdditions:
     'Adds two fields to the record it runs on: the LinkedIn profile address ' +
     'it found, and the text of that profile page (both left empty when no ' +
     'confident match exists).',
-  additions: LINKEDIN_ENRICHMENT_SIGNATURE.additions,
+  additions: LINKEDIN_ENRICHMENT_PLUGIN.signature.additions,
   // No handbook section yet: it is callable only from language version 5
   // (`linkedinEnrichment(record)`), and the handbook documents only the forms
   // to write. `research` resolves a person's profile address from a name.
@@ -197,9 +151,7 @@ Return ONLY valid JSON, no markdown.`,
 // ── Public run ────────────────────────────────────────────────────────────
 
 export const linkedinEnrichmentImpl: TransformImpl = {
-  signature: LINKEDIN_ENRICHMENT_SIGNATURE,
-  // Every fetch, search and model call it makes is paid for.
-  priced: true,
+  ...implementing(LINKEDIN_ENRICHMENT_PLUGIN),
   run: async (input): Promise<TransformOutput> => {
     if (input.kind !== 'context-dependent') {
       throw new Error(
