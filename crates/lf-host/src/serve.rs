@@ -57,7 +57,10 @@ pub async fn run(project: Project, ephemeral: bool, store: &StoreSpec, port: Opt
         None => DEFAULT_PORT,
         Some(text) => text.trim().parse::<u16>().map_err(|_| format!("--port {text}: expected a port number"))?,
     };
-    let listener = TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("127.0.0.1:{port}: {e}"))?;
+    // Loopback unless LF_BIND says otherwise: a container must listen on 0.0.0.0
+    // for its platform's router to reach it.
+    let bind = std::env::var("LF_BIND").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "127.0.0.1".into());
+    let listener = TcpListener::bind((bind.as_str(), port)).await.map_err(|e| format!("{bind}:{port}: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let _ = HOST_URL.set(format!("http://127.0.0.1:{port}"));
     let session = Rc::new(open_session(project, ephemeral, store).await?);

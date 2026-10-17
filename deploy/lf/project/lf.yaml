@@ -1,0 +1,7 @@
+# The image's default project: mount your own over /srv/lf/project to replace it.
+engine: 0.11.0
+movements: movements
+externals: externals
+# Where run state is kept: a Postgres URL from the environment (add
+# ?sslmode=verify-full for a verified TLS connection), never written here.
+store: { env: LF_STORE_URL }

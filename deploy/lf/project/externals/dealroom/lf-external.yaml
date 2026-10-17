@@ -1,0 +1,5 @@
+# The built-in Dealroom module, served by the module kit's serve-module.
+name: dealroom
+kind: adapter
+protocol: 2
+module: /srv/lf/modules/dealroom
