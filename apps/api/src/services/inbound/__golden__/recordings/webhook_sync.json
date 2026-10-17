@@ -305,7 +305,7 @@
   {
     "id": "attio-remote-header-ignored-for-builtin",
     "door": "webhook_sync",
-    "note": "x-listen-fire-signature heads the chain for every non-Slack, non-Affinity provider, so a bad one shadows a good attio-signature.",
+    "note": "x-listen-fire-signature verifies remote installs only, so a bad one beside a good attio-signature is ignored: 200. (Before the shared inbound core it headed every chain and shadowed the good one: 401.)",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/attio/sub-1",
@@ -317,14 +317,69 @@
       "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
     },
     "response": {
-      "status": 401,
+      "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "content-length": "29"
+        "content-length": "31"
       },
-      "body": "{\"error\":\"signature_invalid\"}"
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
     },
-    "effects": []
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
   },
   {
     "id": "provider-path-is-case-insensitive",
@@ -520,7 +575,7 @@
   {
     "id": "body-over-100kb",
     "door": "webhook_sync",
-    "note": "The raw parser's default 100 KB limit answers 413 from express itself, before the route runs.",
+    "note": "The raw parser's default 100 KB limit answers 413 before the route runs, in the door's JSON error shape. (Before the shared inbound core express answered its own HTML page.)",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/attio/sub-1",
@@ -537,10 +592,10 @@
     "response": {
       "status": 413,
       "headers": {
-        "content-type": "text/html; charset=utf-8",
-        "content-length": "144"
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
       },
-      "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Payload Too Large</pre>\n</body>\n</html>\n"
+      "body": "{\"error\":\"payload_too_large\"}"
     },
     "effects": []
   },
@@ -739,7 +794,7 @@
   {
     "id": "receipt-enqueue-failure-is-isolated",
     "door": "webhook_sync",
-    "note": "A receipt whose work row cannot be queued is logged and left for replay; the delivery is still acked 200 (only a wake that cannot be queued fails the request).",
+    "note": "A receipt whose work row cannot be queued is logged and the delivery answered 500, so the sender retries and the stored receipt is re-queued. The wakes are still queued. (Before the shared inbound core it was acked 200 and the receipt never ran.)",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/attio/sub-1",
@@ -750,12 +805,12 @@
       "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
     },
     "response": {
-      "status": 200,
+      "status": 500,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "content-length": "31"
+        "content-length": "20"
       },
-      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+      "body": "{\"error\":\"internal\"}"
     },
     "effects": [
       {
@@ -800,9 +855,6 @@
         "adapterType": "attio",
         "teamId": "team-1",
         "correlationKeys": []
-      },
-      {
-        "kind": "notify_work"
       }
     ]
   },

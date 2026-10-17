@@ -1,5 +1,4 @@
 // Attio webhook provider
-import crypto from "node:crypto";
 
 import type {
   WebhookProvider,
@@ -22,22 +21,6 @@ const attioProvider: WebhookProvider = {
   canRegisterViaApi: true,
 
   defaultEventTypes: ['record.created', 'record.updated', 'record.deleted'],
-
-  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean {
-    const expected = crypto
-      .createHmac('sha256', secret)
-      .update(rawBody)
-      .digest('hex');
-
-    try {
-      return crypto.timingSafeEqual(
-        Buffer.from(expected, 'hex'),
-        Buffer.from(signatureHeader, 'hex'),
-      );
-    } catch {
-      return false;
-    }
-  },
 
   async registerSubscription(input): Promise<WebhookRegistration> {
     const client = await getAttioClient(input.credentialsId);

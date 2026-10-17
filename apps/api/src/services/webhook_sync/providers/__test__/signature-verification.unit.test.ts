@@ -7,9 +7,7 @@
 
 import { createHmac } from 'node:crypto';
 
-import { attioProvider } from '../attio';
-import { whatsappProvider } from '../whatsapp';
-import { nativeValuationsProvider } from '../native_valuations';
+import { verifyAsProvider } from '../../../inbound/__test__/verify_as_provider';
 
 /** Hex HMAC-SHA256 of the raw body under `secret` — the digest Attio and
  *  Valuations send verbatim, and the value WhatsApp sends behind `sha256=`. */
@@ -25,18 +23,18 @@ describe('webhook provider signature verification', () => {
     const sign = (body: Buffer, secret = SECRET) => hexHmac(secret, body);
 
     it('accepts a valid signature', () => {
-      expect(attioProvider.verifySignature(BODY, sign(BODY), SECRET)).toBe(true);
+      expect(verifyAsProvider('ATTIO', BODY, sign(BODY), SECRET)).toBe(true);
     });
     it('rejects a tampered body', () => {
       const tampered = Buffer.from(BODY.toString() + ' ', 'utf-8');
-      expect(attioProvider.verifySignature(tampered, sign(BODY), SECRET)).toBe(false);
+      expect(verifyAsProvider('ATTIO', tampered, sign(BODY), SECRET)).toBe(false);
     });
     it('rejects a signature made with the wrong secret', () => {
-      expect(attioProvider.verifySignature(BODY, sign(BODY, 'other'), SECRET)).toBe(false);
+      expect(verifyAsProvider('ATTIO', BODY, sign(BODY, 'other'), SECRET)).toBe(false);
     });
     it('rejects an empty / non-hex header', () => {
-      expect(attioProvider.verifySignature(BODY, '', SECRET)).toBe(false);
-      expect(attioProvider.verifySignature(BODY, 'not-hex!!', SECRET)).toBe(false);
+      expect(verifyAsProvider('ATTIO', BODY, '', SECRET)).toBe(false);
+      expect(verifyAsProvider('ATTIO', BODY, 'not-hex!!', SECRET)).toBe(false);
     });
   });
 
@@ -44,17 +42,17 @@ describe('webhook provider signature verification', () => {
     const sign = (body: Buffer, secret = SECRET) => hexHmac(secret, body);
 
     it('accepts a valid signature', () => {
-      expect(nativeValuationsProvider.verifySignature(BODY, sign(BODY), SECRET)).toBe(true);
+      expect(verifyAsProvider('NATIVE_VALUATIONS', BODY, sign(BODY), SECRET)).toBe(true);
     });
     it('rejects a tampered body', () => {
       const tampered = Buffer.from('{"hello":"evil"}', 'utf-8');
-      expect(nativeValuationsProvider.verifySignature(tampered, sign(BODY), SECRET)).toBe(false);
+      expect(verifyAsProvider('NATIVE_VALUATIONS', tampered, sign(BODY), SECRET)).toBe(false);
     });
     it('rejects the wrong secret', () => {
-      expect(nativeValuationsProvider.verifySignature(BODY, sign(BODY, 'other'), SECRET)).toBe(false);
+      expect(verifyAsProvider('NATIVE_VALUATIONS', BODY, sign(BODY, 'other'), SECRET)).toBe(false);
     });
     it('rejects a missing header', () => {
-      expect(nativeValuationsProvider.verifySignature(BODY, '', SECRET)).toBe(false);
+      expect(verifyAsProvider('NATIVE_VALUATIONS', BODY, '', SECRET)).toBe(false);
     });
   });
 
@@ -62,24 +60,24 @@ describe('webhook provider signature verification', () => {
     const sign = (body: Buffer, secret = SECRET) => `sha256=${hexHmac(secret, body)}`;
 
     it('accepts a valid sha256=-prefixed signature', () => {
-      expect(whatsappProvider.verifySignature(BODY, sign(BODY), SECRET)).toBe(true);
+      expect(verifyAsProvider('INBOUND_WHATSAPP', BODY, sign(BODY), SECRET)).toBe(true);
     });
     it('rejects a tampered body', () => {
       const tampered = Buffer.from(BODY.toString() + 'x', 'utf-8');
-      expect(whatsappProvider.verifySignature(tampered, sign(BODY), SECRET)).toBe(false);
+      expect(verifyAsProvider('INBOUND_WHATSAPP', tampered, sign(BODY), SECRET)).toBe(false);
     });
     it('rejects the wrong secret', () => {
-      expect(whatsappProvider.verifySignature(BODY, sign(BODY, 'other'), SECRET)).toBe(false);
+      expect(verifyAsProvider('INBOUND_WHATSAPP', BODY, sign(BODY, 'other'), SECRET)).toBe(false);
     });
     it('rejects an empty header', () => {
-      expect(whatsappProvider.verifySignature(BODY, '', SECRET)).toBe(false);
+      expect(verifyAsProvider('INBOUND_WHATSAPP', BODY, '', SECRET)).toBe(false);
     });
     it('rejects a bare (unprefixed) but otherwise valid digest only if Meta would', () => {
       // The verifier strips a leading `sha256=`; a bare hex digest has no
       // prefix to strip, so the comparison is digest-vs-digest and still holds.
       // This documents the tolerance rather than asserting a rejection.
       const bare = hexHmac(SECRET, BODY);
-      expect(whatsappProvider.verifySignature(BODY, bare, SECRET)).toBe(true);
+      expect(verifyAsProvider('INBOUND_WHATSAPP', BODY, bare, SECRET)).toBe(true);
     });
   });
 });

@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { slackProvider, parseSlackEvents } from '../providers/slack';
+import { verifyAsProvider } from '../../inbound/__test__/verify_as_provider';
 // Avoid importing '../providers' (the aggregate index) because it pulls in
 // the attio provider at module load, which requires ENCRYPTION_MASTER_KEY
 // at import time. We verify the registration structurally instead by
@@ -149,7 +150,7 @@ describe('slackProvider.parseEvents — non-dispatchable envelopes', () => {
   });
 });
 
-describe('slackProvider.verifySignature — Slack v0 HMAC scheme', () => {
+describe('Slack v0 HMAC scheme', () => {
   const SECRET = 'slack-signing-secret';
 
   function signWith(rawBody: Buffer, secret: string, timestamp: string): string {
@@ -162,7 +163,7 @@ describe('slackProvider.verifySignature — Slack v0 HMAC scheme', () => {
     const rawBody = fixtureRawBody();
     const ts = '1700000000';
     const header = signWith(rawBody, SECRET, ts);
-    expect(slackProvider.verifySignature(rawBody, header, SECRET)).toBe(true);
+    expect(verifyAsProvider('SLACK', rawBody, header, SECRET)).toBe(true);
   });
 
   it('accepts a signature without the `v0=` prefix (raw hex)', () => {
@@ -171,27 +172,27 @@ describe('slackProvider.verifySignature — Slack v0 HMAC scheme', () => {
     const base = `v0:${ts}:${rawBody.toString('utf-8')}`;
     const digest = crypto.createHmac('sha256', SECRET).update(base).digest('hex');
     const header = `${ts}:${digest}`;
-    expect(slackProvider.verifySignature(rawBody, header, SECRET)).toBe(true);
+    expect(verifyAsProvider('SLACK', rawBody, header, SECRET)).toBe(true);
   });
 
   it('rejects when the body has been tampered with', () => {
     const ts = '1700000000';
     const header = signWith(fixtureRawBody(), SECRET, ts);
     const tampered = Buffer.from(fixtureRawBody().toString('utf-8') + ' '); // extra byte
-    expect(slackProvider.verifySignature(tampered, header, SECRET)).toBe(false);
+    expect(verifyAsProvider('SLACK', tampered, header, SECRET)).toBe(false);
   });
 
   it('rejects when the secret is wrong', () => {
     const rawBody = fixtureRawBody();
     const ts = '1700000000';
     const header = signWith(rawBody, SECRET, ts);
-    expect(slackProvider.verifySignature(rawBody, header, 'wrong-secret')).toBe(false);
+    expect(verifyAsProvider('SLACK', rawBody, header, 'wrong-secret')).toBe(false);
   });
 
   it('rejects when the timestamp is missing from the packed header', () => {
     const rawBody = fixtureRawBody();
-    expect(slackProvider.verifySignature(rawBody, '', SECRET)).toBe(false);
-    expect(slackProvider.verifySignature(rawBody, ':v0=deadbeef', SECRET)).toBe(false);
+    expect(verifyAsProvider('SLACK', rawBody, '', SECRET)).toBe(false);
+    expect(verifyAsProvider('SLACK', rawBody, ':v0=deadbeef', SECRET)).toBe(false);
   });
 });
 

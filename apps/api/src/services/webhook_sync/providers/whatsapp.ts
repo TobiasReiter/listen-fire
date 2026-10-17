@@ -13,7 +13,6 @@
 // (`services/whatsapp/dispatch.ts`) resolves ids → stored documents before
 // dispatch. (See the flagged note in that file.)
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { z } from 'zod';
 
@@ -266,22 +265,6 @@ export const whatsappProvider: WebhookProvider = {
     '2. Subscribe to the `messages` field. Meta signs deliveries with your App',
     '   Secret (X-Hub-Signature-256), verified here.',
   ].join('\n'),
-
-  // Meta signs the raw body with the App Secret using HMAC-SHA256, delivered as
-  // `X-Hub-Signature-256: sha256=<hex>`.
-  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean {
-    if (!signatureHeader || !secret) return false;
-    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-    const got = signatureHeader.replace(/^sha256=/, '');
-    try {
-      const a = Buffer.from(expected, 'hex');
-      const b = Buffer.from(got, 'hex');
-      return a.length === b.length && timingSafeEqual(a, b);
-    } catch {
-      return false;
-    }
-  },
-
 
   async registerSubscription(): Promise<WebhookRegistration> {
     // Manual mode — Meta is configured in its dashboard; the subscription is

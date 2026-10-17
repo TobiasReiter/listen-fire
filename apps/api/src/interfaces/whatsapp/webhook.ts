@@ -4,7 +4,7 @@ import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../../lib/slack';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 import { dispatchWhatsappMessage } from '../../services/whatsapp/dispatch';
-import { whatsappProvider } from '../../services/webhook_sync/providers/whatsapp';
+import { verifyWithScheme } from 'movement-engine/public/inbound';
 import { resolveWhatsappSender } from '../../services/whatsapp/utils';
 import {
   defaultWhatsappCallbackResponder,
@@ -215,7 +215,7 @@ const receiveWebhook = (config: WhatsappDoorConfig) => async (req: Request, res:
       // it is for callers that hand the handler a body directly (tests).
       const rawBody: Buffer =
         (req as unknown as { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
-      if (!signature || !whatsappProvider.verifySignature(rawBody, signature, appSecret)) {
+      if (!signature || !verifyWithScheme('hmac_sha256_hex', { rawBody, headers: { 'x-hub-signature-256': signature }, secret: appSecret })) {
         // A mismatch is silent otherwise: an operator whose deliveries all
         // bounce sees only 401s in the access log, with no way to tell a
         // second Meta app (subscribed to the same WhatsApp Business Account,

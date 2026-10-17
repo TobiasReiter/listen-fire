@@ -20,8 +20,6 @@
 // `TELEGRAM_WEBHOOK_SECRET` before processing. That is the only thing proving
 // the POST genuinely came from Telegram.
 
-import { timingSafeEqual } from "node:crypto";
-
 import { Router } from 'express';
 
 import type { Request, Response } from 'express';
@@ -34,6 +32,7 @@ import { logger } from 'movement-engine/services/logger';
 import { notifyWork } from '../../services/work/drain';
 import { runHarnessDelivery } from '../../services/work/harness';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
+import { authenticateInbound, type InboundAuth } from 'movement-engine/public/inbound';
 
 const telegramBuiltinRouter: ReturnType<typeof Router> = Router();
 
@@ -53,18 +52,7 @@ function telegramWebhookSecret(): string | null {
   return secret.length > 0 ? secret : null;
 }
 
-/** Constant-time string equality, length-guarded (a length mismatch is an early,
- *  benign `false` — `timingSafeEqual` throws on unequal-length buffers). */
-function secretsMatch(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf-8');
-  const bb = Buffer.from(b, 'utf-8');
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
-}
-
-export type WebhookAuthResult =
-  | { authorized: true }
-  | { authorized: false; reason: 'missing_or_mismatched_secret' | 'no_secret' };
+export type WebhookAuthResult = InboundAuth;
 
 /**
  * Fail-closed authentication of a shared-bot delivery against the configured
@@ -75,19 +63,15 @@ export type WebhookAuthResult =
  *   secret UNSET → the shared no-secret rule (`lib/unsigned_webhooks`): refused
  *                  unless this deployment set ALLOW_UNSIGNED_WEBHOOKS and is not
  *                  production. That is how the dev loop keeps injecting updates.
- *
  */
 export function verifyTelegramWebhookSecret(headerValue: string | undefined): WebhookAuthResult {
-  const secret = telegramWebhookSecret();
-
-  if (secret !== null) {
-    if (headerValue !== undefined && secretsMatch(headerValue, secret)) {
-      return { authorized: true };
-    }
-    return { authorized: false, reason: 'missing_or_mismatched_secret' };
-  }
-
-  return authorizeUnsignedWebhook('telegram/builtin');
+  return authenticateInbound({
+    verifier: { scheme: 'telegram_secret_token', signatureHeaders: [TELEGRAM_SECRET_HEADER] },
+    rawBody: Buffer.alloc(0),
+    headers: { [TELEGRAM_SECRET_HEADER]: headerValue },
+    secret: telegramWebhookSecret(),
+    allowUnsigned: () => authorizeUnsignedWebhook('telegram/builtin').authorized,
+  });
 }
 
 /**

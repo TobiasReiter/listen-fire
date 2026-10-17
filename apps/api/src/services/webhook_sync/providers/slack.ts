@@ -103,55 +103,6 @@ const slackEnvelopeSchema = z
   .passthrough();
 
 /**
- * Slack signing-secret verification.
- *
- * Slack signs every request as `v0=` + HMAC-SHA256(secret, `v0:{ts}:{body}`)
- * and posts the digest in the `X-Slack-Signature` header alongside the
- * `X-Slack-Request-Timestamp` header carrying the unix timestamp the
- * request was signed at.
- *
- * The webhook_sync REST router only passes a single `signatureHeader`
- * string through to `verifySignature` — so for Slack the router encodes
- * both halves as `"{timestamp}:{signature}"` and the provider splits
- * them here. Anything missing → reject.
- *
- * Replay-window enforcement (Slack recommends rejecting requests older
- * than 5 minutes) is left to higher layers; the framework's test-harness
- * bypass already short-circuits signature verification for synthetic
- * inbound events, so the window check would only matter in production
- * and is best handled centrally if/when we add it.
- *
- * @see https://api.slack.com/authentication/verifying-requests-from-slack
- */
-function verifySlackSignature(
-  rawBody: Buffer,
-  signatureHeader: string,
-  secret: string,
-): boolean {
-  if (!signatureHeader) return false;
-  const idx = signatureHeader.indexOf(':');
-  if (idx <= 0) return false;
-  const timestamp = signatureHeader.slice(0, idx);
-  const signature = signatureHeader.slice(idx + 1);
-  if (!timestamp || !signature) return false;
-
-  // Strip Slack's `v0=` prefix when present so we can compare hex-to-hex.
-  const sigHex = signature.startsWith('v0=') ? signature.slice(3) : signature;
-
-  const base = `v0:${timestamp}:${rawBody.toString('utf-8')}`;
-  const expected = crypto.createHmac('sha256', secret).update(base).digest('hex');
-
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, 'hex'),
-      Buffer.from(sigHex, 'hex'),
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Object id Slack events normalise to. The framework's source-side
  * SlackAdapter publishes exactly one entry-point type (`slack:message`),
  * so we surface the same id on every WebhookEvent. The router's
@@ -243,8 +194,6 @@ const slackProvider: WebhookProvider = {
     '5. Save. Slack will deliver `event_callback` payloads to the URL.',
   ].join('\n'),
 
-  verifySignature: verifySlackSignature,
-
   async registerSubscription(_input): Promise<WebhookRegistration> {
     // Manual mode — generate a fresh secret locally; the operator pastes
     // it into Slack as the Signing Secret. Slack itself never tells us
@@ -256,11 +205,6 @@ const slackProvider: WebhookProvider = {
 };
 
 export { slackProvider };
-
-// Exported for the Listen-Fire-app Events door, which verifies inbound requests with
-// the app's signing secret (SLACK_MOVEMENTS_SIGNING_SECRET) using the same HMAC
-// logic as the BYO provider.
-export { verifySlackSignature };
 
 // Exported for the REST handler so it can branch on Slack's
 // `url_verification` envelope without re-parsing.

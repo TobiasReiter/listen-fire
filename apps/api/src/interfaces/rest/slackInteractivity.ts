@@ -44,15 +44,6 @@ export { parseAskAction };
 
 const slackInteractivityRouter: ReturnType<typeof Router> = Router();
 
-/** Slack packs its two signature headers into the "{timestamp}:{signature}"
- *  string the verifier splits (mirrors slackEvents.ts). */
-function slackSignatureHeader(req: Request): string {
-  const timestamp = req.headers['x-slack-request-timestamp'];
-  const signature = req.headers['x-slack-signature'];
-  if (typeof timestamp !== 'string' || typeof signature !== 'string') return '';
-  return `${timestamp}:${signature}`;
-}
-
 export interface BlockAction {
   action_id?: unknown;
   value?: unknown;
@@ -193,7 +184,7 @@ export function resolveAskAction(action: BlockAction): { token: string; answer: 
 slackInteractivityRouter.post('/', async (req: Request, res: Response) => {
   const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body ?? ''));
 
-  const auth = verifySlackEventsRequest(rawBody, slackSignatureHeader(req));
+  const auth = verifySlackEventsRequest(rawBody, req.headers);
   if (!auth.authorized) {
     if (auth.reason === 'no_secret') {
       logger.error('[slack/actions] REJECTING: SLACK_MOVEMENTS_SIGNING_SECRET is unset.');

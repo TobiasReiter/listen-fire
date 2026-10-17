@@ -8,10 +8,11 @@ import { Router } from 'express';
 
 import type { Request, Response } from 'express';
 
-import { verifySlackSignature } from '../../services/webhook_sync/providers/slack';
+import { answerIntercepts, authenticateInbound, type InboundAuth, type InboundHeaders } from 'movement-engine/public/inbound';
 import { handleSlackEventsInbound } from '../../services/webhook_sync/slack_events';
 import { logger } from 'movement-engine/services/logger';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
+import { sendInboundAnswer } from './inbound_answer';
 
 const slackEventsRouter: ReturnType<typeof Router> = Router();
 
@@ -23,62 +24,32 @@ function signingSecret(): string | null {
   return s.length > 0 ? s : null;
 }
 
-export type SlackEventsAuthResult =
-  | { authorized: true }
-  | { authorized: false; reason: 'signature_invalid' | 'no_secret' };
+export type SlackEventsAuthResult = InboundAuth;
 
 /** Fail-closed: secret set → the Slack signature must verify; unset → the shared
  *  no-secret rule (`lib/unsigned_webhooks`), which refuses unless the deployment
  *  explicitly opted into unsigned deliveries and is not production. */
-export function verifySlackEventsRequest(
-  rawBody: Buffer,
-  signatureHeader: string,
-): SlackEventsAuthResult {
-  const secret = signingSecret();
-  if (secret !== null) {
-    return verifySlackSignature(rawBody, signatureHeader, secret)
-      ? { authorized: true }
-      : { authorized: false, reason: 'signature_invalid' };
-  }
-  return authorizeUnsignedWebhook('slack/events');
-}
-
-/** Echo Slack's url_verification challenge (no signature required). */
-function respondToChallenge(rawBody: Buffer, res: Response): boolean {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawBody.toString('utf-8'));
-  } catch {
-    return false;
-  }
-  if (
-    parsed &&
-    typeof parsed === 'object' &&
-    (parsed as { type?: unknown }).type === 'url_verification'
-  ) {
-    const challenge = (parsed as { challenge?: unknown }).challenge;
-    if (typeof challenge === 'string') res.status(200).json({ challenge });
-    else res.status(400).json({ error: 'missing_challenge' });
-    return true;
-  }
-  return false;
-}
-
-/** Pack Slack's two signature headers into the "{timestamp}:{signature}" string
- *  verifySlackSignature splits internally. Empty when either is missing. */
-function buildSlackSignatureHeader(req: Request): string {
-  const timestamp = req.headers['x-slack-request-timestamp'];
-  const signature = req.headers['x-slack-signature'];
-  if (typeof timestamp !== 'string' || typeof signature !== 'string') return '';
-  return `${timestamp}:${signature}`;
+export function verifySlackEventsRequest(rawBody: Buffer, headers: InboundHeaders): SlackEventsAuthResult {
+  return authenticateInbound({
+    verifier: { scheme: 'slack_v0', signatureHeaders: ['x-slack-signature'] },
+    rawBody,
+    headers,
+    secret: signingSecret(),
+    allowUnsigned: () => authorizeUnsignedWebhook('slack/events').authorized,
+  });
 }
 
 slackEventsRouter.post('/events', async (req: Request, res: Response) => {
   const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
 
-  if (respondToChallenge(rawBody, res)) return;
+  // Slack's url_verification echoes its challenge unsigned.
+  const intercepted = answerIntercepts(['slack_url_verification'], rawBody);
+  if (intercepted) {
+    sendInboundAnswer(res, intercepted);
+    return;
+  }
 
-  const auth = verifySlackEventsRequest(rawBody, buildSlackSignatureHeader(req));
+  const auth = verifySlackEventsRequest(rawBody, req.headers);
   if (!auth.authorized) {
     if (auth.reason === 'no_secret') {
       logger.error(

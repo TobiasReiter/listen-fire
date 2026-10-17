@@ -23,7 +23,6 @@
 // the HMAC as hex OR base64 — but never accepts an EMPTY signature once a key
 // is configured.
 
-import crypto from 'node:crypto';
 
 import type { WebhookProvider, WebhookRegistration } from './interface';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
@@ -43,28 +42,6 @@ const affinityProvider: WebhookProvider = {
 
   // See the signature stance above: URL-trust without a key, strict HMAC
   // verification once the credential carries the account's signature key.
-  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean {
-    if (secret === '') return true; // no key configured — URL secrecy carries it
-    const token = signatureHeader.replace(/^sha256=/i, '').trim();
-    if (token === '') return false; // key configured — an unsigned delivery is rejected
-    const provided = Buffer.from(token, 'utf-8');
-    const raw = crypto.createHmac('sha256', secret).update(rawBody).digest();
-    for (const expected of [raw.toString('hex'), raw.toString('base64')]) {
-      const expectedBuf = Buffer.from(expected, 'utf-8');
-      try {
-        if (
-          expectedBuf.length === provided.length &&
-          crypto.timingSafeEqual(expectedBuf, provided)
-        ) {
-          return true;
-        }
-      } catch {
-        // length mismatch handled above; fall through
-      }
-    }
-    return false;
-  },
-
   async registerSubscription(input): Promise<WebhookRegistration> {
     const credential = await affinityCredentialFor(input.credentialsId);
     const client = getAffinityClient(credential.apiKey, credential.baseUrl);
