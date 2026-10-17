@@ -28,6 +28,8 @@ const WORKSPACE = {
   'movement-engine': 'packages/movement-engine',
   'movement-lang': 'packages/movement-lang',
   'file-text': 'packages/file-text',
+  // gmail and google-drive reuse google-sheets' OAuth code by its package name.
+  '@listen-fire/google-sheets': 'modules/google-sheets',
   '#shared': 'packages/shared',
   '@listen-fire/shared': 'packages/shared',
 };
@@ -44,6 +46,24 @@ for (const source of sources) {
 writeFileSync(join(bundle, 'package.json'), JSON.stringify({ private: true, dependencies: thirdParty }));
 // npm prunes whatever it did not install, so third-party packages go in first.
 execFileSync('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...platform], { cwd: bundle, stdio: 'inherit' });
+
+// A Linux archive serves glibc and musl machines alike (install.sh always picks
+// the musl archive), but a few packages ship one native binary per libc
+// (@node-rs/crc32, under file-text's zip reader). Install again for the other
+// libc and keep the packages that came out only there.
+if (os === 'linux' && libc) {
+  const otherLibc = libc === 'glibc' ? 'musl' : 'glibc';
+  const other = join(bundle, '.other-libc');
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, 'package.json'), JSON.stringify({ private: true, dependencies: thirdParty }));
+  execFileSync('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', `--os=${os}`, `--cpu=${cpu}`, `--libc=${otherLibc}`], { cwd: other, stdio: 'inherit' });
+  const scopes = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.name.startsWith('@') ? readdirSync(join(dir, e.name)).map((n) => `${e.name}/${n}`) : [e.name]));
+  for (const name of scopes(join(other, 'node_modules')).filter((n) => !n.startsWith('.'))) {
+    const target = join(bundle, 'node_modules', name);
+    if (!existsSync(target)) cpSync(join(other, 'node_modules', name), target, { recursive: true });
+  }
+  rmSync(other, { recursive: true, force: true });
+}
 
 const skip = (path) => !/(^|\/)(node_modules|__test__|bench)(\/|$)|jest\.config/.test(path);
 for (const [name, source] of Object.entries(WORKSPACE)) {
