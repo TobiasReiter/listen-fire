@@ -1057,43 +1057,47 @@
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/getFile",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "file_id": "DOC1"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+        "response": "{\"ok\":true,\"result\":{\"file_id\":\"DOC1\",\"file_unique_id\":\"DOC1_u\",\"file_size\":12,\"file_path\":\"documents/DOC1.bin\"}}"
       },
       {
         "method": "GET",
         "path": "/file/botBYO-TOKEN/documents/DOC1.bin",
-        "contentType": null,
         "authorization": null,
+        "headers": {},
         "body": null,
         "status": 200,
-        "responseContentType": "application/octet-stream",
-        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+        "response": "fake-telegram-bytes:documents/DOC1.bin",
+        "responseContentType": "application/octet-stream"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Hello Ada"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjEsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJIZWxsbyBBZGEifX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":1,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Hello Ada\"}}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Approve?",
@@ -1110,60 +1114,63 @@
           }
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjIsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJBcHByb3ZlPyIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyLCJyZXBseV9tYXJrdXAiOnsiaW5saW5lX2tleWJvYXJkIjpbW3sidGV4dCI6IlllcyIsImNhbGxiYWNrX2RhdGEiOiJjYl8xIn1dXX19fQ=="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":2,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Approve?\",\"reply_to_message_id\":42,\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Yes\",\"callback_data\":\"cb_1\"}]]}}}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "plain",
           "reply_to_message_id": 42
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjMsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJwbGFpbiIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyfX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":3,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"plain\",\"reply_to_message_id\":42}}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/answerCallbackQuery",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "callback_query_id": "cbq-1",
           "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+        "response": "{\"ok\":true,\"result\":true}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/answerCallbackQuery",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "callback_query_id": "cbq-2"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+        "response": "{\"ok\":true,\"result\":true}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/editMessageReplyMarkup",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "message_id": 50
         },
         "status": 400,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yX2NvZGUiOjQwMCwiZGVzY3JpcHRpb24iOiJCYWQgUmVxdWVzdDogbWVzc2FnZSB0byBlZGl0IG5vdCBmb3VuZCJ9"
+        "response": "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message to edit not found\"}"
       }
     ]
   },
@@ -2225,43 +2232,47 @@
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/getFile",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "file_id": "DOC1"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+        "response": "{\"ok\":true,\"result\":{\"file_id\":\"DOC1\",\"file_unique_id\":\"DOC1_u\",\"file_size\":12,\"file_path\":\"documents/DOC1.bin\"}}"
       },
       {
         "method": "GET",
         "path": "/file/botSHARED-BOT-TOKEN/documents/DOC1.bin",
-        "contentType": null,
         "authorization": null,
+        "headers": {},
         "body": null,
         "status": 200,
-        "responseContentType": "application/octet-stream",
-        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+        "response": "fake-telegram-bytes:documents/DOC1.bin",
+        "responseContentType": "application/octet-stream"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Hello Ada"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjQsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJIZWxsbyBBZGEifX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":4,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Hello Ada\"}}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Approve?",
@@ -2278,60 +2289,63 @@
           }
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjUsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJBcHByb3ZlPyIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyLCJyZXBseV9tYXJrdXAiOnsiaW5saW5lX2tleWJvYXJkIjpbW3sidGV4dCI6IlllcyIsImNhbGxiYWNrX2RhdGEiOiJjYl8xIn1dXX19fQ=="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":5,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Approve?\",\"reply_to_message_id\":42,\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Yes\",\"callback_data\":\"cb_1\"}]]}}}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "plain",
           "reply_to_message_id": 42
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjYsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJwbGFpbiIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyfX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":6,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"plain\",\"reply_to_message_id\":42}}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "callback_query_id": "cbq-1",
           "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+        "response": "{\"ok\":true,\"result\":true}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "callback_query_id": "cbq-2"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+        "response": "{\"ok\":true,\"result\":true}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/editMessageReplyMarkup",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "message_id": 50
         },
         "status": 400,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yX2NvZGUiOjQwMCwiZGVzY3JpcHRpb24iOiJCYWQgUmVxdWVzdDogbWVzc2FnZSB0byBlZGl0IG5vdCBmb3VuZCJ9"
+        "response": "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message to edit not found\"}"
       }
     ]
   },
@@ -3389,43 +3403,47 @@
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/getFile",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "file_id": "DOC1"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+        "response": "{\"ok\":true,\"result\":{\"file_id\":\"DOC1\",\"file_unique_id\":\"DOC1_u\",\"file_size\":12,\"file_path\":\"documents/DOC1.bin\"}}"
       },
       {
         "method": "GET",
         "path": "/file/botSHARED-BOT-TOKEN/documents/DOC1.bin",
-        "contentType": null,
         "authorization": null,
+        "headers": {},
         "body": null,
         "status": 200,
-        "responseContentType": "application/octet-stream",
-        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+        "response": "fake-telegram-bytes:documents/DOC1.bin",
+        "responseContentType": "application/octet-stream"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Hello Ada"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjcsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJIZWxsbyBBZGEifX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":7,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Hello Ada\"}}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Approve?",
@@ -3442,60 +3460,63 @@
           }
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjgsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJBcHByb3ZlPyIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyLCJyZXBseV9tYXJrdXAiOnsiaW5saW5lX2tleWJvYXJkIjpbW3sidGV4dCI6IlllcyIsImNhbGxiYWNrX2RhdGEiOiJjYl8xIn1dXX19fQ=="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":8,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Approve?\",\"reply_to_message_id\":42,\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Yes\",\"callback_data\":\"cb_1\"}]]}}}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "plain",
           "reply_to_message_id": 42
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjksImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJwbGFpbiIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyfX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":9,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"plain\",\"reply_to_message_id\":42}}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "callback_query_id": "cbq-1",
           "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+        "response": "{\"ok\":true,\"result\":true}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "callback_query_id": "cbq-2"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+        "response": "{\"ok\":true,\"result\":true}"
       },
       {
         "method": "POST",
         "path": "/botSHARED-BOT-TOKEN/editMessageReplyMarkup",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "message_id": 50
         },
         "status": 400,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yX2NvZGUiOjQwMCwiZGVzY3JpcHRpb24iOiJCYWQgUmVxdWVzdDogbWVzc2FnZSB0byBlZGl0IG5vdCBmb3VuZCJ9"
+        "response": "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message to edit not found\"}"
       }
     ]
   },
@@ -4464,43 +4485,47 @@
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/getFile",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "file_id": "DOC1"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+        "response": "{\"ok\":true,\"result\":{\"file_id\":\"DOC1\",\"file_unique_id\":\"DOC1_u\",\"file_size\":12,\"file_path\":\"documents/DOC1.bin\"}}"
       },
       {
         "method": "GET",
         "path": "/file/botBYO-TOKEN/documents/DOC1.bin",
-        "contentType": null,
         "authorization": null,
+        "headers": {},
         "body": null,
         "status": 200,
-        "responseContentType": "application/octet-stream",
-        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+        "response": "fake-telegram-bytes:documents/DOC1.bin",
+        "responseContentType": "application/octet-stream"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Hello Ada"
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjEwLCJmcm9tIjp7ImlkIjo0MjQyNDIsImlzX2JvdCI6dHJ1ZSwiZmlyc3RfbmFtZSI6Ikxpc3Rlbi1GaXJlIERldiBCb3QiLCJ1c2VybmFtZSI6Imxpc3Rlbl9maXJlX2Rldl9ib3QifSwiY2hhdCI6eyJpZCI6Nzc3LCJ0eXBlIjoicHJpdmF0ZSJ9LCJkYXRlIjoxNzkyMjQxNzU5LCJ0ZXh0IjoiSGVsbG8gQWRhIn19"
+        "response": "{\"ok\":true,\"result\":{\"message_id\":10,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Hello Ada\"}}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "Approve?",
@@ -4517,22 +4542,22 @@
           }
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjExLCJmcm9tIjp7ImlkIjo0MjQyNDIsImlzX2JvdCI6dHJ1ZSwiZmlyc3RfbmFtZSI6Ikxpc3Rlbi1GaXJlIERldiBCb3QiLCJ1c2VybmFtZSI6Imxpc3Rlbl9maXJlX2Rldl9ib3QifSwiY2hhdCI6eyJpZCI6Nzc3LCJ0eXBlIjoicHJpdmF0ZSJ9LCJkYXRlIjoxNzkyMjQxNzU5LCJ0ZXh0IjoiQXBwcm92ZT8iLCJyZXBseV90b19tZXNzYWdlX2lkIjo0MiwicmVwbHlfbWFya3VwIjp7ImlubGluZV9rZXlib2FyZCI6W1t7InRleHQiOiJZZXMiLCJjYWxsYmFja19kYXRhIjoiY2JfMSJ9XV19fX0="
+        "response": "{\"ok\":true,\"result\":{\"message_id\":11,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"Approve?\",\"reply_to_message_id\":42,\"reply_markup\":{\"inline_keyboard\":[[{\"text\":\"Yes\",\"callback_data\":\"cb_1\"}]]}}}"
       },
       {
         "method": "POST",
         "path": "/botBYO-TOKEN/sendMessage",
-        "contentType": "application/json",
         "authorization": null,
+        "headers": {
+          "content-type": "application/json"
+        },
         "body": {
           "chat_id": "777",
           "text": "plain",
           "reply_to_message_id": 42
         },
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjEyLCJmcm9tIjp7ImlkIjo0MjQyNDIsImlzX2JvdCI6dHJ1ZSwiZmlyc3RfbmFtZSI6Ikxpc3Rlbi1GaXJlIERldiBCb3QiLCJ1c2VybmFtZSI6Imxpc3Rlbl9maXJlX2Rldl9ib3QifSwiY2hhdCI6eyJpZCI6Nzc3LCJ0eXBlIjoicHJpdmF0ZSJ9LCJkYXRlIjoxNzkyMjQxNzU5LCJ0ZXh0IjoicGxhaW4iLCJyZXBseV90b19tZXNzYWdlX2lkIjo0Mn19"
+        "response": "{\"ok\":true,\"result\":{\"message_id\":12,\"from\":{\"id\":424242,\"is_bot\":true,\"first_name\":\"Listen-Fire Dev Bot\",\"username\":\"listen_fire_dev_bot\"},\"chat\":{\"id\":777,\"type\":\"private\"},\"date\":1792263158,\"text\":\"plain\",\"reply_to_message_id\":42}}"
       }
     ]
   }

@@ -634,188 +634,237 @@
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+      "response": "{\"entries\":[{\".tag\":\"folder\",\"name\":\"Deals\",\"path_display\":\"/Deals\",\"path_lower\":\"/deals\"}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+      "response": "{\"entries\":[{\".tag\":\"folder\",\"name\":\"Deals\",\"path_display\":\"/Deals\",\"path_lower\":\"/deals\"}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Deals",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH1dLCJjdXJzb3IiOiJmYWtlLWN1cnNvciIsImhhc19tb3JlIjpmYWxzZX0="
+      "response": "{\"entries\":[{\".tag\":\"file\",\"name\":\"foo-notes.txt\",\"path_display\":\"/Deals/foo-notes.txt\",\"path_lower\":\"/deals/foo-notes.txt\",\"size\":38}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Deals",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH1dLCJjdXJzb3IiOiJmYWtlLWN1cnNvciIsImhhc19tb3JlIjpmYWxzZX0="
+      "response": "{\"entries\":[{\".tag\":\"file\",\"name\":\"foo-notes.txt\",\"path_display\":\"/Deals/foo-notes.txt\",\"path_lower\":\"/deals/foo-notes.txt\",\"size\":38}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/download",
       "authorization": "Bearer parity-access-token",
-      "apiArg": "{\"path\":\"/Deals/foo-notes.txt\"}",
-      "contentType": null,
-      "body": "",
+      "headers": {
+        "dropbox-api-arg": "{\"path\":\"/Deals/foo-notes.txt\"}"
+      },
+      "body": null,
       "status": 200,
-      "responseContentType": "application/octet-stream; charset=utf-8",
-      "response": "Rm9vIENvcnAgbm90ZXM6IHN0cm9uZyB0ZWFtLCBwcmUtc2VlZC4="
+      "response": "Foo Corp notes: strong team, pre-seed.",
+      "responseContentType": "application/octet-stream; charset=utf-8"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+      "response": "{\"entries\":[{\".tag\":\"folder\",\"name\":\"Deals\",\"path_display\":\"/Deals\",\"path_lower\":\"/deals\"}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/create_folder_v2",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0NsaWVudHMifQ==",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Clients"
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJtZXRhZGF0YSI6eyJuYW1lIjoiQ2xpZW50cyIsInBhdGhfZGlzcGxheSI6Ii9DbGllbnRzIiwicGF0aF9sb3dlciI6Ii9jbGllbnRzIn19"
+      "response": "{\"metadata\":{\"name\":\"Clients\",\"path_display\":\"/Clients\",\"path_lower\":\"/clients\"}}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9LHsiLnRhZyI6ImZvbGRlciIsIm5hbWUiOiJDbGllbnRzIiwicGF0aF9kaXNwbGF5IjoiL0NsaWVudHMiLCJwYXRoX2xvd2VyIjoiL2NsaWVudHMifV0sImN1cnNvciI6ImZha2UtY3Vyc29yIiwiaGFzX21vcmUiOmZhbHNlfQ=="
+      "response": "{\"entries\":[{\".tag\":\"folder\",\"name\":\"Deals\",\"path_display\":\"/Deals\",\"path_lower\":\"/deals\"},{\".tag\":\"folder\",\"name\":\"Clients\",\"path_display\":\"/Clients\",\"path_lower\":\"/clients\"}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Deals",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH1dLCJjdXJzb3IiOiJmYWtlLWN1cnNvciIsImhhc19tb3JlIjpmYWxzZX0="
+      "response": "{\"entries\":[{\".tag\":\"file\",\"name\":\"foo-notes.txt\",\"path_display\":\"/Deals/foo-notes.txt\",\"path_lower\":\"/deals/foo-notes.txt\",\"size\":38}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/create_folder_v2",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0RlYWxzLzIwMjYifQ==",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Deals/2026"
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJtZXRhZGF0YSI6eyJuYW1lIjoiMjAyNiIsInBhdGhfZGlzcGxheSI6Ii9EZWFscy8yMDI2IiwicGF0aF9sb3dlciI6Ii9kZWFscy8yMDI2In19"
+      "response": "{\"metadata\":{\"name\":\"2026\",\"path_display\":\"/Deals/2026\",\"path_lower\":\"/deals/2026\"}}"
     },
     {
       "method": "POST",
       "path": "/2/files/upload",
       "authorization": "Bearer parity-access-token",
-      "apiArg": "{\"path\":\"/hello.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
-      "contentType": "application/octet-stream",
-      "body": "aGVsbG8gZnJvbSBhIHJ1bg==",
+      "headers": {
+        "dropbox-api-arg": "{\"path\":\"/hello.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
+        "content-type": "application/octet-stream"
+      },
+      "body": "hello from a run",
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJuYW1lIjoiaGVsbG8udHh0IiwicGF0aF9kaXNwbGF5IjoiL2hlbGxvLnR4dCIsInBhdGhfbG93ZXIiOiIvaGVsbG8udHh0Iiwic2l6ZSI6MTZ9"
+      "response": "{\"name\":\"hello.txt\",\"path_display\":\"/hello.txt\",\"path_lower\":\"/hello.txt\",\"size\":16}"
     },
     {
       "method": "POST",
       "path": "/2/files/upload",
       "authorization": "Bearer parity-access-token",
-      "apiArg": "{\"path\":\"/memo.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
-      "contentType": "application/octet-stream",
-      "body": "aW5saW5lIGNvbnRlbnQ=",
+      "headers": {
+        "dropbox-api-arg": "{\"path\":\"/memo.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
+        "content-type": "application/octet-stream"
+      },
+      "body": "inline content",
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJuYW1lIjoibWVtby50eHQiLCJwYXRoX2Rpc3BsYXkiOiIvbWVtby50eHQiLCJwYXRoX2xvd2VyIjoiL21lbW8udHh0Iiwic2l6ZSI6MTR9"
+      "response": "{\"name\":\"memo.txt\",\"path_display\":\"/memo.txt\",\"path_lower\":\"/memo.txt\",\"size\":14}"
     },
     {
       "method": "POST",
       "path": "/2/files/download",
       "authorization": "Bearer parity-access-token",
-      "apiArg": "{\"path\":\"/Deals/foo-notes.txt\"}",
-      "contentType": null,
-      "body": "",
+      "headers": {
+        "dropbox-api-arg": "{\"path\":\"/Deals/foo-notes.txt\"}"
+      },
+      "body": null,
       "status": 200,
-      "responseContentType": "application/octet-stream; charset=utf-8",
-      "response": "Rm9vIENvcnAgbm90ZXM6IHN0cm9uZyB0ZWFtLCBwcmUtc2VlZC4="
+      "response": "Foo Corp notes: strong team, pre-seed.",
+      "responseContentType": "application/octet-stream; charset=utf-8"
     },
     {
       "method": "POST",
       "path": "/2/files/upload",
       "authorization": "Bearer parity-access-token",
-      "apiArg": "{\"path\":\"/Clients/copy.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
-      "contentType": "application/octet-stream",
-      "body": "Rm9vIENvcnAgbm90ZXM6IHN0cm9uZyB0ZWFtLCBwcmUtc2VlZC4=",
+      "headers": {
+        "dropbox-api-arg": "{\"path\":\"/Clients/copy.txt\",\"mode\":{\".tag\":\"overwrite\"},\"autorename\":true}",
+        "content-type": "application/octet-stream"
+      },
+      "body": "Foo Corp notes: strong team, pre-seed.",
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJuYW1lIjoiY29weS50eHQiLCJwYXRoX2Rpc3BsYXkiOiIvQ2xpZW50cy9jb3B5LnR4dCIsInBhdGhfbG93ZXIiOiIvY2xpZW50cy9jb3B5LnR4dCIsInNpemUiOjM4fQ=="
+      "response": "{\"name\":\"copy.txt\",\"path_display\":\"/Clients/copy.txt\",\"path_lower\":\"/clients/copy.txt\",\"size\":38}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IkRlYWxzIiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzIiwicGF0aF9sb3dlciI6Ii9kZWFscyJ9LHsiLnRhZyI6ImZvbGRlciIsIm5hbWUiOiJDbGllbnRzIiwicGF0aF9kaXNwbGF5IjoiL0NsaWVudHMiLCJwYXRoX2xvd2VyIjoiL2NsaWVudHMifSx7Ii50YWciOiJmaWxlIiwibmFtZSI6ImhlbGxvLnR4dCIsInBhdGhfZGlzcGxheSI6Ii9oZWxsby50eHQiLCJwYXRoX2xvd2VyIjoiL2hlbGxvLnR4dCIsInNpemUiOjE2fSx7Ii50YWciOiJmaWxlIiwibmFtZSI6Im1lbW8udHh0IiwicGF0aF9kaXNwbGF5IjoiL21lbW8udHh0IiwicGF0aF9sb3dlciI6Ii9tZW1vLnR4dCIsInNpemUiOjE0fV0sImN1cnNvciI6ImZha2UtY3Vyc29yIiwiaGFzX21vcmUiOmZhbHNlfQ=="
+      "response": "{\"entries\":[{\".tag\":\"folder\",\"name\":\"Deals\",\"path_display\":\"/Deals\",\"path_lower\":\"/deals\"},{\".tag\":\"folder\",\"name\":\"Clients\",\"path_display\":\"/Clients\",\"path_lower\":\"/clients\"},{\".tag\":\"file\",\"name\":\"hello.txt\",\"path_display\":\"/hello.txt\",\"path_lower\":\"/hello.txt\",\"size\":16},{\".tag\":\"file\",\"name\":\"memo.txt\",\"path_display\":\"/memo.txt\",\"path_lower\":\"/memo.txt\",\"size\":14}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Deals",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH0seyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IjIwMjYiLCJwYXRoX2Rpc3BsYXkiOiIvRGVhbHMvMjAyNiIsInBhdGhfbG93ZXIiOiIvZGVhbHMvMjAyNiJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+      "response": "{\"entries\":[{\".tag\":\"file\",\"name\":\"foo-notes.txt\",\"path_display\":\"/Deals/foo-notes.txt\",\"path_lower\":\"/deals/foo-notes.txt\",\"size\":38},{\".tag\":\"folder\",\"name\":\"2026\",\"path_display\":\"/Deals/2026\",\"path_lower\":\"/deals/2026\"}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     },
     {
       "method": "POST",
       "path": "/2/files/list_folder",
       "authorization": "Bearer parity-access-token",
-      "apiArg": null,
-      "contentType": "application/json",
-      "body": "eyJwYXRoIjoiL0RlYWxzIiwicmVjdXJzaXZlIjpmYWxzZSwiaW5jbHVkZV9kZWxldGVkIjpmYWxzZX0=",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "path": "/Deals",
+        "recursive": false,
+        "include_deleted": false
+      },
       "status": 200,
-      "responseContentType": "application/json; charset=utf-8",
-      "response": "eyJlbnRyaWVzIjpbeyIudGFnIjoiZmlsZSIsIm5hbWUiOiJmb28tbm90ZXMudHh0IiwicGF0aF9kaXNwbGF5IjoiL0RlYWxzL2Zvby1ub3Rlcy50eHQiLCJwYXRoX2xvd2VyIjoiL2RlYWxzL2Zvby1ub3Rlcy50eHQiLCJzaXplIjozOH0seyIudGFnIjoiZm9sZGVyIiwibmFtZSI6IjIwMjYiLCJwYXRoX2Rpc3BsYXkiOiIvRGVhbHMvMjAyNiIsInBhdGhfbG93ZXIiOiIvZGVhbHMvMjAyNiJ9XSwiY3Vyc29yIjoiZmFrZS1jdXJzb3IiLCJoYXNfbW9yZSI6ZmFsc2V9"
+      "response": "{\"entries\":[{\".tag\":\"file\",\"name\":\"foo-notes.txt\",\"path_display\":\"/Deals/foo-notes.txt\",\"path_lower\":\"/deals/foo-notes.txt\",\"size\":38},{\".tag\":\"folder\",\"name\":\"2026\",\"path_display\":\"/Deals/2026\",\"path_lower\":\"/deals/2026\"}],\"cursor\":\"fake-cursor\",\"has_more\":false}"
     }
   ]
 }
