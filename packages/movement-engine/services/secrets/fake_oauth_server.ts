@@ -3,6 +3,10 @@
 // authorization-code and refresh-token grants that checks what a real one
 // checks (the client, the redirect, the PKCE verifier, a code used once) and
 // rotates refresh tokens. Every token call is recorded.
+//
+// Unit tests start it in process, with no fake-channels running; the dev
+// loop's provider (apps/fake-channels routes/oauth.ts) serves the running
+// stack instead, and engine code may not import an app.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';

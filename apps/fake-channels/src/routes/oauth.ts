@@ -6,6 +6,9 @@
 // against a real provider, so a refresh that forgets to store its answer is
 // caught here as an invalid_grant on the next refresh.
 //
+// This one is the dev loop's; unit tests that need a provider without the
+// stack use movement-engine's in-process one (public/secrets-testing).
+//
 // Entities (service 'oauth'):
 //   code    keyed by code            { clientId, redirectUri, scope }
 //   access  keyed by access token    { refreshToken, expiresAt, expired }
