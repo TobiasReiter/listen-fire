@@ -554,6 +554,12 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     for (file, _) in checked.files.values_mut() {
         movement_parser::catalog::packages::expand_package_imports(&mut file.program, &catalog.plugins, version);
     }
+    // The state's code is read against the program it pinned: a reference
+    // that resolves to nothing there is a state of another program, refused
+    // before anything runs (not partway through the resume).
+    if let Some(reason) = input.resume.as_ref().and_then(|resume| crate::park::resume_refusal_in(&resume.state, Some(&checked))) {
+        return Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", format!("this run's parked state does not read ({reason})"))));
+    }
     let run = Run {
         host,
         input,
@@ -3138,6 +3144,39 @@ mod tests {
         suspended["suspended"] = json!(true);
         suspended["journal"] = json!([]);
         assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
+    }
+
+    /// A parked state naming code the pinned program does not hold (another
+    /// program's place, a library it never linked) is refused before the run
+    /// starts, the same reason as a state that names none: it does not fail
+    /// partway through the resume.
+    #[test]
+    fn a_parked_state_naming_code_the_program_lacks_is_refused_up_front() {
+        let source = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
+        let state = |binding: Json| json!({ "version": 2, "address": "s0", "bindingName": null, "scopeChain": [{ "bindings": {} }, { "bindings": { "x": binding } }] });
+        for binding in [
+            json!({ "kind": "closure", "closure": "/statements/40/value", "captured": {} }),
+            // A place that holds a statement, but not a closure.
+            json!({ "kind": "closure", "closure": "/statements/1", "captured": {} }),
+            json!({ "kind": "localShape", "declaration": "/statements/0/body/0" }),
+            json!({ "kind": "fileClosure", "name": "f", "file": "lib/gone" }),
+            json!({ "kind": "lazyWalk", "walk": { "head": "/statements/9/body/0", "captured": {} } }),
+        ] {
+            let input = json!({
+                "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
+                "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
+                "resume": { "state": wire(state(binding.clone())) }, "nativeCheck": true,
+            });
+            let mut segment = crate::begin(&input.to_string()).unwrap();
+            match segment.start().unwrap() {
+                Step::Done(done) => assert_eq!(
+                    done["thrown"],
+                    json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": "this run's parked state does not read (resume_state_code_does_not_read)" }),
+                    "{binding}"
+                ),
+                Step::Pending(pending) => panic!("{binding}: asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
+            }
+        }
     }
 
     /// A declared shape travels by name and is re-resolved from the program's
