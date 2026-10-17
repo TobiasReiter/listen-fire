@@ -4,7 +4,7 @@ import { google } from 'googleapis';
 
 import { getEnvVar } from '../utils/environment';
 import { PlaywrightService } from '../../services/playwright';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { Crawler, FetchedDocument, Screenshot } from '../../services/crawler';
 
 class GoogleDocsCrawler extends Crawler {

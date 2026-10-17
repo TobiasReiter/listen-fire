@@ -1,6 +1,6 @@
 import type { V3Adapter, V3AdapterExecuteInput, AdapterResult } from './types';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 interface WebhookV3Config {
   url: string;

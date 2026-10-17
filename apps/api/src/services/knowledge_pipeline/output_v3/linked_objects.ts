@@ -5,7 +5,7 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type LinkedObjectSource from '../../../generated/kysely/knowledge/LinkedObjectSource';
 
 import { getKnowledgeQb } from '../../../lib/kysely';
-import { normalizeAdapterType } from 'movement-engine/services/translation_graph/adapter_type';
+import { normalizeAdapterType } from 'movement-engine/public/adapter';
 
 // unified linked object model
 

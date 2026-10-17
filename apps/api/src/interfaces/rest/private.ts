@@ -1,11 +1,11 @@
 import { RequestHandler, Request, Response } from 'express';
 import { currentPrincipal } from 'principal';
 
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
 import { currentContext } from '../../services/context';
 import { catchingRoutes } from './async_route';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { sendSlackNotification } from '../../lib/slack';
 import { getQb } from '../../lib/kysely';
 import { TeamId } from '../../generated/kysely/core/Team';

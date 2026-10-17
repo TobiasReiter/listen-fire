@@ -4,7 +4,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { NewTeamJourney, TeamJourneyUpdate, TeamJourneyTeamId } from '../../generated/kysely/public/TeamJourney';
 
 import { getCoreQb, getQb } from '../kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { emitOpsEventSafely } from './emit';
 import { JOURNEY_LAUNCH_AT } from './cohort';
 import OpsEventType from '../../generated/kysely/public/OpsEventType';

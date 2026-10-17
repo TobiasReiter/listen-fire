@@ -33,6 +33,9 @@ export default {
   preset: 'ts-jest',
   transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
+  // Engine tests that still live here reach engine internals, which the
+  // package's exports map resolves only under this condition.
+  testEnvironmentOptions: { customExportConditions: ['node', 'node-addons', 'movement-engine-internals'] },
 
   // Sources before compiled output. The preset's default order tries `.js`
   // first, so a compiled copy beside a source (a package compiled in place)

@@ -10,7 +10,7 @@
 import { Request, Response } from 'express';
 import { google } from 'googleapis';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { storePendingCredentials } from '../../lib/pendingCredentials';
 import { getFlowUserId } from '../../lib/oauthFlows';
 import { resolveOAuthCallbackRedirect } from '../../lib/oauthCallbackRedirect';

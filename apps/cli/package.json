@@ -9,7 +9,7 @@
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit",
-    "test": "node --test --require tsx/cjs src/__test__/*.test.ts"
+    "test": "node --conditions=movement-engine-internals --test --require tsx/cjs src/__test__/*.test.ts"
   },
   "type": "commonjs",
   "dependencies": {

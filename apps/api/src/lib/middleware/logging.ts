@@ -1,6 +1,6 @@
 import expressWinston from 'express-winston';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { HEALTH_CHECK_ENDPOINT } from '../../constants';
 
 /**

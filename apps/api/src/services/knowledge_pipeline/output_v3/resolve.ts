@@ -19,7 +19,7 @@ import type {
   OrderKey,
   PromptEmbed,
   FilterExpression,
-} from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
+} from 'movement-engine/public/output-v3';
 import type { FieldConstraints, ResourceContext, AdapterResult } from './adapters/types';
 import type { NodeData } from './filter';
 import type { SystemContext } from '../extract';
@@ -28,12 +28,12 @@ import { resolveFieldRef, evaluateFilter } from './filter';
 import { loadLinkedObjects } from './linked_objects';
 import ResourceType from '../../../generated/kysely/knowledge/ResourceType';
 import { signDocumentUrl } from '../../../lib/document_link';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { anthropicChat, anthropicChatStructured } from '../../../lib/anthropic';
 import { HAIKU_MODEL } from '../../agent_running_state';
 import { getKnowledgeQb, getQb } from '../../../lib/kysely';
 import { evaluateExpression } from './evaluate';
-import { fieldMappingToExpression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
+import { fieldMappingToExpression } from 'movement-engine/public/output-v3';
 
 // -- Execution context --
 

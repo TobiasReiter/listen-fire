@@ -11,28 +11,28 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type {
   FileRef,
   ResolveFileRefResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 
 import {
   documentStoreFileRef,
   teamDocumentKeyPrefix,
   type DocumentStore,
-} from 'movement-engine/services/translation_graph/engine/files/document_store';
+} from 'movement-engine/public/files';
 import {
   redeemFileRef,
   type ResolveFileOwner,
-} from 'movement-engine/services/translation_graph/engine/files/redeem';
+} from 'movement-engine/public/files';
 import { teamKeySchema } from '../../movement/tenant';
 
 export {
   withFileOwners,
   type FileOwners,
-} from 'movement-engine/services/translation_graph/engine/files/file_owners';
+} from 'movement-engine/public/files';
 export {
   hasFileSource,
   type ResolveFileOwner,
-} from 'movement-engine/services/translation_graph/engine/files/redeem';
-export { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
+} from 'movement-engine/public/files';
+export { FileOutsideTeamError } from 'movement-engine/public/files';
 
 export interface StreamFileRefOptions {
   /** The team the file was read for — the owner instance is the team's. */

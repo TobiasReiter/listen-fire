@@ -22,7 +22,7 @@
 import '../services';
 import { LISTEN_FIRE_VERSION } from '../constants';
 import { mounts } from '../products';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import {
   DEPLOY_CHECK_OUTCOMES,
   latestDeployCheckSummary,
@@ -32,7 +32,7 @@ import {
   type DeployCheckOutcome,
   type DeployCheckSummary,
 } from '../services/translation_graph/movement/language_upgrade';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 function outcomeHeading(outcome: DeployCheckOutcome): string {
   switch (outcome) {

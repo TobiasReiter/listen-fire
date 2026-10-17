@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import type { AgentUpdate } from '../openai/types';
 import type { OntologySummary, AgentContext, AdapterMetadataProvider } from '../../services/knowledge_pipeline/output_v3/agent';
-import type { OutputV3Config, ActionNode, TreeNode } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
+import type { OutputV3Config, ActionNode, TreeNode } from 'movement-engine/public/output-v3';
 import type { PropertyInfo, EdgeInfo } from '#shared/expression/formula';
 
 import { anthropicToolLoop, type TurnEvent } from '../anthropic';
@@ -24,7 +24,7 @@ import { slackCredsParser, getSlackClient } from '../../adapters/slack/webApi/ap
 import { SlackWebApiConfigurer } from '../../adapters/slack/webApi/configurer';
 import { airtableCredsParser, getAirtableClient } from '../../adapters/airtable/apiClient';
 import { writeExpression, type ExpressionWriterContext } from '../../services/knowledge_pipeline/output_v3/expression_writer';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getStyleBlock } from './style_preferences';
 
 interface OutputAgentOptions {

@@ -43,7 +43,7 @@ import type { WebhookEvent } from './providers';
 import type { HarnessDelivery, SettleReport } from '../work/harness';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import {
   parseTelegramEvents,
   telegramEventToDiscriminable,

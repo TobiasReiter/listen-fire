@@ -7,7 +7,7 @@ import type { PluginManifest, TransformImpl } from './registry';
 
 import { LINKEDIN_RESEARCH_HANDBOOK_SECTION } from './linkedin_research_handbook_section';
 import { linkedinResearchPlugin } from '@lf/web';
-import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { importIdentifier } from 'movement-engine/public/catalog';
 import { LINKEDIN_RESEARCH_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';
 

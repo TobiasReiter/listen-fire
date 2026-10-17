@@ -49,16 +49,16 @@
 // dedupes it. Lookups query both the `a` and `b` columns.
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { BindingEndpoint, EncodedEndpoint } from 'movement-engine/services/movement_engine/host';
+import type { BindingEndpoint, EncodedEndpoint } from 'movement-engine/public/host';
 import {
   asEncoded,
   encodeEndpoint,
   orderEndpoints,
-} from 'movement-engine/services/translation_graph/movement/binding_endpoint';
+} from 'movement-engine/public/catalog';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 
-export { encodeEndpoint, encodeInstanceKey } from 'movement-engine/services/translation_graph/movement/binding_endpoint';
+export { encodeEndpoint, encodeInstanceKey } from 'movement-engine/public/catalog';
 
 /**
  * Record a symmetric binding between two endpoints (idempotent upsert on the

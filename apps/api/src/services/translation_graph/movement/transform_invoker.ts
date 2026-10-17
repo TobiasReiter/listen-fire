@@ -3,18 +3,18 @@
 // in process; any other is the TG transform registry, with the document store
 // a plugin's fetched files land in.
 
-import type { TransformInvocationResult, TransformInvokeInput } from 'movement-engine/services/movement_engine/extraction';
-import type { Costed, Priced } from 'movement-engine/services/movement_engine/host';
-import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
+import type { TransformInvocationResult, TransformInvokeInput } from 'movement-engine/public/model-calls';
+import type { Costed, Priced } from 'movement-engine/public/host';
+import type { FileRef } from 'movement-engine/public/adapter';
 
 import { runFields } from '../../../lib/llm_usage';
-import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from 'movement-engine/lib/run_cost';
+import { costEnvelopeMicrodollars, costSourceKey, isBudgetExhausted } from 'movement-engine/public/models';
 import { DocumentService } from '../../document';
-import { logger } from 'movement-engine/services/logger';
-import { documentStoreFileRef } from 'movement-engine/services/translation_graph/engine/files/document_store';
+import { logger } from 'movement-engine/public/log';
+import { documentStoreFileRef } from 'movement-engine/public/files';
 import { registerBundledTransforms } from '../engine/transforms/register-bundled';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
-import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
+import { makeEphemeralPosition } from 'movement-engine/public/catalog';
 import { BUILTIN_MODULES, builtinPluginModule, type BuiltinModuleTable } from '../adapters/builtin_modules';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';

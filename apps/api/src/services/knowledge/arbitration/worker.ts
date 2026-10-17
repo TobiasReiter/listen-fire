@@ -22,7 +22,7 @@ import { SECOND } from '../../../constants';
 import { getKnowledgeQb } from '../../../lib/kysely';
 import { worker } from '../../../lib/worker';
 import { handleError } from '../../../lib/errors';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { isKnowledgeLlmConfigured } from '../../../lib/knowledge/llm';
 import { arbitrateProperty } from './evaluate';
 

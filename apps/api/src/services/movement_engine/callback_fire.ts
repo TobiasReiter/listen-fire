@@ -14,7 +14,7 @@
 // row, made due at once, which runs it once the run is free; a row whose body
 // already started does nothing.
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 
 import type { WorkHandler } from '../work/kinds';

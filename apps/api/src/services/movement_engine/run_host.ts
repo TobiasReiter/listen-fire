@@ -3,11 +3,11 @@
 // and the product's own run records (the run's status row, its callbacks).
 // Every hosted entry into a parked run goes through the core with this host.
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { sql } from 'kysely';
 
-import type { LeaseOptions } from 'movement-engine/services/run_host/lease';
-import type { RunHost, RunRecords } from 'movement-engine/services/run_host/rules';
+import type { LeaseOptions } from 'movement-engine/public/run-host';
+import type { RunHost, RunRecords } from 'movement-engine/public/run-host';
 
 import { getAutomationsQb } from '../../lib/kysely';
 import { awaitKeepers } from '../translation_graph/adapters/packages';

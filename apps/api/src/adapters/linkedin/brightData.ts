@@ -6,12 +6,12 @@ import uniq from 'lodash/uniq';
 import { parseJsonResponse } from '../../lib/utils/fetch';
 import { LinkedinAdapter, ProfileFetchBudget } from './interface';
 import { MINUTE, SECOND } from '../../constants';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { safeToUrl } from '../../lib/utils/url';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { notNull, notUndefined } from '../../lib/utils/nullability';
 import { sendSlackNotification } from '../../lib/slack';
-import { Queue } from 'movement-engine/lib/utils/queue';
+import { Queue } from 'movement-engine/public/utils';
 
 // BrightData long-polls (up to 5min per request) — limit concurrent requests
 const brightDataQueue = new Queue<unknown>({ concurrency: 4 });

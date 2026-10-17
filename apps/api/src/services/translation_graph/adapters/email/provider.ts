@@ -18,12 +18,12 @@
 // one. Silent 401s on old attachments is exactly what the old
 // `endsWith('mailgun.net')` special-case produced when anything else appeared.
 
-import type { ResolveFileRefResult } from 'movement-engine/services/translation_graph/adapter';
+import type { ResolveFileRefResult } from 'movement-engine/public/adapter';
 
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { getEnvVar } from '../../../../lib/utils/environment';
 import { mintAttachmentDownloadUrl, parseResendAttachmentHandle } from './resend';
-import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
+import { FileOutsideTeamError } from 'movement-engine/public/files';
 
 type EmailProviderSlug = 'mailgun' | 'resend';
 

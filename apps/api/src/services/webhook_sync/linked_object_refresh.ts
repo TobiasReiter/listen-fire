@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { WorkHandler } from '../work/kinds';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { registerWorkKinds } from '../work/drain';
 import { enqueueWork } from '../work/store';
 import {

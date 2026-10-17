@@ -2,7 +2,7 @@ import type { OpsEventId } from '../../generated/kysely/public/OpsEvent';
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { getQb } from '../kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { unsafeCurrentContext } from '../../services/context';
 import { dispatchPush } from './push';
 import OpsEventType from '../../generated/kysely/public/OpsEventType';

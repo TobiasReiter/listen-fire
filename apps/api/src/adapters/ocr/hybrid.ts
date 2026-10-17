@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { OcrAdapter } from './interface';
 
 class HybridAdapter implements OcrAdapter {

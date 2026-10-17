@@ -2,13 +2,13 @@
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ResourceId } from '../../generated/kysely/knowledge/Resource';
-import type { Resource } from 'movement-engine/services/translation_graph/adapter';
+import type { Resource } from 'movement-engine/public/adapter';
 
 import { getKnowledgeQb } from '../../lib/kysely';
 import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from 'movement-engine/lib/utils/parse_json';
+import { parseJson } from 'movement-engine/public/utils';
 import { embedTexts } from '../embedding';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { resourceIdSchema } from '../../lib/resource_id';
 
 // ---------------------------------------------------------------------------

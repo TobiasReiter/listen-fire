@@ -23,8 +23,8 @@
 import type { AskRecord } from './store';
 
 import { getAsksQb } from '../../../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { logger } from 'movement-engine/public/log';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { askSettleDelivery } from './delivery_mode';
 
 /** What a deployment does when an ask settles. */

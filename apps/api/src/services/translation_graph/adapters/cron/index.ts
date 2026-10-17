@@ -36,16 +36,16 @@ import type {
   EdgesFromResult,
   EnsureEventSubscriptionInput,
   EventSubscriptionRegistration,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
 import { uniformWalk } from 'module-kit/adapter/hop';
 import { CRON_HANDBOOK_SECTION } from './handbook_section';
-import { META_RECORD_TYPE, positionData } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE, positionData } from 'movement-engine/public/catalog';
 import { BaseAdapter } from 'module-kit/adapter/base';
 
 /** Stable adapter identifier — the trigger `kind` of cron-derived rows. */

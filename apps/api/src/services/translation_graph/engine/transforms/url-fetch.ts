@@ -19,7 +19,7 @@ import { SECOND } from '../../../../constants';
 import { extractDocumentTextTool } from '../../../../lib/agent/tools/extract_document_text';
 import { pitchDeckUrlTool } from '../../../../lib/agent/tools/pitch_deck_url';
 import { handleError } from '../../../../lib/errors';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { RawTextService } from '../../../raw_text';
 import { ResourceService } from '../../../resource';
 

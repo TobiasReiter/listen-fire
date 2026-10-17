@@ -3,10 +3,10 @@
 // is asked for the words.
 
 import type { ModelHost } from '../host';
-import type { Resolved } from 'movement-engine/lib/models/map';
+import type { Resolved } from 'movement-engine/public/models';
 import type { TranscriptionRequest, TranscriptionResult } from './index';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { geminiClient } from '../providers/gemini';
 import { geminiAudioMimeType } from './audio_format';
 

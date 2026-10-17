@@ -11,7 +11,7 @@ import * as Sentry from '@sentry/node';
 import './services';
 import { prismaClient } from './prisma';
 import { initSentry } from './lib/sentry';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { currentContext } from './services/context';
 
 // Diagnostic: log unhandled promise rejections in detail so we can identify
@@ -35,14 +35,14 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 import { requireEnv } from './lib/utils/environment';
-import { assertModelMapConfigured, modelKeyWarning, providerCredentialsPresent, resolveModel } from 'movement-engine/lib/models/map';
+import { assertModelMapConfigured, modelKeyWarning, providerCredentialsPresent, resolveModel } from 'movement-engine/public/models';
 import { assertKnowledgeLlmModelConfigured, isKnowledgeLlmConfigured, knowledgeLlmModel } from './lib/knowledge/llm';
 import { assertJevConfigured } from './lib/jev/client';
-import { assertRunCostCapConfigured } from 'movement-engine/lib/run_spend';
-import { assertExtractionTiersConfigured } from 'movement-engine/services/movement_engine/ai_tiers';
-import { assertMaxCallDepthConfigured } from 'movement-engine/services/movement_engine/call_depth';
-import { assertWriteLockTimeoutConfigured } from 'movement-engine/services/write_locks/write_locks';
-import { assertEngineConfigured } from 'movement-engine/services/movement_engine/rust_engine';
+import { assertRunCostCapConfigured } from 'movement-engine/public/models';
+import { assertExtractionTiersConfigured } from 'movement-engine/public/run-support';
+import { assertMaxCallDepthConfigured } from 'movement-engine/public/run-support';
+import { assertWriteLockTimeoutConfigured } from 'movement-engine/public/write-locks';
+import { assertEngineConfigured } from 'movement-engine/public/movement-engine';
 import { assertBrightDataSerpRateConfigured } from './services/web_search';
 import { healthCheck, workersHealthCheck } from './lib/middleware/health_check';
 import { rootHandler } from './lib/middleware/root_handler';

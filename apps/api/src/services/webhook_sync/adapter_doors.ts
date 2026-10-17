@@ -27,11 +27,11 @@ import { loadRemoteAdapterSecret, resolveAdapter } from '../translation_graph/ad
 import { RemoteAdapterManifestFile } from '../translation_graph/adapters/remote/manifest';
 import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';
 import { listRemoteAdaptersOfType, type RemoteAdapterRow } from '../translation_graph/adapters/remote/store';
-import { ADAPTER_TEAM_HEADER, authHeader } from 'movement-engine/services/translation_graph/protocol/client';
+import { ADAPTER_TEAM_HEADER, authHeader } from 'movement-engine/public/adapter';
 import { enqueueCapturedEvents, type CapturedTriggerEvent } from '../translation_graph/triggers/dispatch_event';
 import { enqueueAwaitWakes } from '../movement_engine/await_wake';
 import { notifyWork } from '../work/drain';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { captureProviderTriggerEvents } from './handler';
 import { webhookProviderKey } from './urls';
 

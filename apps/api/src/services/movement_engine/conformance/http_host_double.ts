@@ -30,7 +30,7 @@ import type { Server } from 'node:http';
 import express from 'express';
 import { ReplayDivergence, type RecordedConversation, type ServedAnswer } from 'engine-contracts/conformance';
 
-import type { EngineHost } from 'movement-engine/services/movement_engine/host';
+import type { EngineHost } from 'movement-engine/public/host';
 import { hostServing, settle } from './replay_host';
 
 /** The double's address and the conversation it answers from. */

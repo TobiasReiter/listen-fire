@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import CurrencyIsoCode from '../../../generated/kysely/valuations/CurrencyIsoCode';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { getLotsForInvestments, Lot } from '../inventory';
 import { getExchangeRate, getLatestPrices } from '../valuation/data';
 import {

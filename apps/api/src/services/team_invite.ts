@@ -14,7 +14,7 @@ import type { TeamId } from '../generated/kysely/core/Team';
 import type { UserId } from '../generated/kysely/core/User';
 import type { TeamInviteId } from '../generated/kysely/core/TeamInvite';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getCoreQb } from '../lib/kysely';
 import { ProvisioningService } from './provisioning';
 

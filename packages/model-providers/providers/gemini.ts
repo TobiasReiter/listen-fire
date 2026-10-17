@@ -35,8 +35,8 @@ import type {
 } from '@google/genai';
 import type { ChatProvider } from '../chat';
 
-import { googleModelRegion, googleServiceAccount } from 'movement-engine/lib/google_cloud';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { googleModelRegion, googleServiceAccount } from 'movement-engine/public/google-cloud';
+import { neverAsAny } from 'movement-engine/public/utils';
 
 const PROVIDER = 'gemini';
 

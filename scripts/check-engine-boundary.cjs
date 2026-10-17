@@ -4,10 +4,10 @@
 // an internal module (anything else under `movement-engine/`) and compares the
 // count with the baseline in engine-boundary-baseline.json.
 //
-// Report mode: it prints and exits 0 — except when the count grows past the
-// baseline (in total, or for any one internal module), which fails. The
-// baseline only shrinks, as imports move to public entries (phase 2 of
-// plan 22 §F: baseline empty, then ESLint and an `exports` map enforce it).
+// The baseline is empty: any import of an internal fails. ESLint's
+// no-restricted-imports (apps/api/eslint.config.js) says the same in the
+// editor, and the package's `exports` map refuses an internal at run time
+// outside the test runners' `movement-engine-internals` condition.
 //
 //   node scripts/check-engine-boundary.cjs            report / gate
 //   node scripts/check-engine-boundary.cjs --update   rewrite the baseline

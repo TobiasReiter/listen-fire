@@ -21,14 +21,14 @@
 // TG's nesting structure already encodes the parent-first ordering
 // we want for compound scoping.
 
-import type { EphemeralNode } from 'movement-engine/services/translation_graph/types';
+import type { EphemeralNode } from 'movement-engine/public/catalog';
 import type { ExtractInvocation, ExtractValueInvocation } from '../evaluator/batcher';
-import type { FieldEvidence } from 'movement-engine/services/translation_graph/adapter';
+import type { FieldEvidence } from 'movement-engine/public/adapter';
 import type { Bundle } from './bundle';
 import type { SyntheticSchema, FieldShape } from './schema_synthesis';
 import type { FullExtractionResult } from './phases';
 
-import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
+import { makeEphemeralPosition } from 'movement-engine/public/catalog';
 
 export interface RebindResult {
   /** Materialised ephemeral nodes per `#extract` siteId — `#extract` is

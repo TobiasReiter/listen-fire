@@ -54,6 +54,10 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 
 - The Rust binary is now `lf` (Cargo bin `lf`, from package `lf-host`; usage text, release workflow, container image and docs follow). The TypeScript `lf` is gone: `apps/cli` is only the test harness that drives the built binary (`LF_BIN`, default `target/debug/lf`). Tests that compared the two were dropped.
 
+### r-boundary
+
+- The platform reaches the engine only through its public entries (`movement-engine/public/*`): 603 internal imports in apps/api (plus apps/cli and model-providers) now name a public entry, the guard's baseline is empty, ESLint refuses an internal import, and the package's `exports` map refuses one at run time. Engine tests still in apps/api reach internals under the test runners' `movement-engine-internals` condition.
+- 39 engine-only test suites moved from apps/api into packages/movement-engine (`pnpm test` there); the rest still need the platform and stay.
 ### r-deploy
 
 - A container image for the Rust `lf` (`deploy/lf/`): `lf-host serve` for the webhook and callback doors and `lf-host drain --until-idle --max-seconds N` for workers, on the Postgres store (`LF_STORE_URL`, TLS). A compose file for a local trial and a page on scale-from-zero platforms. `serve` listens on the address `LF_BIND` names (default loopback).

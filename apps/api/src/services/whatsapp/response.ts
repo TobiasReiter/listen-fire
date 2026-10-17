@@ -1,6 +1,6 @@
 import { sendSlackNotification } from '../../lib/slack';
 import { prismaClient } from '../../prisma';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { metaWhatsappApi } from './metaApi';
 import { queryParams } from './utils';
 

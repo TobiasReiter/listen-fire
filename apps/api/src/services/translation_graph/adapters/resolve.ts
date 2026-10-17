@@ -20,8 +20,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../generated/kysely/automations/ExternalServiceCredentials';
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
+import type { Adapter } from 'movement-engine/public/adapter';
+import type { TriggerType } from 'movement-engine/public/adapter';
 
 import { getAutomationsQb } from '../../../lib/kysely';
 import {
@@ -38,7 +38,7 @@ import {
   type RemoteAdapterConfig,
   type RemoteCredentialBinding,
   type RemoteManifest,
-} from 'movement-engine/services/translation_graph/adapters/remote';
+} from 'movement-engine/public/modules';
 import { createSecretsFamily } from 'movement-engine/public/secrets';
 
 /**

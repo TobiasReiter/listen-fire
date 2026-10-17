@@ -27,20 +27,20 @@ import type {
   GetRelatedInput,
   RelatedResult,
   ResolveFileRefResult,
-} from 'movement-engine/services/translation_graph/adapter';
+} from 'movement-engine/public/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
   SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+} from 'movement-engine/public/catalog';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
 import { parseEmailAddress } from 'movement-engine/public/inbound';
-import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
+import { fileHandle, ownedFileSource } from 'movement-engine/public/adapter';
 import { uniformWalk } from 'module-kit/adapter/hop';
 import { INBOUND_EMAIL_ADDRESS_VAR, inboundRoutingAddress } from './address';
 import { fetchEmailAttachment } from './provider';
-import { META_RECORD_TYPE, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE, makeUnstablePosition, positionData } from 'movement-engine/public/catalog';
 import { BaseAdapter } from 'module-kit/adapter/base';
 
 /** Stable adapter identifier. Matches `MutationContext.source.adapterType`. */

@@ -29,14 +29,14 @@
 
 import { z } from 'zod';
 
-import type { ExpressionType } from 'movement-engine/services/translation_graph/types';
+import type { ExpressionType } from 'movement-engine/public/catalog';
 import type { StoredUniquenessConstraints } from '../../../knowledge_pipeline/uniqueness_constraints';
 import type { Bundle } from './bundle';
 import type { ExtractInvocation, ExtractValueInvocation } from '../evaluator/batcher';
 
 // The density model choice is its own module (`./model_choice`), so the
 // engine can make it without this module's storage types.
-export { ENTITY_DENSITY_OPUS_THRESHOLD, selectModel } from 'movement-engine/services/translation_graph/engine/batched_extraction/model_choice';
+export { ENTITY_DENSITY_OPUS_THRESHOLD, selectModel } from 'movement-engine/public/model-calls';
 
 /**
  * One declared scalar/structural field the LLM should emit for an

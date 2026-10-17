@@ -1,7 +1,7 @@
 // Embeddings behind the model map, bound to the hosted product's environment,
 // usage ledger and tokenizer. The vendors live in packages/model-providers.
 
-import type { EmbeddingModelName } from 'movement-engine/lib/models/registry';
+import type { EmbeddingModelName } from 'movement-engine/public/models';
 import type { EmbeddingRequest, EmbeddingResult } from 'model-providers/embedding';
 
 import { embed as embedWith } from 'model-providers/embedding';

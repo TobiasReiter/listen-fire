@@ -58,11 +58,11 @@ import {
 } from 'movement-lang';
 
 import type { Expression } from '#shared/expression/types';
-import type { ListenConfigKey } from 'movement-engine/services/translation_graph/adapter';
-import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { ListenConfigKey } from 'movement-engine/public/adapter';
+import type { SchemaTypeDescriptor } from 'movement-engine/public/catalog';
 import type { CachedAdapterInstance } from './instance_cache';
 
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 
 export interface EventNarrowingInput {
   adapterType: string;

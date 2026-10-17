@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 
 import { AttioConnector } from './interface';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { storePendingCredentials } from '../../lib/pendingCredentials';
 import { getFlowUserId } from '../../lib/oauthFlows';
 import { resolveOAuthCallbackRedirect } from '../../lib/oauthCallbackRedirect';

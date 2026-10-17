@@ -17,7 +17,7 @@ import {
   withRunLease as withCoreRunLease,
   RUN_LEASE_TTL_MS as CORE_RUN_LEASE_TTL_MS,
   type HeldRunLease,
-} from 'movement-engine/services/run_host/lease';
+} from 'movement-engine/public/run-host';
 
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 
@@ -42,7 +42,7 @@ export class RunBusy extends Error {
 
 // The signal a segment that lost its lease stops with is the engine's own
 // control flow (errors.ts); re-exported for the host side.
-export { RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
+export { RunLeaseLost } from 'movement-engine/public/run-support';
 
 /** Take the run's lease for this process, or null while it is held elsewhere.
  *  `ttlMs` shortens it for tests; production takes the stale-heartbeat rule. */

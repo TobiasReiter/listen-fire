@@ -5,7 +5,7 @@
 // exist, what state they're in, and in what order they sit on the
 // shelf.
 
-import { chapterRoute, sliceChapterSection, splitChapterRoute } from 'movement-engine/lib/handbook_section';
+import { chapterRoute, sliceChapterSection, splitChapterRoute } from 'movement-engine/public/handbook';
 import { adapterHandbook } from '../adapter_handbook';
 import { getMovementHandbook } from '../movement_handbook';
 import { frontSection, renderFrontPage } from '../movement_handbook/front_page';

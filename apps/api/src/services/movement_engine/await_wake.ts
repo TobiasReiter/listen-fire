@@ -4,7 +4,7 @@
 // the engine.
 
 import { z } from 'zod';
-import { queueAwaitWake } from 'movement-engine/services/run_host/rules';
+import { queueAwaitWake } from 'movement-engine/public/run-host';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 

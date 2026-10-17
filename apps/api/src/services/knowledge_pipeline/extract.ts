@@ -26,11 +26,11 @@ import type {
 } from './types';
 
 import { execute } from '../../lib/prompts/execute';
-import { parseJson } from 'movement-engine/lib/utils/parse_json';
+import { parseJson } from 'movement-engine/public/utils';
 import { promptDef } from '../../lib/prompts/definition';
 import { PromptFragment } from '../../lib/prompts/fragments';
 import { anthropicChat } from '../../lib/anthropic';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { sendSlackNotification } from '../../lib/slack';
 import {
   buildRelationshipContextFromSubgraph,

@@ -1,6 +1,6 @@
 import { Client, iteratePaginatedAPI } from '@notionhq/client';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 const NOTION_PAGE_ID_REGEX = /\b[0-9a-f]{32}\b/;
 

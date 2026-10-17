@@ -1,6 +1,6 @@
 import { ExternalUrl, PdfStream } from '.';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { PlaywrightService } from '../../services/playwright';
 import { MINUTE, SECOND } from '../../constants';
 import { sendSlackNotification } from '../slack';

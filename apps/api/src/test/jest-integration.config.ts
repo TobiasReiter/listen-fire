@@ -36,6 +36,9 @@ export default {
   preset: 'ts-jest',
   transform: { '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true, diagnostics: false }] },
   testEnvironment: 'node',
+  // Engine tests that still live here reach engine internals, which the
+  // package's exports map resolves only under this condition.
+  testEnvironmentOptions: { customExportConditions: ['node', 'node-addons', 'movement-engine-internals'] },
   // Real-DB integration tests need a generous timeout — migration
   // application + ontology seeding can take 5-10s on first run.
   testTimeout: 60000,

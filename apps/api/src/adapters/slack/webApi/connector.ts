@@ -7,7 +7,7 @@ import { getFlowUserId } from '../../../lib/oauthFlows';
 import { resolveOAuthCallbackRedirect } from '../../../lib/oauthCallbackRedirect';
 import { getSlackClient } from './apiClient';
 import { SlackWebApiConfigurer } from './configurer';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 // Coalesce concurrent requests for the same OAuth code — React strict mode
 // double-mounts the callback page, causing two simultaneous exchange attempts.

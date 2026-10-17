@@ -15,7 +15,7 @@ import type { CallbackParamSpec } from 'engine-contracts';
 
 import { getCallback, type CallbackRecord } from '../../services/movement_engine/callback_store';
 import { fireCallback, type CallbackFireOutcome } from '../../services/movement_engine/callback_fire';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 export const callbacksRouter: ReturnType<typeof Router> = Router();
 

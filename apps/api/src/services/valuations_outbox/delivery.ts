@@ -25,7 +25,7 @@ import { SECOND } from '../../constants';
 import { getValuationsQb } from '../../lib/kysely';
 import { worker } from '../../lib/worker';
 import { handleError } from '../../lib/errors';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 const DELIVERY_INTERVAL = 5 * SECOND;
 const BATCH_SIZE = 100;

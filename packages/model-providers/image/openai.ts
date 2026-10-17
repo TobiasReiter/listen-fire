@@ -3,10 +3,10 @@
 import { z } from 'zod';
 
 import type { ModelHost } from '../host';
-import type { Resolved } from 'movement-engine/lib/models/map';
+import type { Resolved } from 'movement-engine/public/models';
 import type { GeneratedImage, ImageRequest } from './index';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { openAiClient } from '../providers/openai';
 
 

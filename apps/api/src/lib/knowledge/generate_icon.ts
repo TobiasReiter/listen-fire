@@ -3,7 +3,7 @@ import { Resvg } from '@resvg/resvg-js';
 import type Anthropic from '@anthropic-ai/sdk';
 
 import { chatCallFor } from '../models/chat';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 const MAX_REFINEMENTS = 3;
 

@@ -3,7 +3,7 @@ import type { AgentUpdate } from '../openai/types';
 import type { AgentConversationId } from '../../generated/kysely/public/AgentConversation';
 
 import { currentContext } from '../../services/context';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getNavigation } from '../../services/navigation_state';
 import {
   buildRecentThoughtsPrefix,

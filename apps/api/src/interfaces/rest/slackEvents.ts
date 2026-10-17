@@ -10,7 +10,7 @@ import type { Request, Response } from 'express';
 
 import { admitShared, authenticateInbound, type InboundAuth, type InboundHeaders, type SharedDoor } from 'movement-engine/public/inbound';
 import { handleSlackEventsInbound } from '../../services/webhook_sync/slack_events';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
 import { sendInboundAnswer } from './inbound_answer';
 

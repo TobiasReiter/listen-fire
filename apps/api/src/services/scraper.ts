@@ -1,15 +1,15 @@
 import { backOff } from 'exponential-backoff';
 import { htmlToText } from 'html-to-text';
 
-import type { CostSource } from 'movement-engine/lib/run_cost';
+import type { CostSource } from 'movement-engine/public/models';
 
 import { SECOND } from '../constants';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { sendSlackNotification } from '../lib/slack';
-import { Queue } from 'movement-engine/lib/utils/queue';
+import { Queue } from 'movement-engine/public/utils';
 import { getEnvVar } from '../lib/utils/environment';
 import { looksLikeNonHtmlAddress } from '../lib/utils/url';
-import { assertRunBudget, reportRunCost } from 'movement-engine/lib/run_spend';
+import { assertRunBudget, reportRunCost } from 'movement-engine/public/models';
 
 // Web Unlocker uses a dedicated zone, distinct from the LinkedIn Dataset API zone.
 // The zone must be provisioned in the Bright Data dashboard under Web Unlocker.

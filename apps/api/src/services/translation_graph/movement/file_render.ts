@@ -20,12 +20,12 @@
 
 import { Readable } from 'node:stream';
 
-import type { RenderFile } from 'movement-engine/services/movement_engine/host';
-import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
+import type { RenderFile } from 'movement-engine/public/host';
+import type { FileRef } from 'movement-engine/public/adapter';
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
-import { documentStoreFileRef, teamDocumentKeyPrefix } from 'movement-engine/services/translation_graph/engine/files/document_store';
+import { documentStoreFileRef, teamDocumentKeyPrefix } from 'movement-engine/public/files';
 
 /** The team's `files.render`: its artifacts are stored under the team's key
  *  prefix, which is what makes them the team's to read again. */

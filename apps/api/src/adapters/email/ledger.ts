@@ -13,7 +13,7 @@
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { getAutomationsQb } from '../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { OutboundEmailMessager, SendArgs } from './interface';
 
 /** Which adapter served a send — the ledger's record of who was asked. */

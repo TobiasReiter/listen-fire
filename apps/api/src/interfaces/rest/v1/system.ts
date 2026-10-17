@@ -14,7 +14,7 @@ import { runConversationTurn } from '../../../lib/knowledge/orchestrator';
 import { LlmUsageContext } from '../../../lib/llm_usage';
 import { drainUntilIdle, recordExternalDrainPass } from '../../../services/work/drain';
 import { mounts } from '../../../products';
-import { rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import { rustRunStats } from 'movement-engine/public/run-support';
 import {
   requireSystemAction,
   requireSystemCaller,

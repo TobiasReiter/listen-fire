@@ -9,14 +9,14 @@
 // (e.g. map `data` into a target field). Available ONLY on extract-produced
 // nodes — a non-ephemeral position resolves `#resources` through its adapter.
 
-import type { ResourceFilter } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
+import type { ResourceFilter } from 'movement-engine/public/output-v3';
 
 import {
   isEphemeralPosition,
   makeEphemeralPosition,
   type EphemeralNode,
   type SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 
 /**
  * Resolve `#resources` off an extract node into field-readable ephemeral

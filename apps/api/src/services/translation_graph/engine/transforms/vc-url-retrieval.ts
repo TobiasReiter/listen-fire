@@ -7,7 +7,7 @@ import type { PluginManifest, TransformImpl } from './registry';
 
 import { VC_URL_RETRIEVAL_HANDBOOK_SECTION } from './vc_url_retrieval_handbook_section';
 import { vcUrlRetrievalPlugin } from '@lf/web';
-import { importIdentifier } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { importIdentifier } from 'movement-engine/public/catalog';
 import { VC_URL_RETRIEVAL_PLUGIN } from 'movement-engine/public/plugins';
 import { legacyImpl } from './hosted_tools';
 export { _extractCandidateUrls, _extractLocalContext } from '@lf/web/vc_url_retrieval';

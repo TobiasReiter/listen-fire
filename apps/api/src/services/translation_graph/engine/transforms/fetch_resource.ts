@@ -13,8 +13,8 @@ import type { ResourceId } from '../../../../generated/kysely/knowledge/Resource
 import { describeError } from '@lf/web';
 import { DocumentSourceService } from '../../../../lib/document_sources';
 import { runFields } from '../../../../lib/llm_usage';
-import { isBudgetExhausted } from 'movement-engine/lib/run_cost';
-import { logger } from 'movement-engine/services/logger';
+import { isBudgetExhausted } from 'movement-engine/public/models';
+import { logger } from 'movement-engine/public/log';
 import { RawTextService } from '../../../raw_text';
 import { ResourceService } from '../../../resource';
 import { ScraperService } from '../../../scraper';

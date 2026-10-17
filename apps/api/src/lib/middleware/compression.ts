@@ -2,7 +2,7 @@ import { brotliCompress, constants, gzip } from 'node:zlib';
 
 import { RequestHandler } from 'express';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 /**
  * Compress what the API sends back, when the client says it can read it.

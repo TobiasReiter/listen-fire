@@ -5,7 +5,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lfHostBinary } from '../lf_host';
+import { lfBinary } from '../lf_bin';
 
 export const POSTGRES_URL = process.env.LF_TEST_POSTGRES_URL ?? 'postgresql://listenfire:localdevpassword@localhost:9432/listenfire_test';
 
@@ -25,7 +25,7 @@ let schemaReady = false;
  *  contract bridge runs that setup when it opens, and exits at end of input. */
 function ensureLfSchema(): void {
   if (schemaReady) return;
-  const setup = spawnSync(lfHostBinary(), ['--contract-store', POSTGRES_URL], { input: '', encoding: 'utf8' });
+  const setup = spawnSync(lfBinary(), ['--contract-store', POSTGRES_URL], { input: '', encoding: 'utf8' });
   if (setup.error !== undefined || setup.status !== 0) throw new Error(`the lf schema's setup failed: ${setup.error?.message ?? setup.stderr}`);
   schemaReady = true;
 }

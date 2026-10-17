@@ -15,7 +15,7 @@ import type { GuardSignal } from './types';
 
 import { getCoreQb } from '../../lib/kysely';
 import { sendSlackNotification } from '../../lib/slack';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 
 const SIGNAL_LABEL: Record<GuardSignal, string> = {

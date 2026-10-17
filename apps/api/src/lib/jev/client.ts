@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 import { SECOND } from '../../constants';
 import { recordLlmUsage } from '../llm_usage';
-import { assertRunBudget } from 'movement-engine/lib/run_spend';
+import { assertRunBudget } from 'movement-engine/public/models';
 
 const JEV_API_URL = 'https://api.typesafe.ai/v1/systemone';
 const JEV_REQUEST_MODEL = 'jev-latest';

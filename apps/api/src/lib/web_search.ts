@@ -1,4 +1,4 @@
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 
 interface SearchResult {
   title: string;

@@ -16,14 +16,14 @@
 
 import { Readable } from 'node:stream';
 
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WhatsappAttachment, WhatsappPayload } from '../translation_graph/adapters/whatsapp/types';
 import type { MetaWhatsappMessage } from '../webhook_sync/providers/whatsapp';
 
 import { prismaClient } from '../../prisma';
 import { Context } from '../context';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { DocumentService } from '../document';
 import { exposeFile } from '../translation_graph/engine/files/expose';
 import { findTriggersByKind } from '../translation_graph/storage/tg_table';

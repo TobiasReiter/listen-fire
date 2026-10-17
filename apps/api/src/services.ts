@@ -11,7 +11,7 @@ import {
   emailProvidersOverlap,
   resolveEmailProvider,
 } from './services/translation_graph/adapters/email/provider';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { OutboundTwilioMessager } from './adapters/whatsapp/twilio.adapter';
 import { FakeOutboundWhatsAppAdapter } from './adapters/whatsapp/fake.adapter';
 import { UnconfiguredOutboundWhatsAppAdapter } from './adapters/whatsapp/unconfigured.adapter';
@@ -38,7 +38,7 @@ import {
 } from './adapters/gmail/connect_method';
 import { SlackMonitoring } from './lib/slack';
 import { getEnvVar } from './lib/utils/environment';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
+import { neverAsAny } from 'movement-engine/public/utils';
 import { getFlowUserId } from './lib/oauthFlows';
 import { storePendingCredentials } from './lib/pendingCredentials';
 import { resolveOAuthCallbackRedirect } from './lib/oauthCallbackRedirect';

@@ -14,8 +14,8 @@
 // the hosted pieces: the per-run single-flight slot, the step (resume_step.ts)
 // and the work handler.
 
-import { drainAwaits, wakeAwaits, type StepperFor } from 'movement-engine/services/run_host/drain';
-import { logger } from 'movement-engine/services/logger';
+import { drainAwaits, wakeAwaits, type StepperFor } from 'movement-engine/public/run-host';
+import { logger } from 'movement-engine/public/log';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WorkHandler } from '../work/kinds';

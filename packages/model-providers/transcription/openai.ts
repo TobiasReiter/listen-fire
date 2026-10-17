@@ -3,7 +3,7 @@
 
 import type { TranscriptionRequest, TranscriptionResult } from './index';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { openAiClient } from '../providers/openai';
 import { sniffContainer } from './audio_format';
 

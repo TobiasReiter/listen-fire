@@ -2,7 +2,7 @@ import axios from 'axios';
 import FormData from 'form-data';
 import * as ExcelJS from 'exceljs';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getEnvVar } from '../../lib/utils/environment';
 import { buildOtpTemplatePayload } from './phone_verification/otp_template';
 

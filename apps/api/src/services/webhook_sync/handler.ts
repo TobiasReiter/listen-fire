@@ -8,7 +8,7 @@ import { sql } from 'kysely';
 
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
+import type { DiscriminableEvent, EventType } from 'movement-engine/public/adapter';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
 import type { HarnessDelivery, SettleReport } from '../work/harness';
 import type {
@@ -23,7 +23,7 @@ import type {
 
 import { getAutomationsQb } from '../../lib/kysely';
 import { getWebhookProvider } from './providers';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { findTriggersByKind } from '../translation_graph/storage/tg_table';
 import {
   captureDiscriminableEvent,
@@ -31,7 +31,7 @@ import {
   readReceiptGroupOutcomes,
   type CapturedTriggerEvent,
 } from '../translation_graph/triggers/dispatch_event';
-import { channelScopeMatches, eventConfigList, eventMatchesTriggerScope } from 'movement-engine/services/translation_graph/triggers/listen_config';
+import { channelScopeMatches, eventConfigList, eventMatchesTriggerScope } from 'movement-engine/public/inbound';
 import { TELEGRAM_ADAPTER_TYPE, TelegramAdapter } from '../translation_graph/adapters/telegram';
 import { handleTelegramCallbackQuery, ownsCallbackQuery } from './telegram_callback_door';
 import { WHATSAPP_ADAPTER_TYPE } from '../translation_graph/adapters/whatsapp';

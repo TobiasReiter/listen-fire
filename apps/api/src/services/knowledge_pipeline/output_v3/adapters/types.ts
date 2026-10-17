@@ -1,7 +1,7 @@
 import type { NodeId } from '../../../../generated/kysely/knowledge/Node';
 import type { NodeRelationship } from '../../../../adapters/pipeline/outbound/configSchema';
 import type { OutputExecutionContext } from '../resolve';
-import type { FieldMapping } from 'movement-engine/services/knowledge_pipeline/output_v3/schemas';
+import type { FieldMapping } from 'movement-engine/public/output-v3';
 
 // Tier 0 linked object refs
 
@@ -93,7 +93,7 @@ interface V3Adapter {
 // __expr discriminator
 interface ExpressionConfigValue {
   __expr: true;
-  expression: import('movement-engine/services/knowledge_pipeline/output_v3/expression').Expression;
+  expression: import('movement-engine/public/catalog').Expression;
 }
 
 function isExpressionConfig(v: unknown): v is ExpressionConfigValue {

@@ -2,12 +2,12 @@
 // width, and the map decides which vendor computes the vectors.
 
 import type { ModelHost } from '../host';
-import type { Resolved } from 'movement-engine/lib/models/map';
-import type { EmbeddingModelName } from 'movement-engine/lib/models/registry';
+import type { Resolved } from 'movement-engine/public/models';
+import type { EmbeddingModelName } from 'movement-engine/public/models';
 
-import { assertRunBudget } from 'movement-engine/lib/run_spend';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
+import { assertRunBudget } from 'movement-engine/public/models';
+import { neverAsAny } from 'movement-engine/public/utils';
+import { assertCallable, resolveModel } from 'movement-engine/public/models';
 import { geminiEmbed } from './gemini';
 import { openAiEmbed } from './openai';
 

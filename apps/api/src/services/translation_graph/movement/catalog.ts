@@ -56,17 +56,17 @@ import {
 
 import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { AdapterManifest } from 'movement-engine/services/translation_graph/adapter';
+import type { AdapterManifest } from 'movement-engine/public/adapter';
 
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { availableChatModels } from 'movement-engine/lib/models/map';
+import { neverAsAny } from 'movement-engine/public/utils';
+import { availableChatModels } from 'movement-engine/public/models';
 import { getAutomationsQb } from '../../../lib/kysely';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
 import {
   makeMetaPosition,
   positionLabel,
   type Position,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import { connectMethodForType } from '../../credentials/connect_link';
 import { isLegacyApp } from '../../credentials/app_id';
 import { isCredentialType } from '../adapters/credential_type';
@@ -94,14 +94,14 @@ import {
   instanceSchemaFromDescriptors,
   type AdapterSchemaProjection,
   type CredentialRow,
-} from 'movement-engine/services/translation_graph/movement/schema_projection';
+} from 'movement-engine/public/catalog';
 import {
   buildCatalogSnapshot,
   constructionArgsOf,
   needsCredential,
   triggerConfigVocabulary,
   type CatalogAdapterInput,
-} from 'movement-engine/services/translation_graph/movement/catalog_snapshot';
+} from 'movement-engine/public/catalog';
 import { closeDemandOverChains, closeDemandOverWriteVariants, demandSeed } from './demand';
 
 const textList: SchemaFieldType = { kind: 'list', of: 'text' };
@@ -317,8 +317,8 @@ export {
   fieldTypeFromDescriptor,
   instanceSchemaFromDescriptors,
   credentialImportNames,
-} from 'movement-engine/services/translation_graph/movement/schema_projection';
-export type { AdapterSchemaProjection } from 'movement-engine/services/translation_graph/movement/schema_projection';
+} from 'movement-engine/public/catalog';
+export type { AdapterSchemaProjection } from 'movement-engine/public/catalog';
 
 // ── Team catalog assembly (I/O) ─────────────────────────────────────────────
 

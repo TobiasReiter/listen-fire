@@ -147,8 +147,11 @@ jobs:
           MOVEMENT_CATALOG_DIFFERENTIAL: "1"
         run: pnpm run test --testPathPattern 'catalog_differential'
       - name: Engine shim, against a double and through the committed artifact
+        working-directory: packages/movement-engine
+        run: pnpm run test --testPathPattern 'movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_traverse|rust_verbs)\.unit\.test\.ts$'
+      - name: Engine shim, the cases that still need the platform
         working-directory: apps/api
-        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_write|rust_traverse|rust_verbs|rust_extract|program_check|seam_guard)\.unit\.test\.ts$'
+        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_write|rust_extract|program_check|seam_guard)\.unit\.test\.ts$'
       # What the crate tests still hold the Rust engine to from the TypeScript
       # (the ORDER BY / LIMIT plan, the priced cap) and what Rust does with the
       # pattern programs: a change that moves one must move the oracle. The

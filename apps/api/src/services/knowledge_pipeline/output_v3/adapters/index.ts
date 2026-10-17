@@ -12,10 +12,10 @@ import { getSlackClient, slackCredsParser } from '../../../../adapters/slack/web
 import { googleCredsParser } from '../../../../adapters/google/authClient';
 import { GoogleDriveClient } from '../../../../adapters/google/driveClient';
 import { GoogleSheetsApiClient } from '../../../../adapters/googleSheets/apiClient';
-import { webhookGraphOutputConfigSchema } from 'movement-engine/adapters/webhook/configSchema';
+import { webhookGraphOutputConfigSchema } from 'movement-engine/public/adapter-config';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { decryptToken } from '../../../../lib/credentials';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { createAttioV3Adapter } from './attio';
 import { createAffinityV3Adapter } from './affinity';
 import { createAirtableV3Adapter } from './airtable';

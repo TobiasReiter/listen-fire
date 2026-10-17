@@ -15,7 +15,7 @@ import { createPublicKey, type KeyObject } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { SYSTEM_ACTIONS, type SystemCallerVerdict, type SystemCallerVerifier } from './verifier';
 
 interface OidcVerifierOptions {

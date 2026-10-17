@@ -9,7 +9,7 @@
 
 import type { AskId } from '../../../../generated/kysely/asks/Ask';
 import type { TriggerRunId } from '../../../../generated/kysely/automations/TriggerRun';
-import type { CorrelatedAwait } from 'movement-engine/services/run_host/store';
+import type { CorrelatedAwait } from 'movement-engine/public/run-host';
 
 import { getAsksQb, getAutomationsQb } from '../../../../lib/kysely';
 import { postgresRunHostStore } from '../../../movement_engine/run_host_store';

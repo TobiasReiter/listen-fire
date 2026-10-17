@@ -19,7 +19,7 @@ import type { WorkKindRegistration } from '../work/drain';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WebhookSubscriptionId } from '../../generated/kysely/automations/WebhookSubscription';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getAutomationsQb } from '../../lib/kysely';
 import { HOUR } from '../../constants';
 import { MOVEMENT_LISTEN_PROVISIONER } from '../translation_graph/movement/listen_subscriptions';

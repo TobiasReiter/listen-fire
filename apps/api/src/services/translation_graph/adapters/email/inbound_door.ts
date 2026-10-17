@@ -37,7 +37,7 @@ import type { InboundEmailDecision, MailgunStore, RoutableMessage } from 'moveme
 import { admitMailgunMail } from 'movement-engine/public/inbound';
 
 import { getAutomationsQb } from '../../../../lib/kysely';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { sendSlackNotification } from '../../../../lib/slack';
 import { findTriggerByInboundKey } from '../../storage/tg_table';
 import { principalDirectory } from '../../../principal';

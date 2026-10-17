@@ -18,7 +18,7 @@ import type { ExternalServiceCredentialsId } from '../../../generated/kysely/aut
 import { getAutomationsQb } from '../../../lib/kysely';
 import { decryptToken } from '../../../lib/credentials';
 import { apiBaseUrl } from '../../../lib/api_base_url';
-import { describeError } from 'movement-engine/lib/utils/error';
+import { describeError } from 'movement-engine/public/utils';
 
 /** Where the graph lives, and what proves we may read it. */
 export interface KgCredentials {

@@ -6,12 +6,12 @@ import type { TeamId } from '../../../generated/kysely/core/Team';
 import type {
   ActingUser,
   Adapter,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { Expression } from 'movement-engine/services/knowledge_pipeline/output_v3/expression';
+} from 'movement-engine/public/adapter';
+import type { MutationContext } from 'movement-engine/public/adapter';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
+import type { Expression } from 'movement-engine/public/catalog';
 import type { ActionResultRecord } from './action_plan';
-import type { SchemaRef, SourcePosition } from 'movement-engine/services/translation_graph/types';
+import type { SchemaRef, SourcePosition } from 'movement-engine/public/catalog';
 import type { Batcher } from './evaluator/batcher';
 import type { ExtractState } from './evaluator/extract';
 import type { FactExtractor } from './batched_extraction';

@@ -19,7 +19,7 @@
 
 import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import {
   beginOAuth2Connect,
   createPendingStates,
@@ -30,7 +30,7 @@ import {
   type OAuth2Attempt,
   type OAuth2Declaration,
 } from 'movement-engine/public/secrets';
-import { GMAIL_READONLY_SCOPE } from 'movement-engine/lib/google_cloud';
+import { GMAIL_READONLY_SCOPE } from 'movement-engine/public/google-cloud';
 
 import type { Credentials } from 'google-auth-library';
 
