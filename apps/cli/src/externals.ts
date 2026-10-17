@@ -1,7 +1,10 @@
 // Externals: the project's installed modules (a folder each, like
-// node_modules), each with an `lf-external.yaml`. An adapter external speaks
-// adapter protocol 2 over HTTP: the host starts its command (or reaches its
-// url) and every adapter call is one protocol call. Nothing about an external
+// node_modules), each with an `lf-external.yaml`. An external speaks adapter
+// protocol 2 over HTTP: the host starts its command (or reaches its url, or
+// serves its `module` with serve-module) and every call is one protocol
+// call. An adapter external is a system a movement connects to; a plugin
+// external serves a package of plugins a movement imports
+// (``import { `@lf/web` as web } from plugins``). Nothing about an external
 // lives in lf itself.
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -10,7 +13,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parse } from 'yaml';
 import { z } from 'zod';
-import { METHODS, WireListenDeclarations, WireManifestProtocolVersion, type WireCredentialDeclarationShape, type WireInboundDeclarationShape } from 'engine-contracts';
+import { METHODS, WireListenDeclarations, WireManifestProtocolVersion, type WireCredentialDeclarationShape, type WireInboundDeclarationShape, type WirePluginsDeclarationShape } from 'engine-contracts';
 import { authHeader, parseWireResult, postRpc } from 'movement-engine/services/translation_graph/protocol/client';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import type { RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
@@ -25,6 +28,10 @@ const ExternalManifest = z.object({
   protocol: z.literal(2).default(2),
   command: z.array(z.string()).min(1).optional(),
   url: z.string().url().optional(),
+  /** A module (a path, relative to the folder, or a package name) the host
+   *  serves itself with serve-module: the same module the platform loads in
+   *  process. */
+  module: z.string().min(1).optional(),
   auth: z.object({ kind: z.literal('bearer'), field: z.string() }).optional(),
   webhook: z
     .object({
@@ -56,8 +63,9 @@ export function scanExternals(project: Project): External[] {
     if (!parsed.success) {
       throw new Error(`${file}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
     }
-    if (parsed.data.kind === 'adapter' && parsed.data.command === undefined && parsed.data.url === undefined) {
-      throw new Error(`${file}: an adapter external needs a \`command\` or a \`url\``);
+    const reaches = [parsed.data.command, parsed.data.url, parsed.data.module].filter((how) => how !== undefined).length;
+    if (reaches !== 1) {
+      throw new Error(`${file}: an external needs exactly one of \`command\`, \`url\` or \`module\``);
     }
     found.push({ dir, manifest: parsed.data });
   }
@@ -81,6 +89,9 @@ export interface RunningExternal {
   credentials: WireCredentialDeclarationShape[];
   /** How its manifest says its webhooks are signed (doors.ts). */
   inbound?: WireInboundDeclarationShape;
+
+  /** The plugins it serves (a plugin external). */
+  plugins?: WirePluginsDeclarationShape;
   stop(): void;
 }
 
@@ -120,7 +131,7 @@ export async function rpc(input: {
   );
 }
 
-/** Start (or reach) every adapter external and read its manifest. */
+/** Start (or reach) every external and read its manifest. */
 export async function startExternals(input: {
   project: Project;
   externals: External[];
@@ -133,7 +144,6 @@ export async function startExternals(input: {
   const running = new Map<string, RunningExternal>();
   try {
     for (const external of input.externals) {
-      if (external.manifest.kind !== 'adapter') continue;
       const { baseUrl, stop } = await reach(input.project, external, input.hostUrl);
       const shell: RunningExternal = {
         external,
@@ -157,8 +167,12 @@ export async function startExternals(input: {
       if (!version.success) throw new Error(`external "${external.manifest.name}": ${version.error.issues[0]?.message}`);
       const manifest = parseWireResult(METHODS.manifest.result, raw, { method: 'manifest', adapter: external.manifest.name });
       if (manifest.adapterType !== external.manifest.name) {
-        throw new Error(`external folder "${external.manifest.name}" serves adapter "${manifest.adapterType}"; the names must agree`);
+        throw new Error(`external folder "${external.manifest.name}" serves "${manifest.adapterType}"; the names must agree`);
       }
+      if (external.manifest.kind === 'plugin' && manifest.plugins === undefined) {
+        throw new Error(`external "${external.manifest.name}" is a plugin external, but its manifest declares no plugins`);
+      }
+      if (manifest.plugins !== undefined) shell.plugins = manifest.plugins;
       shell.methods = manifest.methods;
       shell.supportedTriggers = manifest.supportedTriggers;
       shell.runtimeCapabilities = manifest.runtimeCapabilities;
@@ -180,9 +194,13 @@ export function credentialFor(credentials: Map<string, Credential>, external: st
   return undefined;
 }
 
+/** serve-module, run by this node: lf serves a module external itself. */
+const SERVE_MODULE = require.resolve('module-kit/bin/serve-module.cjs');
+
 async function reach(project: Project, external: External, hostUrl: string | undefined): Promise<{ baseUrl: string; stop: () => void }> {
   if (external.manifest.url !== undefined) return { baseUrl: external.manifest.url, stop: () => {} };
-  const [command, ...args] = external.manifest.command ?? [];
+  const [command, ...args] =
+    external.manifest.module !== undefined ? [process.execPath, SERVE_MODULE, external.manifest.module] : (external.manifest.command ?? []);
   if (command === undefined) throw new Error(`external "${external.manifest.name}" has no command`);
   const stateDir = join(project.lfDir, 'externals', external.manifest.name);
   mkdirSync(stateDir, { recursive: true });

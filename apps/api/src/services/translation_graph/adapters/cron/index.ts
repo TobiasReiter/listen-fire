@@ -43,10 +43,10 @@ import type {
   SourcePosition,
 } from 'movement-engine/services/translation_graph/types';
 
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import { CRON_HANDBOOK_SECTION } from './handbook_section';
 import { META_RECORD_TYPE, positionData } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
+import { BaseAdapter } from 'module-kit/adapter/base';
 
 /** Stable adapter identifier — the trigger `kind` of cron-derived rows. */
 export const CRON_ADAPTER_TYPE = 'cron';

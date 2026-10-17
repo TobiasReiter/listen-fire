@@ -54,9 +54,9 @@ import { webhookEventToDiscriminable } from '../../../webhook_sync/event_convers
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { fileHandle, ownedFileSource, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
 import { META_RECORD_TYPE, makeStablePosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { uniformWalk } from '../hop';
-import { BaseAdapter } from '../base';
-import { naturalName } from '../name_resolution';
+import { uniformWalk } from 'module-kit/adapter/hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import { decryptToken } from '../../../../lib/credentials';
 import { getQb, getAutomationsQb } from '../../../../lib/kysely';
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../../lib/recording';

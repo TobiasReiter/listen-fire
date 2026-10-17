@@ -63,7 +63,7 @@ import { makeFileTextResolver, type FileTextReader } from './file_text';
 import { makeAnthropicExtractCallClient, makeAnthropicLlmClient } from './llm_clients';
 import { postgresRawTextStore, type RawTextStore } from './raw_text_store';
 import { deleteBinding, findBoundCounterpart, recordBinding } from './record_bindings';
-import { registryTransformInvoker, type TransformInvoker } from './transform_invoker';
+import { transformInvokerFor, type TransformInvoker } from './transform_invoker';
 
 export function productionEngineHost(input: {
   teamId: TeamId;
@@ -133,7 +133,7 @@ export function productionEngineHost(input: {
     llm: {
       client: billedLlmClient(makeAnthropicLlmClient({ cancel }), usage),
       extractCall: billedExtractCallClient(makeAnthropicExtractCallClient({ cancel }), usage),
-      transforms: billedTransforms(registryTransformInvoker, usage),
+      transforms: billedTransforms(transformInvokerFor(input.teamId), usage),
       // The judge is a model call like any other.
       arbitrateEntities: (arbitration) => usage(() => refusingPastBudget(() => meteredArbitration(arbitration))),
     },

@@ -120,13 +120,16 @@ importers:
         version: 7.12.1(encoding@0.1.13)
       '@google/genai':
         specifier: ^2.24.0
-        version: 2.24.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12))
+        version: 2.24.0(@modelcontextprotocol/sdk@1.27.1(zod@4.1.12))
       '@langchain/core':
         specifier: 0.3.43
         version: 0.3.43(openai@5.22.0(ws@8.18.0)(zod@4.1.12))
       '@langchain/openai':
         specifier: 0.5.2
         version: 0.5.2(@langchain/core@0.3.43(openai@5.22.0(ws@8.18.0)(zod@4.1.12)))(encoding@0.1.13)(ws@8.18.0)
+      '@lf/dealroom':
+        specifier: workspace:*
+        version: link:../../modules/dealroom
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12)
@@ -298,6 +301,9 @@ importers:
       express-winston:
         specifier: 4.2.0
         version: 4.2.0(winston@3.14.2)
+      file-text:
+        specifier: workspace:*
+        version: link:../../packages/file-text
       form-data:
         specifier: 4.0.0
         version: 4.0.0
@@ -361,6 +367,9 @@ importers:
       model-providers:
         specifier: workspace:*
         version: link:../../packages/model-providers
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
       movement-engine:
         specifier: workspace:*
         version: link:../../packages/movement-engine
@@ -385,9 +394,6 @@ importers:
       playwright:
         specifier: 1.47.0
         version: 1.47.0
-      file-text:
-        specifier: workspace:*
-        version: link:../../packages/file-text
       principal:
         specifier: workspace:*
         version: link:../../packages/principal
@@ -545,6 +551,9 @@ importers:
       engine-contracts:
         specifier: workspace:*
         version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
       movement-engine:
         specifier: workspace:*
         version: link:../../packages/movement-engine
@@ -762,6 +771,37 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
+  modules/dealroom:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
   packages/engine-contracts:
     dependencies:
       movement-lang:
@@ -774,6 +814,49 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  packages/file-text:
+    dependencies:
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
+      hot-formula-parser:
+        specifier: ^4.0.0
+        version: 4.0.0
+      sax:
+        specifier: 1.4.1
+        version: 1.4.1
+      tmp:
+        specifier: 0.2.3
+        version: 0.2.3
+      unpdf:
+        specifier: 1.8.1
+        version: 1.8.1
+      yauzl-promise:
+        specifier: 4.0.0
+        version: 4.0.0
+    devDependencies:
+      '@types/hot-formula-parser':
+        specifier: 4.0.4
+        version: 4.0.4
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      '@types/sax':
+        specifier: 1.2.7
+        version: 1.2.7
+      '@types/tmp':
+        specifier: 0.2.6
+        version: 0.2.6
+      '@types/yauzl-promise':
+        specifier: 4.0.1
+        version: 4.0.1
       typescript:
         specifier: 5.5.4
         version: 5.5.4
@@ -795,7 +878,7 @@ importers:
         version: 0.19.10(zod@4.1.12)
       '@google/genai':
         specifier: ^2.24.0
-        version: 2.24.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12))
+        version: 2.24.0(@modelcontextprotocol/sdk@1.27.1(zod@4.1.12))
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
@@ -805,6 +888,37 @@ importers:
       openai:
         specifier: 5.22.0
         version: 5.22.0(ws@8.18.0)(zod@4.1.12)
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  packages/module-kit:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../engine-contracts
+      movement-engine:
+        specifier: workspace:*
+        version: link:../movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../movement-lang
+      tsx:
+        specifier: 4.21.0
+        version: 4.21.0
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
       typescript:
         specifier: 5.5.4
         version: 5.5.4
@@ -867,49 +981,6 @@ importers:
       ts-jest:
         specifier: 29.2.5
         version: 29.2.5(@babel/core@7.24.5)(@jest/transform@29.7.0)(@jest/types@29.6.3)(babel-jest@29.7.0(@babel/core@7.24.5))(jest@29.7.0(babel-plugin-macros@3.1.0))(typescript@5.5.4)
-
-  packages/file-text:
-    dependencies:
-      exceljs:
-        specifier: ^4.4.0
-        version: 4.4.0
-      hot-formula-parser:
-        specifier: ^4.0.0
-        version: 4.0.0
-      sax:
-        specifier: 1.4.1
-        version: 1.4.1
-      tmp:
-        specifier: 0.2.3
-        version: 0.2.3
-      unpdf:
-        specifier: 1.8.1
-        version: 1.8.1
-      yauzl-promise:
-        specifier: 4.0.0
-        version: 4.0.0
-    devDependencies:
-      '@types/hot-formula-parser':
-        specifier: 4.0.4
-        version: 4.0.4
-      '@types/jest':
-        specifier: 29.5.14
-        version: 29.5.14
-      '@types/node':
-        specifier: 20.16.5
-        version: 20.16.5
-      '@types/sax':
-        specifier: 1.2.7
-        version: 1.2.7
-      '@types/tmp':
-        specifier: 0.2.6
-        version: 0.2.6
-      '@types/yauzl-promise':
-        specifier: 4.0.1
-        version: 4.0.1
-      typescript:
-        specifier: 5.5.4
-        version: 5.5.4
 
   packages/principal:
     devDependencies:
@@ -12690,7 +12761,7 @@ snapshots:
       - encoding
       - supports-color
 
-  '@google/genai@2.24.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12))':
+  '@google/genai@2.24.0(@modelcontextprotocol/sdk@1.27.1(zod@4.1.12))':
     dependencies:
       google-auth-library: 10.3.0
       p-retry: 4.6.2

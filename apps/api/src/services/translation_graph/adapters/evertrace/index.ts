@@ -35,9 +35,9 @@ import {
   positionData,
 } from 'movement-engine/services/translation_graph/types';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { BaseAdapter } from '../base';
-import { uniformWalk } from '../hop';
-import { naturalName } from '../name_resolution';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { uniformWalk } from 'module-kit/adapter/hop';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import {
   EvertraceApiError,
   type EvertraceApiClient,

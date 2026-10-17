@@ -19,7 +19,7 @@ import type { RemoteAdapterConfig } from 'movement-engine/services/translation_g
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
 import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
-import { createAdapterProtocolHandler } from '../../../protocol/server';
+import { createAdapterProtocolHandler } from 'module-kit';
 import { createRemoteAdapter, fetchRemoteManifest, RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
 import { fileValue } from 'movement-engine/services/translation_graph/adapter';
 

@@ -36,8 +36,8 @@ import { fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcR
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import type { MethodName, RpcResponseShape } from 'engine-contracts';
+import type { Adapter } from 'movement-engine/public/adapter';
+import type { MethodName, RpcResponseShape, WireCredentialShape } from 'engine-contracts';
 
 /**
  * Protocol method names that exist purely as server-side concepts (no
@@ -188,9 +188,177 @@ function send(res: ServerResponse, status: number, body: RpcResponseShape): void
   res.end(payload);
 }
 
-function errorEnvelope(code: string, message: string, retryable: boolean): RpcResponseShape {
+export function errorEnvelope(code: string, message: string, retryable: boolean): RpcResponseShape {
   return { ok: false, error: { code, message, retryable } };
 }
+
+/** What one request is answered with: the HTTP status and the envelope. */
+export interface ProtocolAnswer {
+  status: number;
+  body: RpcResponseShape;
+}
+
+/** A request that passed the envelope, version, method and params checks. */
+export interface CheckedRequest {
+  method: MethodName;
+  /** The request's own params, not zod's parsed copy: the wire schemas are
+   *  structural mirrors that drop keys they don't name, and validation is the
+   *  gate, not a transform. */
+  params: unknown;
+  credential?: WireCredentialShape;
+}
+
+/**
+ * Read one request and check it before anything is interpreted: malformed
+ * transport answers HTTP 400; a protocol version other than ours, an unknown
+ * method or params that do not match the method's schema answer in the
+ * envelope (HTTP 200, not retryable).
+ */
+export async function readProtocolRequest(
+  req: IncomingMessage,
+): Promise<{ ok: true; request: CheckedRequest } | { ok: false; answer: ProtocolAnswer }> {
+  let parsed;
+  try {
+    const raw = await readBody(req);
+    parsed = RpcRequest.parse(JSON.parse(raw));
+  } catch (err) {
+    // Genuinely malformed transport (non-JSON / envelope shape violation)
+    // → HTTP 400. The client raises a (retryable) transport error; a
+    // well-formed client never hits this.
+    return {
+      ok: false,
+      answer: {
+        status: 400,
+        body: errorEnvelope('bad_request', `Malformed request: ${err instanceof Error ? err.message : String(err)}`, false),
+      },
+    };
+  }
+
+  const { method, params } = parsed;
+
+  // The envelope survives a version change; what rides inside it does not
+  // (v2 moved the wire to natural names), so a mismatched peer is refused
+  // before anything is interpreted.
+  if (parsed.protocolVersion !== PROTOCOL_VERSION) {
+    return { ok: false, answer: { status: 200, body: errorEnvelope('protocol_version', `expected protocol version ${PROTOCOL_VERSION}`, false) } };
+  }
+
+  // Unknown method (not in the registry) is a dispatch-level failure.
+  if (!isMethodName(method)) {
+    return { ok: false, answer: { status: 200, body: errorEnvelope('method_not_implemented', `Unknown method "${method}".`, false) } };
+  }
+
+  const validated = METHODS[method].params.safeParse(params);
+  if (!validated.success) {
+    return { ok: false, answer: { status: 200, body: errorEnvelope('bad_request', describeParamsError(method, validated.error), false) } };
+  }
+  return { ok: true, request: { method, params, ...(parsed.credential !== undefined ? { credential: parsed.credential } : {}) } };
+}
+
+/** The `manifest` answer for an adapter, synthesised from its readonly props. */
+export function adapterManifestResult(adapter: Adapter, methods: readonly string[]): Record<string, unknown> {
+  return {
+    protocolVersion: MANIFEST_PROTOCOL_VERSION,
+    adapterType: adapter.adapterType,
+    supportedTriggers: adapter.supportedTriggers,
+    runtimeCapabilities: adapter.runtimeCapabilities(),
+    methods,
+    webhookEventTypeId: adapter.webhookEventTypeId,
+  };
+}
+
+/** The protocol methods an adapter instance implements, `manifest` included. */
+export function adapterProtocolMethods(adapter: Adapter): MethodName[] {
+  return implementedMethods(adapter);
+}
+
+/**
+ * Answer one checked request from an in-process adapter. `manifest` is the
+ * answer to the `manifest` method (default: synthesised from the adapter);
+ * every other method dispatches to the adapter member of that name.
+ */
+export async function answerAdapterRequest(
+  opts: {
+    adapter: Adapter;
+    manifest: () => unknown;
+    warn: (message: string) => void;
+  },
+  request: CheckedRequest,
+): Promise<ProtocolAnswer> {
+  const { adapter, warn } = opts;
+  const { method, params } = request;
+
+  // ── Manifest ──────────────────────────────────────────────────────────
+  if (method === MANIFEST_METHOD) return { status: 200, body: { ok: true, result: opts.manifest() } };
+
+  const call = implementation(adapter, method);
+  if (!call) {
+    return { status: 200, body: errorEnvelope('method_not_implemented', `Adapter does not implement "${method}".`, false) };
+  }
+
+  // `resolveFileRef`'s in-process answer is a stream, which can't ride the
+  // envelope; the wire answer is a URL the client fetches. Only a ref that
+  // already carries one is servable — the kit hosts no bytes itself.
+  if (method === 'resolveFileRef') {
+    const { ref } = METHODS.resolveFileRef.params.parse(params);
+    if (typeof ref.url === 'string') {
+      return {
+        status: 200,
+        body: { ok: true, result: { url: ref.url, ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}) } },
+      };
+    }
+    return {
+      status: 200,
+      body: errorEnvelope(
+        'method_not_implemented',
+        'resolveFileRef: this file is not served by URL, and remote adapters serve bytes only by URL.',
+        false,
+      ),
+    };
+  }
+
+  // ── Dispatch ──────────────────────────────────────────────────────────
+  const args = callArgs(method, params);
+  try {
+    if (PAGED_METHODS.has(method)) {
+      const result = await servePage({
+        adapter,
+        method,
+        call,
+        native: adapterMember(adapter, method)?.name === 'iterateRelatedPage',
+        params,
+        warn,
+      });
+      return { status: 200, body: { ok: true, result } };
+    }
+
+    const result = await call(...(method === 'createRecord' || method === 'updateRecord' ? [await withDeclaredFiles(adapter, args[0])] : args));
+    return { status: 200, body: { ok: true, result: result ?? null } };
+  } catch (err) {
+    return { status: 200, body: errorAnswer(method, err) };
+  }
+}
+
+/** A throw from served code, as the envelope says it: a bad request is not
+ *  retryable; anything else is a retryable dispatch error the engine decides
+ *  whether to retry (a source-only adapter that throws on writes surfaces here
+ *  as a structured envelope, not a 500). */
+export function errorAnswer(method: string, err: unknown): RpcResponseShape {
+  if (err instanceof AdapterBadRequestError) return errorEnvelope('bad_request', `${method}: ${err.message}`, false);
+  return errorEnvelope('adapter_error', err instanceof Error ? err.message : String(err), true);
+}
+
+/** Write one answer. */
+export function sendAnswer(res: ServerResponse, answer: ProtocolAnswer): void {
+  send(res, answer.status, answer.body);
+}
+
+/** The 401 an unauthenticated request gets: outside the envelope, so the
+ *  client's transport layer treats it as any other non-2xx (`postRpc`). */
+export const UNAUTHORIZED: ProtocolAnswer = {
+  status: 401,
+  body: { ok: false, error: { code: 'unauthorized', message: 'Authentication failed.', retryable: false } },
+};
 
 /**
  * Build the server handler for one adapter instance.
@@ -217,158 +385,19 @@ export function createAdapterProtocolHandler(opts: {
   const advertisedMethods = opts.methods ?? implementedMethods(adapter);
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // ── Auth ──────────────────────────────────────────────────────────────
-    // 401 (not an in-envelope error) so the client's transport layer treats
-    // it the same as any other non-2xx — see `client.ts` `postRpc`.
     if (authenticate && !authenticate(req.headers)) {
-      send(res, 401, errorEnvelope('unauthorized', 'Authentication failed.', false));
+      sendAnswer(res, UNAUTHORIZED);
       return;
     }
-
-    // ── Parse ─────────────────────────────────────────────────────────────
-    let parsed;
-    try {
-      const raw = await readBody(req);
-      parsed = RpcRequest.parse(JSON.parse(raw));
-    } catch (err) {
-      // Genuinely malformed transport (non-JSON / envelope shape violation)
-      // → HTTP 400. The client raises a (retryable) transport error; a
-      // well-formed client never hits this.
-      send(
-        res,
-        400,
-        errorEnvelope(
-          'bad_request',
-          `Malformed request: ${err instanceof Error ? err.message : String(err)}`,
-          false,
-        ),
-      );
+    const read = await readProtocolRequest(req);
+    if (!read.ok) {
+      sendAnswer(res, read.answer);
       return;
     }
-
-    const { method, params } = parsed;
-
-    // The envelope survives a version change; what rides inside it does not
-    // (v2 moved the wire to natural names), so a mismatched peer is refused
-    // before anything is interpreted.
-    if (parsed.protocolVersion !== PROTOCOL_VERSION) {
-      send(
-        res,
-        200,
-        errorEnvelope('protocol_version', `expected protocol version ${PROTOCOL_VERSION}`, false),
-      );
-      return;
-    }
-
-    // Unknown method (not in the registry) is a dispatch-level failure.
-    if (!isMethodName(method)) {
-      send(
-        res,
-        200,
-        errorEnvelope('method_not_implemented', `Unknown method "${method}".`, false),
-      );
-      return;
-    }
-
-    const validated = METHODS[method].params.safeParse(params);
-    if (!validated.success) {
-      send(res, 200, errorEnvelope('bad_request', describeParamsError(method, validated.error), false));
-      return;
-    }
-
-    // ── Manifest ──────────────────────────────────────────────────────────
-    if (method === MANIFEST_METHOD) {
-      send(res, 200, {
-        ok: true,
-        result: {
-          protocolVersion: MANIFEST_PROTOCOL_VERSION,
-          adapterType: adapter.adapterType,
-          supportedTriggers: adapter.supportedTriggers,
-          runtimeCapabilities: adapter.runtimeCapabilities(),
-          methods: advertisedMethods,
-          webhookEventTypeId: adapter.webhookEventTypeId,
-        },
-      });
-      return;
-    }
-
-    const call = implementation(adapter, method);
-    if (!call) {
-      send(
-        res,
-        200,
-        errorEnvelope(
-          'method_not_implemented',
-          `Adapter does not implement "${method}".`,
-          false,
-        ),
-      );
-      return;
-    }
-
-    // `resolveFileRef`'s in-process answer is a stream, which can't ride the
-    // envelope; the wire answer is a URL the client fetches. Only a ref that
-    // already carries one is servable — the kit hosts no bytes itself.
-    if (method === 'resolveFileRef') {
-      const { ref } = METHODS.resolveFileRef.params.parse(params);
-      if (typeof ref.url === 'string') {
-        send(res, 200, {
-          ok: true,
-          result: { url: ref.url, ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}) },
-        });
-      } else {
-        send(
-          res,
-          200,
-          errorEnvelope(
-            'method_not_implemented',
-            'resolveFileRef: this file is not served by URL, and remote adapters serve bytes only by URL.',
-            false,
-          ),
-        );
-      }
-      return;
-    }
-
-    // ── Dispatch ──────────────────────────────────────────────────────────
-    // The adapter receives the request's own params, not zod's parsed copy:
-    // the wire schemas are structural mirrors that drop keys they don't name,
-    // and validation is the gate, not a transform.
-    const args = callArgs(method, params);
-    try {
-      if (PAGED_METHODS.has(method)) {
-        const result = await servePage({
-          adapter,
-          method,
-          call,
-          native: adapterMember(adapter, method)?.name === 'iterateRelatedPage',
-          params,
-          warn,
-        });
-        send(res, 200, { ok: true, result });
-        return;
-      }
-
-      const result = await call(...(method === 'createRecord' || method === 'updateRecord' ? [await withDeclaredFiles(adapter, args[0])] : args));
-      send(res, 200, { ok: true, result: result ?? null });
-    } catch (err) {
-      if (err instanceof AdapterBadRequestError) {
-        send(res, 200, errorEnvelope('bad_request', `${method}: ${err.message}`, false));
-        return;
-      }
-      // Any other throw inside the adapter becomes a retryable dispatch error —
-      // the engine decides whether to retry. Source-only adapters that throw
-      // on writes (email) surface here as a structured envelope, not a 500.
-      send(
-        res,
-        200,
-        errorEnvelope(
-          'adapter_error',
-          err instanceof Error ? err.message : String(err),
-          true,
-        ),
-      );
-    }
+    sendAnswer(
+      res,
+      await answerAdapterRequest({ adapter, warn, manifest: () => adapterManifestResult(adapter, advertisedMethods) }, read.request),
+    );
   };
 }
 

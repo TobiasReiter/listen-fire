@@ -110,7 +110,7 @@ import {
   naturalName,
   AdapterNameDriftError,
   type AdapterIntrospection,
-} from '../../translation_graph/adapters/name_resolution';
+} from 'module-kit/adapter/name_resolution';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';

@@ -38,7 +38,7 @@ test('a model call answers the cost the shared table prices its tokens at', asyn
         },
       ],
     ]);
-    const answer = await modelCalls(credentials).client.call({
+    const answer = await modelCalls(credentials, () => undefined).client.call({
       system: 's',
       userMessage: 'u',
       model: 'sonnet',

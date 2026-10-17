@@ -100,7 +100,7 @@ pub async fn open_checking(project: &Project) -> Result<Opened, String> {
     let externals = scan_externals(project)?;
     let running = start_externals(project, &externals, &credentials, LOCAL_TENANT).await?;
     let mut schemas = IndexMap::new();
-    for r in &running {
+    for r in running.iter().filter(|r| !r.is_plugin()) {
         schemas.insert(r.external.manifest.name.clone(), describe_external(r, &credentials).await?);
     }
     // Scanned again after the externals start, as the TypeScript session does.

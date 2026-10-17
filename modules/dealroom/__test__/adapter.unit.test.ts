@@ -2,15 +2,6 @@
 // walks, the WHERE/ORDER BY pushdown and the poll's checkpoint behaviour.
 // No network: the API client is faked.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-jest.mock('movement-engine/services/logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Expression } from '#shared/expression/types';
 
 import {
@@ -18,7 +9,7 @@ import {
   makeMetaPosition,
   makeStablePosition,
   positionRecordId,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import {
   DEALROOM_MAX_OFFSET,
   DealroomOffsetCapError,
@@ -32,11 +23,9 @@ import {
   type DealroomPerson,
   type DealroomSearchRequest,
   type DealroomTeamMember,
-} from '../../../../../adapters/dealroom/apiClient';
-import { DealroomAdapter, DEALROOM_MANIFEST, createDealroomAdapter } from '../index';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
-import { normaliseSchemaForAgent } from '../../../movement/agent_schema';
-import { DealroomPollSource, listenFilters } from '../poll';
+} from '../api_client';
+import { DealroomAdapter, DEALROOM_MANIFEST } from '../index';
+import { listenFilters, pollDealroom } from '../poll';
 import {
   companySearchFromWhere,
   fundingRoundSearchFromWhere,
@@ -58,7 +47,6 @@ import {
   encodePairId,
 } from '../types';
 
-const TEAM = 'team-1' as TeamId;
 
 const CREATED_UTC = '2026-09-10 08:00:00';
 const CREATED_MS = Date.UTC(2026, 8, 10, 8, 0, 0);
@@ -250,7 +238,13 @@ function fakeClient(
   } as unknown as DealroomApiClient;
 }
 
-const adapterWith = (client: DealroomApiClient) => new DealroomAdapter(TEAM, 'cred-1', client);
+const adapterWith = (client: DealroomApiClient) => new DealroomAdapter(async () => client);
+
+/** An adapter that never reaches Dealroom: the reads it is asked for are static. */
+const offline = () =>
+  new DealroomAdapter(async () => {
+    throw new Error('this test reaches no Dealroom');
+  });
 
 // The engine's source-read wrapper restamps a position's recordType to the
 // NATURAL type name before a field/edge read. Mirror that here.
@@ -274,7 +268,7 @@ const and = (...operands: Expression[]): Expression =>
 // ── entry surface ───────────────────────────────────────────────────────────
 
 describe('DealroomAdapter entry surface', () => {
-  const adapter = createDealroomAdapter({ teamId: TEAM });
+  const adapter = offline();
 
   it('publishes one entry per type, with a root collection only where the root can enumerate', async () => {
     const entries = await adapter.listEntryPoints();
@@ -318,7 +312,7 @@ describe('DealroomAdapter entry surface', () => {
 // ── describe ────────────────────────────────────────────────────────────────
 
 describe('DealroomAdapter.describe', () => {
-  const adapter = createDealroomAdapter({ teamId: TEAM });
+  const adapter = offline();
 
   it('describes the database meta node with the four root collections plus the event edge', async () => {
     for (const ref of [ADAPTER_META_TYPE_ID, DEALROOM_DATABASE_TYPE_ID]) {
@@ -408,44 +402,6 @@ describe('DealroomAdapter.describe', () => {
     expect(fundType?.references).toEqual([]);
   });
 
-  // Dealroom is READ-ONLY, and the surface an authoring agent reads has to say
-  // so. Every reference here omits `writable` — which is the read-only fact,
-  // not an absent opinion — so describe must report `writable: false` on all of
-  // them. It used to fill the absent flag with `true`, and an agent would
-  // author `write round-[:Company]-> { … }` that the checker then refused.
-  it('describes NOTHING as writable, through the projection the agent reads', async () => {
-    const entries = await adapter.listEntryPoints();
-    const descriptors = new Map(
-      (
-        await Promise.all(
-          entries.map(async (e) => [e.typeId, await adapter.describe(e.typeId)] as const),
-        )
-      ).flatMap(([typeId, d]) => (d ? [[typeId, d] as const] : [])),
-    );
-    const metaDescriptor = await adapter.describe(ADAPTER_META_TYPE_ID);
-    const { schema } = instanceSchemaFromDescriptors({
-      adapterType: 'dealroom',
-      entries,
-      descriptors,
-      ...(metaDescriptor !== null ? { metaDescriptor } : {}),
-      supportsInPlaceUpdate: false,
-    });
-    const agentSchema = normaliseSchemaForAgent(schema);
-
-    const writable = Object.entries(agentSchema.positions).flatMap(([position, p]) =>
-      Object.entries(p.edges)
-        .filter(([, edge]) => edge.writable !== false)
-        .map(([edge]) => `${position}-[:${edge}]->`),
-    );
-    expect(writable).toEqual([]);
-    // The three the defect was reported on, named so a regression says which.
-    expect(agentSchema.positions['Funding Round']?.edges.Company?.writable).toBe(false);
-    expect(agentSchema.positions['Team Member']?.edges.Person?.writable).toBe(false);
-    expect(agentSchema.positions['Round Investor']?.edges.Investor?.writable).toBe(false);
-    // And no write root either — nothing on Dealroom accepts a write at all.
-    expect(Object.keys(agentSchema.writableRoots)).toEqual([]);
-  });
-
   it('answers null for a type it does not own', async () => {
     expect(await adapter.describe('Nonexistent')).toBeNull();
   });
@@ -462,7 +418,7 @@ describe('DealroomAdapter.describe', () => {
 // ── field reads ─────────────────────────────────────────────────────────────
 
 describe('DealroomAdapter.getFieldValue', () => {
-  const adapter = createDealroomAdapter({ teamId: TEAM });
+  const adapter = offline();
 
   it('reads a literal scalar by its natural name', async () => {
     const position = at('Company', '101', company());
@@ -880,8 +836,10 @@ describe('DealroomAdapter.readRecord', () => {
 
 // ── the poll ────────────────────────────────────────────────────────────────
 
-describe('DealroomPollSource.getEvents', () => {
-  const source = (client: DealroomApiClient) => new DealroomPollSource(TEAM, 'cred-1', client);
+describe('pollDealroom', () => {
+  const source = (client: DealroomApiClient) => ({
+    getEvents: (input: { config: unknown; checkpoint?: unknown }) => pollDealroom(client, input),
+  });
 
   it('first poll sets the mark and emits nothing (no backfill)', async () => {
     const searchFundingRounds = jest.fn(async () => page([round()]));

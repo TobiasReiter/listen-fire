@@ -15,7 +15,9 @@ import {
   type CredentialSpec,
   type InstanceSchema,
   type LanguageVersion,
+  type PluginSpec,
 } from 'movement-lang';
+import { pluginSpecsOfManifest } from 'module-kit';
 import { z } from 'zod';
 import { triggerTypeSchema } from 'engine-contracts';
 import { collectFileListeners, type FileListener } from 'movement-engine/services/translation_graph/movement/file_listeners';
@@ -73,6 +75,7 @@ export function catalogOf(input: {
   for (const credential of input.credentials.values()) credentials[credential.name] = { adapters: [credential.external] };
   const adapters: CatalogAdapterInput[] = [];
   for (const [name, running] of input.running) {
+    if (running.external.manifest.kind === 'plugin') continue;
     // The hosted product holds a remote install's secret itself, so there it
     // constructs credential-free; here the secrets file names it, so an
     // external that authenticates takes the credential as an argument.
@@ -99,7 +102,7 @@ export function catalogOf(input: {
   return buildCatalogSnapshot({
     adapters,
     credentials,
-    plugins: {},
+    plugins: pluginsOf(input.running),
     files: Object.fromEntries(input.files.map((f) => [f.name, { source: f.source }])),
   });
 }
@@ -158,4 +161,33 @@ export function collectListens(files: MovementFile[], languageVersion: LanguageV
     }
     return collectFileListeners(program).map((listener) => ({ file, listener }));
   });
+}
+
+/**
+ * The plugins the project's plugin externals serve, keyed as a program spells
+ * them, each tagged with the package it is imported from. Two externals
+ * serving one plugin name would make a call mean two things: refused.
+ */
+export function pluginsOf(running: Map<string, RunningExternal>): Record<string, PluginSpec> {
+  const plugins: Record<string, PluginSpec> = {};
+  const servedBy = new Map<string, string>();
+  for (const [name, external] of running) {
+    if (external.plugins === undefined) continue;
+    for (const [plugin, spec] of Object.entries(pluginSpecsOfManifest({ plugins: external.plugins }))) {
+      const other = servedBy.get(plugin);
+      if (other !== undefined) throw new Error(`plugin "${plugin}" is served by both externals "${other}" and "${name}"`);
+      servedBy.set(plugin, name);
+      plugins[plugin] = spec;
+    }
+  }
+  return plugins;
+}
+
+/** The plugin external that serves `plugin` (either spelling). */
+export function pluginExternalFor(running: Map<string, RunningExternal>, plugin: string): RunningExternal | undefined {
+  const spelled = plugin.replace(/-/g, '_');
+  for (const external of running.values()) {
+    if (external.plugins?.plugins.some((p) => p.name.replace(/-/g, '_') === spelled)) return external;
+  }
+  return undefined;
 }

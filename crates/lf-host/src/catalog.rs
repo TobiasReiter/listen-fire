@@ -6,7 +6,7 @@
 
 use indexmap::IndexMap;
 
-use crate::externals::RunningExternal;
+use crate::externals::{RunningExternal, plugin_entries};
 use crate::json::{Js, Obj};
 use crate::obj;
 use crate::secrets::Credentials;
@@ -28,7 +28,7 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
     let mut enumerated = credential_specs.clone();
     movement_parser::util::js::object_key_order(&mut enumerated);
     let mut adapters = Obj::new();
-    for r in running {
+    for r in running.iter().filter(|r| !r.is_plugin()) {
         let name = &r.external.manifest.name;
         // The hosted product holds a remote install's secret itself, so there
         // it constructs credential-free; here the secrets file names it.
@@ -57,7 +57,7 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
         "contractVersion" => Js::Num(CATALOG_SNAPSHOT_VERSION.into()),
         "adapters" => Js::from(adapters),
         "credentials" => Js::from(credential_specs),
-        "plugins" => Js::from(Obj::new()),
+        "plugins" => Js::from(plugins_of(running)),
         "files" => Js::from(files),
     })
 }
@@ -118,4 +118,22 @@ fn trigger_config_vocabulary(supported_triggers: &[String], listen: &Obj) -> Obj
         out.insert("defaultEvents".into(), Js::Arr(defaults.to_vec()));
     }
     out
+}
+
+/// `pluginsOf`: each plugin external's package, keyed as a program spells a
+/// plugin, each spec tagged with the package it is imported from.
+fn plugins_of(running: &[RunningExternal]) -> Obj {
+    let mut plugins = Obj::new();
+    for r in running {
+        let Some(package) = r.plugins.as_ref().and_then(|d| d.get("package")).cloned() else { continue };
+        for (name, spec) in plugin_entries(r.plugins.as_ref()) {
+            let mut spec = match spec {
+                Js::Obj(spec) => spec,
+                _ => continue,
+            };
+            spec.insert("package".into(), package.clone());
+            plugins.insert(name.replace('-', "_"), Js::Obj(spec));
+        }
+    }
+    plugins
 }

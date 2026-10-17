@@ -8,7 +8,7 @@ import { parseTraversalPath } from 'movement-lang';
 import type { Expression } from '#shared/expression/types';
 import { awaitLandingMatches } from 'movement-engine/services/movement_engine/run';
 import type { Adapter, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
-import { AdapterNameDriftError } from '../../translation_graph/adapters/name_resolution';
+import { AdapterNameDriftError } from 'module-kit/adapter/name_resolution';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { positionData } from 'movement-engine/services/translation_graph/types';
 

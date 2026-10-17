@@ -1,5 +1,6 @@
-// Dealroom HTTP transport — the one owner of the wire shape for the movements
-// adapter (services/translation_graph/adapters/dealroom) and its poll source.
+// Dealroom HTTP transport — the one owner of the wire shape for the adapter
+// (adapter.ts) and its poll (poll.ts). It reaches Dealroom through the fetch
+// and the log its host hands the module, never the process's own.
 //
 // Dealroom is a market-intelligence database: companies, investors, people and
 // funding rounds, with the relationships between them. The API is read-only for
@@ -10,7 +11,7 @@
 
 import { z } from 'zod';
 
-import { logger } from 'movement-engine/services/logger';
+import type { ModuleLog } from 'module-kit';
 
 export const DEALROOM_DEFAULT_BASE_URL = 'https://api.dealroom.co/api/v1';
 
@@ -391,15 +392,41 @@ function retryAfterMs(response: Response): number {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The pacing gate one API key shares: the earliest moment its next request
+ * may leave. Shared by every client on the key in this process, so a fan-out
+ * stays under the 5/s ceiling however many clients it is spread over.
+ */
+export interface DealroomPacer {
+  nextSlotAt: number;
+}
+
+const pacersByKey = new Map<string, DealroomPacer>();
+
+/** The process's one pacer for `apiKey`. */
+export function dealroomPacerFor(apiKey: string): DealroomPacer {
+  let pacer = pacersByKey.get(apiKey);
+  if (pacer === undefined) {
+    pacer = { nextSlotAt: 0 };
+    pacersByKey.set(apiKey, pacer);
+  }
+  return pacer;
+}
+
 export class DealroomApiClient {
   private readonly base: string;
   private readonly apiKey: string;
-  /** The earliest moment the next request may leave — the pacing gate. */
-  private nextSlotAt = 0;
+  /** Called unbound: a host's fetch may be the global one, which wants no receiver. */
+  private readonly send: typeof fetch;
+  private readonly log: Pick<ModuleLog, 'warn'>;
+  private readonly pacer: DealroomPacer;
 
-  constructor(creds: DealroomCredentials) {
-    this.base = (creds.baseUrl ?? DEALROOM_DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.apiKey = creds.apiKey;
+  constructor(input: DealroomCredentials & { fetch: typeof fetch; log: Pick<ModuleLog, 'warn'>; pacer?: DealroomPacer }) {
+    this.base = (input.baseUrl ?? DEALROOM_DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.apiKey = input.apiKey;
+    this.send = input.fetch;
+    this.log = input.log;
+    this.pacer = input.pacer ?? dealroomPacerFor(input.apiKey);
   }
 
   /** Dealroom's only scheme: the key as the Basic username, blank password. */
@@ -415,8 +442,8 @@ export class DealroomApiClient {
    */
   private async pace(): Promise<void> {
     const now = Date.now();
-    const slot = Math.max(now, this.nextSlotAt);
-    this.nextSlotAt = slot + DEALROOM_MIN_REQUEST_INTERVAL_MS;
+    const slot = Math.max(now, this.pacer.nextSlotAt);
+    this.pacer.nextSlotAt = slot + DEALROOM_MIN_REQUEST_INTERVAL_MS;
     if (slot > now) await sleep(slot - now);
   }
 
@@ -440,7 +467,8 @@ export class DealroomApiClient {
 
     for (let attempt = 0; ; attempt++) {
       await this.pace();
-      const response = await fetch(url, {
+      const send = this.send;
+      const response = await send(url, {
         method: input.method,
         headers,
         ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
@@ -448,7 +476,7 @@ export class DealroomApiClient {
 
       if (response.status === 429 && attempt < RATE_LIMIT_RETRIES) {
         const waitMs = retryAfterMs(response);
-        logger.warn(
+        this.log.warn(
           `[dealroom] rate limited on ${input.method} ${input.path}; waiting ${waitMs}ms`,
         );
         await sleep(waitMs);
@@ -685,20 +713,4 @@ export class DealroomApiClient {
       dealroomTeamMemberSchema,
     );
   }
-}
-
-const clientsByKey: Record<string, DealroomApiClient> = {};
-
-/** A memoized client per (key, base URL) — the same sharing the other API-key
- *  adapters do, so repeated construction inside one run costs nothing, and the
- *  pacing gate is shared by everything on that key. */
-export function getDealroomClient(apiKey: string, baseUrl?: string): DealroomApiClient {
-  const cacheKey = baseUrl ? `${apiKey}:${baseUrl}` : apiKey;
-  if (!clientsByKey[cacheKey]) {
-    clientsByKey[cacheKey] = new DealroomApiClient({
-      apiKey,
-      ...(baseUrl !== undefined ? { baseUrl } : {}),
-    });
-  }
-  return clientsByKey[cacheKey];
 }

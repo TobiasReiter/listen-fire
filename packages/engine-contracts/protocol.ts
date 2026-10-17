@@ -715,18 +715,60 @@ export const WirePeriodicDeclaration = z.object({
   intervalSeconds: z.number().int().positive(),
 });
 
+/**
+ * One plugin's checker surface (movement-lang's `PluginSpec`, minus the
+ * package, which the declaration names once for all its plugins): the
+ * arguments a call may write, their types, its effects, whether it may cost
+ * money, and what it hands back. The checker reads it to type a call; the
+ * engine reads it to bind one. Its type vocabulary is the checker's own, so
+ * the inner shapes are the checker's to refuse.
+ */
+export const WirePluginSpec = z.object({
+  args: z.array(z.string()),
+  priced: z.boolean(),
+  argTypes: z.record(z.string(), z.unknown()),
+  requiredArgs: z.array(z.string()).optional(),
+  effects: z.record(z.string(), z.unknown()).optional(),
+  fedArgs: z.array(z.object({ name: z.string(), required: z.literal(true).optional() })).optional(),
+  fedByExtraction: z.literal(true).optional(),
+  output: z.record(z.string(), z.unknown()).optional(),
+  earlierOutputs: z.array(z.object({ before: z.number().int().positive(), output: z.record(z.string(), z.unknown()) })).optional(),
+});
+export type WirePluginSpecShape = z.infer<typeof WirePluginSpec>;
+
+/**
+ * The plugins a module serves, imported by a program as one package
+ * (``import { `@lf/web` as web } from plugins``, then `web.fetchUrl(…)`).
+ * `package` is the tag, matched exactly and never parsed. Each plugin's
+ * `name` is its registered name (`fetch-url`); a program calls it by the
+ * camel-case of that name.
+ */
+export const WirePluginsDeclaration = z.object({
+  package: z.string().min(1),
+  plugins: z
+    .array(
+      z.object({
+        name: z.string().regex(/^[a-z][a-z0-9_-]*$/, 'a plugin name is ASCII lower case: a letter, then letters, digits, dashes or underscores'),
+        spec: WirePluginSpec,
+      }),
+    )
+    .min(1),
+});
+export type WirePluginsDeclarationShape = z.infer<typeof WirePluginsDeclaration>;
+
 export const WireModuleDeclarations = z.object({
   credentials: z.array(WireCredentialDeclaration).optional(),
   inbound: WireInboundDeclaration.optional(),
   poll: WirePollDeclaration.optional(),
   periodic: z.array(WirePeriodicDeclaration).optional(),
+  plugins: WirePluginsDeclaration.optional(),
 });
 export type WireModuleDeclarationsShape = z.infer<typeof WireModuleDeclarations>;
 
 /** A declaration and the method that answers it go together: a host would
  *  otherwise schedule a call nobody answers, or never schedule one that is
  *  answered. */
-function refuseUnpairedDeclarations(
+export function refuseUnpairedDeclarations(
   manifest: WireModuleDeclarationsShape & { methods: string[] },
   ctx: z.RefinementCtx,
 ): void {
@@ -740,6 +782,7 @@ function refuseUnpairedDeclarations(
   };
   pair(manifest.poll !== undefined, 'poll', 'poll');
   pair((manifest.periodic ?? []).length > 0, 'runPeriodic', 'periodic');
+  pair(manifest.plugins !== undefined, 'invokePlugin', 'plugins');
   // Refreshing is optional for a declared credential (the host refreshes an
   // OAuth 2 one itself), but there is nothing to refresh without one.
   if (lists.has('refreshCredential') && (manifest.credentials ?? []).length === 0) {
@@ -754,6 +797,7 @@ function refuseUnpairedDeclarations(
   };
   unique((manifest.credentials ?? []).map((credential) => credential.name), 'credentials');
   unique((manifest.periodic ?? []).map((task) => task.name), 'periodic');
+  unique((manifest.plugins?.plugins ?? []).map((plugin) => plugin.name.replace(/-/g, '_')), 'plugins');
 }
 
 export const WireManifestResult = z.object({
@@ -781,6 +825,7 @@ export const WireManifestResult = z.object({
   // manifest rather than answered by an RPC.
   webhookEventTypeId: z.string().optional(),
 }).superRefine(refuseUnpairedDeclarations);
+export type WireManifestResultShape = z.infer<typeof WireManifestResult>;
 
 // ── Streaming page shapes ────────────────────────────────────────────────────
 
@@ -881,6 +926,17 @@ export const WireAwaitResolution = z.discriminatedUnion('status', [
   z.object({ status: z.literal('empty') }),
 ]);
 export type WireAwaitResolutionShape = z.infer<typeof WireAwaitResolution>;
+
+// ── Plugins (invokePlugin) ───────────────────────────────────────────────────
+
+export const WirePluginResult = z.object({
+  text: z.string().optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
+  records: z.array(z.record(z.string(), z.unknown())).optional(),
+  outcome: z.string().optional(),
+  costMicrodollars: z.number().int().nonnegative().optional(),
+});
+export type WirePluginResultShape = z.infer<typeof WirePluginResult>;
 
 // ── Method registry ──────────────────────────────────────────────────────────
 // One entry per protocol method, each describing its params + result schema.
@@ -1044,6 +1100,21 @@ export const METHODS = {
   runPeriodic: {
     params: z.object({ name: z.string().min(1) }),
     result: z.null(),
+  },
+  // One call of a declared plugin. `config` is the author's arguments, by
+  // name; `extractedContext` the fields extracted so far when the plugin runs
+  // inside a `through [ … ]` stage (empty otherwise). The answer is what the
+  // plugin added: fetched `text` to extract from, `data` fields, `records`
+  // (one per thing it fetched, for a records output), an `outcome` in its own
+  // words for the trace, and `costMicrodollars`, what its own work cost that
+  // nothing else priced.
+  invokePlugin: {
+    params: z.object({
+      name: z.string().min(1),
+      config: z.record(z.string(), z.unknown()),
+      extractedContext: z.record(z.string(), z.unknown()),
+    }),
+    result: WirePluginResult,
   },
 } as const;
 

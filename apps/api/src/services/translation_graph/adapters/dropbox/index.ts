@@ -56,8 +56,8 @@ import { DropboxClient } from '../../../../adapters/dropbox/apiClient';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
 import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
 import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { naturalName } from '../name_resolution';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import {
   DROPBOX_ADAPTER_TYPE,
   dropboxAdapterCredsParser,
@@ -74,7 +74,7 @@ import {
   describe as catalogDescribe,
   rootDescriptor,
 } from './schema_catalog';
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import {
   createRecord as writeCreateRecord,
   updateRecord as writeUpdateRecord,
