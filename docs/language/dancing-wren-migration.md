@@ -457,11 +457,12 @@ m = coalesce(n, 0) + 1               # a fallback
 if (n != null) { m = n + 1 }         # a guard (or a guard clause that leaves)
 m = n != null ? n + 1 : 0            # a conditional
 s = List.sum(List.compact(ys))       # a list that may hold absent members: drop them first
+s = List.sum(filter(ys, (y) => y != null))   # or keep only the present ones
 ```
 
 - It covers `+ - * / %`, unary `-`, a built-in's number parameter (`Number.round(n)`, `Date.addDays(d, n)`), and `List.sum`, `List.avg`, `List.min` and `List.max` over a list that may hold an absent member.
 - Why: the engine reads an absent value as 0 there. `n + 1` answered 1 for a number that was never found, and `List.avg` counted an absent member as 0. Nothing said so.
-- The fix: guard the value, give it a fallback with `coalesce`, or drop (`List.compact`) or fill (`map(xs, (x) => coalesce(x, 0))`) a list's absent members. The diagnostic writes the guard and the fallback from your own operand.
+- The fix: guard the value, give it a fallback with `coalesce`, or drop (`List.compact`, or a `filter` whose test keeps only present members) or fill (`map(xs, (x) => coalesce(x, 0))`) a list's absent members. The diagnostic writes the guard and the fallback from your own operand.
 - Under 1 to 4 the program runs as before; a move up across 5 is an upgrade warning.
 
 ## 19. Diagnostic code index

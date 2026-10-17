@@ -401,7 +401,8 @@ fn absent_number_message(ty: &Ty, source: Option<&str>, reader: &NumberReader) -
 }
 
 /// `absentNumberMessage` for a fold: its remedy drops the absent members
-/// (`List.compact`, which types as the list without them) or fills them.
+/// (`List.compact`, or a `filter` whose test keeps only present members —
+/// each types as the list without them) or fills them.
 fn absent_members_message(element: &Ty, source: Option<&str>, builtin: &str) -> String {
     let subject = match source {
         Some(s) => format!("'{s}' may hold an absent member"),
@@ -409,7 +410,7 @@ fn absent_members_message(element: &Ty, source: Option<&str>, builtin: &str) -> 
     };
     let xs = source.unwrap_or("…");
     format!(
-        "{subject} ({}), and {builtin} reads an absent member as 0. Drop the absent members first ('{builtin}(MULTI({xs}))'), or fill them ('{builtin}(map({xs}, (x) => coalesce(x, 0)))').",
+        "{subject} ({}), and {builtin} reads an absent member as 0. Drop the absent members first ('{builtin}(MULTI({xs}))' or '{builtin}(filter({xs}, (x) => x != null))'), or fill them ('{builtin}(map({xs}, (x) => coalesce(x, 0)))').",
         describe_field_type(element)
     )
 }

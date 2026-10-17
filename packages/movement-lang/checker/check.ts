@@ -3631,6 +3631,9 @@ interface ReturnCollector {
   what: string;
   refuses?: string;
   returns: Array<ReturnShape & { span: Span }>;
+  /** A filter's function: its member parameter, and whether each `return`
+   *  that may keep a member proves the member present there (`keepsPresent`). */
+  keeps?: { member: string; present: boolean[] };
 }
 
 /** The prefix the ENGINE's own names wear (`#resources`, and the slot a
@@ -5318,6 +5321,10 @@ class Checker {
       this.report(DiagnosticCodes.RETURN_OUTSIDE_BODY, collector.refuses, statement.span);
       return;
     }
+    if (collector.keeps !== undefined) {
+      const present = this.keepsPresent(statement.value, collector.keeps.member, scope, statement.span);
+      if (present !== undefined) collector.keeps.present.push(present);
+    }
     collector.returns.push({
       returns: true,
       span: statement.span,
@@ -5325,6 +5332,39 @@ class Checker {
       ...(shape.fieldType !== undefined ? { fieldType: shape.fieldType } : {}),
       ...(shape.mayHold !== undefined ? { mayHold: shape.mayHold } : {}),
     });
+  }
+
+  /**
+   * Whether a filter's function, answering at this `return`, proves its member
+   * present — TypeScript's inferred type predicate, which makes
+   * `xs.filter(x => x != null)` a `T[]`. The member is what the body's own
+   * narrowing has made of it here (an `if` arm, a guard clause above), and
+   * what the returned value proves when it holds. Undefined for a
+   * `return false`, which keeps nothing.
+   */
+  private keepsPresent(value: RValue, member: string, scope: Scope, span: Span): boolean | undefined {
+    const answered = new Scope('branch', scope);
+    if (value.kind === 'expr') {
+      let expr: Expression | undefined;
+      try {
+        expr = expressionOfSlot(value.expr, this.languageVersion);
+      } catch {
+        expr = undefined; // the parse failure is reported by the return's own check
+      }
+      if (expr?.type === 'static' && expr.value === false) return undefined;
+      if (expr !== undefined) this.narrowPresence(expr, scope, answered, span);
+    }
+    const resolution = answered.resolve(member);
+    return resolution.kind === 'found' && this.isPresentSymbol(resolution.symbol);
+  }
+
+  /** A name whose value is known to be there: typed, and not `T | absent`. */
+  private isPresentSymbol(symbol: ScopeSymbol): boolean {
+    if (symbol.bindingPlane === 'scalar') {
+      return symbol.fieldType !== undefined && symbol.fieldType !== 'absent' && !isMaybeAbsent(symbol.fieldType);
+    }
+    const posType = this.symbolPositionType(symbol);
+    return posType !== undefined && posType.kind !== 'maybeEmpty';
   }
 
   /**
@@ -7405,8 +7445,11 @@ class Checker {
        * parameter takes this, and one with neither is refused.
        */
       suppliedParams?: ReadonlyArray<PlaneType>;
+      /** A filter's function: the parameter whose presence its answer may
+       *  prove (`keepsPresent`). */
+      keeps?: string;
     },
-  ): { params: ClosureParam[]; returns: ReturnShape; effects: EffectRow } {
+  ): { params: ClosureParam[]; returns: ReturnShape; effects: EffectRow; keptPresent: boolean } {
     const bodyScope = new Scope('branch', scope);
     this.recordFrame('branch', closure.span, bodyScope);
     const params: ClosureParam[] = [];
@@ -7454,7 +7497,11 @@ class Checker {
     // The body is its OWN function: what it does belongs to the closure's type,
     // not to whoever wrote it down. Writing a closure has no effects; calling
     // one has the closure's.
-    const collector: ReturnCollector = { what: options.label, returns: [] };
+    const collector: ReturnCollector = {
+      what: options.label,
+      returns: [],
+      ...(options.keeps !== undefined ? { keeps: { member: options.keeps, present: [] } } : {}),
+    };
     const { value: inferred, row: effects } = this.withEffectFrame(() =>
       this.checkBody(closure.body, bodyScope, collector),
     );
@@ -7494,7 +7541,9 @@ class Checker {
       : inferred;
     // An unbound closure's value is caught where it is bound.
     const returns = options.self !== undefined ? this.withinTypeLimit(options.self, returned, closure.span) : returned;
-    return { params, returns, effects };
+    // Every `return` that may keep a member proves it present.
+    const kept = collector.keeps?.present ?? [];
+    return { params, returns, effects, keptPresent: kept.length > 0 && kept.every(present => present) };
   }
 
   /**
@@ -8394,7 +8443,7 @@ class Checker {
     }
 
     const carried = expr.op === 'reduce' ? (init?.valueType) : undefined;
-    const shape = this.checkCollectionFunction(expr, spelling, scope, {
+    const { shape, keptPresent } = this.checkCollectionFunction(expr, spelling, scope, {
       element,
       carried,
       elementMayHold: source.mayHold !== undefined ? collectionElementOf(source.mayHold) : undefined,
@@ -8428,8 +8477,11 @@ class Checker {
       case 'map':
         return returned !== undefined ? listOf(returned, ordering) : undefined;
       case 'filter':
-        // What survives is what went in, in the order it was in.
-        return element !== undefined ? listOf(element, ordering) : undefined;
+        // What survives is what went in, in the order it was in — present,
+        // where the function's own test keeps only members that are there
+        // (version 5; TypeScript's inferred type predicate).
+        if (element === undefined) return undefined;
+        return listOf(keptPresent && since(this.languageVersion, 5) ? stripAbsent(element) : element, ordering);
       case 'reduce':
         // The carried value's type, which is the function's return where it
         // typed and the starting value's where it did not.
@@ -8563,14 +8615,15 @@ class Checker {
    * The function a collection op is given: checked as an arm (a closure in
    * place, or a name bound to one), but CALLED WITH arguments — so its
    * parameters take their types from the collection where the author left them
-   * unwritten.
+   * unwritten. `keptPresent`: a FILTER's closure keeps only members that are
+   * there (`keepsPresent`).
    */
   private checkCollectionFunction(
     expr: CollectionOpExpression,
     spelling: string,
     scope: Scope,
     members: CollectionMembers,
-  ): ReturnShape {
+  ): { shape: ReturnShape; keptPresent: boolean } {
     const { element, carried } = members;
     const supplied = expr.op === 'reduce'
       ? [{ fieldType: carried }, { fieldType: element }]
@@ -8581,16 +8634,18 @@ class Checker {
       if (params.length !== arity) {
         this.reportArmArity(spelling, arity, params.length, params[0]?.name, expr.fn.span);
       }
-      const { params: bound, returns, effects } = this.checkClosure(expr.fn.closure, scope, {
+      const member = expr.op === 'filter' ? params[0]?.name : undefined;
+      const { params: bound, returns, effects, keptPresent } = this.checkClosure(expr.fn.closure, scope, {
         label: `the function for '${spelling}'`,
         suppliedParams: supplied,
+        ...(member !== undefined ? { keeps: member } : {}),
       });
       this.checkMembersFieldsInHand(spelling, `the function for '${spelling}'`, bound, supplied, expr.fn.span);
       this.checkMembersFitParams(expr, spelling, { callee: `the function for '${spelling}'`, params: bound }, members);
       this.absorbCollectionRow(effects, spelling, expr.fn.span);
-      if (expr.op === 'map' && !returns.returns) return MAP_SLOT_ABSENT;
+      if (expr.op === 'map' && !returns.returns) return { shape: MAP_SLOT_ABSENT, keptPresent };
       this.requireCollectionReturn(returns, spelling, expr.fn.span);
-      return returns;
+      return { shape: returns, keptPresent };
     }
     const named = this.checkArm(expr.fn, spelling, scope, undefined, arity);
     const resolved = scope.resolve(expr.fn.name);
@@ -8605,9 +8660,9 @@ class Checker {
       : [];
     this.checkMembersFieldsInHand(spelling, `'${expr.fn.name}'`, namedParams, supplied, expr.fn.span);
     this.checkMembersFitParams(expr, spelling, { callee: `'${expr.fn.name}'`, params: namedParams }, members);
-    if (expr.op === 'map' && !named.returns) return MAP_SLOT_ABSENT;
+    if (expr.op === 'map' && !named.returns) return { shape: MAP_SLOT_ABSENT, keptPresent: false };
     this.requireCollectionReturn(named, spelling, expr.fn.span);
-    return named;
+    return { shape: named, keptPresent: false };
   }
 
   /**

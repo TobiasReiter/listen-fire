@@ -114,6 +114,16 @@ pub struct Checker<'c> {
     pub record_unions: crate::types::unions::RecordUnions,
 }
 
+/// What a closure's caller supplies (`checkClosure`'s `suppliedParams`): the
+/// first `count` parameters, `types` saying what it hands each where the
+/// closure leaves the type out (contextual typing); and, for a filter's
+/// function, the parameter whose presence its answer may prove (`keeps`).
+pub struct Supplied<'a> {
+    pub count: usize,
+    pub types: &'a [crate::types::position::PlaneType],
+    pub keeps: Option<&'a str>,
+}
+
 /// A write's scopes, one per record its root may be (`scopesByMember`).
 struct ByMember {
     members: Vec<Position>,
@@ -766,7 +776,7 @@ impl<'c> Checker<'c> {
     }
 
     /// `narrowPresence`: what a condition's truth proves present, declared into `narrow_into`.
-    fn narrow_presence(&mut self, expr: &movement_parser::lowering::expression::Expression, scope: ScopeId, narrow_into: ScopeId, span: Span) {
+    pub(crate) fn narrow_presence(&mut self, expr: &movement_parser::lowering::expression::Expression, scope: ScopeId, narrow_into: ScopeId, span: Span) {
         let proofs = {
             let env = self.typing_env(scope);
             let mut typing = Typing::new(&env, self.version, span);
@@ -915,21 +925,12 @@ impl<'c> Checker<'c> {
     /// `checkClosure`, with whether calling the closure may wait: its body
     /// is its own function, so what it does is not the writer's.
     pub fn check_closure_walked(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, supplied: usize) -> (Body, bool) {
-        self.check_closure_supplied(closure, scope, self_name, label, supplied, &[])
+        self.check_closure_supplied(closure, scope, self_name, label, Supplied { count: supplied, types: &[], keeps: None })
     }
 
-    /// `checkClosure` with `suppliedParams`: the caller supplies the first
-    /// `supplied` parameters, and `types` says what it hands each, where the
-    /// closure leaves the type out (contextual typing).
-    pub fn check_closure_supplied(
-        &mut self,
-        closure: &ClosureExpression,
-        scope: ScopeId,
-        self_name: Option<&str>,
-        label: &str,
-        supplied: usize,
-        types: &[crate::types::position::PlaneType],
-    ) -> (Body, bool) {
+    /// `checkClosure` with `suppliedParams` (`Supplied`).
+    pub fn check_closure_supplied(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, given: Supplied) -> (Body, bool) {
+        let Supplied { count: supplied, types, keeps } = given;
         let body = self.scopes.open(Some(scope));
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
@@ -951,7 +952,7 @@ impl<'c> Checker<'c> {
         }
         let own = self_name.and_then(|name| self.declare_closure_self(name, closure, body));
         self.open_effect_frame();
-        let returns = self.check_body(&closure.body, body, label.to_string());
+        let returns = self.check_body_keeping(&closure.body, body, label.to_string(), keeps);
         let suspends = self.close_effect_frame();
         // Reported once, where it is written: a type-only walk sees the same body.
         if let Some(written) = &closure.return_type {
