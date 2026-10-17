@@ -56,6 +56,16 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 - The packages are ready to publish (not published): `@lf/engine` (was `movement-engine`), `@lf/engine-contracts`, `@lf/module-kit`, `@lf/movement-lang`, `@lf/shared`, `@lf/file-text`, `@lf/model-providers` and every `@lf/<module>`, each 0.11.0, built to `dist/` with declarations by `scripts/build-packages.cjs` on `pnpm pack`. Sources still import the old spellings through workspace aliases; `pnpm --filter` takes the new names.
 - Merged onto r-boundary: the published `@lf/engine` serves only `public/*` (its `publishConfig.exports`); in the workspace the internals still resolve only under the `movement-engine-internals` condition. The engine's own tests reach internals by relative path, not the old package name.
 
+### tidy-rust
+
+- `lf` is built from the Cargo package `lf` (`crates/lf`; was `lf-host`): `cargo build --release -p lf`. `lf --version` prints the crate's version, now 0.11.0 with the packages; the release workflow refuses an `lf-v<version>` tag that names another.
+- At most eight model requests are in flight from one `lf` process, as the TypeScript client allowed. `EXTRACTION_OUTPUT_BUDGET=1` (or `true`) switches on the extraction loop guard in `lf` as on the platform: a ceiling sized from the call's input (8,000 to 32,000 tokens) and one continuation.
+- A model reply's broken JSON is repaired by a port of the npm `jsonrepair` 3.8.0, held to the TypeScript engine's reading over a corpus of 114 malformed replies. The crate it replaces read 32 of them differently: a truncated list lost its last entry, and a truncated reply with escaped quotes turned into made-up keys.
+- Past a segment's wall clock, what is in flight gets five seconds to finish; then a read or a model call is dropped, and a write to an external system is waited for to its end, never cut off half-sent.
+- A limit a segment meets (`MOVENG_LIMIT_*`) is never swallowed: a read the engine makes to push a filter down and an await's re-check after parking pass it on, and a `map` or `all` reports it over an earlier member's failure that `onError` could forgive.
+- An adapter call's answered `cost` (adapter protocol 2) rides the answer into the engine's ledger (`adapters.call` answers take an optional `cost`), so the cost cap counts it before the segment's next priced call rather than from the next segment.
+- @lf/sqlite-store's `path` setting is refused unless it names a file in a folder that exists. `lf connect @lf/judge` and `lf connect @lf/local-files` write no empty entry to the secrets file.
+
 ### r-retire
 
 - The Rust binary is now `lf` (Cargo package and bin `lf`, in `crates/lf`; usage text, release workflow, container image and docs follow). The TypeScript `lf` is gone: `apps/cli` is only the test harness that drives the built binary (`LF_BIN`, default `target/debug/lf`). Tests that compared the two were dropped.
