@@ -1,0 +1,33 @@
+{
+  "name": "module-kit",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "How an integration is built once and loaded everywhere: `defineModule` (an adapter or a set of plugins, its declarations and its methods over a host context), the in-process transport the platform loads a module with, the adapter protocol's server kit, and `serve-module`, which serves any module as a protocol-2 process for lf, the Rust host, the cloud and embedders. A module may not reach the hosted product, a database or the recording layer (scripts/check-module-boundary.cjs). Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "bin": {
+    "serve-module": "bin/serve-module.cjs"
+  },
+  "scripts": {
+    "code:type-check": "tsc --pretty --noEmit && node ../../scripts/check-module-boundary.cjs",
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+  },
+  "main": "index.ts",
+  "types": "index.ts",
+  "type": "commonjs",
+  "dependencies": {
+    "#shared": "workspace:@listen-fire/shared@*",
+    "engine-contracts": "workspace:*",
+    "movement-engine": "workspace:*",
+    "movement-lang": "workspace:*",
+    "tsx": "4.21.0",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.14",
+    "@types/node": "20.16.5",
+    "typescript": "5.5.4"
+  }
+}

@@ -219,6 +219,7 @@
     "pg": "8.12.0",
     "playwright": "1.47.0",
     "file-text": "workspace:*",
+    "module-kit": "workspace:*",
     "principal": "workspace:*",
     "prisma": "5.22.0",
     "prisma-kysely": "1.8.0",

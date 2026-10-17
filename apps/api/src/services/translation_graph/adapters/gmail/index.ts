@@ -40,9 +40,9 @@ import {
   makeStablePosition,
   positionData,
 } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { uniformWalk } from '../hop';
-import { naturalName } from '../name_resolution';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { uniformWalk } from 'module-kit/adapter/hop';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import { GmailApiError } from '../../../../adapters/gmail/apiClient';
 import { decodeGmailMessage, type GmailMessageRecord } from '../../../../adapters/gmail/mime';
 import { resolveGmailClient, type GmailApiClient } from './client';

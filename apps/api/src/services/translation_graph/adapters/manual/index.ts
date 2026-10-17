@@ -52,14 +52,14 @@ import type { TriggerEvent } from 'movement-engine/services/translation_graph/tr
 
 import { streamFileRef } from '../../engine/files/retrieve';
 import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import { MANUAL_HANDBOOK_SECTION } from './handbook_section';
 import {
   META_RECORD_TYPE,
   makeUnstablePosition,
   positionData,
 } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
+import { BaseAdapter } from 'module-kit/adapter/base';
 
 /** Stable adapter identifier — the trigger `kind` of manual-derived rows. */
 export const MANUAL_ADAPTER_TYPE = 'manual';

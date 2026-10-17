@@ -36,11 +36,11 @@ import type {
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import { INBOUND_EMAIL_ADDRESS_VAR, inboundRoutingAddress } from './address';
 import { fetchEmailAttachment } from './provider';
 import { META_RECORD_TYPE, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
+import { BaseAdapter } from 'module-kit/adapter/base';
 
 /** Stable adapter identifier. Matches `MutationContext.source.adapterType`. */
 export const EMAIL_ADAPTER_TYPE = 'email';

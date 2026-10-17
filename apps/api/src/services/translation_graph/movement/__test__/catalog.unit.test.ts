@@ -31,7 +31,7 @@ import {
   adapterNameResolver,
   naturalName,
   AdapterNameDriftError,
-} from '../../adapters/name_resolution';
+} from 'module-kit/adapter/name_resolution';
 
 // ── 1. Import-name projection ───────────────────────────────────────────────
 

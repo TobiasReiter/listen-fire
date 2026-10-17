@@ -1,5 +1,5 @@
 {
-  "total": 799,
+  "total": 788,
   "byModule": {
     "adapters/webhook/configSchema": 2,
     "lib/anthropic": 3,
@@ -39,7 +39,7 @@
     "services/run_host/lease": 3,
     "services/run_host/rules": 6,
     "services/run_host/store": 4,
-    "services/translation_graph/adapter": 134,
+    "services/translation_graph/adapter": 129,
     "services/translation_graph/adapter_type": 1,
     "services/translation_graph/adapters/remote": 3,
     "services/translation_graph/awaitable": 2,
@@ -64,8 +64,8 @@
     "services/translation_graph/triggerConfig": 2,
     "services/translation_graph/triggers/listen_config": 5,
     "services/translation_graph/triggers/trigger_event": 1,
-    "services/translation_graph/triggers/types": 35,
-    "services/translation_graph/types": 95,
+    "services/translation_graph/triggers/types": 34,
+    "services/translation_graph/types": 90,
     "services/translation_graph/uniqueness": 5,
     "services/webhook_sync/remote_inbound": 1,
     "services/write_locks/write_locks": 4

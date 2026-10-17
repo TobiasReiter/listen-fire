@@ -55,7 +55,7 @@ import type {
   WriteResult,
 } from 'movement-engine/services/translation_graph/adapter';
 
-import { hydrateTargets, typeAddressedPositions, uniformWalk } from './hop';
+import { hydrateTargets, typeAddressedPositions, uniformWalk } from 'module-kit/adapter/hop';
 import { KNOWLEDGE_GRAPH_HANDBOOK_SECTION } from './knowledge_graph_handbook_section';
 import PropertyValueType from '../../../generated/kysely/knowledge/PropertyValueType';
 import PropertyCardinality from '../../../generated/kysely/knowledge/PropertyCardinality';
@@ -104,7 +104,7 @@ import {
   naturalName,
   type AdapterNameResolver,
   type ScopedResolver,
-} from './name_resolution';
+} from 'module-kit/adapter/name_resolution';
 
 /** Stable adapter identifier. Matches `MutationContext.source.adapterType`, and
  *  IS the import name a movement constructs the graph through

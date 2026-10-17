@@ -18,9 +18,9 @@ import type {
   SourcePosition,
 } from 'movement-engine/services/translation_graph/types';
 
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import { META_RECORD_TYPE, positionData } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
+import { BaseAdapter } from 'module-kit/adapter/base';
 import { SYSTEM_HANDBOOK_SECTION } from './handbook_section';
 import {
   RUN_FAILED,

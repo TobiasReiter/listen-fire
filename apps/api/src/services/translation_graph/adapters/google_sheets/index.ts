@@ -56,8 +56,8 @@ import {
   makeStablePosition,
   positionData,
 } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { targetStubs } from '../hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { targetStubs } from 'module-kit/adapter/hop';
 import {
   GOOGLE_SHEETS_ADAPTER_TYPE,
   googleSheetsAdapterCredsParser,

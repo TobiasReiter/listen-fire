@@ -70,11 +70,11 @@ import ExternalServiceType from '../../../generated/kysely/automations/ExternalS
 
 
 import { fileHandle, isFileValue, iterateRelatedPages, ownedFileSource, writeParentLinks, type ParentAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { BaseAdapter } from './base';
+import { BaseAdapter } from 'module-kit/adapter/base';
 import { stubTargetOf, type EdgesFromResult } from 'movement-engine/services/translation_graph/adapter';
-import { uniformWalk } from './hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import { UPDATE_NOT_FOUND, isHttp404 } from './not_found';
-import { naturalName } from './name_resolution';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 
 
 import {

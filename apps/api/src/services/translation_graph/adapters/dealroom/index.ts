@@ -27,8 +27,8 @@ import {
   positionData,
   positionRecordId,
 } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { uniformWalk } from '../hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import {
   DealroomApiError,
   DEALROOM_MAX_LIMIT,

@@ -53,10 +53,10 @@ import {
   makeStablePosition,
   positionData,
 } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { hydrateTargets, targetStubs } from '../hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { hydrateTargets, targetStubs } from 'module-kit/adapter/hop';
 import { stubTargetOf } from 'movement-engine/services/translation_graph/adapter';
-import { memoizedResolver, naturalName, type ScopedResolver } from '../name_resolution';
+import { memoizedResolver, naturalName, type ScopedResolver } from 'module-kit/adapter/name_resolution';
 import {
   AIRTABLE_ADAPTER_TYPE,
   airtableAdapterCredsParser,

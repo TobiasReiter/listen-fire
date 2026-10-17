@@ -73,8 +73,8 @@ import {
   makeUnstablePosition,
   positionData,
 } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { naturalName } from '../name_resolution';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import { SLACK_HANDBOOK_SECTION } from './handbook_section';
 import { historyWindowFromWhere, type SlackHistoryWindow } from './history_window';
 import {
@@ -119,7 +119,7 @@ import {
   type SlackUserRecord,
 } from './read_graph';
 import { SLACK_ADAPTER_TYPE } from './types';
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 
 import { isNaturalOrder } from '#shared/expression/order_limit';
 export { SLACK_ADAPTER_TYPE } from './types';

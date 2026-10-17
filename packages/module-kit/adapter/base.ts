@@ -55,12 +55,12 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
-import type { TriggerType } from 'movement-engine/services/translation_graph/triggers/types';
+} from 'movement-engine/public/adapter';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/public/catalog';
+import type { TriggerType } from 'movement-engine/public/inbound';
 
-import { BASE_RUNTIME_CAPABILITIES } from 'movement-engine/services/translation_graph/adapter';
-import { positionData } from 'movement-engine/services/translation_graph/types';
+import { BASE_RUNTIME_CAPABILITIES } from 'movement-engine/public/adapter';
+import { positionData } from 'movement-engine/public/catalog';
 import {
   AdapterNameDriftError,
   memoizedResolver,
