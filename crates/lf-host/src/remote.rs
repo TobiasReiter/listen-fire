@@ -22,7 +22,7 @@ use crate::json::{Js, Obj};
 use crate::obj;
 use crate::project::Project;
 use crate::protocol::{Call, RpcError, post_rpc};
-use crate::secrets::{Credential, Credentials, credential_for, refuse_stale};
+use crate::secrets::{Binding, Credential, Credentials, credential_for, refuse_stale, signer_of};
 use crate::wire::{Hv, json_of_js};
 use crate::wire_results;
 
@@ -230,6 +230,14 @@ impl<'s> SegmentAdapters<'s> {
             Some(id) => Some(ext.credentials.iter().position(|c| c.name == id).ok_or_else(|| format!("no credential \"{id}\" in the secrets file"))?),
             None => credential_for(ext.credentials, adapter_type).and_then(|c| ext.credentials.iter().position(|o| std::ptr::eq(o, c))),
         };
+        // A user credential for a module's declared credential travels in each
+        // call and is refreshed by the host: the secrets family G4 ports.
+        if let Some(Binding::Credential(declared)) = credential.map(|i| &ext.credentials[i].binding) {
+            return Err(format!(
+                "credential \"{}\" is a user credential for {adapter_type}'s \"{declared}\"; lf-host does not send a module's declared credentials yet (run it with the TypeScript lf)",
+                credential.map(|i| ext.credentials[i].name.as_str()).unwrap_or_default()
+            ));
+        }
         let credentials_id_of = credential.map(|i| ext.credentials[i].name.clone()).unwrap_or_default();
         let next = self.instances.borrow().len() + 1;
         Ok(Instance {
@@ -297,7 +305,8 @@ impl<'s> SegmentAdapters<'s> {
         self.count()?;
         let ext = self.externals;
         let running = self.running(instance);
-        let credential: Option<&Credential> = instance.credential.map(|i| &ext.credentials[i]);
+        let credential: Option<&Credential> =
+            signer_of(ext.credentials, &running.external.manifest.name, instance.credential.map(|i| &ext.credentials[i]));
         if let Some(credential) = credential {
             refuse_stale(credential, jiff::Timestamp::now().as_millisecond()).map_err(CallFailure::adapter)?;
         }

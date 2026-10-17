@@ -19,7 +19,7 @@ use tokio::process::{Child, Command};
 use crate::json::{Js, Obj};
 use crate::project::Project;
 use crate::protocol::{Call, post_rpc, shape_error};
-use crate::secrets::{Credential, Credentials, credential_for, refuse_stale};
+use crate::secrets::{Credential, Credentials, install_of, refuse_stale};
 
 pub const EXTERNAL_MANIFEST: &str = "lf-external.yaml";
 
@@ -130,6 +130,8 @@ pub struct RunningExternal {
     pub webhook_event_type_id: Option<String>,
     /// The package of plugins it serves (`plugins`: `{ package, plugins }`).
     pub plugins: Option<Js>,
+    /// The credentials its manifest declares, by name (`credentials[].name`).
+    pub declared_credentials: Vec<String>,
     /// The started process; killed when this is dropped.
     _child: Option<Child>,
 }
@@ -181,7 +183,8 @@ pub async fn rpc(running: &RunningExternal, credentials: &Credentials, tenant: &
 }
 
 async fn call(external: &External, base_url: &str, credentials: &Credentials, tenant: &str, method: &str, params: serde_json::Value) -> Result<Js, String> {
-    let credential = credential_for(credentials, &external.manifest.name);
+    // Signed with the install's server secret.
+    let credential = install_of(credentials, &external.manifest.name);
     if let Some(credential) = credential {
         refuse_stale(credential, jiff::Timestamp::now().as_millisecond())?;
     }
@@ -219,6 +222,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             runtime_capabilities: manifest.runtime_capabilities,
             webhook_event_type_id: manifest.webhook_event_type_id,
             plugins: manifest.plugins,
+            declared_credentials: declared_credentials_of(&raw),
             _child: child,
         });
     }
@@ -386,6 +390,16 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
 fn listening_port(line: &str) -> Option<u16> {
     let digits: String = line.strip_prefix("listening ")?.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
+}
+
+/// The names of the credentials a manifest answer declares; the manifest's
+/// own validation is the TypeScript lf's (protocol.ts), so a malformed entry
+/// names nothing here.
+fn declared_credentials_of(raw: &Js) -> Vec<String> {
+    raw.get("credentials")
+        .and_then(Js::as_array)
+        .map(|items| items.iter().filter_map(|c| c.get("name").and_then(Js::as_str).map(str::to_string)).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

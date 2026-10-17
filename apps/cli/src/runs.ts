@@ -110,7 +110,7 @@ export async function openSession(
     for (const [name, r] of running) {
       // A plugin external has no graph to describe; its plugins are its manifest's.
       if (r.external.manifest.kind === 'plugin') continue;
-      schemas.set(name, await describeExternal(remoteAdapterOf({ running: r, credential: credentialFor(credentials, name), documents, tenant: LOCAL_TENANT })));
+      schemas.set(name, await describeExternal(remoteAdapterOf({ running: r, credential: credentialFor(credentials, name), secrets: credentials, documents, tenant: LOCAL_TENANT })));
     }
     const files = scanMovements(project);
     const catalog = catalogOf({ running, schemas, credentials, files });
@@ -194,7 +194,7 @@ export async function fireEvent(
 async function eventTypesOf(session: Session, external: string): Promise<EventType[]> {
   const running = session.running.get(external);
   if (running === undefined || !running.methods.includes('listEventTypes')) return [];
-  const adapter = remoteAdapterOf({ running, credential: credentialFor(session.credentials, external), documents: session.documents, tenant: LOCAL_TENANT });
+  const adapter = remoteAdapterOf({ running, credential: credentialFor(session.credentials, external), secrets: session.credentials, documents: session.documents, tenant: LOCAL_TENANT });
   return adapter.listEventTypes !== undefined ? adapter.listEventTypes() : [];
 }
 

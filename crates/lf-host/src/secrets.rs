@@ -22,7 +22,20 @@ const REFRESH_WINDOW_MS: i64 = 30_000;
 pub struct Credential {
     pub name: String,
     pub external: String,
+    /// What the entry is for (secrets.ts `CredentialBinding`).
+    pub binding: Binding,
     pub fields: BTreeMap<String, String>,
+}
+
+/// secrets.ts `CredentialBinding`: a hand-written `external:` entry is an
+/// install and a credential in one; `module:` alone is the install (its
+/// server secret signs calls); `module:` + `credential:` is a user credential
+/// for that declared credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Binding {
+    Legacy,
+    Install,
+    Credential(String),
 }
 
 /// The credentials, in the order the file and then the environment name them.
@@ -55,8 +68,8 @@ pub fn load_secrets(project: &Project, env: &[(String, String)]) -> Result<Crede
             if name == "sops" {
                 continue;
             }
-            let (external, fields) = parse_entry(raw).map_err(|why| format!("{}: entry \"{name}\" {why}", path.display()))?;
-            credentials.push(Credential { name, external, fields });
+            let (external, binding, fields) = parse_entry(raw).map_err(|why| format!("{}: entry \"{name}\" {why}", path.display()))?;
+            credentials.push(Credential { name, external, binding, fields });
         }
     }
     apply_environment(&mut credentials, env)?;
@@ -67,31 +80,34 @@ pub fn load_secrets(project: &Project, env: &[(String, String)]) -> Result<Crede
 /// `lf credential`, or a hand-written `external:`) and its fields. A user
 /// credential's `credential:` names the declared credential it binds; it is
 /// not a field.
-fn parse_entry(raw: serde_yaml::Value) -> Result<(String, BTreeMap<String, String>), String> {
+fn parse_entry(raw: serde_yaml::Value) -> Result<(String, Binding, BTreeMap<String, String>), String> {
     let shape = || "needs `module` (or a hand-written `external`) and string fields".to_string();
     let serde_yaml::Value::Mapping(entry) = raw else { return Err(shape()) };
-    let (mut external, mut module) = (None, None);
+    let (mut external, mut module, mut credential) = (None, None, None);
     let mut fields = BTreeMap::new();
     for (key, value) in entry {
         let (serde_yaml::Value::String(key), serde_yaml::Value::String(value)) = (key, value) else { return Err(shape()) };
         match key.as_str() {
             "external" => external = Some(value),
             "module" => module = Some(value),
-            "credential" => {}
+            "credential" => credential = Some(value),
             _ => {
                 fields.insert(key, value);
             }
         }
     }
-    let owner = match (external, module) {
-        (Some(_), Some(_)) => return Err("names both `external` and `module`; keep one".into()),
-        (Some(owner), None) | (None, Some(owner)) => owner,
-        (None, None) => return Err(shape()),
+    let (owner, binding) = match (external, module, credential) {
+        (Some(_), Some(_), _) | (Some(_), None, Some(_)) => return Err("names both `external` and `module`/`credential`; keep one".into()),
+        (Some(owner), None, None) => (owner, Binding::Legacy),
+        (None, Some(owner), None) => (owner, Binding::Install),
+        (None, Some(owner), Some(declared)) => (owner, Binding::Credential(declared)),
+        (None, None, Some(_)) => return Err("names a `credential` but no `module`".into()),
+        (None, None, None) => return Err(shape()),
     };
     if owner.is_empty() {
         return Err(shape());
     }
-    Ok((owner, fields))
+    Ok((owner, binding, fields))
 }
 
 fn read_secrets_file(path: &Path) -> Result<Vec<(String, serde_yaml::Value)>, String> {
@@ -138,7 +154,7 @@ fn apply_environment(credentials: &mut Credentials, env: &[(String, String)]) ->
         let at = match credentials.iter().position(|c| c.name.to_lowercase() == credential_name) {
             Some(at) => at,
             None => {
-                credentials.push(Credential { name: credential_name.into(), external: String::new(), fields: BTreeMap::new() });
+                credentials.push(Credential { name: credential_name.into(), external: String::new(), binding: Binding::Legacy, fields: BTreeMap::new() });
                 credentials.len() - 1
             }
         };
@@ -162,9 +178,27 @@ fn apply_environment(credentials: &mut Credentials, env: &[(String, String)]) ->
     Ok(())
 }
 
-/// The first credential the secrets name for this external.
+/// The credential a connection that names none acts as (externals.ts
+/// `credentialFor`): never the install, whose secret signs calls.
 pub fn credential_for<'a>(credentials: &'a Credentials, external: &str) -> Option<&'a Credential> {
-    credentials.iter().find(|c| c.external == external)
+    credentials.iter().find(|c| c.external == external && c.binding != Binding::Install)
+}
+
+/// The install of `external` (secrets.ts `installOf`): its `module:`-only
+/// entry, else the first hand-written one, else the first.
+pub fn install_of<'a>(credentials: &'a Credentials, external: &str) -> Option<&'a Credential> {
+    let mut of = credentials.iter().filter(|c| c.external == external);
+    let all: Vec<&Credential> = of.by_ref().collect();
+    all.iter().find(|c| c.binding == Binding::Install).or_else(|| all.iter().find(|c| c.binding == Binding::Legacy)).or(all.first()).copied()
+}
+
+/// The entry whose secret signs a call made as `credential` (remote.ts): a
+/// hand-written entry signs for itself; otherwise the install does.
+pub fn signer_of<'a>(credentials: &'a Credentials, external: &str, credential: Option<&'a Credential>) -> Option<&'a Credential> {
+    match credential {
+        Some(c) if c.binding == Binding::Legacy => Some(c),
+        _ => install_of(credentials, external).or(credential),
+    }
 }
 
 /// Refused until G4 ports the refresh: a credential the TypeScript lf would
@@ -231,21 +265,23 @@ pub fn missing_credentials(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_entry;
+    use super::{Binding, parse_entry};
 
-    fn entry(yaml: &str) -> Result<(String, Vec<(String, String)>), String> {
-        parse_entry(serde_yaml::from_str(yaml).unwrap()).map(|(owner, fields)| (owner, fields.into_iter().collect()))
+    type Entry = (String, Binding, Vec<(String, String)>);
+
+    fn entry(yaml: &str) -> Result<Entry, String> {
+        parse_entry(serde_yaml::from_str(yaml).unwrap()).map(|(owner, binding, fields)| (owner, binding, fields.into_iter().collect()))
     }
 
     #[test]
     fn entries_written_by_the_commands_and_by_hand_both_read() {
         let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
-        assert_eq!(entry("module: hubspot\nclient_id: app\n"), Ok(("hubspot".into(), vec![pair("client_id", "app")])));
+        assert_eq!(entry("module: hubspot\nclient_id: app\n"), Ok(("hubspot".into(), Binding::Install, vec![pair("client_id", "app")])));
         assert_eq!(
-            entry("module: hubspot\ncredential: hubspot\naccess_token: t\n"),
-            Ok(("hubspot".into(), vec![pair("access_token", "t")]))
+            entry("module: hubspot\ncredential: oauth\naccess_token: t\n"),
+            Ok(("hubspot".into(), Binding::Credential("oauth".into()), vec![pair("access_token", "t")]))
         );
-        assert_eq!(entry("external: acme_crm\ntoken: x\n"), Ok(("acme_crm".into(), vec![pair("token", "x")])));
+        assert_eq!(entry("external: acme_crm\ntoken: x\n"), Ok(("acme_crm".into(), Binding::Legacy, vec![pair("token", "x")])));
         assert!(entry("external: a\nmodule: b\n").unwrap_err().contains("both"));
         assert!(entry("credential: c\ntoken: x\n").is_err());
     }
