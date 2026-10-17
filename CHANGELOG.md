@@ -50,6 +50,11 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-embed
+
+- Embedding: a product can let its customers write and run movements in its own process ([docs/embedding.md](docs/embedding.md), [`examples/embed-saas`](examples/embed-saas)). New entry `@lf/engine/public/embed` (the in-process host, adapter introspection, the listen routing table, priced model clients); `RunInput.limits` carries the segment limits from a TypeScript host, and `movement.wasm` is rebuilt so they hold.
+- The packages are ready to publish (not published): `@lf/engine` (was `movement-engine`), `@lf/engine-contracts`, `@lf/module-kit`, `@lf/movement-lang`, `@lf/shared`, `@lf/file-text`, `@lf/model-providers` and every `@lf/<module>`, each 0.11.0, built to `dist/` with declarations by `scripts/build-packages.cjs` on `pnpm pack`. Sources still import the old spellings through workspace aliases; `pnpm --filter` takes the new names.
+
 ### r-retire
 
 - The Rust binary is now `lf` (Cargo bin `lf`, from package `lf-host`; usage text, release workflow, container image and docs follow). The TypeScript `lf` is gone: `apps/cli` is only the test harness that drives the built binary (`LF_BIN`, default `target/debug/lf`). Tests that compared the two were dropped.

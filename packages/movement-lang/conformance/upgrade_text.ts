@@ -1,7 +1,7 @@
 // The upgrade loop (checker/upgrade.ts) over files or a string, from a shell:
 //
-//   pnpm --filter movement-lang language:upgrade [--check] [--snapshot <snapshot.json>] <file>...
-//   echo '<program>' | pnpm --silent --filter movement-lang language:upgrade [--snapshot <snapshot.json>] -
+//   pnpm --filter @lf/movement-lang language:upgrade [--check] [--snapshot <snapshot.json>] <file>...
+//   echo '<program>' | pnpm --silent --filter @lf/movement-lang language:upgrade [--snapshot <snapshot.json>] -
 //
 // Files are rewritten in place (`--check`: the diff is printed and nothing is
 // written); `-` reads the program from stdin and prints the rewritten text.

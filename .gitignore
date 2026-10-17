@@ -80,3 +80,7 @@ HEALTH.md
 
 # Rust build output (the parser crate)
 /target
+
+# The publishable packages' builds (scripts/build-packages.cjs), packed, never committed
+packages/*/dist/
+modules/*/dist/

@@ -14,9 +14,9 @@
   },
   "type": "commonjs",
   "dependencies": {
-    "engine-contracts": "workspace:*",
-    "module-kit": "workspace:*",
-    "movement-engine": "workspace:*",
+    "@lf/engine": "workspace:*",
+    "@lf/engine-contracts": "workspace:*",
+    "@lf/module-kit": "workspace:*",
     "tsx": "4.21.0"
   },
   "devDependencies": {

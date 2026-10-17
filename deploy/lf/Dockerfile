@@ -23,7 +23,7 @@ WORKDIR /srv/lf
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages packages
 COPY modules modules
-RUN pnpm install --frozen-lockfile --filter "@lf/dealroom..." --filter "module-kit..."
+RUN pnpm install --frozen-lockfile --filter "@lf/dealroom..." --filter "@lf/module-kit..."
 
 FROM node:22.20.0-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \

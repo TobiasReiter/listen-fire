@@ -11,7 +11,7 @@ What keeps a movement someone else wrote from harming the host that runs it. An 
 
 | limit | kept by | default | the host sets it with | code when exceeded |
 |---|---|---|---|---|
-| Steps: statements run plus expressions evaluated, per segment | engine | 10,000,000 | `limits.maxSteps` | `MOVENG_LIMIT_STEPS` |
+| Steps: statements run plus expressions evaluated, per segment | engine | 10,000,000 | `limits.maxSteps` (TypeScript: `RunInput.limits`) | `MOVENG_LIMIT_STEPS` |
 | One text's size, in UTF-8 bytes | engine | 16 MiB | `limits.maxTextBytes` | `MOVENG_LIMIT_TEXT_SIZE` |
 | One list's members, or one map's keys | engine | 1,000,000 | `limits.maxCollectionItems` | `MOVENG_LIMIT_COLLECTION_SIZE` |
 | The segment's result, as JSON text | engine | 64 MiB | `limits.maxResultBytes` | `MOVENG_LIMIT_RESULT_SIZE` |
@@ -61,4 +61,4 @@ Reviewed for this release:
 
 - **Memory as a whole.** The size limits bound each value, not their sum. A movement could still hold many values each under the limits; the step budget bounds how many it can build.
 - **One step's own work.** A single step can still do work proportional to its input (sorting a list of a million). The collection limit bounds that input.
-- **The TypeScript host.** It passes no `limits`, so the engine's defaults apply there, and it keeps no wall clock of its own yet.
+- **The TypeScript host's wall clock.** A TypeScript host sets the engine limits on the run's input (`RunInput.limits`), but keeps no wall clock of its own yet.

@@ -13,7 +13,7 @@ import {
   type ParkedScopeState,
   type RunInput,
   type TenantId,
-} from 'engine-contracts';
+} from '@lf/engine-contracts';
 
 import { runMovement, type MovementRunResult } from '../../../packages/movement-engine/services/movement_engine/run';
 import { makeFakeParkSink, makeTestHost } from '../../../packages/movement-engine/services/movement_engine/test_host';

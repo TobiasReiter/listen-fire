@@ -1,15 +1,15 @@
 {
-  "name": "engine-contracts",
-  "private": true,
+  "name": "@lf/engine-contracts",
   "license": "Apache-2.0",
-  "version": "0.0.1",
+  "version": "0.11.0",
   "description": "The contracts the movement engine speaks: the tenant id, the host families and entry-point inputs, the parked state, file descriptors and the adapter protocol. While private, its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit && node __embed_smoke__/check.cjs",
-    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
+    "prepack": "node ../../scripts/build-packages.cjs ."
   },
   "main": "index.ts",
   "types": "index.ts",
@@ -20,11 +20,48 @@
   },
   "type": "commonjs",
   "dependencies": {
-    "movement-lang": "workspace:*",
+    "@lf/movement-lang": "workspace:^",
     "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/node": "20.16.5",
+    "movement-lang": "workspace:@lf/movement-lang@*",
     "typescript": "5.5.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/listen-fire/listen-fire.git",
+    "directory": "packages/engine-contracts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./conformance": {
+        "types": "./dist/conformance/index.d.ts",
+        "default": "./dist/conformance/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "default": "./dist/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "typesVersions": {
+      "*": {
+        "*": [
+          "dist/*",
+          "*"
+        ]
+      }
+    }
   }
 }

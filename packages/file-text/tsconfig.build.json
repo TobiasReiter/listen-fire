@@ -14,5 +14,5 @@
     "declaration": false,
     "sourceMap": true
   },
-  "exclude": ["node_modules", "jest.config.borrowed.cjs", "**/__test__/**"]
+  "exclude": ["node_modules", "dist", "jest.config.borrowed.cjs", "**/__test__/**"]
 }
