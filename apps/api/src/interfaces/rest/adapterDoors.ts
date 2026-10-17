@@ -39,6 +39,6 @@ export function createAdapterDoorsRouter<Captured>(store: PushStore<Captured>): 
   return router;
 }
 
-const adapterDoorsRouter = createAdapterDoorsRouter(platformPushStore);
+const adapterDoorsRouter: ReturnType<typeof Router> = createAdapterDoorsRouter(platformPushStore);
 
 export { adapterDoorsRouter };

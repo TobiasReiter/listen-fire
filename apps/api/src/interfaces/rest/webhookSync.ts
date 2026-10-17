@@ -47,6 +47,6 @@ export function createWebhookSyncRouter<Captured>(
   return router;
 }
 
-const webhookSyncRouter = createWebhookSyncRouter(platformInboundStore, platformDeliveryHost);
+const webhookSyncRouter: ReturnType<typeof Router> = createWebhookSyncRouter(platformInboundStore, platformDeliveryHost);
 
 export { webhookSyncRouter };
