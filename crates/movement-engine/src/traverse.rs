@@ -538,6 +538,14 @@ impl Run<'_> {
                     let Some(steps) = steps else { return Err(over("an extract result".into())) };
                     self.extract_paths(extracted, steps, scope, span).await.map_err(Stop::Thrown)
                 }
+                // `d-[f:_resources]-> { … }` off a record an extraction call
+                // found: the content that call read, as it stamped it on the
+                // record.
+                Binding::Node(node) if let Probe::Resources { alias, filter } = probe => {
+                    let resources = node.borrow().resources.clone();
+                    let resources = self.filter_resources(resources, filter.as_deref(), scope, span).await?;
+                    Ok(resource_paths(resources, alias.as_deref()))
+                }
                 // `d-[c:company]-> { … }`: the node's arrow plane.
                 node @ Binding::Node(_) => {
                     let Some(steps) = steps else { return Err(over(crate::record::describe(&node))) };

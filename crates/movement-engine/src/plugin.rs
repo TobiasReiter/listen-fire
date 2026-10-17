@@ -199,7 +199,7 @@ impl Run<'_> {
                 let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
                 let handed_back = !field_order.is_empty();
                 let field_provenance = field_order.iter().map(|name| (name.clone(), trail.clone())).collect();
-                let node = Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() };
+                let node = Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new(), resources: Vec::new() };
                 (Binding::Node(Rc::new(RefCell::new(node))), handed_back)
             }
             // One record per thing the plugin found, in its order: the
@@ -217,7 +217,7 @@ impl Run<'_> {
                     let fields = spread_fields(record)?;
                     let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
                     let field_provenance = field_order.iter().map(|name| (name.clone(), trail.clone())).collect();
-                    landings.push(Binding::Node(Rc::new(RefCell::new(Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() }))));
+                    landings.push(Binding::Node(Rc::new(RefCell::new(Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new(), resources: Vec::new() }))));
                 }
                 let handed_back = !landings.is_empty();
                 (Binding::Positions(landings), handed_back)

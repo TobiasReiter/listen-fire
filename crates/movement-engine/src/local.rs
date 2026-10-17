@@ -159,6 +159,7 @@ impl LocalEdge {
             field_provenance: Vec::new(),
             landed_on: Some(self.edge_name.clone()),
             edges: landing_edges(shape.as_ref()),
+            resources: Vec::new(),
         };
         let landing = Rc::new(RefCell::new(landing));
         let index = {

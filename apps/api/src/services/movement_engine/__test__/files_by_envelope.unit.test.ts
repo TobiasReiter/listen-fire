@@ -349,6 +349,35 @@ describe('a parked file', () => {
   });
 });
 
+describe("a parked extraction call's record keeps the content it read", () => {
+  const source = PRELUDE + [
+    'function m(msg: <inbox-[:message]->>) {',
+    '  d = extractOne([msg.`subject`, msg.`deck`], node Found: "the company" { name: <text> "its name" })',
+    '  await sleep(1h)',
+    '  if (d != null) {',
+    '    d-[f:_resources WHERE f.type == "FILE"]-> {',
+    '      write crm-[:notes]-> { title: coalesce(File.read(f.file), "unread") }',
+    '    }',
+    '  }',
+    '}',
+  ].join('\n');
+
+  it('its `_resources` revive, the file a file again', async () => {
+    resetRustRunStats();
+    const sink = makeFakeParkSink();
+    await runMovement({ ...baseInput(source), host: hostFor([], [], [], sink) });
+    expect(sink.timerParks).toHaveLength(1);
+    const parked = JSON.stringify(sink.timerParks[0]?.state);
+    expect(parked).toContain('"resources"');
+    const ran: Ran = { read: [], titles: [], prompts: [] };
+    resetRustRunStats();
+    ran.result = await resumeMovement({ ...baseInput(source), state: JSON.parse(parked) as ParkedScopeState, host: hostFor(ran.read, ran.titles, ran.prompts) });
+    expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
+    expect(ran.titles).toEqual(['the deck']);
+    expect(ran.read).toEqual([SPELLED]);
+  });
+});
+
 describe('a parked file is found by the park\'s structure, never by a name', () => {
   // The names a park's own descriptors use for their members: bound by the
   // author, each is only a key in a scope's bindings, and a file bound to it

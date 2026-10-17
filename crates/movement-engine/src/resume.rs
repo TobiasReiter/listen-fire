@@ -1275,7 +1275,8 @@ impl Run<'_> {
             }
         }
         let landed_on = text(at(descriptor, "landedOn")).map(String::from);
-        *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, landed_on, edges };
+        let resources = items(at(descriptor, "resources")).iter().map(rehydrate_resource).collect();
+        *node.borrow_mut() = Node { fields: ordered, field_order: order, field_provenance: provenance, landed_on, edges, resources };
         Ok(node)
     }
 

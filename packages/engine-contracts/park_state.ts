@@ -271,6 +271,10 @@ export type BindingDescriptor<C extends ParkedCode = CodeAsTree> =
        *  node on no edge, and on a park written before landings kept it. */
       landedOn?: string;
       edges: Record<string, NodeEdgeDescriptor<C>>;
+      /** A record an extraction call found (version 5): the content that call
+       *  read, as resources (what `-[f:_resources]->` walks off it). Absent
+       *  on every other node, and on a park written before calls kept it. */
+      resources?: ResourceDescriptor[];
     }
   /**
    * A run-built node this park has already written — reached again through a

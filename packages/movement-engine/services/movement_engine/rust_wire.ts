@@ -589,6 +589,7 @@ function descriptorFiles(descriptor: BindingDescriptor): unknown {
         ...descriptor,
         ...(descriptor.fileFields !== undefined ? { fileFields: fileFieldsFiles(descriptor.fileFields) } : {}),
         edges: mapFiles(descriptor.edges, (edge) => edgeFiles(edge as NodeEdgeDescriptor)),
+        ...(descriptor.resources !== undefined ? { resources: listFiles(descriptor.resources, resourceFiles) } : {}),
       };
     case 'lazyWalk':
       return { ...descriptor, walk: walkFiles(descriptor.walk) };
