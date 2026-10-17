@@ -56,8 +56,10 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  the re-harvest took in every slice's new test programs at once, 62 more,
  *  of which 38 upgrade clean: 5,000 of 5,967 (83.8%). Raised when 174 orphan
  *  programs no test writes were dropped (with the checks of catalogs no test
- *  builds any more): 4,732 of 5,515 (85.8%). */
-const FLOOR = 0.858;
+ *  builds any more): 4,732 of 5,515 (85.8%). Lowered when version 5 refused
+ *  arithmetic on a value that may be absent (MOV_ABSENT_REQUIRED, a person
+ *  picks the guard or fallback): 4,732 of 5,518 (85.76%). */
+const FLOOR = 0.857;
 
 interface Program {
   source: string;
