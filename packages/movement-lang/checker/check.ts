@@ -1414,6 +1414,12 @@ export function checkProgram(
 
 /** The old spellings a program holds under language version 5 (the parser's
  *  `Program.spelling`), refused, each with its rewrite as the fix. */
+/** What a module declares, for a credential that fills none of it. */
+function declaredCredentialsPhrase(adapter: string, declared: readonly string[]): string {
+  if (declared.length === 0) return `'${adapter}' takes no credential of its own`;
+  return `connect it using a ${declared.map((d) => `'${d}'`).join(' or ')} credential of ${adapter}`;
+}
+
 function spellingDiagnostics(program: Program, checker: Checker): Diagnostic[] {
   return (program.spelling ?? []).filter(f => checker.spellingStands(f)).flatMap((f): Diagnostic[] => {
     if (f.named !== undefined) return positional(f, f.named, checker.namedOrders);
@@ -9660,6 +9666,16 @@ class Checker {
       this.report(
         DiagnosticCodes.CRED_WRONG_ADAPTER,
         `'${name}' is a ${served} credential — '${adapter}' needs a ${adapter} credential`,
+        slot.span,
+      );
+      return;
+    }
+    const filled = this.catalog.credential(symbol.importedName ?? name)?.credential;
+    const declared = this.catalog.adapter(adapter)?.declaredCredentials;
+    if (filled !== undefined && declared !== undefined && !declared.includes(filled)) {
+      this.report(
+        DiagnosticCodes.CRED_WRONG_ADAPTER,
+        `'${name}' is ${adapter}'s '${filled}' credential, which '${adapter}' does not declare — ${declaredCredentialsPhrase(adapter, declared)}`,
         slot.span,
       );
     }

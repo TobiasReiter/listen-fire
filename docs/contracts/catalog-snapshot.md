@@ -24,7 +24,7 @@ The shapes are TypeScript-ish: `x?: T` may be absent, and an absent member and o
 interface CatalogSnapshot {
   contractVersion?: number;                       // absent: 1
   adapters: Record<string, AdapterSnapshot>;      // by adapter type
-  credentials: Record<string, { adapters: string[] } | { adapter: string }>;   // by import name; `{ adapter }` is the older single-adapter form
+  credentials: Record<string, { adapters: string[]; credential?: string } | { adapter: string }>;   // by import name; `{ adapter }` is the older single-adapter form; `credential`: the module's declared credential it fills
   plugins: Record<string, PluginSpec>;            // by registered name
   files?: Record<string, { source: string }>;     // saved movement files, by import path
   models?: string[];                              // logical model names this deployment reaches; absent: models unchecked
@@ -38,6 +38,7 @@ interface AdapterSnapshot extends AdapterSpec {
 
 interface AdapterSpec {
   constructionArgs: ConstructionArg[];
+  declaredCredentials?: string[];                 // a module's declared credentials, by name; a credential naming another (`credential`) is refused at check
   canFire?: boolean;                              // absent on a known spec: it cannot fire anything
   triggerConfig?: string[];
   triggerConfigOptions?: Record<string, string[]>;

@@ -517,6 +517,9 @@ pub enum SchemaShape {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdapterSpec {
     pub construction_args: Vec<ConstructionArg>,
+    /// The credentials a module declares, by name (`AdapterSpec.declaredCredentials`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_credentials: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_fire: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -545,6 +548,9 @@ pub struct AdapterSpec {
 #[serde(deny_unknown_fields)]
 pub struct CredentialSpec {
     pub adapters: Vec<String>,
+    /// The module credential this one fills (`CredentialSpec.credential`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

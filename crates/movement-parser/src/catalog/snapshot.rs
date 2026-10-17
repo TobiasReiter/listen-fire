@@ -64,7 +64,7 @@ impl CatalogSnapshot {
     pub fn credential(&self, name: &str) -> Option<CredentialSpec> {
         Some(match self.credentials.get(name)? {
             SnapshotCredential::Adapters(spec) => spec.clone(),
-            SnapshotCredential::Adapter(legacy) => CredentialSpec { adapters: vec![legacy.adapter.clone()] },
+            SnapshotCredential::Adapter(legacy) => CredentialSpec { adapters: vec![legacy.adapter.clone()], credential: None },
         })
     }
 

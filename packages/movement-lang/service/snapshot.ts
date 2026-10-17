@@ -90,8 +90,9 @@ export interface CatalogSnapshot {
    * Both `{ adapter: string }` (legacy single-adapter form) and
    * `{ adapters: string[] }` (multi-adapter form) are accepted here.
    * `fromCatalogSnapshot` normalizes to `{ adapters }` for the checker.
+   * A module's credential also names the declared credential it fills.
    */
-  credentials: Record<string, { adapter: string } | { adapters: string[] }>;
+  credentials: Record<string, { adapter: string } | CredentialSpec>;
   plugins: Record<string, PluginSpec>;
   /**
    * The workspace's saved movement files, by name — the import-path
@@ -240,7 +241,7 @@ export function fromCatalogSnapshot(snapshot: CatalogSnapshot): Catalog {
     credential(name): CredentialSpec | undefined {
       const c = snapshot.credentials[name];
       if (!c) return undefined;
-      return { adapters: 'adapters' in c ? c.adapters : [c.adapter] };
+      return 'adapters' in c ? c : { adapters: [c.adapter] };
     },
     credentialNames(): string[] {
       return Object.keys(snapshot.credentials);
