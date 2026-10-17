@@ -35,6 +35,7 @@ import type {
 } from 'movement-engine/services/translation_graph/types';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
+import { parseEmailAddress } from 'movement-engine/public/inbound';
 import { fileHandle, ownedFileSource } from 'movement-engine/services/translation_graph/adapter';
 import { uniformWalk } from '../hop';
 import { INBOUND_EMAIL_ADDRESS_VAR, inboundRoutingAddress } from './address';
@@ -757,13 +758,6 @@ function emailAttachmentFileRef(att: Partial<EmailAttachment>): FileRef | null {
  * because `user_email.email` is citext but the join's still cheaper on
  * normalised input. Returns null when no `@` is present.
  */
-export function parseEmailAddress(raw: string | undefined | null): string | null {
-  if (!raw) return null;
-  const match = raw.match(/<([^>]+)>/);
-  const candidate = (match ? match[1] : raw).trim().toLowerCase();
-  if (!candidate.includes('@')) return null;
-  return candidate;
-}
 
 /**
  * Extract the friendly display name from an RFC 5322 address field.

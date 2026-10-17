@@ -55,12 +55,11 @@
       "body": "{\"signature\":{\"timestamp\":\"1792238400\",\"token\":\"golden-mailgun-token-0001\",\"signature\":\"abc\"},\"event-data\":{\"event\":\"delivered\"}}"
     },
     "response": {
-      "status": 500,
+      "status": 406,
       "headers": {
-        "content-type": "application/json; charset=utf-8",
-        "content-length": "49"
+        "content-length": "0"
       },
-      "body": "{\"error\":{\"code\":500,\"message\":\"Internal error\"}}"
+      "body": ""
     },
     "effects": []
   },
@@ -77,12 +76,11 @@
       "body": "{\"event-data\":{\"event\":\"delivered\"}}"
     },
     "response": {
-      "status": 500,
+      "status": 406,
       "headers": {
-        "content-type": "application/json; charset=utf-8",
-        "content-length": "49"
+        "content-length": "0"
       },
-      "body": "{\"error\":{\"code\":500,\"message\":\"Internal error\"}}"
+      "body": ""
     },
     "effects": []
   }

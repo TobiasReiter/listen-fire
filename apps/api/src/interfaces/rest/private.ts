@@ -17,12 +17,8 @@ import {
   EMAIL_ADAPTER_TYPE,
   EMAIL_RECORD_TYPE_ID,
 } from '../../services/translation_graph/adapters/email';
-import { readMessage } from '../../services/translation_graph/adapters/email/inbound_door';
-import {
-  envelopeRecipients,
-  fetchResendEmailPayload,
-  readReceivedEnvelope,
-} from '../../services/translation_graph/adapters/email/resend_inbound';
+import { fetchResendEmailPayload } from '../../services/translation_graph/adapters/email/resend_inbound';
+import { readMailgunMessage, readResendEnvelope, resendEnvelopeRecipients } from 'movement-engine/public/inbound';
 import { resolveActingUser } from '../../services/translation_graph/adapters/acting_user/resolve';
 
 /**
@@ -201,7 +197,7 @@ const acceptInboundEmail = async (
 const receiveInboundEmail: RequestHandler = async (req, res) =>
   acceptInboundEmail(req, res, {
     payload: normaliseInboundEmailPayload((req.body ?? {}) as Record<string, unknown>),
-    recipients: readMessage(req.body)?.recipients ?? [],
+    recipients: readMailgunMessage(req.body)?.recipients ?? [],
   });
 
 /**
@@ -212,14 +208,14 @@ const receiveInboundEmail: RequestHandler = async (req, res) =>
  */
 const receiveResendInboundEmail: RequestHandler = async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf-8') : '';
-  const envelope = readReceivedEnvelope(raw);
+  const envelope = readResendEnvelope(raw);
   // The door already answered anything that is not mail arriving; reaching
   // here without an envelope means the body changed under us.
   if (envelope === null) return res.status(406).send();
 
   return acceptInboundEmail(req, res, {
     payload: await fetchResendEmailPayload(envelope.email_id),
-    recipients: envelopeRecipients(envelope),
+    recipients: resendEnvelopeRecipients(envelope),
   });
 };
 

@@ -32,14 +32,13 @@
 // shape and signature scheme are entirely different, routes through the same
 // three questions once its own door has believed it.
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { InboundEmailDecision, MailgunStore, RoutableMessage } from 'movement-engine/public/inbound';
 
-import type { Request } from 'express';
+import { admitMailgunMail } from 'movement-engine/public/inbound';
 
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { logger } from 'movement-engine/services/logger';
 import { sendSlackNotification } from '../../../../lib/slack';
-import { notUndefined } from '../../../../lib/utils/nullability';
 import { findTriggerByInboundKey } from '../../storage/tg_table';
 import { principalDirectory } from '../../../principal';
 import { routingKeyFrom } from './address';
@@ -47,111 +46,8 @@ import { routingKeyFrom } from './address';
 /** The trigger kinds an inbound email may dispatch. */
 const INBOUND_EMAIL_TRIGGER_KINDS = ['CUSTOM_EMAIL', 'MAILGUN', 'INBOUND_EMAIL'];
 
-/** What the door decided, carried to the handler on the request. */
-interface InboundEmailRoute {
-  teamId: string;
-  /** The `<local>+<key>@` routing key on the message, when it carries one. */
-  key: string | null;
-  /** The team's trigger for that key — null when nothing matched. */
-  trigger: { id: string; kind: string } | null;
-}
-
-type InboundEmailDecision =
-  | { outcome: 'routed'; userId: string; teamId: string; route: InboundEmailRoute }
-  /** Nothing to do — answer with `status` and stop. Never a 5xx: every refusal
-   *  here is final, and a retryable code would have the provider redeliver it.
-   *  200 is the "understood, and there is nothing to do" arm — a provider that
-   *  delivers its whole event stream to one endpoint sends things that are not
-   *  mail arriving. */
-  | { outcome: 'refused'; status: 401 | 406 | 201 | 200 };
-
-// ── The message, as far as the door is concerned ───────────────────────────
-
-/** What routing needs to know, whatever provider carried the message. */
-interface RoutableMessage {
-  recipients: string[];
-  /** Addresses the message passed through before us, most-specific first. */
-  senderCandidates: string[];
-}
-
-interface DoorMessage extends RoutableMessage {
-  signature: string;
-  token: string;
-  timestamp: string;
-  sender: string;
-}
-
 function str(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function firstAddress(header: string | undefined): string | undefined {
-  return header?.split(/[;, ]+/)[0];
-}
-
-function parseRecipientList(header: string | undefined): string[] {
-  return header?.split(', ').map((entry) => entry.replace(/^.*<(.*)>$/, '$1')) ?? [];
-}
-
-function receivedHeaderRecipients(raw: Record<string, unknown>): string[] {
-  const value = raw['message-headers'];
-  const headers: unknown = typeof value === 'string' ? safeJson(value) : value;
-  if (!Array.isArray(headers)) return [];
-
-  const found: string[] = [];
-  for (const entry of headers) {
-    if (!Array.isArray(entry) || entry.length < 2) continue;
-    const [key, line] = entry;
-    if (key !== 'Received' || typeof line !== 'string') continue;
-    // `for <email@domain>`, whose angle brackets may arrive HTML-encoded —
-    // the last resort when a BCC was stripped on the way in.
-    const match = line.match(/\bfor\s+(?:<|&lt;)([\w.+-]+@[\w.-]+)(?:>|&gt;)/);
-    if (match) found.push(match[1]);
-  }
-  return found;
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function readMessage(body: unknown): DoorMessage | null {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
-  const raw: Record<string, unknown> = { ...(body as Record<string, unknown>) };
-
-  const sender = str(raw['sender']);
-  if (sender === undefined) return null;
-
-  return {
-    signature: str(raw['signature']) ?? '',
-    token: str(raw['token']) ?? '',
-    timestamp: str(raw['timestamp']) ?? '',
-    sender,
-    recipients: Array.from(
-      new Set([
-        ...parseRecipientList(str(raw['To'])),
-        ...parseRecipientList(str(raw['Cc'])),
-        ...parseRecipientList(str(raw['Bcc'])),
-        ...receivedHeaderRecipients(raw),
-      ]),
-    ),
-    // Auto-forwarding addresses act as service accounts: an email that reached
-    // us THROUGH one of them is the proxy's to answer for, so the proxy is
-    // tried before the human who happens to be in the `sender` header.
-    senderCandidates: [
-      firstAddress(str(raw['X-Forwarded-For'])),
-      firstAddress(str(raw['X-BeenThere'])),
-      firstAddress(str(raw['X-Gm-Original-To'])),
-      firstAddress(str(raw['X-Google-Original-To'])),
-      firstAddress(str(raw['X-Original-To'])),
-      firstAddress(str(raw['Delivered-To'])),
-      sender,
-    ].filter(notUndefined),
-  };
 }
 
 /** The routing key on the deployment's own inbound address, if a recipient
@@ -177,21 +73,6 @@ function signingKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
     return str(env.MAILGUN_API_KEY);
   }
   return env.TEST_HARNESS_TEAM_ID ? 'test-harness-dummy-key' : undefined;
-}
-
-function signatureVerifies(
-  message: Pick<DoorMessage, 'signature' | 'token' | 'timestamp'>,
-  apiKey: string,
-): boolean {
-  const expected = createHmac('sha256', apiKey)
-    .update(message.timestamp + message.token)
-    .digest('hex');
-  const given = Buffer.from(message.signature);
-  // A length mismatch is a wrong signature, not an exception: `timingSafeEqual`
-  // throws on unequal lengths, and letting that surface as a 500 invited
-  // Mailgun to redeliver a payload that will never verify.
-  if (given.length !== expected.length) return false;
-  return timingSafeEqual(given, Buffer.from(expected));
 }
 
 // ── 2. Whose team is this? ─────────────────────────────────────────────────
@@ -438,42 +319,24 @@ async function routeInboundEmail(message: RoutableMessage): Promise<InboundEmail
   };
 }
 
-/**
- * The Mailgun door: its own wire shape and its own signature, then the shared
- * three questions.
- */
-async function verifyInboundEmailRequest(req: Request): Promise<InboundEmailDecision> {
-  const message = readMessage(req.body);
-  if (message === null) {
-    logger.warn('[InboundEmail] refused a payload that is not an inbound email');
-    return { outcome: 'refused', status: 406 };
-  }
+/** The platform's side of the mail doors: the environment's signing rules and
+ *  the sender-keyed routing above; the core (`admitMailgunMail`,
+ *  `admitResendMail`) is everything between. */
+const platformMailgunStore: MailgunStore = {
+  route: routeInboundEmail,
+  mailgunSigningKey: () => signingKey(),
+};
 
-  const apiKey = signingKey();
-  if (apiKey === undefined) {
-    logger.error('[InboundEmail] no Mailgun signing key configured — refusing inbound email');
-    return { outcome: 'refused', status: 401 };
-  }
-  if (!signatureVerifies(message, apiKey)) {
-    // 406 rather than 401: Mailgun retries hard on anything it reads as
-    // transient, and a bad signature will never become good.
-    return { outcome: 'refused', status: 406 };
-  }
-
-  return routeInboundEmail(message);
+/** The Mailgun door over the platform's store. */
+function verifyInboundEmailRequest(body: unknown): Promise<InboundEmailDecision> {
+  return admitMailgunMail(platformMailgunStore, body);
 }
 
 export {
   INBOUND_EMAIL_TRIGGER_KINDS,
   inboundKeyFrom,
-  readMessage,
   recogniseAddresses,
   routeInboundEmail,
-  signatureVerifies,
   signingKey,
   verifyInboundEmailRequest,
-  type DoorMessage,
-  type InboundEmailDecision,
-  type InboundEmailRoute,
-  type RoutableMessage,
 };

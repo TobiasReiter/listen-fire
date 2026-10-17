@@ -2,7 +2,7 @@
  * Sign a synthetic Resend webhook the way Svix does.
  *
  * Mirrors the verification in
- * `services/translation_graph/adapters/email/svix.ts`:
+ * `packages/movement-engine/services/inbound/svix.ts`:
  *
  *     signature = base64(HMAC-SHA256(base64decode(secret), `${id}.${timestamp}.${body}`))
  *
