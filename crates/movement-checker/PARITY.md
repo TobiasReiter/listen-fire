@@ -5,7 +5,7 @@ Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 - Codes at parity: **263 of 263** codes the TypeScript checker reports on this corpus.
 - Diagnostics matched: 172930 of 172930; 0 extra in Rust.
 - Records with exactly the TypeScript's diagnostics, in its order: 48272 of 48272.
-- Rust side: 40.3s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Rust side: 40.6s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 

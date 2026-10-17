@@ -18,7 +18,9 @@ mkdir -p "$WORK"
 if [ "${1:-}" = "" ]; then
   (cd "$ROOT/packages/movement-lang" && checker/harvest/harvest.sh)
 fi
+# The engine oracles' programs reach apps/api modules that read env at load:
+# the jest suites' inert defaults stand in.
 if [ "${1:-}" != "--rust" ]; then
-  (cd "$ROOT/packages/movement-lang" && node -r ../../apps/api/node_modules/ts-node/register/transpile-only "$HERE/reference.ts" "$WORK")
+  (cd "$ROOT/packages/movement-lang" && node -r ../../apps/api/node_modules/ts-node/register/transpile-only -r ../../apps/api/src/test/test-env-defaults.ts "$HERE/reference.ts" "$WORK")
 fi
 cargo run --quiet --release -p movement-checker --example parity -- "$WORK" "$ROOT/crates/movement-checker/PARITY.md"
