@@ -2,15 +2,17 @@
 //! the TypeScript lf keeps it (apps/cli/src/documents.ts). A stored
 //! document's handle is `lf-files:<key>`, its key the path under
 //! `.lf/files/`. Exposing a file (for an external that fetches it across the
-//! JSON wire) copies it under `exposed/` and serves it from a loopback
-//! listener that lives as long as the process: the local stand-in for the
-//! hosted API's short-lived blob route.
+//! JSON wire) copies it under `exposed/` and serves it at `/files/<id>`:
+//! from `lf serve`'s own listener while it serves, else from a loopback
+//! listener of its own that lives as long as the process. The local
+//! stand-in for the hosted API's short-lived blob route.
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+use crate::http::Response;
 
 use crate::json::{Js, Obj};
 use crate::obj;
@@ -25,7 +27,8 @@ fn team_prefix(tenant: &str) -> String {
 
 pub struct Documents {
     root: PathBuf,
-    /// The loopback listener's port, once something was exposed.
+    /// The port exposed files are fetched from: `lf serve`'s, or this
+    /// store's own listener's once something was exposed.
     serving: OnceCell<u16>,
 }
 
@@ -68,6 +71,17 @@ impl Documents {
         std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Expose files from the listener on `port` (`lf serve`'s), which answers
+    /// `/files/<id>` from `exposed`.
+    pub fn serve_at(&self, port: u16) {
+        let _ = self.serving.set(port);
+    }
+
+    /// An exposed file's bytes, by the id its URL names.
+    pub fn exposed(&self, id: &str) -> Option<Vec<u8>> {
+        exposed_file(&self.root.join(EXPOSED), id)
+    }
+
     /// `expose`: the bytes at a URL an external can fetch.
     pub async fn expose(&self, bytes: &[u8]) -> Result<String, String> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -87,44 +101,28 @@ impl Documents {
         let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("the file listener: {e}"))?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         let exposed = self.root.join(EXPOSED);
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(serve_one(stream, exposed.clone()));
+        tokio::task::spawn_local(crate::http::serve(listener, 0, move |request| {
+            let found = match request.path.strip_prefix("/files/") {
+                Some(id) if request.method == "GET" => exposed_file(&exposed, id),
+                _ => None,
+            };
+            async move {
+                match found {
+                    Some(bytes) => Response::bytes(200, bytes),
+                    None => Response::bytes(404, Vec::new()),
+                }
             }
-        });
+        }));
         Ok(port)
     }
 }
 
-/// One `GET /files/<id>`: the exposed file, or 404.
-async fn serve_one(mut stream: tokio::net::TcpStream, exposed: PathBuf) {
-    let mut head = Vec::new();
-    let mut buf = [0u8; 1024];
-    while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16 * 1024 {
-        match stream.read(&mut buf).await {
-            Ok(0) | Err(_) => return,
-            Ok(n) => head.extend_from_slice(&buf[..n]),
-        }
+/// The exposed file an id names: a uuid's characters only, never a path.
+fn exposed_file(exposed: &Path, id: &str) -> Option<Vec<u8>> {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+        return None;
     }
-    let line = String::from_utf8_lossy(&head);
-    let mut words = line.split_whitespace();
-    let found = match (words.next(), words.next()) {
-        (Some("GET"), Some(path)) => path
-            .strip_prefix("/files/")
-            .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
-            .and_then(|id| std::fs::read(exposed.join(id)).ok()),
-        _ => None,
-    };
-    let response = match found {
-        Some(bytes) => {
-            let mut out = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", bytes.len()).into_bytes();
-            out.extend_from_slice(&bytes);
-            out
-        }
-        None => b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_vec(),
-    };
-    let _ = stream.write_all(&response).await;
-    let _ = stream.shutdown().await;
+    std::fs::read(exposed.join(id)).ok()
 }
 
 /// The key a handle names: `/`-separated names, never a way out of the folder.

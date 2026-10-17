@@ -1428,14 +1428,17 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf-host completion <bash|zsh|fish>` prints a tab-completion script. It completes the subcommands
   and their flags, the installed and known module names, and the credential names.
 
-## [v0.11.0] - 2026-10-12
+### lfr-serve
 
-Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
-moves an existing automation up to it when it validates cleanly there. An automation with an error,
-or with a move-up warning (`MOV_MATCH_MISS_CONTINUES`, `MOV_HANDLE_UPDATED_IN_PLACE`,
-`MOV_HANDLE_READ_FOUND`: the same text now does something different), stays on its version, shows
-Review and lists the diagnostics, and behaves exactly as before. Read each warning, edit what
-assumed the old behaviour, and upgrade with `upgradeAutomation`, acknowledging it.
+- `lf-host serve` serves what `lf serve` does: a provider's webhook deliveries (and the older
+  `/hooks/<external>/<install>` address), an external's emit and wake pushes, callback calls at
+  `/api/cb/<id>`, and due work drained every second. Deliveries are verified by the same seven
+  signature schemes and the same signed-inbound rule, with the same 100 KB and 1 MB limits.
+- `lf-host` runs callbacks: a run mints them, `lf-host call <id> --body <file>` or the door calls
+  them, and the body runs once under the run's lease. `lf-host cancel <run> [--reason]` cancels a
+  run, and `lf-host run --webhook` takes one delivery. Either binary can resume what the other
+  left, callbacks included.
+- `lf-host` reads lf.yaml's `publicUrl`; a callback's link is under it.
 
 ### lfr-store
 
@@ -1450,6 +1453,15 @@ assumed the old behaviour, and upgrade with `upgradeAutomation`, acknowledging i
   claims only its team's work.
 - Thin for now: connections are plain (no TLS), and a run's trace count covers only the current
   process, because the hosted schema has no trace table.
+
+## [v0.11.0] - 2026-10-12
+
+Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
+moves an existing automation up to it when it validates cleanly there. An automation with an error,
+or with a move-up warning (`MOV_MATCH_MISS_CONTINUES`, `MOV_HANDLE_UPDATED_IN_PLACE`,
+`MOV_HANDLE_READ_FOUND`: the same text now does something different), stays on its version, shows
+Review and lists the diagnostics, and behaves exactly as before. Read each warning, edit what
+assumed the old behaviour, and upgrade with `upgradeAutomation`, acknowledging it.
 
 ### Language version 4, Luminous Owl: what breaks
 

@@ -108,20 +108,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-/// A fresh callback id: the prefix and 24 random bytes, base64url (`newCallbackId`).
-fn new_callback_id() -> Result<String> {
-    let mut bytes = [0u8; 24];
-    getrandom::fill(&mut bytes).map_err(|e| StoreError::Backend(format!("no random bytes for a callback id: {e}")))?;
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut id = String::from("cb_");
-    for chunk in bytes.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
-        for shift in [18, 12, 6, 0] {
-            id.push(char::from(ALPHABET[((n >> shift) & 63) as usize]));
-        }
-    }
-    Ok(id)
-}
+const NO_PULL_CURSORS: &str = "a Postgres store keeps no inbound pull cursor (a notify-then-pull source needs the SQLite state file for now)";
 
 const CALLBACK_COLUMNS: &str = concat!(
     "id, team_id::text, run_id::text, address, params::text, state::text, calls::text, single_use, ",
@@ -764,7 +751,7 @@ impl RunHostStore for PgStore {
     // ── Callbacks ───────────────────────────────────────────────────────────
 
     fn mint_callback(&self, input: MintCallback<'_>) -> Result<String> {
-        let id = new_callback_id()?;
+        let id = crate::callbacks::new_callback_id()?;
         let (params, state) = (input.params.to_json(), input.state.to_json());
         self.execute(
             "insert into automations.callback (id, team_id, run_id, address, params, state, calls, single_use, expires_at, status)
@@ -869,19 +856,21 @@ impl RunHostStore for PgStore {
         )?;
         Ok(())
     }
+
+    // The hosted product keeps a pull cursor on its webhook subscription row,
+    // which lf's installs (its secrets file) have no counterpart for: refused,
+    // never answered empty.
+    fn inbound_checkpoint(&self, _subscription_id: &str) -> Result<Option<Js>> {
+        Err(StoreError::Backend(NO_PULL_CURSORS.into()))
+    }
+    fn save_inbound_checkpoint(&self, _subscription_id: &str, _checkpoint: &Js) -> Result<()> {
+        Err(StoreError::Backend(NO_PULL_CURSORS.into()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_callback_id_is_the_prefix_and_32_base64url_characters() {
-        let (a, b) = (new_callback_id().unwrap(), new_callback_id().unwrap());
-        assert_ne!(a, b);
-        assert!(a.starts_with("cb_") && a.len() == 3 + 32, "{a}");
-        assert!(a[3..].bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'), "{a}");
-    }
 
     #[test]
     fn a_completed_run_is_the_hosted_products_success() {

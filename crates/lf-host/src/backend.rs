@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::json::Js;
 use crate::pg_store::PgStore;
-use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, Store, StoreError};
+use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, Store};
 
 /// The tenant a SQLite state file's rows belong to (`LOCAL_TENANT`).
 pub const SQLITE_TENANT: &str = "local";
@@ -196,12 +196,11 @@ pub trait RunHostStore {
     fn mark_callback_body_started(&self, id: &str, call_index: i64, fence: Option<&str>) -> Result<bool>;
     fn landed_callbacks(&self, ids: &[String]) -> Result<Vec<String>>;
     fn revoke_run_callbacks(&self, run_id: &str) -> Result<()>;
-}
 
-/// The callback family lf-host's SQLite store does not serve yet (the
-/// callbacks slice brings it): refused, never answered empty.
-fn no_sqlite_callbacks<T>() -> Result<T> {
-    Err(StoreError::Invalid("lf-host's SQLite store does not serve callbacks yet".into()))
+    // ── Inbound pull cursors ────────────────────────────────────────────────
+    /// An install's saved pull cursor (a notify-then-pull source's), or None.
+    fn inbound_checkpoint(&self, subscription_id: &str) -> Result<Option<Js>>;
+    fn save_inbound_checkpoint(&self, subscription_id: &str, checkpoint: &Js) -> Result<()>;
 }
 
 impl RunHostStore for Store {
@@ -224,8 +223,8 @@ impl RunHostStore for Store {
     fn cancel_request(&self, id: &str) -> Result<Option<Option<String>>> {
         Store::cancel_request(self, id)
     }
-    fn request_cancel(&self, _id: &str, _reason: Option<&str>) -> Result<()> {
-        Err(StoreError::Invalid("lf-host's SQLite store does not take cancel requests yet".into()))
+    fn request_cancel(&self, id: &str, reason: Option<&str>) -> Result<()> {
+        Store::request_cancel(self, id, reason)
     }
     fn run(&self, id: &str) -> Result<Option<RunRow>> {
         Store::run(self, id)
@@ -328,23 +327,30 @@ impl RunHostStore for Store {
         Store::get_source(self, team_id, hash)
     }
 
-    fn mint_callback(&self, _input: MintCallback<'_>) -> Result<String> {
-        no_sqlite_callbacks()
+    fn mint_callback(&self, input: MintCallback<'_>) -> Result<String> {
+        Store::mint_callback(self, input)
     }
-    fn callback(&self, _id: &str) -> Result<Option<CallbackRecord>> {
-        no_sqlite_callbacks()
+    fn callback(&self, id: &str) -> Result<Option<CallbackRecord>> {
+        Store::callback(self, id)
     }
-    fn record_callback_call(&self, _id: &str, _values: &Js, _body_due_at: &str) -> Result<CallbackClaim> {
-        no_sqlite_callbacks()
+    fn record_callback_call(&self, id: &str, values: &Js, body_due_at: &str) -> Result<CallbackClaim> {
+        Store::record_callback_call(self, id, values, body_due_at)
     }
-    fn mark_callback_body_started(&self, _id: &str, _call_index: i64, _fence: Option<&str>) -> Result<bool> {
-        no_sqlite_callbacks()
+    fn mark_callback_body_started(&self, id: &str, call_index: i64, fence: Option<&str>) -> Result<bool> {
+        Store::mark_callback_body_started(self, id, call_index, fence)
     }
-    fn landed_callbacks(&self, _ids: &[String]) -> Result<Vec<String>> {
-        no_sqlite_callbacks()
+    fn landed_callbacks(&self, ids: &[String]) -> Result<Vec<String>> {
+        Store::landed_callbacks(self, ids)
     }
     fn revoke_run_callbacks(&self, run_id: &str) -> Result<()> {
         Store::revoke_run_callbacks(self, run_id)
+    }
+
+    fn inbound_checkpoint(&self, subscription_id: &str) -> Result<Option<Js>> {
+        Store::inbound_checkpoint(self, subscription_id)
+    }
+    fn save_inbound_checkpoint(&self, subscription_id: &str, checkpoint: &Js) -> Result<()> {
+        Store::save_inbound_checkpoint(self, subscription_id, checkpoint)
     }
 }
 

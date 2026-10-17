@@ -9,35 +9,45 @@
 //!   lf-host upgrade [--check] [--all]        rewrite the movement files into the current language version
 //!   lf-host runs                             the runs, most recent first
 //!   lf-host drain [--until-idle] [--max-seconds N]  a worker over the work queue (scale from zero)
+//!   lf-host serve [--port N]                 the inbound doors, the callback door and the work drain
+//!   lf-host call <callback-id> [--body <values.json>]
+//!   lf-host cancel <run-id> [--reason <text>]
 //!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
 //!   lf-host connect [<module>]               set a module up (src/connect.rs)
 //!   lf-host credential add|update|delete|list   user credentials (src/credential_cmd.rs)
 //!   lf-host completion <bash|zsh|fish>       the shell's tab completion
 //!   lf-host --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
 //!   lf-host --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
+//!   lf-host --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!
-//! `run`, `resume`, `runs` and `drain` keep run state where `--store <spec>`
-//! (or lf.yaml's `store:`) says: a SQLite file, `.lf/state.db` by default,
-//! or a Postgres database (`postgres://…`) with the hosted product's schema.
+//! `run`, `resume`, `runs`, `drain`, `serve`, `call` and `cancel` keep run
+//! state where `--store <spec>` (or lf.yaml's `store:`) says: a SQLite file,
+//! `.lf/state.db` by default, or a Postgres database (`postgres://…`) with the
+//! hosted product's schema.
 //!   lf-host --project-schema                 one schema projection, stdin to stdout (a parity probe)
 //!
 //! Single-threaded: one tokio thread, every wait an await.
 
 mod anthropic;
 mod backend;
+mod callbacks;
 mod catalog;
 mod check;
 mod completion;
 mod connect;
+mod contract_doors;
 mod contract_secrets;
 mod contract_store;
 mod credential_calls;
 mod credential_cmd;
+mod doors;
 mod documents;
 mod drain;
 mod externals;
 mod file_ref;
+mod http;
 mod http_out;
+mod inbound;
 mod json;
 mod llm_calls;
 mod models;
@@ -57,6 +67,7 @@ mod secret_stores;
 mod secrets;
 mod secrets_family;
 mod segment;
+mod serve;
 mod sources;
 mod store;
 mod upgrade;
@@ -66,12 +77,17 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
+const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
        lf-host run --event <file.json> [--dry-run]
+       lf-host run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
        lf-host resume [<run-id>]
        lf-host drain [--until-idle] [--max-seconds <n>]
+       lf-host serve [--port N]
+       lf-host call <callback-id> [--body <values.json>]
+       lf-host cancel <run-id> [--reason <text>]
        lf-host --contract-store <state.db|postgres://…> [--team <uuid>]
        lf-host --contract-secrets <secrets file | env>
+       lf-host --contract-doors
        lf-host --project-schema
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
@@ -80,16 +96,20 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|upgrade
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   runs      the runs in the state file, most recent first (as `lf runs`)
   drain     claim due work rows one at a time and run them; with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
+  serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
+  call      call a callback, as its url's POST does (the values: a JSON object)
+  cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
   --store   where run state is kept: a SQLite file (default .lf/state.db, or lf.yaml's `store:`) or a Postgres database with the hosted schema
   --team    the tenant (a uuid) of a Postgres store's rows
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
+  --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
   --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
 {CREDENTIAL_USAGE}
-not yet here (the TypeScript lf has them): init, serve, call, cancel, run --webhook";
+not yet here (the TypeScript lf has them): init";
 
 /// The commands the TypeScript lf has that this binary does not yet.
-const NOT_YET: &[&str] = &["init", "serve", "call", "cancel"];
+const NOT_YET: &[&str] = &["init"];
 
 struct Args {
     command: Option<String>,
@@ -102,7 +122,13 @@ struct Args {
     webhook: Option<String>,
     check_only: bool,
     all: bool,
+    body: Option<PathBuf>,
+    install: Option<String>,
+    headers: Vec<String>,
+    port: Option<String>,
+    reason: Option<String>,
     contract_store: Option<String>,
+    contract_doors: bool,
     store: Option<String>,
     team: Option<String>,
     until_idle: bool,
@@ -122,7 +148,13 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         webhook: None,
         check_only: false,
         all: false,
+        body: None,
+        install: None,
+        headers: Vec::new(),
+        port: None,
+        reason: None,
         contract_store: None,
+        contract_doors: false,
         store: None,
         team: None,
         until_idle: false,
@@ -139,6 +171,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--webhook" => args.webhook = Some(value("--webhook")?),
             "--check" => args.check_only = true,
             "--all" => args.all = true,
+            "--body" => args.body = Some(PathBuf::from(value("--body")?)),
+            "--install" => args.install = Some(value("--install")?),
+            "--header" => args.headers.push(value("--header")?),
+            "--port" => args.port = Some(value("--port")?),
+            "--reason" => args.reason = Some(value("--reason")?),
+            "--contract-doors" => args.contract_doors = true,
             "--ephemeral" => args.ephemeral = true,
             "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(value("--contract-store")?),
@@ -174,6 +212,9 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         return contract_store::serve(&backend::StoreSpec::parse(spec, &cwd, args.team.as_deref())?).await.map(|()| 0);
     }
+    if args.contract_doors {
+        return contract_doors::serve().await.map(|()| 0);
+    }
     let mut out = std::io::stdout().lock();
     if args.project_schema {
         let mut input = Vec::new();
@@ -201,9 +242,12 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         },
         "upgrade" => upgrade::run(&project::load_project(&args.dir)?, upgrade::UpgradeOptions { check_only: args.check_only, all: args.all }, &mut out).await,
         "run" => {
-            if args.webhook.is_some() {
-                eprintln!("lf-host: `run --webhook` is not in lf-host yet; use the TypeScript lf for it");
-                return Ok(2);
+            if let (Some(external), Some(body)) = (&args.webhook, &args.body) {
+                let project = project::load_project(&args.dir)?;
+                let store = store_of(&args, &project)?;
+                let session = runs::open_session(project, args.ephemeral, &store).await?;
+                let delivery = serve::WebhookFile { external, install: args.install.as_deref(), body, headers: &args.headers };
+                return runs::report(&serve::receive_webhook(&session, delivery).await?, &mut out);
             }
             let Some(event_file) = &args.event else {
                 eprintln!("lf run needs --event <file> or --webhook <external> --body <file>");
@@ -248,6 +292,20 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             let session = runs::open_session(project, false, &store).await?;
             drain::drain(&session, &drain::DrainOptions { until_idle: args.until_idle, max_seconds: args.max_seconds }, &mut out).await
         }
+        "serve" => {
+            let project = project::load_project(&args.dir)?;
+            let store = store_of(&args, &project)?;
+            serve::run(project, args.ephemeral, &store, args.port.as_deref()).await
+        }
+        "call" => {
+            let project = project::load_project(&args.dir)?;
+            let store = store_of(&args, &project)?;
+            serve::call_command(project, &store, args.rest.first().map(String::as_str), args.body.as_deref(), &mut out).await
+        }
+        "cancel" => {
+            let project = project::load_project(&args.dir)?;
+            serve::cancel_command(&store_of(&args, &project)?, args.rest.first().map(String::as_str), args.reason.as_deref(), &mut out).await
+        }
         other if NOT_YET.contains(&other) => {
             eprintln!("lf-host: `{other}` is not in lf-host yet; use the TypeScript lf for it");
             Ok(2)
@@ -267,7 +325,8 @@ fn store_of(args: &Args, project: &project::Project) -> Result<backend::StoreSpe
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a tokio runtime");
-    let code = match runtime.block_on(run(argv)) {
+    // A LocalSet, so a listener's connections run as tasks on this one thread.
+    let code = match runtime.block_on(tokio::task::LocalSet::new().run_until(run(argv))) {
         Ok(code) => code,
         Err(message) => {
             eprintln!("lf-host: {message}");

@@ -44,8 +44,24 @@ pub struct ExternalManifest {
     /// `serve-module`.
     pub module: Option<String>,
     pub auth: Option<Auth>,
+    /// How its webhooks are signed when its manifest declares no `inbound`.
+    pub webhook: Option<WebhookBlock>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+}
+
+/// `webhook:` — the protocol's own scheme, keyed by one of the install's fields.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookBlock {
+    pub signature: String,
+    #[serde(default = "remote_signature_header")]
+    pub header: String,
+    #[serde(rename = "secretField")]
+    pub secret_field: String,
+}
+
+fn remote_signature_header() -> String {
+    "x-listen-fire-signature".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -115,6 +131,9 @@ fn validate(manifest: &ExternalManifest) -> Result<(), String> {
     if manifest.auth.as_ref().is_some_and(|a| a.kind != "bearer") {
         return Err("auth.kind: expected \"bearer\"".into());
     }
+    if manifest.webhook.as_ref().is_some_and(|w| w.signature != "hmac-sha256") {
+        return Err("webhook.signature: expected \"hmac-sha256\"".into());
+    }
     Ok(())
 }
 
@@ -137,6 +156,8 @@ pub struct RunningExternal {
     pub credential_declarations: Vec<Declaration>,
     /// Its manifest answer as it came (what `lf connect` reads of it).
     pub manifest_answer: Js,
+    /// How its manifest says its webhooks are signed (crate::doors).
+    pub inbound: Option<crate::inbound::Declaration>,
     /// The started process; killed when this is dropped.
     _child: Option<Child>,
 }
@@ -214,6 +235,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             plugins: manifest.plugins,
             credential_declarations,
             manifest_answer: raw,
+            inbound: manifest.inbound,
             _child: child,
         });
     }
@@ -229,6 +251,7 @@ struct WireManifest {
     runtime_capabilities: Js,
     webhook_event_type_id: Option<String>,
     plugins: Option<Js>,
+    inbound: Option<crate::inbound::Declaration>,
 }
 
 impl WireManifest {
@@ -266,7 +289,8 @@ impl WireManifest {
         });
         let webhook_event_type_id = raw.get("webhookEventTypeId").and_then(Js::as_str).map(str::to_string);
         let plugins = plugins_declaration(raw, &methods)?;
-        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)?, methods, runtime_capabilities, webhook_event_type_id, plugins })
+        let inbound = raw.get("inbound").map(crate::inbound::Declaration::read).transpose().map_err(|issue| format!("inbound.{issue}"))?;
+        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)?, methods, runtime_capabilities, webhook_event_type_id, plugins, inbound })
     }
 }
 
@@ -353,6 +377,7 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("PORT", "0")
+        .envs(crate::serve::host_url().map(|url| ("LF_HOST_URL", url)))
         .envs(external.manifest.env.iter().map(|(k, v)| (k, v.replace("{lf}", &lf))))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

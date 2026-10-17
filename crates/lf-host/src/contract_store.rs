@@ -15,6 +15,8 @@
 //! refused because the lease is gone answers the error `RunLeaseLost`
 //! (code -32001, `data: { name, runId }`), which the client rethrows as the
 //! core's `RunLeaseLost`. Requests are answered one at a time, in order.
+//! The callback family and the run records (`callbacks.*`, `runs.*`) are
+//! crate::callbacks's.
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 

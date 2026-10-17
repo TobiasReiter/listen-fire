@@ -253,7 +253,6 @@ async fn pick_up(lf_dir: &Path, state: &str, timeout: Duration) -> Result<Redire
 
 /// `lf serve`'s answer to GET /oauth/callback?<query>: hand the redirect to
 /// the command waiting for its state. The status and the page's text.
-#[allow(dead_code)] // mounted by `lf serve` (the doors slice, G5)
 pub fn deliver_public_redirect(lf_dir: &Path, query: &str) -> (u16, String) {
     let state = url::form_urlencoded::parse(query.as_bytes()).find(|(k, _)| k == "state").map(|(_, v)| v.into_owned());
     let Some(state) = state.filter(|s| !s.is_empty()) else { return (400, "This redirect carries no state.".into()) };

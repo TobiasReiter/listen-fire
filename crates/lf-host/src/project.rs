@@ -31,6 +31,8 @@ struct ProjectFile {
     user: UserFile,
     /// Where run state is kept, when not `.lf/state.db` (crate::backend::StoreSpec).
     store: Option<String>,
+    #[serde(rename = "publicUrl")]
+    public_url: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -62,6 +64,8 @@ pub struct Project {
     pub user: (Option<String>, Option<String>),
     /// lf.yaml's `store:`, unless `--store` names another.
     pub store: Option<String>,
+    /// Where lf is reached from outside (`publicUrl`), when lf.yaml names it.
+    pub public_url: Option<String>,
 }
 
 /// The language version an engine version runs. Every engine this release
@@ -102,6 +106,12 @@ fn is_semver(text: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// `http://` or `https://` and a host.
+fn is_http_url(text: &str) -> bool {
+    let rest = text.strip_prefix("https://").or_else(|| text.strip_prefix("http://"));
+    rest.is_some_and(|rest| rest.split(['/', '?', '#']).next().is_some_and(|host| !host.is_empty() && !host.contains(char::is_whitespace)))
+}
+
 /// The project whose `lf.yaml` is at `from` or the nearest folder above it.
 pub fn load_project(from: &Path) -> Result<Project, String> {
     let mut dir = std::path::absolute(from).map_err(|e| format!("{}: {e}", from.display()))?;
@@ -120,6 +130,11 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
     if !is_semver(&file.engine) {
         return Err(format!("{}: engine: a semver version, e.g. 0.11.0", path.display()));
     }
+    if let Some(url) = &file.public_url
+        && !is_http_url(url)
+    {
+        return Err(format!("{}: publicUrl: an http(s) URL, e.g. https://lf.example.com", path.display()));
+    }
     let language_version = language_version_of_engine(&file.engine)?;
     refuse_below_lf(language_version, &path.display().to_string(), "run `lf upgrade`")?;
     let lf_dir = dir.join(".lf");
@@ -132,6 +147,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         language_version,
         user: (file.user.name, file.user.email),
         store: file.store,
+        public_url: file.public_url,
         root: dir,
     })
 }
