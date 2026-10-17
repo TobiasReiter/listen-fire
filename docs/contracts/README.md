@@ -11,6 +11,7 @@ The movement core speaks six contracts. Each is written down here with an intege
 | language-versions | [language-versions.md](language-versions.md) | 5 | 1, 2, 3, 4, 5 | none | `languageVersion` beside every program |
 | system-caller | [system-caller.md](system-caller.md) | 1 | 1 | none | none: an in-process interface |
 
+- **Not a contract of its own:** [run-limits.md](run-limits.md) says what one segment may consume, and what holds a movement away from the network.
 - **This table is this release's.** A release states, contract by contract, the version it writes, the versions it reads, and the ones it will stop reading.
 - **The table is held equal to the code.** `CONTRACTS` (`packages/engine-contracts/versions.ts`) is test-held equal to this table, and each document's version line to its constant (`CATALOG_SNAPSHOT_VERSION`, `PARK_STATE_VERSION`, `HOST_FAMILIES_VERSION`, `MANIFEST_PROTOCOL_VERSION`, `CURRENT_LANGUAGE_VERSION`, `SYSTEM_CALLER_VERSION`).
 

@@ -149,6 +149,7 @@ interface RunInput {
   credentialIds?: Record<string, string>; // import name to credential id
   dryRun?: boolean;                       // rehearse every target
   suspendAt?: string[];                   // addresses to suspend at, once each
+  limits?: SegmentLimits;                 // what one segment may consume (run-limits.md); absent: the defaults
 }
 ```
 
