@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LF, companies, lf, project } from './example';
+import { companies, lf, lfCommand, project } from './example';
 
 const STATE = '.lf/externals/acme_crm/state.json';
 
@@ -57,7 +57,7 @@ test('lf run --dry-run captures the writes and makes none', () => {
 
 test('a run past the call ceiling is stopped, naming the knob', () => {
   const dir = project();
-  const run = spawnSync(process.execPath, [LF, 'run', '--event', 'events/company_created.json'], {
+  const run = spawnSync(...lfCommand(['run', '--event', 'events/company_created.json']), {
     cwd: dir,
     encoding: 'utf8',
     env: { ...process.env, NODE_NO_WARNINGS: '1', REMOTE_ADAPTER_MAX_CALLS_PER_RUN: '1' },

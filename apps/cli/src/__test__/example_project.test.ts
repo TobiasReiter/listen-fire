@@ -10,7 +10,7 @@ import { createHmac } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { LF, companies, crmCompanies, externalPort, lf, project, served } from './example';
+import { companies, crmCompanies, externalPort, lf, lfCommand, project, served } from './example';
 
 test('lf check: the example is clean', () => {
   const dir = project();
@@ -53,7 +53,7 @@ test('lf run --webhook refuses a delivery whose signature does not verify', () =
 
 test('lf serve takes one signed webhook at /hooks/<external>/<install>', async () => {
   const dir = project();
-  const server = spawn(process.execPath, [LF, 'serve', '--ephemeral', '--port', '0'], {
+  const server = spawn(...lfCommand(['serve', '--ephemeral', '--port', '0']), {
     cwd: dir,
     env: { ...process.env, NODE_NO_WARNINGS: '1' },
     stdio: ['ignore', 'pipe', 'inherit'],

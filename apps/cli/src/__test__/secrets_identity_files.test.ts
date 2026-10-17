@@ -15,8 +15,8 @@ import { localDocumentStore } from '../documents';
 import { localFileText } from '../files';
 import { loadProject, initProject } from '../project';
 import { loadSecrets, refreshCredential, type Credential } from '../secrets';
+import { lfCommand } from './example';
 
-const LF = resolve(__dirname, '../../bin/lf.cjs');
 const EXAMPLE = resolve(__dirname, '../../../../examples/lf-acme');
 const EVENT = 'events/company_created.json';
 
@@ -59,7 +59,7 @@ function credentialYaml(extra = ''): string {
 
 function lf(dir: string, args: string[], env: Record<string, string | undefined> = {}): Promise<{ code: number; out: string }> {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [LF, ...args], { cwd: dir, env: { ...process.env, NODE_NO_WARNINGS: '1', ...env } });
+    const child = spawn(...lfCommand(args), { cwd: dir, env: { ...process.env, NODE_NO_WARNINGS: '1', ...env } });
     let out = '';
     child.stdout.on('data', (c) => (out += c));
     child.stderr.on('data', (c) => (out += c));

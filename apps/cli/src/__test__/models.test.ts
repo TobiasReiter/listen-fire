@@ -10,7 +10,7 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { LF, companies, project } from './example';
+import { companies, lfCommand, project } from './example';
 
 const ANSWER = 'Vireo Robotics, welcomed by a model';
 
@@ -48,7 +48,7 @@ async function fakeAnthropic(): Promise<{ url: string; received: Received[]; clo
 // process's event loop.
 function lfAsync(dir: string, ...args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [LF, ...args], { cwd: dir, env: { ...process.env, NODE_NO_WARNINGS: '1' } });
+    const child = spawn(...lfCommand(args), { cwd: dir, env: { ...process.env, NODE_NO_WARNINGS: '1' } });
     let out = '';
     child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString()));
     child.stderr.on('data', (chunk: Buffer) => (out += chunk.toString()));
