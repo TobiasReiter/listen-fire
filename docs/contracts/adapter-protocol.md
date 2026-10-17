@@ -22,6 +22,7 @@ Contents:
 - [Methods](#methods)
 - [Waiting on your system (awaits)](#waiting-on-your-system-awaits)
 - [Telling Listen-Fire something happened](#telling-listen-fire-something-happened)
+- [Modules: credentials, signatures and schedules](#modules-credentials-signatures-and-schedules)
 - [Paging](#paging)
 - [Files](#files)
 - [Limits and timeouts](#limits-and-timeouts)
@@ -91,6 +92,11 @@ Record ids are identity, and cross the wire unchanged.
   manifest file claims. The probe runs when the secret is linked.
 - Additions that older servers can ignore (a new optional field, a new
   optional method) do not change the version. A change in meaning does.
+- Within a version, the two sides learn what the other speaks from the
+  manifest, never from the version: a method is called only when it is listed
+  in `methods`, and a declaration (`credentials`, `inbound`, `poll`,
+  `periodic`) is acted on only when it is present. An older server sends
+  neither and is unchanged; an older host ignores both.
 - The version is an integer on the manifest and its decimal string on a
   request. `MANIFEST_PROTOCOL_VERSION` and `PROTOCOL_VERSION`
   (`packages/engine-contracts/protocol.ts`) hold it, and a test holds them
@@ -157,6 +163,8 @@ The manifest file registers your server with a team:
 - Optional fields: `handbookSection` (`{ title, content }`, prose the authoring
   handbook shows about your system), `vocabulary` (an icon and event phrasing),
   `webhookEventTypeId`.
+- Optional module declarations: `credentials`, `inbound`, `poll` and
+  `periodic` ([Modules](#modules-credentials-signatures-and-schedules)).
 - What a listen on your adapter may say, also optional:
   - `subscribableEvents`: the values of a listen's `events: [...]`
     (`listen to crm { events: ["company.created"] } fire welcome`). An event
@@ -390,6 +398,9 @@ language version 5 an automation cannot delete any other.
 | `describeOpaqueId` | `{ fieldPath, value }` | a label, or `null` |
 | `invokeFieldFunction` | `{ recordType, fieldId, functionName, args: { instructions, data } }` | the composed value |
 | `edgesFrom` | `{ position, cursor? }` | see [describe](#describe) |
+| `poll` | `{ config, checkpoint? }` | `{ events, checkpoint? }` ([Modules](#polled-sources-and-periodic-tasks)); needs `poll` declared |
+| `refreshCredential` | `{}` | `{ fields }` ([Modules](#credentials)); needs `credentials` declared |
+| `runPeriodic` | `{ name }` | `null` ([Modules](#polled-sources-and-periodic-tasks)); needs `periodic` declared |
 
 `listEventTypes` example — the CRM's one event, delivered as a `Company`:
 
@@ -653,6 +664,159 @@ If your system sends webhooks, let Listen-Fire subscribe:
 Protocol 2 has no replay protection: a captured signed delivery verifies
 again. Keep the callback on HTTPS.
 
+## Modules: credentials, signatures and schedules
+
+An installable module (a built-in integration such as `@lf/attio`, or your
+own server) can hand its housekeeping to the host by declaring it in the
+manifest. Every declaration is optional and is an addition within version 2:
+a server that declares nothing is unchanged.
+
+A declaration and its method go together. The manifest is refused when one
+is present without the other (`poll` with the `poll` method, `periodic` with
+`runPeriodic`), or when a name is declared twice. `refreshCredential` needs
+`credentials`, but `credentials` does not need `refreshCredential`.
+
+### Credentials
+
+Declare the credential your module needs to reach its provider:
+
+```json
+"credentials": [
+  {
+    "name": "attio",
+    "kind": "oauth2",
+    "fields": [{ "name": "workspace_id", "label": "Workspace", "secret": false }],
+    "oauth2": {
+      "authorizeUrl": "https://app.attio.com/authorize",
+      "tokenUrl": "https://app.attio.com/oauth/token",
+      "scopes": ["record_permission:read-write"],
+      "clientAuth": "body",
+      "pkce": true
+    }
+  }
+]
+```
+
+- `name` is ASCII lower case. It names the credential in `lf.yaml`, a connect
+  link and the request.
+- `kind` is `static` or `oauth2`:
+  - `static` is entered once and never refreshed by the host (an API key, a
+    bot token). It holds exactly its `fields`.
+  - `oauth2` is connected through the provider's authorize page. It holds
+    `access_token`, `refresh_token` and `expires_at` (an ISO time) besides its
+    `fields`, and needs the `oauth2` block.
+- Each field is `{ name, label?, secret?, optional? }`. A field is secret
+  unless it says `"secret": false`: the host keeps secret fields out of logs,
+  traces and error text.
+- `oauth2`: `authorizeUrl` and `tokenUrl` (required), `scopes`, `clientAuth`
+  (`basic`, the default, sends the client id and secret as an HTTP Basic
+  header on the token call; `body` sends them in the form), `pkce`, and
+  `authorizeParams` (extra query parameters for the authorize page).
+
+The host sends the install's resolved credential on every request, beside
+`params`:
+
+```json
+{
+  "protocolVersion": "2",
+  "method": "poll",
+  "cacheScopeId": "c0ffee",
+  "params": { "config": {} },
+  "credential": { "name": "attio", "fields": { "access_token": "…", "refresh_token": "…", "expires_at": "2026-10-17T12:00:00.000Z" } }
+}
+```
+
+- Every field value is a string.
+- The host sends a credential only to an installed module that declares it,
+  and only over loopback or HTTPS.
+- Never log it, echo it in an error, or store it beyond the call.
+
+If your call changed the credential (you refreshed the token, or the provider
+rotated the refresh token), say so beside the result:
+
+```json
+{ "ok": true, "result": { "events": [] }, "credentialUpdate": { "name": "attio", "fields": { "access_token": "…", "refresh_token": "…" } } }
+```
+
+- Only the fields you name change; the host merges them over the stored ones
+  and writes them back.
+- `credentialUpdate` may ride a failure (`ok: false`) too. Send it whenever a
+  token changed, or a rotated refresh token is lost.
+
+Refreshing:
+
+- The host refreshes an `oauth2` credential itself, with the standard
+  refresh-token grant at `tokenUrl`, before a call when `expires_at` is near
+  and once more when a call fails as unauthorized.
+- A provider whose refresh is not the standard grant implements
+  `refreshCredential`: `{}` → `{ fields }`, the changed fields. The credential
+  to refresh is the request's `credential`.
+- The host runs at most one refresh of a credential at a time, so two calls
+  never spend the same refresh token.
+
+### Declared inbound signatures
+
+A module whose provider sends webhooks names how they are signed, and the
+host verifies each delivery before `preprocessInbound` sees it:
+
+```json
+"inbound": {
+  "providerKey": "attio",
+  "scheme": "attio",
+  "signatureHeaders": ["attio-signature", "x-attio-signature"]
+}
+```
+
+- `providerKey` is the door's provider segment:
+  `/api/public/webhook-sync/<providerKey>/<subscription>`. A built-in keeps
+  today's key, so no subscription's URL changes.
+- `scheme` is one of:
+
+  | `scheme` | Provider |
+  |---|---|
+  | `hmac_sha256_hex` | lower-case hex HMAC-SHA256 of the raw body |
+  | `airtable_mac` | Airtable's `x-airtable-content-mac` |
+  | `attio` | Attio's signature |
+  | `affinity_hex_or_b64` | Affinity's signature, hex or base64 |
+  | `slack_v0` | Slack's `v0` signature over the timestamp and body |
+  | `telegram_secret_token` | Telegram's secret token, compared whole |
+  | `remote` | this protocol's own `x-listen-fire-signature` ([host door](#inbound-through-the-host-door)) |
+
+- `signatureHeaders` lists the headers that may carry the signature, in lower
+  case; the first one present is read. `slack_v0` also reads
+  `x-slack-request-timestamp`, which the scheme fixes.
+- `intercepts` (optional) names requests the host answers itself, unsigned,
+  before verifying: `slack_url_verification` echoes Slack's `challenge`.
+- A scheme or intercept the host does not know refuses the manifest; it is
+  never silently left unverified. A provider no scheme fits keeps verifying
+  in its own code.
+
+### Polled sources and periodic tasks
+
+A source with no webhooks is polled:
+
+```json
+"poll": { "intervalSeconds": 300 }
+```
+
+- The host calls `poll` every `intervalSeconds` for each listen on the
+  module; a listen's own `every` overrides it.
+- `poll`: `{ config, checkpoint? }` → `{ events, checkpoint? }`. `config` is
+  the listen's options. `checkpoint` is whatever the previous poll returned,
+  absent the first time. Each event has the `emit` door's shape
+  ([emit](#emit-new-data)).
+- Return only what is new since the checkpoint. A backfill is not a poll.
+
+Housekeeping on a schedule, per install (renewing a webhook the provider
+expires, say):
+
+```json
+"periodic": [{ "name": "renew_webhook", "intervalSeconds": 86400 }]
+```
+
+- The host calls `runPeriodic({ name })` every `intervalSeconds` for each
+  install, with that install's credential. It answers `null`.
+
 ## Paging
 
 `getRelated` returns everything at once. For a large collection implement
@@ -899,4 +1063,11 @@ from the root, so no automation can walk the collection.
   - A webhook subscription must return a secret, and deliveries are signed.
   - Clarified within version 2 (no bump; the reference adapter declares no file field, and conformance is unchanged for it): a file is read only at a field the catalog declares `kind: "file"` or in a resource's `fileRef`; a file ref anywhere else is data. File refs Listen-Fire sends (in a write, a position's resources, evidence) name no credential. The CLI gains `files-declared`.
 - **`deletable` on a type** (within version 2, no bump; language version 5, Dancing Wren). A type's `describe` may say `"deletable": true` when `deleteRecord` removes one. The field is additive: an older server that never sends it still installs, speaks version 2 and passes conformance, and an automation pinned to language version 4 or earlier deletes as before. The ruling: no protocol version bump. Under language version 5 an adapter that omits it has every `delete` of its types refused when the automation is checked (`MOV_DELETE_NOT_DECLARED`); declare it to allow them.
+- **Modules** (within version 2, no bump). The manifest may declare
+  `credentials`, `inbound`, `poll` and `periodic`; a request may carry
+  `credential`, and a response `credentialUpdate`; three optional methods,
+  `poll`, `refreshCredential` and `runPeriodic`. All additive: an older server
+  declares none of them and is unchanged, and an older host ignores them. The
+  ruling: no protocol version bump. See
+  [Modules](#modules-credentials-signatures-and-schedules).
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.
