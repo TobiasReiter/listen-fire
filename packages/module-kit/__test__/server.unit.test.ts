@@ -218,6 +218,51 @@ describe('resolveFileRef answers by URL', () => {
   });
 });
 
+describe('resolveFileRef with a host that serves bytes', () => {
+  const served: Array<{ contentType?: string; text: string }> = [];
+  const owner = baseAdapter({
+    resolveFileRef: async ({ ref }) => ({ stream: Readable.from([`bytes of ${ref.name}`]), contentType: ref.contentType }),
+  });
+  const handler = createAdapterProtocolHandler({ adapter: owner, serveBytes: (file) => {
+    void (async () => {
+      let text = '';
+      for await (const chunk of file.stream) text += String(chunk);
+      served.push({ ...(file.contentType !== undefined ? { contentType: file.contentType } : {}), text });
+    })();
+    return 'http://module.test/files/t1';
+  } });
+
+  it('hosts the stream the adapter answers and returns that URL', async () => {
+    const answer = await rpc(handler, 'resolveFileRef', {
+      ref: { name: 'notes.txt', contentType: 'text/plain', source: { ownerAdapterType: 'paged_crm', handle: 'h1' } },
+    });
+    expect(answer.body).toEqual({ ok: true, result: { url: 'http://module.test/files/t1', contentType: 'text/plain' } });
+    await new Promise((done) => setImmediate(done));
+    expect(served).toEqual([{ contentType: 'text/plain', text: 'bytes of notes.txt' }]);
+  });
+
+  it('a ref that carries a URL is still answered with it', async () => {
+    const answer = await rpc(handler, 'resolveFileRef', { ref: { name: 'x', url: 'https://files.example/x' } });
+    expect(answer.body.result).toEqual({ url: 'https://files.example/x' });
+  });
+});
+
+describe('a file the adapter returns, on the wire', () => {
+  const handler = createAdapterProtocolHandler({
+    adapter: baseAdapter({
+      getFieldValue: async () => ({ __brand: 'FileRef', name: 'a.txt', source: { adapterType: 'paged_crm', handle: 'h1' } }),
+    }),
+  });
+
+  it('names its owner type and handle, in the wire spelling', async () => {
+    const answer = await rpc(handler, 'getFieldValue', {
+      position: makeStablePosition({ adapterType: 'paged_crm', recordType: 'Doc', recordId: 'd1' }),
+      fieldId: 'File',
+    });
+    expect(answer.body.result).toEqual({ __brand: 'FileRef', name: 'a.txt', source: { ownerAdapterType: 'paged_crm', handle: 'h1' } });
+  });
+});
+
 describe('what an adapter throw answers', () => {
   it('a request the adapter refuses is bad_request, not retryable', async () => {
     const handler = createAdapterProtocolHandler({

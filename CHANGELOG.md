@@ -1365,6 +1365,22 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
   signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
 
+### ev4-dropbox
+
+- Dropbox is a module: `@lf/dropbox` (`modules/dropbox`). Nothing changes for a team using it: the
+  same requests and answers, held by a recording of the old
+  adapter replayed against the module in process and served as a process over protocol 2.
+  Switching back is one line (`BUILTIN_MODULES`).
+- Dropbox's OAuth credential is declared by the module. The platform, as its host, refreshes a token
+  about to expire through the secrets family against its own Dropbox app (so a refresh still runs
+  once at a time across processes) and hands the module a working token. The dev loop's fake still
+  stands in for Dropbox through the module's base URL override.
+- Files cross as handles. A Dropbox file read is a handle (its path) that the host redeems through
+  `resolveFileRef`; bytes a write carries are read through the host (`ctx.files`). The platform now
+  provides `ctx.files` (a team's own bytes). A served module hosts the bytes of a file it returns at
+  a short-lived one-use URL and reads a file value's bytes from the URL the host sent; a file it
+  returns names its owner type and handle in the wire's spelling.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

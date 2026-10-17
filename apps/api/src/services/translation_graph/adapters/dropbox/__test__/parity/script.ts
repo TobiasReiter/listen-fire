@@ -11,9 +11,12 @@ import type { SourcePosition } from 'movement-engine/public/catalog';
 
 import { withFileOwners } from 'movement-engine/public/files';
 import { makeMetaPosition } from 'movement-engine/public/catalog';
+import { fileValue, userEditContext } from 'movement-engine/public/adapter';
 
 export interface ParitySubject {
   adapter: Adapter;
+  /** What an error says, when the subject's transport wraps it. */
+  messageOf?(error: unknown): string;
 }
 
 export interface TranscriptEntry {
@@ -42,7 +45,7 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
       transcript.push({ step: name, answer: json(answer) });
       return answer;
     } catch (error) {
-      transcript.push({ step: name, answer: { error: error instanceof Error ? error.message : String(error) } });
+      transcript.push({ step: name, answer: { error: subject.messageOf?.(error) ?? (error instanceof Error ? error.message : String(error)) } });
       return undefined;
     }
   };
@@ -50,7 +53,7 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
     step(name, () => adapter.getRelated({ position, fieldId, direction: 'outgoing' }));
   const first = (results: RelatedResult[] | undefined): SourcePosition | undefined => results?.[0]?.position;
   const write = (name: string, input: Omit<WriteInput, 'mutationContext'>) =>
-    step(name, () => adapter.createRecord({ ...input, mutationContext: {} as never }));
+    step(name, () => adapter.createRecord({ ...input, mutationContext: userEditContext('parity-actor') }));
 
   const meta = makeMetaPosition('dropbox');
   await step('listEntryPoints', () => adapter.listEntryPoints());
@@ -58,7 +61,7 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
     await step(`describe ${type}`, () => adapter.describe(type));
   }
   await step('edgesFrom meta', async () => adapter.edgesFrom?.(meta) ?? null);
-  await step('resolveEntity', () => adapter.resolveEntity({ recordType: 'Folder', fields: { name: 'Deals' } } as never));
+  await step('resolveEntity', () => adapter.resolveEntity({ recordType: 'Folder', record: { name: 'Deals' }, candidates: [], constraints: { any: [] } } as never));
 
   // The seeded tree: /Deals and /Deals/foo-notes.txt.
   const folder = first(await related('root Folders', meta, 'Folders'));
@@ -105,12 +108,12 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
     fields: { file: { __brand: 'FileRef', name: 'memo.txt', contentType: 'text/plain', content: 'inline content' } },
   });
   if (ref !== undefined) {
-    await write('create File copied from a Dropbox file', { recordType: 'File', fields: { name: 'copy.txt', file: ref, parent: '/Clients' } });
+    await write('create File copied from a Dropbox file', { recordType: 'File', fields: { name: 'copy.txt', file: fileValue(ref), parent: '/Clients' } });
   }
   await write('create File with no content', { recordType: 'File', fields: { name: 'empty.txt' } });
   await write('create an unknown type', { recordType: 'Spreadsheet', fields: {} });
-  await step('updateRecord', () => adapter.updateRecord({ recordType: 'File', externalId: '/x', fields: {} } as never));
-  await step('deleteRecord', () => adapter.deleteRecord({ recordType: 'File', externalId: '/x' } as never));
+  await step('updateRecord', () => adapter.updateRecord({ recordType: 'File', externalId: '/x', fields: {}, mutationContext: userEditContext('parity-actor') }));
+  await step('deleteRecord', () => adapter.deleteRecord({ recordType: 'File', externalId: '/x', mutationContext: userEditContext('parity-actor') }));
 
   // What the creates left behind.
   await related('root Folders after', meta, 'Folders');

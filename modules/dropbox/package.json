@@ -9,7 +9,8 @@
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit && node ../../scripts/check-module-boundary.cjs",
-    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
+    "bench": "node --require ../../packages/module-kit/node_modules/tsx/dist/cjs/index.cjs bench/hosted_bench.ts"
   },
   "main": "index.ts",
   "types": "index.ts",

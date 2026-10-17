@@ -7,9 +7,9 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { resolve as resolvePath } from 'node:path';
 
-import type { ModuleDefinition, ModuleLog } from './define';
+import type { ModuleDefinition, ModuleFiles, ModuleLog } from './define';
 
-import { refusingFiles, refusingKv } from './in_process';
+import { refusingKv } from './in_process';
 import { createModuleProtocolHandler } from './module_server';
 
 /** A log that writes one JSON line per entry to `write`. */
@@ -19,6 +19,24 @@ export function jsonLineLog(module: string, write: (line: string) => void): Modu
     (message: string, meta?: Record<string, unknown>): void =>
       write(`${JSON.stringify({ level, module, message, ...(meta !== undefined ? { meta } : {}) })}\n`);
   return { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
+}
+
+/** The files of a served module: a file value the host handed in carries a URL
+ *  (protocol 2 moves bytes by URL), which is where its bytes are read; nothing
+ *  is kept for the module. */
+function urlFiles(module: string): ModuleFiles {
+  const refuse = (what: string) => new Error(`module ${module}: ${what} is not available when the module is served as a process (protocol 2 keeps no module files)`);
+  return {
+    read: async (ref) => {
+      if (typeof ref.url !== 'string' || ref.url === '') throw new Error(`module ${module}: the file${ref.name !== undefined ? ` '${ref.name}'` : ''} carries no URL to read its bytes from`);
+      const response = await fetch(ref.url);
+      if (!response.ok) throw new Error(`module ${module}: reading the file${ref.name !== undefined ? ` '${ref.name}'` : ''} answered HTTP ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
+    put: async () => {
+      throw refuse('ctx.files.put');
+    },
+  };
 }
 
 export interface ServeModuleOptions {
@@ -41,7 +59,7 @@ export async function serveModule(options: ServeModuleOptions): Promise<{ port: 
   const handler = createModuleProtocolHandler({
     definition,
     log,
-    files: refusingFiles(unavailable('ctx.files')),
+    files: urlFiles(definition.name),
     kv: refusingKv(unavailable('ctx.kv')),
     ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
     ...(token !== undefined ? { authenticate: (headers) => headers.authorization === `Bearer ${token}` } : {}),
