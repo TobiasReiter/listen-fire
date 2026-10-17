@@ -378,6 +378,35 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
 
+### close-refusals
+
+- From version 5 the checker refuses, at save, forms the engine does not run, each naming the
+  spelling it does run. Versions 1 to 4 are unchanged.
+  - A linked write or match whose target walks more than one edge (`MOV_WRITE_MULTI_HOP`):
+    walk to the parent in a block, then write off its alias.
+  - A walk with no root (`MOV_WALK_ROOTLESS`), as a block head or in an expression. Only a
+    rootless `exists(-[…]->)` inside a hop's WHERE or ORDER BY has a record to walk from: the one
+    that hop lands on. That form now also runs over a record a run built (an extraction call's
+    nested record), where the engine used to refuse it.
+  - `unique by` on a write to a declared node (`MOV_WRITE_SHAPE_UNIQUE`): the record lands in
+    memory, so there is nothing to find it in.
+  - `KG_VALUE(…)` and `KG_EXISTS(…)` (`MOV_KG_QUERY_RETIRED`): no engine runs a query text.
+  - `await` on a name holding a list of records (`MOV_AWAIT_ON_LIST`): an await parks on one
+    record.
+  - A record written as the value of a field that is a relationship (`MOV_WRITE_LINK_FIELD`;
+    before 5 an info nudge): write off the record, or link the two after the write.
+  - A walk off a json value (`MOV_JSON_HAS_NO_EDGES`): a json value has no relationships.
+- `-[f:_resources]->` reads off a record an extraction call found (`extract`, `extractOne`), and
+  off its nested records: the content the call read, a FILE resource per file and a TEXT one per
+  text. Before, the checker refused it although version 5 reads `_resources` only off an
+  extraction's result. A paused run keeps them (park state: a `nodePosition` may carry
+  `resources`).
+- A built-in call on a line by itself in version 5 spelling (`Text.upper(x)`) parses, and the
+  checker reports it as a value nothing reads, instead of a parse error.
+- A run whose host names a function taking a value as its entry fails saying the function is a
+  callee, no longer that the checker should have caught it: a function taking a value is a legal
+  callee, and no check can see which function a host will name.
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)

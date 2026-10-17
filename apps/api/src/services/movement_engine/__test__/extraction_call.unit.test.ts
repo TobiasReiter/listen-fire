@@ -759,3 +759,73 @@ describe("extractOne's absent answer", () => {
     expect(none).toEqual({ kind: 'positions', landings: [] });
   });
 });
+
+describe('`_resources` off a record the call found: the content it read', () => {
+  it('a FILE resource per file, a TEXT one per text, in order', async () => {
+    const { writes } = await run(
+      [
+        '  d = extractOne([msg.`text`, msg.`deck`], Detail)',
+        '  if (d != null) {',
+        '    d-[f:_resources]-> {',
+        '      write crm-[:companies]-> { name: "${f.type} ${coalesce(f.name, "-")}: ${coalesce(f.content, "-")}" }',
+        '    }',
+        '  }',
+      ],
+      [{ record: { summary: cite('Acme builds infra', 0) } }],
+    );
+    expect(writes.map((w) => w.fields)).toEqual([
+      { name: 'TEXT -: Acme (40 people) raised a Seed. Beta raised a Series A.' },
+      // A file's own fields are its name, type and content type; its text is READ(f.file).
+      { name: 'FILE deck.pdf: -' },
+    ]);
+  });
+
+  it("each record carries them, a nested one too, and a hop's WHERE narrows them", async () => {
+    const { writes } = await run(
+      [
+        "  found = extract([msg.`text`, msg.`deck`], Company, { tier: 'careful' })",
+        '  found-[c:round]-> {',
+        '    c-[f:_resources WHERE f.type == "FILE"]-> {',
+        '      write crm-[:companies]-> { name: "${c.stage} ${f.name}" }',
+        '    }',
+        '  }',
+      ],
+      [COMPANIES],
+    );
+    expect(writes.map((w) => w.fields)).toEqual([{ name: 'Seed deck.pdf' }, { name: 'Series A deck.pdf' }]);
+  });
+
+  it('none when the call read nothing', async () => {
+    const { writes, result } = await run(
+      ['  found = extract([], Detail)', '  found-[f:_resources]-> {', '    write crm-[:companies]-> { name: f.type }', '  }'],
+      [],
+    );
+    expect(writes).toEqual([]);
+    expect(result.writes).toEqual([]);
+  });
+});
+
+describe("a rootless EXISTS inside a hop's WHERE over a record the call found", () => {
+  it('walks off the record the hop lands on', async () => {
+    const { writes } = await run(
+      [
+        '  node Found: "the companies named" {',
+        '    node co: "each company" {',
+        '      name: <text> "its name"',
+        '      node round: "each round it raised" {',
+        '        stage: <text> "the stage"',
+        '      }',
+        '    }',
+        '  }',
+        '  found = extractOne([msg.`text`], Found)',
+        '  if (found != null) {',
+        '    found-[c:co WHERE exists(-[:round]->)]-> {',
+        '      write crm-[:companies]-> { name: c.name }',
+        '    }',
+        '  }',
+      ],
+      [{ record: { co: [{ name: cite('Acme', 0), round: [{ stage: cite('Seed', 0) }] }, { name: cite('Beta', 0), round: [] }] } }],
+    );
+    expect(writes.map((w) => w.fields)).toEqual([{ name: 'Acme' }]);
+  });
+});

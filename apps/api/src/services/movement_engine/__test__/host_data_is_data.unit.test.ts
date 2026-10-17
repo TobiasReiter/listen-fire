@@ -92,7 +92,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => ({
 }));
 
 import { mockCatalogSnapshot, parseMovementExpression, type InstanceSchema } from 'movement-lang';
-import { MovementRunFailed, runMovement } from 'movement-engine/services/movement_engine/run';
+import { runMovement } from 'movement-engine/services/movement_engine/run';
 import { MovementEngineError } from 'movement-engine/services/movement_engine/errors';
 import type { Adapter, RuntimeCapabilities } from 'movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
@@ -252,10 +252,13 @@ beforeEach(() => {
 });
 
 describe('a host value shaped like an engine object is data', () => {
-  it('a deferred walk spelled as data is never walked: one field read, no hop, the value-hop refusal', async () => {
+  // From version 5 a walk off a json value is refused at the check
+  // (MOV_JSON_HAS_NO_EDGES): a json value has no relationships, whatever it
+  // spells, so nothing is read and nothing walked.
+  it('a deferred walk spelled as data is never walked: the walk off the json value is refused at the check', async () => {
     const { outcome, email } = await run(COUNT_HOPS_OFF_META, walkShaped('COUNT(e-[:items]->)'));
-    await expect(outcome).rejects.toThrow(/traversing from a value binding \('v'\) is not supported/);
-    expect(email.calls.getFieldValue).toEqual(['meta']);
+    await expect(outcome).rejects.toThrow(/MOV_JSON_HAS_NO_EDGES/);
+    expect(email.calls.getFieldValue).toEqual([]);
     expect(email.calls.getRelated).toBe(0);
     expect(parsedTexts().some((text) => text.includes('-[:items]->'))).toBe(false);
   });
@@ -266,14 +269,11 @@ describe('a host value shaped like an engine object is data', () => {
       () => undefined,
       (e: unknown) => e,
     );
-    expect(error).toBeInstanceOf(MovementRunFailed);
-    if (!(error instanceof MovementRunFailed)) throw new Error('unreachable');
-    expect(error.cause).toBeInstanceOf(MovementEngineError);
-    expect(error.message).toMatch(/traversing from a value binding \('v'\) is not supported/);
-    expect(error.message).not.toContain('NOSUCHFN');
-    expect(JSON.stringify(error.partial.trace)).not.toContain('NOSUCHFN');
+    expect(error).toBeInstanceOf(MovementEngineError);
+    expect(String(error)).toMatch(/MOV_JSON_HAS_NO_EDGES/);
+    expect(String(error)).not.toContain('NOSUCHFN');
     expect(parsedTexts().some((text) => text.includes('NOSUCHFN'))).toBe(false);
-    expect(email.calls.getFieldValue).toEqual(['meta']);
+    expect(email.calls.getFieldValue).toEqual([]);
     expect(email.calls.getRelated).toBe(0);
   });
 });

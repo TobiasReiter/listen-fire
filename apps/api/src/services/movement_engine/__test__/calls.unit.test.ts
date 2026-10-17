@@ -695,8 +695,8 @@ describe('guards', () => {
     );
   });
 
-  // The retired construct's engine path, which outlives the author-time
-  // refusal by one wave: it still runs, and its own guard still holds.
+  // The retired construct still runs for a saved program, but from version 5
+  // its `unique by` is refused at the check (MOV_WRITE_SHAPE_UNIQUE).
   it('unique by on a declaration write has no store to resolve against', async () => {
     await expectError(
       [
@@ -709,7 +709,7 @@ describe('guards', () => {
         '  }',
         '}',
       ].join('\n'),
-      /MOVENG_UNSUPPORTED: unique by on a shape write/,
+      /MOV_WRITE_SHAPE_UNIQUE/,
     );
   });
 

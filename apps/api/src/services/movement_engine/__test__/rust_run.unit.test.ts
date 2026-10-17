@@ -316,13 +316,15 @@ describe('a whole run in the Rust engine', () => {
       expectOf(await onRust(c));
     };
 
-    it('reads a field shaped like a kept walk as data: one field read, no walk, no program text run', async () => {
+    // From version 5 the walk off the json value is refused at the check
+    // (MOV_JSON_HAS_NO_EDGES), so nothing is read and nothing walked.
+    it('reads a field shaped like a kept walk as data: the walk off it refused at the check, no program text run', async () => {
       for (const raw of ['COUNT(e-[:items]->)', 'NOSUCHFN(1)']) {
         await held({ source: body('  n = count(v-[:subs]->)', '  fail("${n}")'), event: webhook({ meta: keptWalk(raw) }) }, (ran) => {
-          expect(ran.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
+          expect(ran.called.filter((m) => m === 'getFieldValue')).toHaveLength(0);
           expect(ran.called).not.toContain('getRelated');
           expect(ran.called).not.toContain('iterateRelated');
-          expect(ran.ended).toContain("traversing from a value binding ('v')");
+          expect(ran.ended).toContain('MOV_JSON_HAS_NO_EDGES');
           expect(JSON.stringify([ran.ended, ran.trace, ran.appends])).not.toContain('NOSUCHFN');
         });
       }
