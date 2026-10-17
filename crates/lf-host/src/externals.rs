@@ -449,16 +449,10 @@ fn serve_module_command(project: &Project, external: &str) -> Result<Vec<String>
             .find(|path| path.is_file())
             .map(|path| vec!["node".to_string(), path.display().to_string()])
     };
-    // The modules bundle a release installs beside the binary: each module is
-    // a folder with its own node_modules (module-kit among them).
-    if let Some(root) = bundled_modules_root()
-        && let Ok(entries) = std::fs::read_dir(&root)
-    {
-        let mut folders: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        folders.sort();
-        if let Some(command) = folders.iter().find_map(|folder| script(folder)) {
-            return Ok(command);
-        }
+    // The modules bundle a release installs beside the binary: module-kit in
+    // its node_modules, each module a folder beside it.
+    if let Some(command) = bundled_modules_root().and_then(|root| script(&root)) {
+        return Ok(command);
     }
     let from_binary = std::env::current_exe().ok().and_then(|exe| exe.canonicalize().ok());
     let bases = project.root.ancestors().chain(from_binary.iter().flat_map(|exe| exe.ancestors().skip(1)));

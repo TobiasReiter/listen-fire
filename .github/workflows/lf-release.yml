@@ -1,0 +1,115 @@
+name: lf-release
+# A git tag `lf-v<semver>` builds the `lf` binary for macOS (arm64, x64) and
+# Linux (x64, arm64; static, musl) and attaches, to a GitHub release of that
+# tag, one archive per target plus SHA256SUMS. Each archive carries the binary
+# (bin/lf) and the built-in modules (share/lf/modules), so a module runs offline
+# after install (it needs node on the machine: modules are TypeScript served by
+# serve-module). Nothing runs on a push to a branch, and nothing is published
+# anywhere but that release.
+#
+# `workflow_dispatch` builds the same matrix against any ref and uploads the
+# archives as workflow artifacts only: how a change to this file is proved
+# before it is tagged.
+on:
+  push:
+    tags:
+      - "lf-v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to build (dry run — builds every target, publishes nothing)"
+        required: false
+        default: ""
+
+concurrency:
+  group: lf-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The workspace's release profile is tuned for the WASM artifacts
+  # (opt-level "z"); the native host wants speed.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, runner: macos-14, os: darwin, cpu: arm64, libc: "" }
+          - { target: x86_64-apple-darwin, runner: macos-14, os: darwin, cpu: x64, libc: "" }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest, os: linux, cpu: x64, libc: glibc, zig: true }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest, os: linux, cpu: arm64, libc: glibc, zig: true }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Zig (cross-linking musl)
+        if: matrix.zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: cargo-zigbuild
+        if: matrix.zig
+        run: cargo install cargo-zigbuild --locked --version 0.19.8
+      - name: Build lf
+        run: |
+          if [ "${{ matrix.zig }}" = "true" ]; then
+            cargo zigbuild --release --locked -p lf-host --target ${{ matrix.target }}
+          else
+            cargo build --release --locked -p lf-host --target ${{ matrix.target }}
+          fi
+      - name: Smoke test (a binary that runs on this runner)
+        if: "!matrix.zig && matrix.target == 'aarch64-apple-darwin'"
+        run: |
+          bin=target/${{ matrix.target }}/release/lf-host
+          "$bin" init "$RUNNER_TEMP/starter"
+          "$bin" check --dir "$RUNNER_TEMP/starter"
+      - name: Archive
+        id: archive
+        run: |
+          version="${GITHUB_REF_NAME:-dry-run}"
+          name="${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name/bin" "dist/$name/share/lf"
+          cp "target/${{ matrix.target }}/release/lf-host" "dist/$name/bin/lf"
+          node scripts/dist/build-modules-bundle.mjs "dist/$name/share/lf/modules" ${{ matrix.os }} ${{ matrix.cpu }} ${{ matrix.libc }}
+          rm -f "dist/$name/share/lf/modules/package-lock.json"
+          cp LICENSE NOTICE "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "archive=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lf-${{ matrix.target }}
+          path: ${{ steps.archive.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    # Tag pushes only: a dry run stops after the archives exist.
+    if: startsWith(github.ref, 'refs/tags/lf-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: cd artifacts && sha256sum lf-*.tar.gz > SHA256SUMS && cat SHA256SUMS
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/lf-*.tar.gz artifacts/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "lf ${GITHUB_REF_NAME#lf-v}" --generate-notes

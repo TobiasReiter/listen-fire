@@ -34,6 +34,10 @@ refusal (`x.k` would read the field). A narrowing a host registers matches a hop
 the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
 
+### r-dist
+
+`lf` ships as a download. Tagging `lf-v<version>` builds `lf` for macOS (arm64, x64) and Linux (x64, arm64, static) and attaches the archives and `SHA256SUMS` to a GitHub release (`.github/workflows/lf-release.yml`); `scripts/dist/install.sh` verifies the checksum and installs to `~/.local` (or `--system` for `/usr/local`). `lf init [dir]` scaffolds a starter project (`lf.yaml`, one movement that checks clean, `.gitignore` for `.lf/` and secrets). Built-in modules ride in each archive (`share/lf/modules`, found beside the binary or at `LF_MODULES_DIR`); an external names one as `module: "@lf/dealroom"`. Modules are TypeScript, so running one needs node.
+
 ### lfr-upgrade
 
 - `lf-host upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.
