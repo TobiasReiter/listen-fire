@@ -407,14 +407,8 @@ impl Run<'_> {
                         continue;
                     }
                     Binding::Value(value) => {
-                        if let Some(held) = record::held_binding(&value.value) {
-                            let landings = match held {
-                                Binding::Positions(landings) => landings,
-                                one => vec![one],
-                            };
-                            reached.extend(self.walk_meta(landings, steps, name, scope, span).await?);
-                            continue;
-                        }
+                        reached.extend(self.walk_meta(record::walk_starts(&value.value), steps, name, scope, span).await?);
+                        continue;
                     }
                     Binding::Node(node) => {
                         let deferred = node.borrow().edges.iter().find(|(n, _)| *n == step.edge_type_id).and_then(|(_, e)| e.deferred.clone());
@@ -651,10 +645,7 @@ impl Run<'_> {
                     let landed = Binding::Landed(Rc::new(Landed::new(start, None, read)));
                     self.step_cursor(&landed, step, scope, span).await
                 }
-                Binding::Value(value) => match record::held_binding(&value.value) {
-                    Some(held) => self.step_cursor(&held, step, scope, span).await,
-                    None => Err(unsupported(&format!("traversing '{}' from {} inside EXISTS()", step.edge_type_id, record::describe(cursor)))),
-                },
+                Binding::Value(value) => self.step_cursor(&Binding::Positions(record::walk_starts(&value.value)), step, scope, span).await,
                 other => Err(unsupported(&format!("traversing '{}' from {} inside EXISTS()", step.edge_type_id, record::describe(other)))),
             }
         })

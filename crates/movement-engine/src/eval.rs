@@ -603,16 +603,9 @@ impl<'a> Evaluator<'a> {
                     held => self.ask_run(Ask::From { name: member, held, expr: expression.as_ref().clone() }).await,
                 };
             }
-            if let Expression::Exists { steps: hops, where_ } = expression.as_ref() {
-                if !steps.is_empty() {
-                    return Err(EvalError::unsupported_bare(&format!("EXISTS() after hops from '{name}'")));
-                }
-                if !hops.is_empty() || where_.is_some() {
-                    return Err(EvalError::unsupported_bare(&format!(
-                        "traversing inside EXISTS() from '{name}', which holds {} rather than a record",
-                        describe_held_value(&value.value)
-                    )));
-                }
+            // A read that walks started from the records the value holds
+            // (`held_records`), so what is left reads the value itself.
+            if let Expression::Exists { .. } = expression.as_ref() {
                 let present = match &value.value {
                     Js::Array(list) => !list.items().is_empty(),
                     other => !other.is_nullish(),
@@ -620,9 +613,6 @@ impl<'a> Evaluator<'a> {
                 return Ok(Evaluated { value: Js::Bool(present), prov: Prov::Built(transformed) });
             }
             // `directFieldRead`.
-            if !steps.is_empty() {
-                return Err(EvalError::unsupported(&format!("traversing from a value binding ('{name}')"), "source/handle traversal is E2 scope"));
-            }
             let Some(field) = field_terminal(expression) else {
                 return Err(EvalError::unsupported(&format!("this read shape on a value binding ('{name}')"), "only direct field reads run in E1"));
             };
@@ -1100,15 +1090,6 @@ pub(crate) fn field_terminal(terminal: &Expression) -> Option<&str> {
     match terminal {
         Expression::Property { property_type_id, .. } | Expression::EdgeProperty { property_type_id, .. } => Some(property_type_id),
         _ => None,
-    }
-}
-
-/// `describeHeldValue`.
-fn describe_held_value(value: &Js) -> String {
-    match value {
-        Js::Undefined | Js::Null => "nothing".into(),
-        Js::Array(_) => "a list that is not all records".into(),
-        other => format!("a {}", other.type_of()),
     }
 }
 

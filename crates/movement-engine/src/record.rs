@@ -141,27 +141,30 @@ pub fn holds_records(value: &Js) -> bool {
         }
 }
 
-/// `heldBinding`: one record as itself, a non-empty list of nothing but
-/// records as their landings.
-pub fn held_binding(value: &Js) -> Option<Binding> {
-    let Js::Array(list) = value else { return binding_of(value) };
-    if list.items().is_empty() {
-        return None;
-    }
-    list.items().iter().map(binding_of).collect::<Option<Vec<_>>>().map(Binding::Positions)
-}
-
 /// `heldRecords`: the record(s) a value binding holds, as the binding a walk
-/// starts from; a list reads as landings only when the read walks (a hop,
-/// or an `EXISTS` that hops or filters).
+/// starts from. A read that walks (a hop, or an `EXISTS` that hops or
+/// filters) always starts from what `walk_starts` finds, none included; any
+/// other read takes one record as itself and a list as the value it is.
 pub fn held_records(value: &Js, expr: &Expression) -> Option<Binding> {
-    let held = held_binding(value)?;
-    if !matches!(value, Js::Array(_)) {
-        return Some(held);
-    }
     let Expression::Traverse { steps, expression, .. } = expr else { return None };
     let walks = !steps.is_empty() || matches!(expression.as_ref(), Expression::Exists { steps, where_ } if !steps.is_empty() || where_.is_some());
-    walks.then_some(held)
+    if walks {
+        let mut starts = walk_starts(value);
+        return Some(if starts.len() == 1 && !matches!(value, Js::Array(_)) { starts.remove(0) } else { Binding::Positions(starts) });
+    }
+    if matches!(value, Js::Array(_)) { None } else { binding_of(value) }
+}
+
+/// Where a walk off a value starts: the record it holds, or each record
+/// member of a list it holds. Anything else (nothing, a map, a text, a list's
+/// other members) holds no record, so contributes nothing to walk from: a
+/// walk from it reaches nothing, as a walk from the event that finds no
+/// edge does.
+pub fn walk_starts(value: &Js) -> Vec<Binding> {
+    match value {
+        Js::Array(list) => list.items().iter().filter_map(binding_of).collect(),
+        other => binding_of(other).into_iter().collect(),
+    }
 }
 
 /// `readBindingField`'s value case: an object's field (its prototype's
@@ -564,6 +567,33 @@ mod tests {
         assert!(matches!(own_property(&record, "adapterSlug").unwrap(), Js::String(slug) if slug.as_form() == "attio"));
         assert!(matches!(own_property(&record, "credentialName").unwrap(), Js::Null));
         assert!(matches!(get(&held(record), "credentialName").unwrap(), Js::Undefined));
+    }
+
+    /// A walk off a value starts from the records it holds: one record is
+    /// itself, a list its record members; nothing, a map or a text holds none.
+    #[test]
+    fn a_walk_off_a_value_starts_from_the_records_it_holds() {
+        let record = held(Binding::Event);
+        let walk = Expression::Traverse {
+            alias_root: Some("v".into()),
+            steps: Vec::new(),
+            expression: Box::new(Expression::Exists { steps: Vec::new(), where_: Some(Box::new(Expression::stat(movement_parser::lowering::expression::StaticValue::Bool(true)))) }),
+        };
+        let starts = |value: Js| match held_records(&value, &walk) {
+            Some(Binding::Positions(landings)) => landings.len(),
+            Some(_) => 1,
+            None => panic!("a walk always has a start"),
+        };
+        assert!(matches!(held_records(&record, &walk), Some(Binding::Event)));
+        assert_eq!(starts(Js::array(vec![record.clone(), Js::str("x"), Js::Null, record.clone()])), 2);
+        assert_eq!(starts(Js::array(vec![])), 0);
+        assert_eq!(starts(Js::Null), 0);
+        assert_eq!(starts(Js::Undefined), 0);
+        assert_eq!(starts(Js::object(JsObject::new())), 0);
+        // A read that does not walk takes a list as the value it is.
+        let bare = Expression::Traverse { alias_root: Some("v".into()), steps: Vec::new(), expression: Box::new(Expression::Exists { steps: Vec::new(), where_: None }) };
+        assert!(held_records(&Js::array(vec![record.clone()]), &bare).is_none());
+        assert!(matches!(held_records(&record, &bare), Some(Binding::Event)));
     }
 
     /// A dict is data whatever its `kind` says: a binding kind, an

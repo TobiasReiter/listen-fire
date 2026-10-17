@@ -322,7 +322,8 @@ describe('a whole run in the Rust engine', () => {
           expect(ran.called.filter((m) => m === 'getFieldValue')).toHaveLength(1);
           expect(ran.called).not.toContain('getRelated');
           expect(ran.called).not.toContain('iterateRelated');
-          expect(ran.ended).toContain("traversing from a value binding ('v')");
+          // A map holds no record, so the walk off it reaches nothing.
+          expect(ran.ended).toBe('MovementEngineError: MOVENG_ERROR: 0');
           expect(JSON.stringify([ran.ended, ran.trace, ran.appends])).not.toContain('NOSUCHFN');
         });
       }

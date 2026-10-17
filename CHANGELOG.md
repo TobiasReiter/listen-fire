@@ -378,6 +378,15 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
 
+### close-walks
+
+- **A walk off a name holding a value starts from the records it holds** (version 5). One record is
+  itself; a list is each of its records. Anything else in it (nothing, a map, a text, a list's
+  other members) holds no record, so it adds nothing to walk from. So `rows = kg-[c:company]->`
+  then `COUNT(rows-[:deals]->)` counts 0 when `rows` found nothing, `EXISTS(rows-[:deals]->)` is
+  false, and with `both = [acme, "x"]`, `EXISTS(both-[:deals]->)` asks only `acme`. Before, each of
+  these failed the run as a construct the engine did not run.
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)

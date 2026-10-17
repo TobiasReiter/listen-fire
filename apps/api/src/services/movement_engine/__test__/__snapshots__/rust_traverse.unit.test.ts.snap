@@ -835,6 +835,339 @@ exports[`5A's engine fixes, on both engines writes the ledger in program order, 
 }
 `;
 
+exports[`a walk off a value starts from the records it holds finds nothing from a kept walk that found nothing 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "graph",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-2",
+        "origin": {
+          "externalId": "uuid-2",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "text": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 137,
+                  "line": 7,
+                },
+                "start": {
+                  "col": 30,
+                  "line": 7,
+                },
+              },
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 137,
+                  "line": 7,
+                },
+                "start": {
+                  "col": 30,
+                  "line": 7,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "text": "0 false false",
+        },
+      },
+    ],
+  },
+  "world": {
+    "appends": [],
+    "captured": [
+      {
+        "adapterType": "graph",
+        "fields": {
+          "text": "0 false false",
+        },
+        "kind": "create",
+        "recordType": "note",
+      },
+    ],
+    "email": "[]",
+    "graph": "[["getRelated",{"position":{"adapterType":"graph","recordType":"meta","identity":{"kind":"unstable"}},"fieldId":"company","direction":"outgoing","where":{"type":"compare","op":"eq","left":{"type":"edge_property","propertyTypeId":"stage","fieldOnly":true},"right":{"type":"static","value":"Gone"}}}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-3"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-4"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-5"}},"fieldId":"stage"}],["describe","note"],["resolveEntity",{"record":{"text":"0 false false"},"recordType":"note","candidates":[],"constraints":{"any":[]}}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "graph",
+        "credentialsId": "cred-graph_main",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "graph",
+        "credentialsId": "cred-graph_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
+exports[`a walk off a value starts from the records it holds walks from a picked record and from each record of a kept walk 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+    "writes": [
+      {
+        "adapterType": "graph",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-2",
+        "origin": {
+          "externalId": "uuid-2",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "text": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 81,
+                  "line": 12,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 12,
+                },
+              },
+            },
+            {
+              "adapterType": "graph",
+              "externalId": "d-1",
+              "field": "title",
+              "instance": "kg",
+              "kind": "source_field",
+              "recordType": "deal",
+            },
+            {
+              "adapterType": "graph",
+              "externalId": "d-2",
+              "field": "title",
+              "instance": "kg",
+              "kind": "source_field",
+              "recordType": "deal",
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 81,
+                  "line": 12,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 12,
+                },
+              },
+            },
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 81,
+                  "line": 12,
+                },
+                "start": {
+                  "col": 32,
+                  "line": 12,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "text": "2 Seed round,Series A true 3",
+        },
+      },
+    ],
+  },
+  "world": {
+    "appends": [
+      [
+        {
+          "kind": "gate",
+          "outcome": true,
+        },
+      ],
+    ],
+    "captured": [
+      {
+        "adapterType": "graph",
+        "fields": {
+          "text": "2 Seed round,Series A true 3",
+        },
+        "kind": "create",
+        "recordType": "note",
+      },
+    ],
+    "email": "[]",
+    "graph": "[["getRelated",{"position":{"adapterType":"graph","recordType":"meta","identity":{"kind":"unstable"}},"fieldId":"company","direction":"outgoing","where":{"type":"compare","op":"eq","left":{"type":"edge_property","propertyTypeId":"stage","fieldOnly":true},"right":{"type":"static","value":"Seed"}},"orderBy":{"fieldId":"name","direction":"asc"}}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-3"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-4"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-5"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-4"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-5"}},"fieldId":"name"}],["getRelated",{"position":{"adapterType":"graph","recordType":"meta","identity":{"kind":"unstable"}},"fieldId":"company","direction":"outgoing","where":{"type":"compare","op":"eq","left":{"type":"edge_property","propertyTypeId":"stage","fieldOnly":true},"right":{"type":"static","value":"Seed"}}}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-3"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-4"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-5"}},"fieldId":"stage"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"deals","direction":"outgoing"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"deals","direction":"outgoing","orderBy":{"fieldId":"title","direction":"asc"}}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"deal","identity":{"kind":"stable","recordId":"d-1"}},"fieldId":"title"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"deal","identity":{"kind":"stable","recordId":"d-2"}},"fieldId":"title"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"deal","identity":{"kind":"stable","recordId":"d-1"}},"fieldId":"title"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"deal","identity":{"kind":"stable","recordId":"d-2"}},"fieldId":"title"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"deals","direction":"outgoing","where":{"type":"compare","op":"eq","left":{"type":"edge_property","propertyTypeId":"stage","fieldOnly":true},"right":{"type":"static","value":"won"}}}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"deal","identity":{"kind":"stable","recordId":"d-1"}},"fieldId":"stage"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"deal","identity":{"kind":"stable","recordId":"d-2"}},"fieldId":"stage"}],["describe","note"],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"deals","direction":"outgoing"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"deals","direction":"outgoing"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-4"}},"fieldId":"deals","direction":"outgoing"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-5"}},"fieldId":"deals","direction":"outgoing"}],["resolveEntity",{"record":{"text":"2 Seed round,Series A true 3"},"recordType":"note","candidates":[],"constraints":{"any":[]}}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "graph",
+        "credentialsId": "cred-graph_main",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "graph",
+        "credentialsId": "cred-graph_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [
+      {
+        "kind": "gate",
+        "outcome": true,
+      },
+    ],
+  },
+}
+`;
+
+exports[`a walk off a value starts from the records it holds walks from the records of a list that holds other values too 1`] = `
+{
+  "failed": false,
+  "result": {
+    "extractionSites": {},
+    "movementName": "m",
+    "trace": [],
+    "writes": [
+      {
+        "adapterType": "graph",
+        "committed": false,
+        "created": true,
+        "externalId": "uuid-2",
+        "origin": {
+          "externalId": "uuid-2",
+          "kind": "write",
+          "writeIndex": 0,
+        },
+        "outcome": "create",
+        "provenance": {
+          "text": [
+            {
+              "kind": "literal",
+              "span": {
+                "end": {
+                  "col": 84,
+                  "line": 8,
+                },
+                "start": {
+                  "col": 30,
+                  "line": 8,
+                },
+              },
+            },
+          ],
+        },
+        "recordType": "note",
+        "resultData": {},
+        "writtenValues": {
+          "text": "true 2",
+        },
+      },
+    ],
+  },
+  "world": {
+    "appends": [],
+    "captured": [
+      {
+        "adapterType": "graph",
+        "fields": {
+          "text": "true 2",
+        },
+        "kind": "create",
+        "recordType": "note",
+      },
+    ],
+    "email": "[["getFieldValue",{"position":{"adapterType":"email","recordType":"message","identity":{"kind":"unstable","data":{"subject":"Seed","text":"Late"}}},"fieldId":"subject"}]]",
+    "graph": "[["getRelated",{"position":{"adapterType":"graph","recordType":"meta","identity":{"kind":"unstable"}},"fieldId":"company","direction":"outgoing","where":{"type":"compare","op":"eq","left":{"type":"edge_property","propertyTypeId":"name","fieldOnly":true},"right":{"type":"static","value":"Acme"}}}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-2"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-3"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-4"}},"fieldId":"name"}],["getFieldValue",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-5"}},"fieldId":"name"}],["describe","note"],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"deals","direction":"outgoing"}],["getRelated",{"position":{"adapterType":"graph","recordType":"company","identity":{"kind":"stable","recordId":"n-1"}},"fieldId":"deals","direction":"outgoing"}],["resolveEntity",{"record":{"text":"true 2"},"recordType":"note","candidates":[],"constraints":{"any":[]}}]]",
+    "locks": [],
+    "resolved": [
+      {
+        "adapterType": "email",
+        "credentialsId": "cred-dealflow_inbox",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "graph",
+        "credentialsId": "cred-graph_main",
+        "role": "source",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+      {
+        "adapterType": "graph",
+        "credentialsId": "cred-graph_main",
+        "role": "target",
+        "segmentId": "test-segment-1",
+        "teamId": "uuid-1",
+      },
+    ],
+    "trace": [],
+  },
+}
+`;
+
 exports[`the expression tail, on both engines COUNT and FIRST over a traversal answers the same whether the adapter honours the pushed WHERE or not, asking it the same 1`] = `
 {
   "failed": false,
