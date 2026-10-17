@@ -1,0 +1,340 @@
+[
+  {
+    "id": "button-tap-fires-callback",
+    "door": "slack_actions",
+    "note": "A signed block action carrying a callback id fires it and replaces the original message via response_url.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=49dfb96866862fa795d0c93291ad2cee946b92a786ac9067cc7c2c55a0cba370"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22btn%22%2C%22value%22%3A%22cb_golden0001%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "outbound_post",
+        "url": "https://hooks.slack.test/actions/T9/1/abc",
+        "body": {
+          "replace_original": true,
+          "text": "Thanks — that has been recorded.",
+          "blocks": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": ":white_check_mark: Thanks — that has been recorded."
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "button-tap-closed-callback",
+    "door": "slack_actions",
+    "note": "A tap on a closed callback is an ephemeral notice and leaves the message.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=49dfb96866862fa795d0c93291ad2cee946b92a786ac9067cc7c2c55a0cba370"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22btn%22%2C%22value%22%3A%22cb_golden0001%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "outbound_post",
+        "url": "https://hooks.slack.test/actions/T9/1/abc",
+        "body": {
+          "response_type": "ephemeral",
+          "replace_original": false,
+          "text": "This request was already closed."
+        }
+      }
+    ]
+  },
+  {
+    "id": "callback-firing-throws",
+    "door": "slack_actions",
+    "note": "A firing failure still tells the tapper.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=49dfb96866862fa795d0c93291ad2cee946b92a786ac9067cc7c2c55a0cba370"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22btn%22%2C%22value%22%3A%22cb_golden0001%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {}
+      },
+      {
+        "kind": "outbound_post",
+        "url": "https://hooks.slack.test/actions/T9/1/abc",
+        "body": {
+          "response_type": "ephemeral",
+          "replace_original": false,
+          "text": "Something went wrong recording that."
+        }
+      }
+    ]
+  },
+  {
+    "id": "date-picker-supplies-value",
+    "door": "slack_actions",
+    "note": "A control with no value rides the callback id in action_id and the tap-time capture as the supplied value.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=3fb4a2a39c0a36f25d1faacd9d62fdaea4a715b21071a845e59cd168b8e700a5"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22cb_golden0001%22%2C%22selected_date%22%3A%222026-11-02%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "fire_callback",
+        "id": "cb_golden0001",
+        "values": {},
+        "suppliedValue": "2026-11-02"
+      },
+      {
+        "kind": "outbound_post",
+        "url": "https://hooks.slack.test/actions/T9/1/abc",
+        "body": {
+          "replace_original": true,
+          "text": "Thanks — that has been recorded.",
+          "blocks": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": ":white_check_mark: Thanks — that has been recorded."
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "legacy-ask-answer-link",
+    "door": "slack_actions",
+    "note": "A legacy ask answer link in value is answered through the ask door.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=e85d28c2632c5530eb8dc43eab7a5d76b788f9965c0e2b73fa247eaf1b51e56e"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22btn%22%2C%22value%22%3A%22https%3A%2F%2Fgolden.example.test%2Fapi%2Fasks%2Fask_tok1%3Fanswer%3Dyes%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": [
+      {
+        "kind": "answer_ask",
+        "token": "ask_tok1",
+        "raw": "yes"
+      },
+      {
+        "kind": "outbound_post",
+        "url": "https://hooks.slack.test/actions/T9/1/abc",
+        "body": {
+          "replace_original": true,
+          "text": "Thanks — your answer was recorded.",
+          "blocks": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": ":white_check_mark: Thanks — your answer was recorded."
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "non-block-actions-payload",
+    "door": "slack_actions",
+    "note": "Anything else (a shortcut) is acked 200 and not acted on.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=94750d415887dcaed66dba34995b0f1ebc4337811337b8d0b6a68b7057c63b0f"
+      },
+      "body": "payload=%7B%22type%22%3A%22shortcut%22%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": []
+  },
+  {
+    "id": "no-payload-field",
+    "door": "slack_actions",
+    "note": "A signed form with no payload is acked 200 and ignored.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=d31e0c6c0ae96a39fb81475ede59861b5f1514ef887984f194b32307bc721671"
+      },
+      "body": "other=x"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": []
+  },
+  {
+    "id": "unrelated-action-ignored",
+    "door": "slack_actions",
+    "note": "A block action that is neither a callback nor an ask is ignored after the ack.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=e874c4144bb375951e08652e27b94f1073b25549dcf71ce6786a7cc2cd67dc73"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22overflow%22%2C%22value%22%3A%22something%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "11"
+      },
+      "body": "{\"ok\":true}"
+    },
+    "effects": []
+  },
+  {
+    "id": "bad-signature",
+    "door": "slack_actions",
+    "note": "Another secret: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": "1760702400",
+        "x-slack-signature": "v0=66cb38612b653b6d87821dd99695c52f063f9789444efcfd240a36f6b2311c17"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22btn%22%2C%22value%22%3A%22cb_golden0001%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "{\"ok\":false}"
+    },
+    "effects": []
+  },
+  {
+    "id": "secret-unset-refuses",
+    "door": "slack_actions",
+    "note": "No signing secret configured: 500.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/slack-actions",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "body": "payload=%7B%22type%22%3A%22block_actions%22%2C%22response_url%22%3A%22https%3A%2F%2Fhooks.slack.test%2Factions%2FT9%2F1%2Fabc%22%2C%22actions%22%3A%5B%7B%22action_id%22%3A%22btn%22%2C%22value%22%3A%22cb_golden0001%22%7D%5D%7D"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "12"
+      },
+      "body": "{\"ok\":false}"
+    },
+    "effects": []
+  }
+]

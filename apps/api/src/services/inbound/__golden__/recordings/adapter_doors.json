@@ -1,0 +1,437 @@
+[
+  {
+    "id": "emit-good-credential",
+    "door": "adapter_doors",
+    "note": "The presented credential names the install and so the team; events are receipted against its triggers and queued; 202 with the count.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 202,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "{\"accepted\":1}"
+    },
+    "effects": [
+      {
+        "kind": "find_triggers",
+        "teamId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "kinds": [
+          "ACME-CRM",
+          "acme-crm"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "adapterType": "acme-crm",
+        "triggerType": "webhook",
+        "event": {
+          "payload": {
+            "id": "r-1"
+          },
+          "externalId": "r-1",
+          "eventType": "record.created"
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "emit-bearer-strategy",
+    "door": "adapter_doors",
+    "note": "An install whose strategy is bearer sends the credential as Authorization.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "authorization": "Bearer golden-adapter-door-secret-0001",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 202,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "{\"accepted\":0}"
+    },
+    "effects": [
+      {
+        "kind": "find_triggers",
+        "teamId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "kinds": [
+          "ACME-CRM",
+          "acme-crm"
+        ]
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": []
+      }
+    ]
+  },
+  {
+    "id": "emit-wrong-credential",
+    "door": "adapter_doors",
+    "note": "A credential that matches no install is 401 with no detail.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "not-the-secret"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "24"
+      },
+      "body": "{\"error\":\"unauthorized\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-no-credential",
+    "door": "adapter_doors",
+    "note": "No credential header at all is the same 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "24"
+      },
+      "body": "{\"error\":\"unauthorized\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-unknown-type",
+    "door": "adapter_doors",
+    "note": "A type nobody installed is 401, exactly as a wrong credential.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/never-installed/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "24"
+      },
+      "body": "{\"error\":\"unauthorized\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-builtin-slug-never-remote",
+    "door": "adapter_doors",
+    "note": "A slug a built-in answers to is always 401, whatever rows exist.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/slack/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "24"
+      },
+      "body": "{\"error\":\"unauthorized\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-credential-shared-by-two-teams",
+    "door": "adapter_doors",
+    "note": "One credential on installs in two teams is 409 until the caller names its team.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 409,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "148"
+      },
+      "body": "{\"error\":\"ambiguous_credential\",\"message\":\"this credential belongs to more than one team's install; name the team in the x-listen-fire-team header\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-shared-credential-team-named",
+    "door": "adapter_doors",
+    "note": "x-listen-fire-team narrows the shared credential to one install.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001",
+        "x-listen-fire-team": "aaaaaaaa-0000-4000-8000-000000000002"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 202,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "{\"accepted\":0}"
+    },
+    "effects": [
+      {
+        "kind": "find_triggers",
+        "teamId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "kinds": [
+          "ACME-CRM",
+          "acme-crm"
+        ]
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": []
+      }
+    ]
+  },
+  {
+    "id": "emit-malformed-body-after-auth",
+    "door": "adapter_doors",
+    "note": "The body is judged only after authentication: 400 with the issues.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"events\":[]}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "108"
+      },
+      "body": "{\"error\":\"bad_request\",\"issues\":[{\"path\":\"events\",\"message\":\"Too small: expected array to have >=1 items\"}]}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-malformed-body-unauthenticated",
+    "door": "adapter_doors",
+    "note": "An unauthenticated caller learns nothing about the body shape: 401, not 400.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "24"
+      },
+      "body": "{\"error\":\"unauthorized\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-over-1mb",
+    "door": "adapter_doors",
+    "note": "A body past 1 MB is refused 413 before anything is authenticated.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": {
+        "bytes": 1100000,
+        "sha256": "75981f969fe52b9a0778108fbe390ed0e54089d5e95457e7b1f2c0658cd973c0",
+        "head": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}],\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    "response": {
+      "status": 413,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "144"
+      },
+      "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Payload Too Large</pre>\n</body>\n</html>\n"
+    },
+    "effects": []
+  },
+  {
+    "id": "emit-capture-failure",
+    "door": "adapter_doors",
+    "note": "An event whose receipt cannot be stored fails the call 500 with the counts, after the others were queued.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/emit",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"events\":[{\"eventType\":\"record.created\",\"externalId\":\"r-1\",\"payload\":{\"id\":\"r-1\"}}]}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "50"
+      },
+      "body": "{\"error\":\"capture_failed\",\"accepted\":0,\"failed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "find_triggers",
+        "teamId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "kinds": [
+          "ACME-CRM",
+          "acme-crm"
+        ]
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": []
+      }
+    ]
+  },
+  {
+    "id": "wake-good-credential",
+    "door": "adapter_doors",
+    "note": "Wake keys are queued as await wakes for the caller team; 202 with the count.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/wake",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"keys\":[\"thread:abc\",\"thread:def\"]}"
+    },
+    "response": {
+      "status": 202,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "14"
+      },
+      "body": "{\"accepted\":2}"
+    },
+    "effects": [
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "acme-crm",
+        "teamId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "correlationKeys": [
+          "thread:abc",
+          "thread:def"
+        ]
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "wake-empty-keys",
+    "door": "adapter_doors",
+    "note": "An empty key list is a 400.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/wake",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "golden-adapter-door-secret-0001"
+      },
+      "body": "{\"keys\":[]}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "106"
+      },
+      "body": "{\"error\":\"bad_request\",\"issues\":[{\"path\":\"keys\",\"message\":\"Too small: expected array to have >=1 items\"}]}"
+    },
+    "effects": []
+  },
+  {
+    "id": "wake-wrong-credential",
+    "door": "adapter_doors",
+    "note": "Wake authenticates the same way: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/adapter/acme-crm/wake",
+      "headers": {
+        "content-type": "application/json",
+        "x-listen-fire-adapter-secret": "nope"
+      },
+      "body": "{\"keys\":[\"k\"]}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "24"
+      },
+      "body": "{\"error\":\"unauthorized\"}"
+    },
+    "effects": []
+  }
+]
