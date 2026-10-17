@@ -172,15 +172,15 @@ describe('judgeEntityMatch — prompt construction', () => {
       recordType: 'company',
     });
     expect(mockExecute).toHaveBeenCalledTimes(1);
-    const args = mockExecute.mock.calls[0][2] as { recordType: string; asserted: string; candidates: string };
-    expect(args.recordType).toBe('company');
-    expect(args.asserted).toContain('- name: Acme');
-    expect(args.asserted).toContain('- domains: ["acme.com"]');
-    expect(args.asserted).toContain('- owner: {"id":7}');
-    expect(args.asserted).not.toContain('blank');
-    expect(args.asserted).not.toContain('missing');
-    expect(args.candidates).toContain('[Candidate 0]');
-    expect(args.candidates).toContain('[Candidate 1]');
+    const { user } = mockExecute.mock.calls[0][2] as unknown as { user: string };
+    expect(user).toContain('Record type: company');
+    expect(user).toContain('- name: Acme');
+    expect(user).toContain('- domains: ["acme.com"]');
+    expect(user).toContain('- owner: {"id":7}');
+    expect(user).not.toContain('blank');
+    expect(user).not.toContain('missing');
+    expect(user).toContain('[Candidate 0]');
+    expect(user).toContain('[Candidate 1]');
   });
 });
 

@@ -1,0 +1,1 @@
+The record at candidates.{{{option}}} is the same real-world {{{recordType}}} as the asserted record. Names may differ slightly between systems, but if identifying fields (website or domain, email, profile link) disagree they are different entities. A job title or employer can change over time, so an agreeing email or profile link outweighs a differing title or employer.
