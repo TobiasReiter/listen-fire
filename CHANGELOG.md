@@ -1311,6 +1311,21 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - Fixed: emit and wake bodies over 1 MB answer `{"error":"payload_too_large"}` with 413, like the webhook door (they answered express's HTML page).
 - Fixed: a Mailgun event whose signature is the wrong length, or missing, answers 406 (it answered a 500 that Mailgun would retry).
 
+### ev3-connect
+
+- `lf connect <credential>` connects an OAuth credential the way its external's manifest declares
+  it. lf prints the provider's sign-in URL and opens it, takes the redirect on a loopback port
+  (`--redirect-port N` for a provider that wants an exact redirect URI, `--no-browser` to only
+  print the URL), exchanges the code, and writes the tokens into the secrets file. The secrets
+  entry must already name its external and your app's `client_id` (and `client_secret`); those
+  and every other field are kept.
+- One connect flow in the engine package, driven by the declaration (authorize and token URLs,
+  scopes, where the client authenticates, PKCE, extra authorize parameters). The platform's
+  Attio, Airtable, Dropbox, Google and Gmail sign-ins now run on it. Their callback URLs, the
+  parameters of each authorize URL and code exchange, the 15 minute single-use state, and the
+  stored credential shapes are unchanged, so existing connections and registered redirect URIs
+  keep working. Slack keeps its own installer flow.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
