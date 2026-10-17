@@ -1299,6 +1299,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - Not in `lf-host` yet: `serve` and the inbound doors, callbacks, `cancel`, model calls, credential
   refresh, and `run --webhook`. The TypeScript `lf` is unchanged and still has them all.
 
+### ev3-otherdoors
+
+- The mail doors (Resend, Mailgun inbound, Mailgun events) and the shared Slack app and Telegram bot doors now run on the inbound core. Every path, header and signature is unchanged; the golden corpus gained 21 Mailgun cases and passes unchanged except the fixes below.
+- Fixed: emit and wake bodies over 1 MB answer `{"error":"payload_too_large"}` with 413, like the webhook door (they answered express's HTML page).
+- Fixed: a Mailgun event whose signature is the wrong length, or missing, answers 406 (it answered a 500 that Mailgun would retry).
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

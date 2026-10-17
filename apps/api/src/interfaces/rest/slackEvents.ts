@@ -8,7 +8,7 @@ import { Router } from 'express';
 
 import type { Request, Response } from 'express';
 
-import { answerIntercepts, authenticateInbound, type InboundAuth, type InboundHeaders } from 'movement-engine/public/inbound';
+import { admitShared, authenticateInbound, type InboundAuth, type InboundHeaders, type SharedDoor } from 'movement-engine/public/inbound';
 import { handleSlackEventsInbound } from '../../services/webhook_sync/slack_events';
 import { logger } from 'movement-engine/services/logger';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
@@ -24,6 +24,13 @@ function signingSecret(): string | null {
   return s.length > 0 ? s : null;
 }
 
+/** The app's one signing secret covers its Events and Interactivity doors; only
+ *  Events is asked Slack's one-shot setup check. */
+export const SLACK_APP_DOOR: SharedDoor = {
+  verifier: { scheme: 'slack_v0', signatureHeaders: ['x-slack-signature'] },
+  intercepts: ['slack_url_verification'],
+};
+
 export type SlackEventsAuthResult = InboundAuth;
 
 /** Fail-closed: secret set → the Slack signature must verify; unset → the shared
@@ -31,7 +38,7 @@ export type SlackEventsAuthResult = InboundAuth;
  *  explicitly opted into unsigned deliveries and is not production. */
 export function verifySlackEventsRequest(rawBody: Buffer, headers: InboundHeaders): SlackEventsAuthResult {
   return authenticateInbound({
-    verifier: { scheme: 'slack_v0', signatureHeaders: ['x-slack-signature'] },
+    verifier: SLACK_APP_DOOR.verifier,
     rawBody,
     headers,
     secret: signingSecret(),
@@ -42,16 +49,18 @@ export function verifySlackEventsRequest(rawBody: Buffer, headers: InboundHeader
 slackEventsRouter.post('/events', async (req: Request, res: Response) => {
   const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
 
-  // Slack's url_verification echoes its challenge unsigned.
-  const intercepted = answerIntercepts(['slack_url_verification'], rawBody);
-  if (intercepted) {
-    sendInboundAnswer(res, intercepted);
+  const admission = admitShared(SLACK_APP_DOOR, {
+    rawBody,
+    headers: req.headers,
+    secret: signingSecret(),
+    allowUnsigned: () => authorizeUnsignedWebhook('slack/events').authorized,
+  });
+  if (admission.kind === 'answered') {
+    sendInboundAnswer(res, admission.answer);
     return;
   }
-
-  const auth = verifySlackEventsRequest(rawBody, req.headers);
-  if (!auth.authorized) {
-    if (auth.reason === 'no_secret') {
+  if (admission.kind === 'refused') {
+    if (admission.reason === 'no_secret') {
       logger.error(
         '[slack/events] REJECTING inbound: SLACK_MOVEMENTS_SIGNING_SECRET is unset, so ' +
           'nothing can prove this delivery came from Slack.',
@@ -59,7 +68,7 @@ slackEventsRouter.post('/events', async (req: Request, res: Response) => {
     } else {
       logger.warn('[slack/events] dropping inbound: Slack signature missing or invalid.');
     }
-    res.status(auth.reason === 'no_secret' ? 500 : 401).json({ ok: false });
+    res.status(admission.reason === 'no_secret' ? 500 : 401).json({ ok: false });
     return;
   }
 
