@@ -139,7 +139,42 @@ impl From<rusqlite::Error> for StoreError {
     }
 }
 
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // `RunLeaseLost`'s words.
+            StoreError::LeaseLost { .. } => f.write_str("run lease lost; another instance may hold the run"),
+            StoreError::Invalid(message) => f.write_str(message),
+            StoreError::Db(error) => write!(f, "{error}"),
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, StoreError>;
+
+/// A run's row, as far as the host reads it.
+pub struct RunRow {
+    pub id: String,
+    pub file: String,
+    pub movement: String,
+    pub status: String,
+    pub started_at: String,
+    /// The run's facts a resume needs, as JSON.
+    pub input: String,
+    pub outcome: Option<String>,
+}
+
+fn run_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunRow> {
+    Ok(RunRow {
+        id: r.get(0)?,
+        file: r.get(1)?,
+        movement: r.get(2)?,
+        status: r.get(3)?,
+        started_at: r.get(4)?,
+        input: r.get(5)?,
+        outcome: r.get(6)?,
+    })
+}
 
 pub struct LeafRow {
     pub address: String,
@@ -264,6 +299,88 @@ impl Store {
             params![id, file, movement, "running", started_at, input],
         )?;
         Ok(())
+    }
+
+    /// Record where the run stands. A run that ends, however it ends, revokes
+    /// its live callbacks: a callback is something the run can still react to.
+    pub fn settle_run(&self, id: &str, status: &str, outcome: &Js, at: &str) -> Result<()> {
+        let ended = status == "completed" || status == "failed";
+        self.transaction(|db| {
+            db.execute(
+                "update run set status = ?, outcome = ?, finished_at = ? where id = ?",
+                params![status, text_of(outcome), ended.then_some(at), id],
+            )?;
+            if ended {
+                Self::revoke_callbacks(db, id)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The run is observably parked (a park landed). A settled run stays.
+    pub fn mark_parked(&self, id: &str) -> Result<()> {
+        self.db.execute("update run set status = 'parked' where id = ? and status in ('running', 'parked')", params![id])?;
+        Ok(())
+    }
+
+    /// The run is over without completing. A run already settled stays.
+    pub fn mark_failed(&self, id: &str, message: &str) -> Result<()> {
+        let outcome = Js::Obj(crate::obj! { "error" => Js::str(message) });
+        self.transaction(|db| {
+            db.execute(
+                "update run set status = 'failed', outcome = ?, finished_at = ? where id = ? and status in ('running', 'parked')",
+                params![text_of(&outcome), iso(0), id],
+            )?;
+            Self::revoke_callbacks(db, id)
+        })
+    }
+
+    /// The run is over: its live callbacks close (`callbacks.revokeRun`).
+    pub fn revoke_run_callbacks(&self, run_id: &str) -> Result<()> {
+        Self::revoke_callbacks(&self.db, run_id)
+    }
+
+    fn revoke_callbacks(db: &Connection, run_id: &str) -> Result<()> {
+        db.execute("update callback set status = 'revoked', revoked_at = ? where run_id = ? and status = 'live'", params![iso(0), run_id])?;
+        Ok(())
+    }
+
+    /// The operator's cancel request on the run (its reason), or None.
+    pub fn cancel_request(&self, id: &str) -> Result<Option<Option<String>>> {
+        Ok(self
+            .db
+            .query_row("select cancel_requested_at, cancel_reason from run where id = ?", params![id], |r| {
+                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+            })
+            .optional()?
+            .and_then(|(at, reason)| at.map(|_| reason)))
+    }
+
+    pub fn run(&self, id: &str) -> Result<Option<RunRow>> {
+        Ok(self.db.query_row("select id, file, movement, status, started_at, input, outcome from run where id = ?", params![id], run_row).optional()?)
+    }
+
+    /// The most recent runs first.
+    pub fn runs(&self, limit: i64) -> Result<Vec<RunRow>> {
+        let mut statement = self.db.prepare("select id, file, movement, status, started_at, input, outcome from run order by started_at desc limit ?")?;
+        Ok(statement.query_map(params![limit], run_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    // ── Trace ───────────────────────────────────────────────────────────────
+
+    pub fn append_trace(&self, run_id: &str, entries: &[Js]) -> Result<()> {
+        self.transaction(|db| {
+            let next: i64 = db.query_row("select coalesce(max(seq), -1) + 1 from trace where run_id = ?", params![run_id], |r| r.get(0))?;
+            let mut insert = db.prepare("insert into trace (run_id, seq, entry) values (?, ?, ?)")?;
+            for (i, entry) in entries.iter().enumerate() {
+                insert.execute(params![run_id, next + i as i64, text_of(entry)])?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn trace_len(&self, run_id: &str) -> Result<i64> {
+        Ok(self.db.query_row("select count(*) from trace where run_id = ?", params![run_id], |r| r.get(0))?)
     }
 
     // ── Parks ───────────────────────────────────────────────────────────────

@@ -111,7 +111,7 @@ pub async fn open_checking(project: &Project) -> Result<Opened, String> {
 
 /// `describeExternal`: its entry points and one `describe` per entry point,
 /// projected as the hosted product projects them.
-async fn describe_external(running: &RunningExternal, credentials: &Credentials) -> Result<Js, String> {
+pub async fn describe_external(running: &RunningExternal, credentials: &Credentials) -> Result<Js, String> {
     let name = &running.external.manifest.name;
     let entries = rpc(running, credentials, LOCAL_TENANT, "listEntryPoints", json!({})).await?;
     let entry_list = entries
