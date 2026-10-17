@@ -43,10 +43,10 @@ const NAME = 'validity-lifecycle-probe';
 
 const sourceWithEdge = (edge: string) => `import { manual, \`${FAKE_CRM_ADAPTER_TYPE}\` as crm } from adapters
 
-runs = manual()
-df = crm()
+runs = connect manual
+df = connect crm
 
-movement probe(go: <runs-[:\`Invocation\`]->>) {
+function probe(go: <runs-[:\`Invocation\`]->>) {
   write df-[:\`${edge}\`]-> {
     Name: "Vireo Robotics"
   }

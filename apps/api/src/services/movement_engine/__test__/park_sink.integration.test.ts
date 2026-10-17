@@ -13,6 +13,7 @@ import type { TriggerRunRecorder } from '../../translation_graph/runs/trigger_ru
 import { makeRecorderParkSink } from '../park_sink';
 import { enqueueAwaitWake } from '../await_wake';
 import { awaitingSource, makeAwaitingAdapter, runAwaiting } from './awaitable_fixture';
+import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { RunLeaseLost } from '../run_lease';
 import { postgresRunHostStore } from '../run_host_store';
 import { tenantOfTeam } from '../../translation_graph/movement/tenant';
@@ -187,7 +188,7 @@ describe('commitAwaitPark', () => {
 
     const result = await runAwaiting({
       teamId: tenantOfTeam(teamId),
-      source: awaitingSource(),
+      source: spelledFor(5, awaitingSource()),
       adapter: awaiting.adapter,
       parkSink: makeRecorderParkSink(makeStubRecorder({ teamId, runId })),
       // The production host's wake: a `wake_await` work row.

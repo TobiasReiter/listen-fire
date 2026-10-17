@@ -45,10 +45,10 @@ const NAME = 'save-warnings-probe';
 const fileDeclaring = (movementName: string, options: { dryRun?: boolean } = {}): string =>
   `import { manual, \`${FAKE_CRM_ADAPTER_TYPE}\` as crm } from adapters
 
-runs = manual()
-df = crm(${options.dryRun === true ? 'dry_run: true' : ''})
+runs = connect manual
+df = connect crm${options.dryRun === true ? ' { dryRun: true }' : ''}
 
-movement ${movementName}(go: <runs-[:\`Invocation\`]->>) {
+function ${movementName}(go: <runs-[:\`Invocation\`]->>) {
   write df-[:\`${FAKE_CRM_COMPANY_TYPE}\`]-> {
     Name: "Vireo Robotics"
   }
@@ -61,9 +61,9 @@ listen to runs {} fire ${movementName}
  *  ruling turns on. */
 const UNREADABLE = `import { manual } from adapters
 
-runs = manual()
+runs = connect manual
 
-movement probe(go: <runs-[:\`Invocation\`]->>) {
+function probe(go: <runs-[:\`Invocation\`]->>) {
   write ((((
 `;
 

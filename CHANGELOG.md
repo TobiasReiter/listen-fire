@@ -402,6 +402,11 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   it. Such a refusal still ends the run as `MOVENG_UNSUPPORTED` and is still never forgiven by a
   collection op's `onError`.
 
+### close-gate20
+
+- `pnpm dev:whatsapp setup` ships its two movements in the version 5 spelling (`connect`,
+  `function`, a walk's field read through its alias), so the setup saves on a version 5 stack.
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)

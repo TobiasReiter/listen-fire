@@ -163,10 +163,10 @@ const SLEEP_THEN_NOTIFY = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement sleep_then_notify(ev: <crm-[:`Webhook Event`]->>) {',
+  'function sleep_then_notify(ev: <crm-[:`Webhook Event`]->>) {',
   '  await sleep(1h)',
   '  write chat-[:messages]-> {',
   '    channel: "#alerts"',
@@ -181,10 +181,10 @@ const SLEEP_THEN_TWICE = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement sleep_then_twice(ev: <crm-[:`Webhook Event`]->>) {',
+  'function sleep_then_twice(ev: <crm-[:`Webhook Event`]->>) {',
   '  await sleep(1h)',
   '  write chat-[:messages]-> {',
   '    channel: "#alerts"',
@@ -203,10 +203,10 @@ const SLEEP_THEN_LAST = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement sleep_then_last(ev: <crm-[:`Webhook Event`]->>) {',
+  'function sleep_then_last(ev: <crm-[:`Webhook Event`]->>) {',
   '  cb = callback()',
   '  await sleep(1h)',
   '  write chat-[:messages]-> {',
@@ -233,7 +233,7 @@ async function seedMovement(
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source } as any)
+    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   // Pin a runnable version + set current_version_id (the resume re-parses THIS).
@@ -718,10 +718,12 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     const [callback] = await listRunCallbacks(runId);
     expect(callback?.status).toBe('live');
     // A correlation of the run's, which nothing the stale holder does may drop.
+    // An ask's id, so a run abandoned in error cancels it as the real thing.
+    const keptAskId = randomUUID();
     await getAutomationsQb(['adapter_await'])
       .insertInto('adapter_await')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .values({ adapter_type: 'ask', correlation_key: 'req-kept', run_id: runId, team_id: teamId, address: 's9' } as any)
+      .values({ adapter_type: 'ask', correlation_key: keptAskId, run_id: runId, team_id: teamId, address: 's9' } as any)
       .execute();
     await backdateLeafAndRow(runId);
 
@@ -755,7 +757,7 @@ describe('timer_resume — parks resume through the work table (real DB)', () =>
     expect(texts).toEqual(['last']);
     expect((await runRow(runId)).status).toBe('parked');
     expect((await getCallback(callback!.id))?.status).toBe('live');
-    expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'ask', teamId, correlationKey: 'req-kept' })).toHaveLength(1);
+    expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'ask', teamId, correlationKey: keptAskId })).toHaveLength(1);
     // The stale holder left its claimed leaf alone; the new holder's claim of
     // the lease already returned it to parked.
     const leaves = await getAutomationsQb(['parked_run']).selectFrom('parked_run').where('run_id', '=', runId).select('status').execute();

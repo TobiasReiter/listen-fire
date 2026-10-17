@@ -167,10 +167,10 @@ const SLEEP_THEN_NOTIFY = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement sleep_then_notify(ev: <crm-[:`Webhook Event`]->>) {',
+  'function sleep_then_notify(ev: <crm-[:`Webhook Event`]->>) {',
   '  await sleep(1h)',
   '  write chat-[:messages]-> {',
   '    channel: "#alerts"',
@@ -192,7 +192,7 @@ async function seedMovementTrigger(teamId: TeamId): Promise<TriggerId> {
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: `Sleep then notify ${movementId.slice(0, 8)}`, source: SLEEP_THEN_NOTIFY } as any)
+    .values({ id: movementId, team_id: teamId, name: `Sleep then notify ${movementId.slice(0, 8)}`, source: SLEEP_THEN_NOTIFY, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
   await mintMovementVersionIfChanged({
     teamId,

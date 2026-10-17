@@ -165,10 +165,10 @@ const SLEEP_THEN_NOTIFY = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement sleep_then_notify(ev: <crm-[:`Webhook Event`]->>) {',
+  'function sleep_then_notify(ev: <crm-[:`Webhook Event`]->>) {',
   '  await sleep(1s)',
   '  write chat-[:messages]-> {',
   '    channel: "#alerts"',
@@ -196,11 +196,11 @@ const IF_THEN_TAIL = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement if_then_tail(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function if_then_tail(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    await sleep(1s)',
   '    write chat-[:messages]-> {',
   '      channel: "#alerts"',
@@ -231,7 +231,7 @@ async function seedMovement(
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source } as any)
+    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   // Pin a runnable version + set current_version_id (the resume re-parses THIS).

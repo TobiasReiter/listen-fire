@@ -165,17 +165,17 @@ const TAP_THEN_RESUME = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement tap_then_resume(ev: <crm-[:`Webhook Event`]->>) {',
+  'function tap_then_resume(ev: <crm-[:`Webhook Event`]->>) {',
   '  cb = callback({',
   '    write chat-[:messages]-> {',
   '      channel: "#alerts"',
   '      text: "body"',
   '    }',
   '  })',
-  '  c = await FIRST(cb-[:Called]->)',
+  '  c = await first(cb-[:Called]->)',
   '  write chat-[:messages]-> {',
   '    channel: "#alerts"',
   '    text: "after"',
@@ -200,7 +200,7 @@ async function seedMovement(
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source } as any)
+    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   // Pin a runnable version + set current_version_id (the resume re-parses THIS).
