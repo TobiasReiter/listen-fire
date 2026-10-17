@@ -35,13 +35,16 @@ jest.mock('../../translation_graph/movement/transform_invoker', () => {
   const runSpend = jest.requireActual('movement-engine/lib/run_spend');
   return {
     ...actual,
-    registryTransformInvoker: {
+    // The host asks `transformInvokerFor` for a run's invoker (a plugin on the
+    // legacy line is dispatched inside it, past any export of the registry
+    // invoker), so the stand-in replaces the factory the host calls.
+    transformInvokerFor: () => ({
       async invoke({ config }: { config: Record<string, unknown> }) {
         mockFetched.push(String(config.url));
         runSpend.reportRunCost({ source: { kind: 'service', name: 'test.fetch' }, microdollars: 1_000_000 });
         return { text: `got-${String(config.url)}` };
       },
-    },
+    }),
   };
 });
 
