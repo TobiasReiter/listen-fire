@@ -153,6 +153,9 @@ pub struct RunningExternal {
     /// The credentials its manifest declares (`credentials`); the first is
     /// sent on each call (src/credential_calls.rs).
     pub credential_declarations: Vec<Declaration>,
+    /// The settings its manifest declares (`settings`), by name: sent on each
+    /// call from its install entry.
+    pub settings: Vec<String>,
     /// Its manifest answer as it came (what `lf connect` reads of it).
     pub manifest_answer: Js,
     /// How its manifest says its webhooks are signed (crate::doors).
@@ -184,6 +187,11 @@ pub fn plugin_entries(declared: Option<&Js>) -> Vec<(String, Js)> {
         .collect()
 }
 
+/// The names of the settings a manifest answer declares (`settings`).
+fn setting_names(manifest: &Js) -> Vec<String> {
+    manifest.get("settings").and_then(Js::as_array).into_iter().flatten().filter_map(|s| s.get("name").and_then(Js::as_str).map(str::to_string)).collect()
+}
+
 /// The plugin external that serves `plugin`.
 pub fn plugin_external_for<'r>(running: &'r [RunningExternal], plugin: &str) -> Option<&'r RunningExternal> {
     running.iter().find(|r| r.serves_plugin(plugin))
@@ -191,7 +199,13 @@ pub fn plugin_external_for<'r>(running: &'r [RunningExternal], plugin: &str) -> 
 
 /// One call to a running external, under the credential its secrets name.
 pub async fn rpc(running: &RunningExternal, credentials: &Credentials, tenant: &str, method: &str, params: serde_json::Value) -> Result<Js, String> {
-    let target = Target { external: &running.external, base_url: &running.base_url, declarations: &running.credential_declarations, methods: &running.methods };
+    let target = Target {
+        external: &running.external,
+        base_url: &running.base_url,
+        declarations: &running.credential_declarations,
+        methods: &running.methods,
+        settings: &running.settings,
+    };
     call(&target, credentials, tenant, method, params).await
 }
 
@@ -207,7 +221,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
     for external in externals {
         let (base_url, child) = reach(project, external).await?;
         let name = &external.manifest.name;
-        let target = Target { external, base_url: &base_url, declarations: &[], methods: &[] };
+        let target = Target { external, base_url: &base_url, declarations: &[], methods: &[], settings: &[] };
         let raw = call(&target, credentials, tenant, "manifest", json!({})).await?;
         let version = raw.get("protocolVersion");
         if !matches!(version, Some(Js::Num(n)) if n.as_f64() == Some(MANIFEST_PROTOCOL_VERSION as f64)) {
@@ -234,6 +248,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             webhook_event_type_id: manifest.webhook_event_type_id,
             plugins: manifest.plugins,
             credential_declarations,
+            settings: setting_names(&raw),
             manifest_answer: raw,
             inbound: manifest.inbound,
             _child: child,
@@ -379,6 +394,7 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("PORT", "0")
         .envs(crate::serve::host_url().map(|url| ("LF_HOST_URL", url)))
+        .envs(crate::serve::host_token().map(|token| ("LF_HOST_TOKEN", token)))
         .envs(external.manifest.env.iter().map(|(k, v)| (k, v.replace("{lf}", &lf))))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -505,7 +521,7 @@ mod tests {
             movements_dir: root.join("movements"),
             externals_dir: root.join("externals"),
             user: (None, None),
-            store: None,
+            core: crate::core::CoreChoice::default(),
             public_url: None,
             start_timeout: crate::project::DEFAULT_START_TIMEOUT,
             cost_cap_microdollars: None,

@@ -51,6 +51,14 @@ pub fn host_url() -> Option<&'static str> {
     HOST_URL.get().map(String::as_str)
 }
 
+/// The token this process's doors take from the externals it starts
+/// (LF_HOST_TOKEN), for the models door.
+static HOST_TOKEN: OnceLock<String> = OnceLock::new();
+
+pub fn host_token() -> Option<&'static str> {
+    HOST_TOKEN.get().map(String::as_str)
+}
+
 /// `lf serve [--port N]`: until SIGINT or SIGTERM.
 pub async fn run(project: Project, ephemeral: bool, store: &StoreSpec, port: Option<&str>) -> Result<i32, String> {
     let port = match port {
@@ -63,6 +71,7 @@ pub async fn run(project: Project, ephemeral: bool, store: &StoreSpec, port: Opt
     let listener = TcpListener::bind((bind.as_str(), port)).await.map_err(|e| format!("{bind}:{port}: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let _ = HOST_URL.set(format!("http://127.0.0.1:{port}"));
+    let _ = HOST_TOKEN.set(crate::http_out::hex(&crate::http_out::random_bytes(24)?));
     let session = Rc::new(open_session(project, ephemeral, store).await?);
     // A file exposed to an external is fetched from this listener.
     session.documents.serve_at(port);
@@ -207,6 +216,9 @@ async fn route(session: &Session, poke: &Notify, request: Request) -> Result<Res
     if let Some([id]) = segments(&request.path, "/api/cb/").as_deref() {
         return callback_door(session, poke, &decoded(id)?, &request).await;
     }
+    if let Some([_, "models"]) = segments(&request.path, "/api/public/adapter/").as_deref() {
+        return Ok(models_door(session, &request).await);
+    }
 
     let notify = || poke.notify_one();
     let doors = LfDoors::of_session(session, EventSink::Queue, &notify);
@@ -231,6 +243,24 @@ async fn route(session: &Session, poke: &Notify, request: Request) -> Result<Res
     // A delivery may have queued wakes.
     poke.notify_one();
     Ok(Response::json(202, &Js::Obj(obj! { "runs" => Js::Arr(outcomes.iter().map(outcome_js).collect()) })))
+}
+
+/// The models door: a model call by the models slot's module, for an
+/// external this process started (it holds LF_HOST_TOKEN).
+async fn models_door(session: &Session, request: &Request) -> Response {
+    let presented = request.headers.iter().find(|(k, _)| k == "authorization").map(|(_, v)| v.as_str());
+    let expected = host_token().map(|t| format!("Bearer {t}"));
+    if expected.is_none() || presented != expected.as_deref() {
+        return Response::json(401, &Js::Obj(obj! { "error" => Js::str("unauthorized") }));
+    }
+    let body = match Js::parse(&request.body) {
+        Ok(body) => body,
+        Err(e) => return Response::json(400, &Js::Obj(obj! { "error" => Js::str("bad_request"), "message" => Js::Str(e) })),
+    };
+    match crate::llm_calls::host_model_call(&body, session.credentials()).await {
+        Ok(answer) => Response::json(200, &answer),
+        Err(message) => Response::json(502, &Js::Obj(obj! { "error" => Js::str("model_call_failed"), "message" => Js::Str(message) })),
+    }
 }
 
 /// The webhook door and the push doors, over any host's stores: `lf serve`'s,

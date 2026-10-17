@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { PROTOCOL_VERSION, RpcResponse } from 'engine-contracts';
+import { reportRunCost } from '../../../lib/run_spend';
 
 import type { RpcErrorShape, WireCredentialShape, WireCredentialUpdateShape } from 'engine-contracts';
 
@@ -152,6 +153,10 @@ export async function postRpc(opts: {
   if (body.credentialUpdate !== undefined && opts.onCredentialUpdate !== undefined) {
     await opts.onCredentialUpdate(body.credentialUpdate);
   }
+  // What the module spent on paid services is the run's, whether or not the
+  // call then failed: charged to the call being served, so the run's cost
+  // cap counts it.
+  for (const line of body.cost ?? []) reportRunCost({ source: { kind: 'adapter', name: line.label }, microdollars: line.microdollars });
   if (!body.ok) throw new RemoteProtocolError(body.error, opts.method);
   return body.result;
 }

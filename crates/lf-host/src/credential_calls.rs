@@ -22,10 +22,10 @@ use serde_json::json;
 use crate::externals::External;
 use crate::json::Js;
 use crate::oauth2::{ClientApp, ClientAuth, Declaration, accepted_fields, client_from_fields, declared_fields, refresh_grant};
-use crate::protocol::{Call, RpcError, post_rpc_carrying};
+use crate::protocol::{CREDENTIAL_REFUSED_CODE, Call, Carried, RpcError, post_rpc_carrying};
 use crate::remote::CallFailure;
 use crate::secret_stores::{current_fields, secrets_of};
-use crate::secrets::{Credential, Credentials, install_of};
+use crate::secrets::{Binding, Credential, Credentials, install_of};
 use crate::secrets_family::{Fields, LocalFuture, Record, Refresher, SecretError, SecretsFamily, with_secret};
 
 /// Where a call goes, and what the external's manifest declared (nothing yet
@@ -35,6 +35,8 @@ pub struct Target<'a> {
     pub base_url: &'a str,
     pub declarations: &'a [Declaration],
     pub methods: &'a [String],
+    /// The settings the manifest declares, by name.
+    pub settings: &'a [String],
 }
 
 #[derive(Debug)]
@@ -89,7 +91,7 @@ pub async fn send(
 ) -> Result<Js, SendError> {
     let Some(credential) = credential else {
         let bearer = bearer_of(target.external, signer.map(|s| (s.name.as_str(), current_fields(s)))).map_err(SendError::Before)?;
-        return post(target, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
+        return post(target, credentials, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
     };
     let family = secrets_of(credential);
     let bearer_for = |record: &Record| -> Result<Option<String>, SendError> {
@@ -100,20 +102,22 @@ pub async fn send(
         };
         bearer_of(target.external, signed_by).map_err(SendError::Before)
     };
-    let unauthorized = |error: &SendError| matches!(error, SendError::Rpc(RpcError::Protocol { code, .. }) if code == "unauthorized");
+    // `credential_refused`: the module says the provider refused the token.
+    let unauthorized =
+        |error: &SendError| matches!(error, SendError::Rpc(RpcError::Protocol { code, .. }) if code == "unauthorized" || code == CREDENTIAL_REFUSED_CODE);
 
     // The protocol carries one credential per request: the first declared.
     let Some(declaration) = target.declarations.first() else {
         let Some(refresher) = fields_refresher(credential) else {
             let bearer = bearer_for(&Record::of(current_fields(credential)))?;
-            return post(target, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
+            return post(target, credentials, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
         };
         let refresher = Some(refresher);
         return with_secret(&family, &credential.name, refresher.as_deref(), unauthorized, |record| {
             let sending = &sending;
             async move {
                 let bearer = bearer_for(&record)?;
-                post(target, sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc)
+                post(target, credentials, sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc)
             }
         })
         .await;
@@ -131,7 +135,7 @@ pub async fn send(
         async move {
             let bearer = bearer_for(&record)?;
             let sent = json!({ "name": declaration.name, "fields": declared_fields(declaration, &record.fields) });
-            let (answer, update) = post(target, sending, bearer.as_deref(), Some(sent)).await;
+            let (answer, update) = post(target, credentials, sending, bearer.as_deref(), Some(sent)).await;
             if let Some(update) = update {
                 store_update(family, &credential.name, adapter_type, declaration, &update, &record.version).await?;
             }
@@ -141,7 +145,28 @@ pub async fn send(
     .await
 }
 
-async fn post(target: &Target<'_>, sending: &Sending<'_>, bearer: Option<&str>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
+async fn post(target: &Target<'_>, credentials: &Credentials, sending: &Sending<'_>, bearer: Option<&str>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
+    let name = &target.external.manifest.name;
+    // The module's other declared credentials, each the first entry bound
+    // to it: the connection names only the first.
+    let others: Vec<serde_json::Value> = match &credential {
+        None => Vec::new(),
+        Some(first) => std::iter::once(first.clone())
+            .chain(target.declarations.iter().skip(1).filter_map(|declaration| {
+                let bound = credentials.iter().find(|c| c.external == *name && c.binding == Binding::Credential(declaration.name.clone()))?;
+                Some(json!({ "name": declaration.name, "fields": declared_fields(declaration, &current_fields(bound)) }))
+            }))
+            .collect(),
+    };
+    let settings = install_of(credentials, name).map(|install| {
+        let fields = current_fields(install);
+        serde_json::Value::Object(target.settings.iter().filter_map(|s| fields.get(s).map(|v| (s.clone(), json!(v)))).collect())
+    });
+    let carried = Carried {
+        credential,
+        credentials: if others.len() > 1 { Some(serde_json::Value::Array(others)) } else { None },
+        settings: settings.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())),
+    };
     let call = Call {
         base_url: target.base_url,
         bearer,
@@ -150,7 +175,7 @@ async fn post(target: &Target<'_>, sending: &Sending<'_>, bearer: Option<&str>, 
         cache_scope_id: sending.cache_scope_id,
         params: sending.params.clone(),
     };
-    post_rpc_carrying(call, credential).await
+    post_rpc_carrying(call, carried).await
 }
 
 /// The `Authorization` secret: the named field of the signing entry (externals.ts `callSecret`).
@@ -199,7 +224,7 @@ fn fields_refresher<'a>(credential: &Credential) -> Option<Box<Refresher<'a>>> {
 /// install's), none for a `static` one.
 fn declared_refresher<'a>(
     target: &'a Target<'a>,
-    credentials: &Credentials,
+    credentials: &'a Credentials,
     credential: &Credential,
     declaration: &'a Declaration,
     sending: &'a Sending<'a>,
@@ -211,7 +236,7 @@ fn declared_refresher<'a>(
                 let bearer = bearer_for(&current).map_err(String::from)?;
                 let sent = json!({ "name": declaration.name, "fields": declared_fields(declaration, &current.fields) });
                 let refreshing = Sending { tenant: sending.tenant, method: "refreshCredential", cache_scope_id: sending.cache_scope_id, params: json!({}) };
-                let (answer, update) = post(target, &refreshing, bearer.as_deref(), Some(sent)).await;
+                let (answer, update) = post(target, credentials, &refreshing, bearer.as_deref(), Some(sent)).await;
                 let result = answer.map_err(|e| e.message())?;
                 let mut changed = match update {
                     Some(update) => update_of(&target.external.manifest.name, &update)?.1,

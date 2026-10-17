@@ -32,6 +32,11 @@ const PARSE_ERROR: i64 = -32700;
 const STORE_FAILED: i64 = -32000;
 
 pub async fn serve(spec: &StoreSpec) -> Result<(), String> {
+    // The bridge stands in for a set-up store: a Postgres one's setup
+    // (`lf connect @lf/postgres-store`) is run first.
+    if let StoreSpec::Postgres { url, .. } = spec {
+        crate::pg_store::PgStore::migrate(url).map_err(|e| format!("{}: {e}", spec.display()))?;
+    }
     let store = open_store(spec)?;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();

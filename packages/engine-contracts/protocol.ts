@@ -59,13 +59,33 @@ export const WireCredentialUpdate = z.object({
 });
 export type WireCredentialUpdateShape = z.infer<typeof WireCredentialUpdate>;
 
+/** What a call spent on a paid service, in the engine's cost-line terms: the
+ *  host adds it to the run's spend, so the run's cost cap (`maxRunCostUsd`)
+ *  counts it. `label` names the service in the trace and usage records. */
+export const WireCostLine = z.object({
+  microdollars: z.number().int().nonnegative(),
+  label: z.string().min(1),
+});
+export type WireCostLineShape = z.infer<typeof WireCostLine>;
+
+/** A module's construction arguments (an Airtable base, a spreadsheet), by
+ *  the names its manifest's `settings` declare, as the install holds them. */
+export const WireModuleSettingValues = z.record(z.string(), z.string());
+
 export const RpcRequest = z.object({
   protocolVersion: z.string(),
   method: z.string(),
   cacheScopeId: z.string(),
   params: z.unknown(),
-  /** Within version 2: absent for a server that declares no credential. */
+  /** Within version 2: absent for a server that declares no credential. The
+   *  first declared credential, as the connection names it. */
   credential: WireCredential.optional(),
+  /** Within version 2: every credential the module declares that the host
+   *  holds for this connection, `credential` among them. Absent from an older
+   *  host, which sends `credential` alone. */
+  credentials: z.array(WireCredential).optional(),
+  /** Within version 2: the install's declared settings. */
+  settings: WireModuleSettingValues.optional(),
 });
 export type RpcRequestShape = z.infer<typeof RpcRequest>;
 
@@ -76,11 +96,27 @@ export const RpcError = z.object({
 });
 export type RpcErrorShape = z.infer<typeof RpcError>;
 
+/** The `code` of a failure that says the provider refused the request's
+ *  credential (an expired or revoked token): the host refreshes that
+ *  credential and retries the call once. */
+export const CREDENTIAL_REFUSED_CODE = 'credential_refused';
+
 // `credentialUpdate` rides a failure too: a module that refreshed and was then
 // refused must still hand back the rotated refresh token, or it is lost.
+// `cost` rides a failure too: money spent is spent.
 export const RpcResponse = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), result: z.unknown(), credentialUpdate: WireCredentialUpdate.optional() }),
-  z.object({ ok: z.literal(false), error: RpcError, credentialUpdate: WireCredentialUpdate.optional() }),
+  z.object({
+    ok: z.literal(true),
+    result: z.unknown(),
+    credentialUpdate: WireCredentialUpdate.optional(),
+    cost: z.array(WireCostLine).optional(),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: RpcError,
+    credentialUpdate: WireCredentialUpdate.optional(),
+    cost: z.array(WireCostLine).optional(),
+  }),
 ]);
 export type RpcResponseShape = z.infer<typeof RpcResponse>;
 
@@ -192,6 +228,9 @@ export const WireTriggerEvent = z.object({
   externalRecordRef: WireInboundRecordRef.optional(),
   changedFields: z.array(z.string()).optional(),
   occurredAt: z.string().optional(),
+  /** The source's own id for the occurrence, carried from the event that
+   *  made this one (`WireDiscriminableEvent.idempotencyKey`). */
+  idempotencyKey: z.string().optional(),
 });
 export type WireTriggerEventShape = z.infer<typeof WireTriggerEvent>;
 
@@ -758,7 +797,40 @@ export const WirePluginsDeclaration = z.object({
 });
 export type WirePluginsDeclarationShape = z.infer<typeof WirePluginsDeclaration>;
 
+/** What a module is: an adapter (a system movements read and write), a
+ *  plugin package (functions movements call), or a core service filling one
+ *  of the host's slots. Absent: an adapter, or a plugin package when it
+ *  declares `plugins`. */
+export const MODULE_KINDS = ['adapter', 'plugin', 'core'] as const;
+export const WireModuleKind = z.enum(MODULE_KINDS);
+export type WireModuleKindShape = z.infer<typeof WireModuleKind>;
+
+/** The host's core services a `core` module can fill. Each slot's contract
+ *  is its family's contract suite (the run host's store cases for `store`,
+ *  and so on); the host names one module per slot. */
+export const CORE_SLOTS = ['models', 'judge', 'store', 'files'] as const;
+export const WireCoreSlot = z.enum(CORE_SLOTS);
+export type WireCoreSlotShape = z.infer<typeof WireCoreSlot>;
+
+/** One construction argument the install supplies (an Airtable `base`, a
+ *  Sheets `spreadsheet`): asked for when the module is set up (`lf connect`,
+ *  the platform's install screen) and sent on every request (`settings`). */
+export const WireModuleSetting = z.object({
+  name: declaredName('a setting name'),
+  label: z.string().optional(),
+  /** Kept out of logs and traces; false unless said. */
+  secret: z.boolean().optional(),
+  optional: z.boolean().optional(),
+});
+export type WireModuleSettingShape = z.infer<typeof WireModuleSetting>;
+
 export const WireModuleDeclarations = z.object({
+  kind: WireModuleKind.optional(),
+  /** The slot a `core` module fills; only with `kind: core`. */
+  slot: WireCoreSlot.optional(),
+  settings: z.array(WireModuleSetting).optional(),
+  /** The module asks the host's models (`POST …/models`, the models slot). */
+  hostModels: z.boolean().optional(),
   credentials: z.array(WireCredentialDeclaration).optional(),
   inbound: WireInboundDeclaration.optional(),
   poll: WirePollDeclaration.optional(),
@@ -797,7 +869,13 @@ export function refuseUnpairedDeclarations(
       seen.add(name);
     }
   };
+  if (manifest.kind === 'core' && manifest.slot === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['slot'], message: 'declares `kind: core` but names no `slot`' });
+  } else if (manifest.kind !== 'core' && manifest.slot !== undefined) {
+    ctx.addIssue({ code: 'custom', path: ['slot'], message: 'names a `slot` but is not `kind: core`' });
+  }
   unique((manifest.credentials ?? []).map((credential) => credential.name), 'credentials');
+  unique((manifest.settings ?? []).map((setting) => setting.name), 'settings');
   unique((manifest.periodic ?? []).map((task) => task.name), 'periodic');
   unique((manifest.plugins?.plugins ?? []).map((plugin) => plugin.name.replace(/-/g, '_')), 'plugins');
 }
@@ -841,6 +919,9 @@ export type RelatedPageShape = z.infer<typeof RelatedPage>;
 
 export const WireDiscriminableEvent = z.object({
   payload: z.unknown(),
+  /** The provider's own id for this occurrence: a host that sees one key
+   *  twice (a redelivery, an overlapping poll) runs it once. */
+  idempotencyKey: z.string().min(1).optional(),
   externalId: z.string().optional(),
   tag: z.string().optional(),
   actor: WireActor.optional(),
@@ -863,6 +944,34 @@ export const AdapterEmitBody = z.object({
 export const AdapterWakeBody = z.object({
   keys: z.array(z.string().min(1)).min(1).max(ADAPTER_DOOR_MAX_BATCH),
 });
+
+/** The models door a module declaring `hostModels` calls
+ *  (`POST {host}/api/public/adapter/{adapterType}/models`, authenticated as
+ *  the push doors are): one model call, made by the host's models slot.
+ *  `schema` (a JSON schema) asks for the reply as data, by one forced tool
+ *  call named `toolName`. */
+export const HostModelRequest = z.object({
+  label: z.string().min(1),
+  system: z.string(),
+  userMessage: z.string(),
+  model: z.string().optional(),
+  effort: z.enum(['low', 'medium', 'high']).optional(),
+  schema: z.record(z.string(), z.unknown()).optional(),
+  toolName: z.string().optional(),
+  toolDescription: z.string().optional(),
+});
+export type HostModelRequestShape = z.infer<typeof HostModelRequest>;
+
+/** The models door's answer: the text (or `data`, for a `schema` request)
+ *  and what it cost. The door bills nothing to a run itself: the module adds
+ *  `cost` to the `cost` of the response whose work asked it, so the run that
+ *  made that call is charged. */
+export const HostModelAnswer = z.object({
+  text: z.string(),
+  data: z.unknown().optional(),
+  cost: z.array(WireCostLine),
+});
+export type HostModelAnswerShape = z.infer<typeof HostModelAnswer>;
 
 export const WireEventType = z.object({
   tag: z.string(),

@@ -13,6 +13,7 @@
 
 import type {
   FileRef,
+  WireCostLineShape,
   WireCredentialDeclarationShape,
   WireInboundDeclarationShape,
   WirePluginResultShape,
@@ -129,8 +130,20 @@ export interface ModuleConfig {
   readonly credentialRef?: string;
 }
 
+/** Money a call spent on a paid service, charged to the run that made it
+ *  (counted against its cost cap). */
+export interface ModuleSpend {
+  charge(line: WireCostLineShape): void;
+}
+
 export interface ModuleContext {
+  /** The first credential the module declares. */
   credential: ModuleCredential;
+  /** Any credential the module declares, by its declared name (the first is
+   *  `credential`). One the request did not carry refuses when read. */
+  credentialNamed(name: string): ModuleCredential;
+  /** Default: the charge is dropped by a host that meters nothing. */
+  spend: ModuleSpend;
   fetch: typeof fetch;
   log: ModuleLog;
   files: ModuleFiles;

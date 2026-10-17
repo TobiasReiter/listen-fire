@@ -1,5 +1,5 @@
 // A model call through the real `lf` binary: the provider key and endpoint
-// come from the secrets file's `anthropic` credential, the request reaches a
+// come from the secrets file's `@lf/anthropic` credential, the request reaches a
 // fake Anthropic Messages API, and the model's answer lands in the external's
 // write.
 
@@ -62,7 +62,7 @@ test('lf run: AI() calls Anthropic on the secrets key and its answer is written'
     const dir = project();
     appendFileSync(
       join(dir, '.lf/secrets.yaml'),
-      `\nanthropic:\n  external: anthropic\n  api_key: test-key\n  base_url: ${fake.url}\n`,
+      `\nanthropic:\n  external: "@lf/anthropic"\n  api_key: test-key\n  base_url: ${fake.url}\n`,
     );
     writeFileSync(
       join(dir, 'movements/named.mvt'),
@@ -123,7 +123,7 @@ test('lf run: lf.yaml maxRunCostUsd pauses a run at its cap; lf resume carries o
   const fake = await fakeAnthropic();
   try {
     const dir = project();
-    appendFileSync(join(dir, '.lf/secrets.yaml'), `\nanthropic:\n  external: anthropic\n  api_key: test-key\n  base_url: ${fake.url}\n`);
+    appendFileSync(join(dir, '.lf/secrets.yaml'), `\nanthropic:\n  external: "@lf/anthropic"\n  api_key: test-key\n  base_url: ${fake.url}\n`);
     appendFileSync(join(dir, 'lf.yaml'), '\nmaxRunCostUsd: 0.000001\n');
     writeFileSync(
       join(dir, 'movements/named.mvt'),

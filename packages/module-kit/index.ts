@@ -9,6 +9,7 @@ export * from './files';
 export * from './served_files';
 export * from './module_server';
 export * from './serve';
+export * from './host_models';
 export {
   AdapterBadRequestError,
   DRAINED_PAGE_LIMIT,

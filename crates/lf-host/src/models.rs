@@ -13,9 +13,6 @@ use serde_json::Value as Json;
 use crate::json::Js;
 use crate::secrets::Credentials;
 
-/// The reserved credential name the provider key lives under.
-pub const MODEL_CREDENTIAL: &str = "anthropic";
-
 /// The chat models, in the registry's order (every one is served by
 /// Anthropic: `home: 'anthropic'`).
 pub const CHAT_MODELS: &[&str] = &[
@@ -120,7 +117,8 @@ pub fn warn_unpriced_once(key: &str) {
 
 // ── The provider key ────────────────────────────────────────────────────────
 
-/// The Anthropic key and endpoint the secrets hold under {@link MODEL_CREDENTIAL}.
+/// The Anthropic key and endpoint: the settings of the models slot's
+/// module, @lf/anthropic (`lf connect @lf/anthropic`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProviderKey {
     pub api_key: String,
@@ -129,11 +127,13 @@ pub struct ProviderKey {
 }
 
 pub fn provider_key(credentials: &Credentials) -> Result<ProviderKey, String> {
-    let fields = credentials.iter().find(|c| c.name == MODEL_CREDENTIAL).map(|c| &c.fields);
-    match fields.and_then(|f| f.get("api_key")).filter(|k| !k.is_empty()) {
-        Some(api_key) => Ok(ProviderKey { api_key: api_key.clone(), base_url: fields.and_then(|f| f.get("base_url")).cloned() }),
+    let module = crate::core::builtin(crate::core::ANTHROPIC).expect("@lf/anthropic is built in");
+    let settings = crate::core::settings_of(credentials, module);
+    match settings.get("api_key") {
+        Some(api_key) => Ok(ProviderKey { api_key: api_key.clone(), base_url: settings.get("base_url").cloned() }),
         None => Err(format!(
-            "a model call needs a provider key: add `{MODEL_CREDENTIAL}: {{ external: anthropic, api_key: … }}` to the secrets file"
+            "a model call needs a provider key: run `lf connect {}`",
+            module.name
         )),
     }
 }

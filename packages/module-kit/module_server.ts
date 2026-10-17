@@ -10,9 +10,9 @@
 import { ADAPTER_TEAM_HEADER } from 'movement-engine/public/adapter';
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
-import { METHODS, type MethodName, type RpcResponseShape, type WireCredentialShape } from 'engine-contracts';
+import { METHODS, type MethodName, type RpcResponseShape, type WireCostLineShape, type WireCredentialShape } from 'engine-contracts';
 
-import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog, ModuleModels } from './define';
+import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog, ModuleModels, ModuleSpend } from './define';
 
 import { moduleContext, noCredential } from './in_process';
 import { servedFiles, type ServedFile, type ServedFiles } from './served_files';
@@ -36,12 +36,12 @@ export interface ModuleServerOptions {
   files: ModuleFiles;
   /** The kv of the tenant a request names. */
   kvFor: (tenant: string) => ModuleKv;
-  /** The models the serving host lends; default: refused by name. */
-  models?: ModuleModels;
+  /** The models the serving host lends; default: refused by name. Given
+   *  each request's spend, so a host door's cost is charged to the call. */
+  models?: ModuleModels | ((spend: ModuleSpend) => ModuleModels);
   baseUrlOverride?: string;
-  /** The install's construction arguments (an entry position), the same for
-   *  every request: protocol 2 carries none, so a served module is one
-   *  install's. */
+  /** Construction arguments for every request (an entry position); a
+   *  request's own `settings` (its install's) are laid over them. */
   constructionArgs?: Readonly<Record<string, string>>;
   /** Where callers reach this server, for the URLs of the files it holds.
    *  Never taken from a request's Host header (a caller could name any host);
@@ -54,28 +54,40 @@ function headerValue(headers: IncomingHttpHeaders, name: string): string | undef
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** The request's credential as the module reads it; updates are collected
- *  for the answer. */
-function requestCredential(
+/** The request's credentials as the module reads them, by declared name;
+ *  updates are collected for the answer, per credential. */
+function requestCredentials(
   definition: ModuleDefinition,
-  sent: WireCredentialShape | undefined,
-  updates: Record<string, string>,
-): ModuleCredential {
-  const declared = definition.credentials[0];
-  if (declared === undefined) return noCredential(`module ${definition.name} declares no credential`);
-  if (sent === undefined) return noCredential(`module ${definition.name}: the request carried no "${declared.name}" credential`);
-  if (sent.name !== declared.name) {
-    return noCredential(`module ${definition.name}: the request carried credential "${sent.name}", not "${declared.name}"`);
-  }
-  let fields: CredentialFields = { ...sent.fields };
-  return {
-    name: declared.name,
-    fields: async () => fields,
-    update: async (changed) => {
-      fields = { ...fields, ...changed };
-      Object.assign(updates, changed);
-    },
+  request: CheckedRequest,
+  updates: Map<string, Record<string, string>>,
+): { first: ModuleCredential; named: (name: string) => ModuleCredential } {
+  const sent = new Map<string, WireCredentialShape>();
+  for (const credential of request.credentials ?? []) sent.set(credential.name, credential);
+  if (request.credential !== undefined) sent.set(request.credential.name, request.credential);
+  const built = new Map<string, ModuleCredential>();
+  const named = (name: string): ModuleCredential => {
+    const known = built.get(name);
+    if (known !== undefined) return known;
+    if (!definition.credentials.some((declared) => declared.name === name)) {
+      return noCredential(`module ${definition.name} declares no credential "${name}"`);
+    }
+    const carried = sent.get(name);
+    if (carried === undefined) return noCredential(`module ${definition.name}: the request carried no "${name}" credential`);
+    let fields: CredentialFields = { ...carried.fields };
+    const credential: ModuleCredential = {
+      name,
+      fields: async () => fields,
+      update: async (changed) => {
+        fields = { ...fields, ...changed };
+        updates.set(name, { ...(updates.get(name) ?? {}), ...changed });
+      },
+    };
+    built.set(name, credential);
+    return credential;
   };
+  const declared = definition.credentials[0];
+  const first = declared === undefined ? noCredential(`module ${definition.name} declares no credential`) : named(declared.name);
+  return { first, named };
 }
 
 /** The module's own methods (beyond an adapter's), answered from its instance. */
@@ -134,8 +146,12 @@ async function answer(
   files: ServedFiles,
 ): Promise<ProtocolAnswer> {
   const { definition, publicUrl } = options;
-  const updates: Record<string, string> = {};
-  const credential = requestCredential(definition, request.credential, updates);
+  const updates = new Map<string, Record<string, string>>();
+  const credentials = requestCredentials(definition, request, updates);
+  const costs: WireCostLineShape[] = [];
+  const spend: ModuleSpend = { charge: (line) => void costs.push(line) };
+  const models = typeof options.models === 'function' ? options.models(spend) : options.models;
+  const constructionArgs = { ...(options.constructionArgs ?? {}), ...(request.settings ?? {}) };
   const tenant = headerValue(req.headers, ADAPTER_TEAM_HEADER) ?? '';
   let loaded: LoadedModule;
   try {
@@ -143,13 +159,15 @@ async function answer(
       definition,
       moduleContext({
         tenant,
-        credential,
+        credential: credentials.first,
+        credentialNamed: credentials.named,
+        spend,
         log: options.log,
         files: options.files,
         kv: options.kvFor(tenant),
-        ...(options.models !== undefined ? { models: options.models } : {}),
+        ...(models !== undefined ? { models } : {}),
         ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
-        ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
+        constructionArgs,
         validateResults: false,
       }),
     );
@@ -176,8 +194,13 @@ async function answer(
   const body: RpcResponseShape =
     answered?.body ?? errorEnvelope('method_not_implemented', `Module ${definition.name} does not implement "${request.method}".`, false);
   const status = answered?.status ?? 200;
-  if (Object.keys(updates).length === 0 || credential.name === '') return { status, body };
-  return { status, body: { ...body, credentialUpdate: { name: credential.name, fields: updates } } };
+  const withCost: RpcResponseShape = costs.length === 0 ? body : { ...body, cost: costs };
+  // The answer carries one credentialUpdate: the first declared credential's
+  // when it changed, else the first that did.
+  const changed = updates.get(credentials.first.name) !== undefined ? credentials.first.name : [...updates.keys()][0];
+  if (changed === undefined) return { status, body: withCost };
+  if (updates.size > 1) options.log.warn(`module ${definition.name}: several credentials changed in one call; only "${changed}"'s change is sent back`);
+  return { status, body: { ...withCost, credentialUpdate: { name: changed, fields: updates.get(changed) ?? {} } } };
 }
 
 /** The HTTP handler that serves one module over adapter protocol 2. */

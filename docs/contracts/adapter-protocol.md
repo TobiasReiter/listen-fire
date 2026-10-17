@@ -753,9 +753,10 @@ The host sends the connection's credential on every request, beside
 - The fields sent are the ones the declaration names, plus `access_token`,
   `refresh_token` and `expires_at` for an `oauth2` one. Anything else the host
   keeps beside them (its client secret, say) is never sent.
-- A request carries one credential: the one the connection names, under the
-  declared credential it fills. A connection that names none (a module that
-  declares none) carries none.
+- `credential` is the one the connection names, under the declared
+  credential it fills; `credentials` adds the module's other declared ones
+  the host holds ([below](#kinds-settings-spend-and-the-hosts-models)). A
+  module that declares none is sent none.
 - The host sends a credential only to an installed module that declares it,
   and only over loopback or HTTPS.
 - Never log it, echo it in an error, or store it beyond the call.
@@ -904,6 +905,61 @@ page = web.fetchUrl(u)
 - A plugin module answers `manifest` with `supportedTriggers: []` and lists
   only `manifest` and `invokePlugin` (and `refreshCredential` if it needs
   one) in `methods`.
+
+### Kinds, settings, spend and the host's models
+
+- **Kind.** The manifest may say what the module is: `"kind": "adapter"`,
+  `"plugin"` or `"core"`. A `core` module fills one of the host's core
+  services and names it in `"slot"`: `models`, `judge`, `store` or `files`.
+  The host names one module per slot (lf.yaml's `core:`); a slot's contract
+  is its family's contract suite (the run host's store cases for `store`).
+  Without `kind`, a module is an adapter, or a plugin package when it
+  declares `plugins`.
+- **Settings.** Construction arguments the install supplies (an Airtable
+  `base`, a Sheets `spreadsheet`) are declared, each
+  `{ name, label?, secret?, optional? }`:
+
+  ```json
+  "settings": [{ "name": "base", "label": "The Airtable base id" }]
+  ```
+
+  The host asks for them when the module is set up (`lf connect`, the
+  platform's install screen) and sends them on every request as
+  `"settings": { "base": "app123" }`.
+- **Every declared credential.** A request carries `credential` (the first
+  declared one) and `credentials`, every declared credential the host holds
+  for the connection. A module reads any of them by declared name. One
+  `credentialUpdate` rides an answer: the first credential's, else the first
+  that changed.
+- **A refused token.** Answer `ok: false` with the code `credential_refused`
+  when the provider refused the request's credential. The host refreshes it
+  (its OAuth 2 grant, or your `refreshCredential`) and retries the call once.
+- **Spend.** An answer (on success or failure) may carry what the call spent
+  on a paid service:
+
+  ```json
+  { "ok": true, "result": { … }, "cost": [{ "microdollars": 1500, "label": "enrichment-api" }] }
+  ```
+
+  The host adds each line to the spend of the run that made the call, so the
+  run's cost cap (`maxRunCostUsd`) counts it.
+- **The host's models.** A module that declares `"hostModels": true` may ask
+  the host's models slot for a model call:
+
+  ```
+  POST {listen-fire}/api/public/adapter/{adapterType}/models
+  { "label": "affinity.formatLocation", "system": "…", "userMessage": "…", "model": "claude-sonnet-5" }
+  → { "text": "…", "cost": [{ "microdollars": 812, "label": "anthropic/claude-sonnet-5" }] }
+  ```
+
+  Authentication is the push doors'. A `schema` (a JSON schema, with
+  `toolName` and `toolDescription`) asks for the reply as `data`. The door
+  bills no run itself: add its `cost` to the `cost` of the answer whose work
+  asked it. The module kit does both for you.
+- **Event idempotency.** An event (`emit`, `poll`, `preprocessInbound`) may
+  carry `idempotencyKey`, the provider's own id for the occurrence; a host
+  that sees one key twice runs it once. A file ref's `size` (bytes) is kept
+  wherever the ref travels.
 
 ### Serving a module
 
@@ -1170,4 +1226,11 @@ from the root, so no automation can walk the collection.
   `plugins` (a package of them), paired with the optional method
   `invokePlugin`. Additive: a server that declares none is unchanged, and an
   older host ignores the declaration. See [Plugins](#plugins).
+- **Core modules, settings, spend** (within version 2, no bump; 2026-10-17).
+  The manifest may declare `kind`, `slot`, `settings` and `hostModels`; a
+  request may carry `credentials` and `settings`; an answer may carry `cost`;
+  the error code `credential_refused`; the host's models door; an event's
+  `idempotencyKey`. All additive: an older server sends and declares none of
+  them and is unchanged, and an older host ignores them. See
+  [Kinds, settings, spend and the host's models](#kinds-settings-spend-and-the-hosts-models).
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.

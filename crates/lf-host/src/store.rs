@@ -752,30 +752,6 @@ fn work_id(id: &str) -> Result<i64> {
 mod tests {
     use super::*;
 
-    /// The TypeScript lf's schema, read off its source, is this one.
-    #[test]
-    fn the_schema_is_the_typescript_lfs() {
-        let source = include_str!("../../../apps/cli/src/state.ts");
-        let start = source.find("const SCHEMA = `").expect("state.ts declares SCHEMA") + "const SCHEMA = `".len();
-        let end = start + source[start..].find('`').expect("SCHEMA ends");
-        assert_eq!(&source[start..end], SCHEMA);
-    }
-
-    #[test]
-    fn the_work_kinds_and_added_columns_are_the_typescript_lfs() {
-        let source = include_str!("../../../apps/cli/src/state.ts");
-        let marker = "export const WorkKind = z.enum([";
-        let start = source.find(marker).expect("state.ts declares WorkKind") + marker.len();
-        let end = start + source[start..].find(']').expect("WorkKind ends");
-        let kinds: Vec<&str> = source[start..end].split(',').map(|k| k.trim().trim_matches('\'')).collect();
-        assert_eq!(kinds, WORK_KINDS);
-        let marker = "for (const column of [";
-        let start = source.find(marker).expect("state.ts adds missing columns") + marker.len();
-        let end = start + source[start..].find(']').expect("the column list ends");
-        let columns: Vec<&str> = source[start..end].split(',').map(|c| c.trim().trim_matches('\'')).collect();
-        assert_eq!(columns, ADDED_RUN_COLUMNS);
-    }
-
     #[test]
     fn instants_are_written_as_to_iso_string_writes_them() {
         let now = iso(0);

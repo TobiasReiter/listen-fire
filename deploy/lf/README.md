@@ -9,7 +9,8 @@ The container keeps no state. Everything lives in Postgres, so any container can
 
 ## Configuration
 
-- `LF_STORE_URL`: the Postgres URL. End it with `?sslmode=verify-full` (TLS, certificate and host name checked). Set it as a platform secret; the default project's `lf.yaml` reads it from the environment, never from the file.
+- The store: the default project's `lf.yaml` names the Postgres store module (`core: { store: "@lf/postgres-store" }`). Its settings come from the environment: `LF_SECRET__POSTGRES_STORE__EXTERNAL=@lf/postgres-store` and `LF_SECRET__POSTGRES_STORE__URL`, the Postgres URL ending `?sslmode=verify-full` (TLS, certificate and host name checked). Set the URL as a platform secret.
+- The store's schema: run `lf connect @lf/postgres-store` once (and again after an upgrade) with the same environment. It creates and migrates the store's own `lf` schema and exits.
 - `PORT`: the port `serve` listens on (default 8080). `LF_BIND` defaults to `0.0.0.0` in the image (the binary's own default is loopback).
 - Credentials for third parties: `LF_SECRET__<CREDENTIAL>__<FIELD>` environment variables.
 - `publicUrl` in `lf.yaml`: the HTTPS address the platform gives the serve container, needed for OAuth redirects.
@@ -17,8 +18,8 @@ The container keeps no state. Everything lives in Postgres, so any container can
 
 ## The platform shape
 
-1. Deploy the image as a service running its default command, with minimum instances at least 1 (or 0 if the platform wakes a container on the first request and senders retry webhooks), HTTPS in front, and `LF_STORE_URL` set.
-2. Deploy the same image as a job whose command is `lf drain --until-idle --max-seconds 55`, with the same `LF_STORE_URL`. Trigger it:
+1. Deploy the image as a service running its default command, with minimum instances at least 1 (or 0 if the platform wakes a container on the first request and senders retry webhooks), HTTPS in front, and the store's environment set.
+2. Deploy the same image as a job whose command is `lf drain --until-idle --max-seconds 55`, with the same environment. Trigger it:
    - on a schedule (every minute) for timers and awaits to wake, or
    - by queue depth, where the platform can scale jobs on a Postgres query: start one worker per few due rows.
 3. A worker that finds nothing due exits at once, so a frequent schedule costs little.
@@ -31,4 +32,4 @@ Set `--max-seconds` below the platform's job time limit: it stops claiming new r
 docker compose -f deploy/lf/docker-compose.yml up --build
 ```
 
-Starts Postgres, one `serve` on port 8080 and a drain loop.
+Starts Postgres, runs the store's setup, then one `serve` on port 8080 and a drain loop.

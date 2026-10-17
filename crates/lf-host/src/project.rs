@@ -30,8 +30,11 @@ struct ProjectFile {
     externals: String,
     #[serde(default)]
     user: UserFile,
-    /// Where run state is kept, when not `.lf/state.db` (crate::backend::StoreSpec).
-    store: Option<StoreFile>,
+    /// The module filling each core slot (crate::core), by slot name.
+    #[serde(default)]
+    core: std::collections::BTreeMap<String, String>,
+    /// Superseded by `core: { store: … }`: refused with the way over.
+    store: Option<serde_yaml::Value>,
     #[serde(rename = "publicUrl")]
     public_url: Option<String>,
     /// Seconds a started external has to print `listening <port>`.
@@ -41,20 +44,6 @@ struct ProjectFile {
     /// `MOVEMENT_MAX_RUN_COST_USD`).
     #[serde(rename = "maxRunCostUsd")]
     max_run_cost_usd: Option<f64>,
-}
-
-/// lf.yaml's `store:`: a spec written out, or where to read one, so a
-/// database's password never sits in the committed file.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoreFile {
-    Spec(String),
-    Env {
-        env: String,
-    },
-    Credential {
-        credential: String,
-    },
 }
 
 #[derive(Deserialize, Default)]
@@ -84,8 +73,8 @@ pub struct Project {
     pub externals_dir: PathBuf,
     /// The local acting identity lf.yaml names.
     pub user: (Option<String>, Option<String>),
-    /// lf.yaml's `store:`, unless `--store` names another.
-    pub store: Option<ProjectStore>,
+    /// The module filling each core slot: lf.yaml's `core:`, defaults beside.
+    pub core: crate::core::CoreChoice,
     /// Where lf is reached from outside (`publicUrl`), when lf.yaml names it.
     pub public_url: Option<String>,
     /// How long a started external (a module's serve-module included) has to
@@ -106,49 +95,6 @@ fn cost_cap_of(dollars: f64, at: &str) -> Result<f64, String> {
         ));
     }
     Ok((dollars * 1_000_000.0).round())
-}
-
-/// Where lf.yaml says run state is kept.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ProjectStore {
-    /// Written out: a SQLite file, or a Postgres URL with no password in it.
-    Spec(String),
-    /// The environment variable that holds the spec.
-    Env(String),
-    /// The secrets entry whose `url` field holds the spec.
-    Credential(String),
-}
-
-impl ProjectStore {
-    fn of(file: StoreFile, at: &str) -> Result<ProjectStore, String> {
-        let named = |name: String, key: &str| {
-            if name.trim().is_empty() { Err(format!("{at}: store.{key}: a name")) } else { Ok(name) }
-        };
-        Ok(match file {
-            StoreFile::Spec(spec) => {
-                if has_inline_password(&spec) {
-                    return Err(format!(
-                        "{at}: store: a database URL with its password written in lf.yaml; keep the URL out of the committed file: `store: {{ env: LF_STORE_URL }}` (an environment variable) or `store: {{ credential: <name> }}` (a secrets entry with a `url` field)"
-                    ));
-                }
-                ProjectStore::Spec(spec)
-            }
-            StoreFile::Env { env } => ProjectStore::Env(named(env, "env")?),
-            StoreFile::Credential { credential } => ProjectStore::Credential(named(credential, "credential")?),
-        })
-    }
-}
-
-/// A Postgres URL carrying a password, in its userinfo or as a `password` parameter.
-fn has_inline_password(spec: &str) -> bool {
-    if !(spec.starts_with("postgres://") || spec.starts_with("postgresql://")) {
-        return false;
-    }
-    match url::Url::parse(spec) {
-        Ok(url) => url.password().is_some_and(|p| !p.is_empty()) || url.query_pairs().any(|(k, v)| k == "password" && !v.is_empty()),
-        // Unreadable: judged by its shape, so a password is never let through.
-        Err(_) => spec.split_once("://").and_then(|(_, rest)| rest.split_once('@')).is_some_and(|(userinfo, _)| userinfo.contains(':')) || spec.contains("password="),
-    }
 }
 
 /// A started external's wait when lf.yaml names none: a module's first start
@@ -235,7 +181,13 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         Some(seconds) => start_timeout_of(seconds, &format!("{}: startTimeout", path.display()))?,
     };
     let cost_cap_microdollars = file.max_run_cost_usd.map(|d| cost_cap_of(d, &path.display().to_string())).transpose()?;
-    let store = file.store.map(|s| ProjectStore::of(s, &path.display().to_string())).transpose()?;
+    if file.store.is_some() {
+        return Err(format!(
+            "{}: store: run state is kept by the store module now: `core: {{ store: \"@lf/postgres-store\" }}` (or @lf/sqlite-store, the default), set up with `lf connect @lf/postgres-store`",
+            path.display()
+        ));
+    }
+    let core = crate::core::CoreChoice::of(&file.core, &path.display().to_string())?;
     let language_version = language_version_of_engine(&file.engine)?;
     refuse_below_lf(language_version, &path.display().to_string(), "run `lf upgrade`")?;
     let lf_dir = dir.join(".lf");
@@ -247,7 +199,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         engine: file.engine,
         language_version,
         user: (file.user.name, file.user.email),
-        store,
+        core,
         public_url: file.public_url,
         start_timeout,
         cost_cap_microdollars,
@@ -263,18 +215,6 @@ mod tests {
     fn a_newer_engine_is_refused_and_an_older_one_runs_the_current_version() {
         assert!(language_version_of_engine("0.12.0").unwrap_err().contains("newer than this lf"));
         assert_eq!(language_version_of_engine("0.6.0"), Ok(CURRENT_LANGUAGE_VERSION));
-    }
-
-    #[test]
-    fn a_store_url_with_a_password_is_refused_and_one_read_from_elsewhere_is_kept() {
-        let of = |yaml: &str| ProjectStore::of(serde_yaml::from_str(yaml).unwrap(), "lf.yaml");
-        assert!(of("postgres://lf:secret@db.example.com/lf").unwrap_err().contains("store: { env: LF_STORE_URL }"));
-        assert!(of("postgresql://db.example.com/lf?user=lf&password=secret").is_err());
-        assert_eq!(of("postgres://lf@db.example.com/lf?sslmode=require").unwrap(), ProjectStore::Spec("postgres://lf@db.example.com/lf?sslmode=require".into()));
-        assert_eq!(of("state/other.db").unwrap(), ProjectStore::Spec("state/other.db".into()));
-        assert_eq!(of("{ env: LF_STORE_URL }").unwrap(), ProjectStore::Env("LF_STORE_URL".into()));
-        assert_eq!(of("{ credential: db }").unwrap(), ProjectStore::Credential("db".into()));
-        assert!(of("{ env: '' }").is_err());
     }
 
     #[test]

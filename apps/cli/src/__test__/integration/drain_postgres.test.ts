@@ -42,7 +42,7 @@ test('two drain workers resume every parked run exactly once', async () => {
       assert.ok(id !== undefined, run.stdout);
       fired.push(id);
     }
-    assert.deepEqual(psql(`select count(*) from automations.work where team_id = '${team}' and kind = 'resume_timer'`), [[String(RUNS)]]);
+    assert.deepEqual(psql(`select count(*) from lf.work where team_id = '${team}' and kind = 'resume_timer'`), [[String(RUNS)]]);
 
     const machines = [dir, join(mkdtempSync(join(tmpdir(), 'lf-drain-')), 'p')];
     cpSync(dir, machines[1]!, { recursive: true });
@@ -55,9 +55,9 @@ test('two drain workers resume every parked run exactly once', async () => {
     assert.deepEqual([...resumed].sort(), [...fired].sort(), `each run resumed once:\n${drained.map((w) => w.out).join('\n---\n')}`);
     const followUps = machines.flatMap((machine) => companies(machine).filter((name) => name.startsWith('Follow up')));
     assert.equal(followUps.length, RUNS, 'each follow-up written once');
-    assert.deepEqual(psql(`select status, count(*) from automations.trigger_run where team_id = '${team}' group by status`), [['success', String(RUNS)]]);
-    assert.deepEqual(psql(`select count(*) from automations.work where team_id = '${team}'`), [['0']]);
-    assert.deepEqual(psql(`select count(*) from automations.parked_run p join automations.trigger_run r on r.id = p.run_id where r.team_id = '${team}'`), [['0']]);
+    assert.deepEqual(psql(`select status, count(*) from lf.trigger_run where team_id = '${team}' group by status`), [['success', String(RUNS)]]);
+    assert.deepEqual(psql(`select count(*) from lf.work where team_id = '${team}'`), [['0']]);
+    assert.deepEqual(psql(`select count(*) from lf.parked_run p join lf.trigger_run r on r.id = p.run_id where r.team_id = '${team}'`), [['0']]);
 
     // The trace is kept on the run's row, so a run another worker resumed
     // reports the whole of it, as the same run over the SQLite file does.
