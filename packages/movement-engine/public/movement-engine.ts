@@ -27,6 +27,12 @@ export {
   type EngineChoice,
 } from '../services/movement_engine/rust_engine';
 
+// Which engine ran a run, counted, and what keeps a program off the
+// TypeScript engine.
+export * from '../services/movement_engine/rust_stats';
+export { RUST_ENGINE_FROM_VERSION } from '../services/movement_engine/rust_engine';
+export { listUnsupportedConstructs } from '../services/movement_engine/interpretable';
+
 export * as programCheck from '../services/movement_engine/program_check';
 export {
   checkAnswer,

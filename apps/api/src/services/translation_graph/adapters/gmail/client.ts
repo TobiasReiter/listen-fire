@@ -9,7 +9,7 @@ import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { gmailCredentialShape } from '../../../credentials/app_id';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import {
   GmailApiClient,
   checkGmailMailboxAllowed,

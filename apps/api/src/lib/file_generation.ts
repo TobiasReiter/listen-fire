@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 
 import { services } from '../adapters/registry';
 import { generateImage as drawImage } from './models/image';
-import { slugify } from 'movement-engine/public/utils';
+import { slugify } from 'movement-engine/public/text';
 
 interface GeneratedFile {
   objectUri: string;

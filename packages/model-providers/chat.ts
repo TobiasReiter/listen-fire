@@ -7,7 +7,7 @@ import type { Provider } from 'movement-engine/public/models';
 import type { ChatModelName } from 'movement-engine/public/models';
 
 import { assertRunBudget } from 'movement-engine/public/models';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { assertCallable, resolveModel } from 'movement-engine/public/models';
 import { anthropicChatProvider } from './providers/anthropic';
 import { geminiChatProvider } from './providers/gemini';

@@ -22,7 +22,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { HttpExchange } from '../../__test__/parity_http';
+import type { Exchange } from '../../__test__/parity/exchange';
 import type { TelegramParitySubject, TranscriptEntry } from './parity/script';
 
 // ── The platform's stores, as the test seeds them ───────────────────────────
@@ -88,8 +88,8 @@ jest.mock('../../../../credentials/secrets_postgres', () => {
 });
 
 import { runTelegramParityScript } from './parity/script';
-import { recordingHttpServer, replayingHttpServer, requestOf } from '../../__test__/parity_http';
-import { bootFakeProvider } from '../../__test__/parity_fake';
+import { recordingServer, replayingServer, requestOf, type ExchangeOptions } from '../../__test__/parity/exchange';
+import { bootFakeChannels } from '../../__test__/parity/fake_channels';
 import { TelegramAdapter } from '../index';
 import { getAdapter } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
@@ -97,6 +97,9 @@ import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/s
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
 
 const FIXTURE = join(__dirname, '__fixtures__/telegram_parity.json');
+/** Chat providers take form-encoded bodies and file bytes: a request's
+ *  content type is part of what it asked for. */
+const EXCHANGE: ExchangeOptions = { headers: ['content-type'] };
 const TEAM = 'team-parity' as TeamId;
 const SHARED_TOKEN = 'SHARED-BOT-TOKEN';
 
@@ -140,7 +143,7 @@ function legacySubject(name: InstallName, baseUrl: string): TelegramParitySubjec
   };
 }
 
-type Recording = Record<InstallName, { transcript: TranscriptEntry[]; exchanges: HttpExchange[] }>;
+type Recording = Record<InstallName, { transcript: TranscriptEntry[]; exchanges: Exchange[] }>;
 
 jest.setTimeout(120_000);
 
@@ -156,11 +159,11 @@ afterAll(() => {
 });
 
 (recording ? it : it.skip)('records the legacy adapter against fake-channels', async () => {
-  const fake = await bootFakeProvider('telegram');
+  const fake = await bootFakeChannels({ file: 'telegram', factory: 'telegramRoutes', mount: '/telegram' });
   const fixture: Partial<Recording> = {};
   try {
     for (const name of INSTALLS) {
-      const proxy = await recordingHttpServer(fake.baseUrl);
+      const proxy = await recordingServer(fake.baseUrl, EXCHANGE);
       try {
         const transcript = await runTelegramParityScript(legacySubject(name, proxy.baseUrl));
         fixture[name] = { transcript, exchanges: proxy.exchanges() };
@@ -181,7 +184,7 @@ function loadRecording(): Recording {
 /** Replay one install against the recording: same answers, same requests. */
 async function expectParity(name: InstallName, subjectAt: (baseUrl: string) => Promise<TelegramParitySubject> | TelegramParitySubject): Promise<void> {
   const recorded = loadRecording()[name];
-  const server = await replayingHttpServer(recorded.exchanges);
+  const server = await replayingServer(recorded.exchanges, EXCHANGE);
   try {
     const transcript = await runTelegramParityScript(await subjectAt(server.baseUrl));
     expect(transcript).toEqual(recorded.transcript);
@@ -228,7 +231,7 @@ async function expectParity(name: InstallName, subjectAt: (baseUrl: string) => P
   it('the module served as a process, over protocol 2, replays identically (bare)', async () => {
     const recorded = loadRecording().bare;
     const served = await serveTelegram();
-    const server = await replayingHttpServer(recorded.exchanges);
+    const server = await replayingServer(recorded.exchanges, EXCHANGE);
     const nodeFetch = globalThis.fetch;
     globalThis.fetch = sameRealmFetch(nodeFetch);
     try {

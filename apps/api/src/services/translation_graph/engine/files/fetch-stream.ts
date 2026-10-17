@@ -17,7 +17,7 @@ import { Readable } from 'node:stream';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { ResolveFileRefResult } from 'movement-engine/public/adapter';
 
-import { describeError } from 'movement-engine/public/utils';
+import { describeError } from 'movement-engine/public/errors';
 
 /**
  * Fetch `url` (optionally with caller-supplied headers, e.g. an owner's

@@ -6,7 +6,7 @@ import type { ChartResultArray } from 'yahoo-finance2/esm/src/modules/chart';
 
 import { SECOND } from '../../constants';
 import { logger } from 'movement-engine/public/log';
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 
 const yahooFinance = new YahooFinance();
 

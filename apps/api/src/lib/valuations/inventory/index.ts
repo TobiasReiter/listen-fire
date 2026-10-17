@@ -20,7 +20,7 @@ import {
 import { logHoldings } from './messages';
 import { handleError } from '../../errors';
 import { logger } from 'movement-engine/public/log';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { AssetHolding, Holdings, InvesteeHoldings } from './holdings';
 import {
   TransactionFlow,

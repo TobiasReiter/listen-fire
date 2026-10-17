@@ -17,7 +17,7 @@ import {
   GLOBAL_DEFAULT_OPS_DETAIL_LEVEL,
   setTeamDetailLevel as setTeamDetailLevelService,
 } from '../../../../services/team/ops_detail';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 
 const userSchema = z.object({
   email: z.string().email(),

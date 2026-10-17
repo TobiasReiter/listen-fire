@@ -193,27 +193,15 @@ const REMOTE_ERROR = /^Remote adapter error for method "[^"]+": [a-z_]+ — /;
 
 /**
  * What protocol 2 does not carry today, taken out of the recording before a
- * served module is compared with it, and nothing else: a polled event's
- * `idempotencyKey` (the wire event has no such field) and a file's `size`
- * once its bytes are read (the wire `resolveFileRef` answers a url and a
- * content type). Both are gaps in the protocol, not in the module.
+ * served module is compared with it, and nothing else: a file's `size` once
+ * its bytes are read (the wire `resolveFileRef` answers a url and a content
+ * type). A gap in the protocol, not in the module.
  */
 function withoutProtocol2Gaps(transcript: TranscriptEntry[]): TranscriptEntry[] {
   return transcript.map((entry) => {
     const answer = entry.answer;
-    if (answer === null || typeof answer !== 'object') return entry;
-    if ('base64' in answer) return { ...entry, answer: { ...answer, size: null } };
-    const events: unknown = Reflect.get(answer, 'events');
-    if (!Array.isArray(events)) return entry;
-    return {
-      ...entry,
-      answer: {
-        ...answer,
-        events: events.map((event: unknown) =>
-          event === null || typeof event !== 'object' ? event : Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'idempotencyKey')),
-        ),
-      },
-    };
+    if (answer === null || typeof answer !== 'object' || !('base64' in answer)) return entry;
+    return { ...entry, answer: { ...answer, size: null } };
   });
 }
 

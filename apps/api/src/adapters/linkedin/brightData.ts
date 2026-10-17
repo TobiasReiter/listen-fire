@@ -8,10 +8,10 @@ import { LinkedinAdapter, ProfileFetchBudget } from './interface';
 import { MINUTE, SECOND } from '../../constants';
 import { logger } from 'movement-engine/public/log';
 import { safeToUrl } from '../../lib/utils/url';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { notNull, notUndefined } from '../../lib/utils/nullability';
 import { sendSlackNotification } from '../../lib/slack';
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 
 // BrightData long-polls (up to 5min per request) — limit concurrent requests
 const brightDataQueue = new Queue<unknown>({ concurrency: 4 });

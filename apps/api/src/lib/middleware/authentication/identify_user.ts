@@ -1,6 +1,6 @@
 import { currentContext } from '../../../services/context';
 import { logger } from 'movement-engine/public/log';
-import { getErrorMessage } from 'movement-engine/public/utils';
+import { getErrorMessage } from 'movement-engine/public/errors';
 
 async function unauthorisedGetUserByEmail(email: string) {
   const ctx = currentContext();

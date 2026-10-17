@@ -13052,6 +13052,15 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 };
                 supportedTriggers: string[];
                 webhookEventTypeId?: string | undefined;
+                kind?: "plugin" | "core" | "adapter" | undefined;
+                slot?: "models" | "files" | "judge" | "store" | undefined;
+                settings?: {
+                    name: string;
+                    label?: string | undefined;
+                    secret?: boolean | undefined;
+                    optional?: boolean | undefined;
+                }[] | undefined;
+                hostModels?: boolean | undefined;
                 credentials?: ({
                     name: string;
                     kind: "static";
@@ -13186,6 +13195,15 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     };
                     supportedTriggers: string[];
                     webhookEventTypeId?: string | undefined;
+                    kind?: "plugin" | "core" | "adapter" | undefined;
+                    slot?: "models" | "files" | "judge" | "store" | undefined;
+                    settings?: {
+                        name: string;
+                        label?: string | undefined;
+                        secret?: boolean | undefined;
+                        optional?: boolean | undefined;
+                    }[] | undefined;
+                    hostModels?: boolean | undefined;
                     credentials?: ({
                         name: string;
                         kind: "static";
@@ -13305,6 +13323,15 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     };
                     supportedTriggers: string[];
                     webhookEventTypeId?: string | undefined;
+                    kind?: "plugin" | "core" | "adapter" | undefined;
+                    slot?: "models" | "files" | "judge" | "store" | undefined;
+                    settings?: {
+                        name: string;
+                        label?: string | undefined;
+                        secret?: boolean | undefined;
+                        optional?: boolean | undefined;
+                    }[] | undefined;
+                    hostModels?: boolean | undefined;
                     credentials?: ({
                         name: string;
                         kind: "static";
@@ -13410,6 +13437,131 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
             }, {
                 id: string;
                 credentialsId: string | null;
+            }>;
+            credentials: _trpc_server.BuildProcedure<"query", {
+                _config: _trpc_server.RootConfig<{
+                    ctx: {
+                        authorise: () => Promise<void>;
+                    };
+                    meta: object;
+                    errorShape: {
+                        message: string;
+                        code: _trpc_server_rpc.TRPC_ERROR_CODE_NUMBER;
+                        data: _trpc_server_dist_error_formatter.DefaultErrorData;
+                    };
+                    transformer: _trpc_server.DefaultDataTransformer;
+                }>;
+                _meta: object;
+                _ctx_out: {
+                    authorise: () => Promise<void>;
+                };
+                _input_in: {
+                    adapterType: string;
+                };
+                _input_out: {
+                    adapterType: string;
+                };
+                _output_in: typeof _trpc_server.unsetMarker;
+                _output_out: typeof _trpc_server.unsetMarker;
+            }, {
+                adapterType: string;
+                redirectUri: string;
+                declarations: ({
+                    kind: "oauth2";
+                    signInAvailable: boolean;
+                    name: string;
+                    fields: {
+                        name: string;
+                        label: string;
+                        secret: boolean;
+                        optional: boolean;
+                    }[];
+                    credentials: {
+                        id: string;
+                        name: string;
+                    }[];
+                } | {
+                    kind: "static";
+                    name: string;
+                    fields: {
+                        name: string;
+                        label: string;
+                        secret: boolean;
+                        optional: boolean;
+                    }[];
+                    credentials: {
+                        id: string;
+                        name: string;
+                    }[];
+                })[];
+            }>;
+            createStaticCredential: _trpc_server.BuildProcedure<"mutation", {
+                _config: _trpc_server.RootConfig<{
+                    ctx: {
+                        authorise: () => Promise<void>;
+                    };
+                    meta: object;
+                    errorShape: {
+                        message: string;
+                        code: _trpc_server_rpc.TRPC_ERROR_CODE_NUMBER;
+                        data: _trpc_server_dist_error_formatter.DefaultErrorData;
+                    };
+                    transformer: _trpc_server.DefaultDataTransformer;
+                }>;
+                _meta: object;
+                _ctx_out: {
+                    authorise: () => Promise<void>;
+                };
+                _input_in: {
+                    adapterType: string;
+                    declaredCredential: string;
+                    name: string;
+                    fields: Record<string, string>;
+                };
+                _input_out: {
+                    adapterType: string;
+                    declaredCredential: string;
+                    name: string;
+                    fields: Record<string, string>;
+                };
+                _output_in: typeof _trpc_server.unsetMarker;
+                _output_out: typeof _trpc_server.unsetMarker;
+            }, {
+                credentialsId: string;
+            }>;
+            beginOAuthCredential: _trpc_server.BuildProcedure<"mutation", {
+                _config: _trpc_server.RootConfig<{
+                    ctx: {
+                        authorise: () => Promise<void>;
+                    };
+                    meta: object;
+                    errorShape: {
+                        message: string;
+                        code: _trpc_server_rpc.TRPC_ERROR_CODE_NUMBER;
+                        data: _trpc_server_dist_error_formatter.DefaultErrorData;
+                    };
+                    transformer: _trpc_server.DefaultDataTransformer;
+                }>;
+                _meta: object;
+                _ctx_out: {
+                    authorise: () => Promise<void>;
+                };
+                _input_in: {
+                    adapterType: string;
+                    declaredCredential: string;
+                    name: string;
+                    fields?: Record<string, string> | undefined;
+                };
+                _input_out: {
+                    adapterType: string;
+                    declaredCredential: string;
+                    name: string;
+                    fields?: Record<string, string> | undefined;
+                };
+                _output_in: typeof _trpc_server.unsetMarker;
+                _output_out: typeof _trpc_server.unsetMarker;
+            }, {
+                url: string;
             }>;
             delete: _trpc_server.BuildProcedure<"mutation", {
                 _config: _trpc_server.RootConfig<{

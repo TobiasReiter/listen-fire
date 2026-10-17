@@ -4,7 +4,7 @@ import { MINUTE, SECOND } from '../constants';
 import { Prompt } from '../lib/prompts';
 import { anthropicChat } from '../lib/anthropic';
 import { getEnvVar } from '../lib/utils/environment';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { logger } from 'movement-engine/public/log';
 // Tavily is a legacy-only supplementary search (no DPA) — gated per-caller via
 // `allowSupplementaryWebSearch`, which only the legacy pipelines pass.

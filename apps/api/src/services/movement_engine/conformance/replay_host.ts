@@ -5,7 +5,7 @@
 
 import type { RecordedError, ServedAnswer } from 'engine-contracts/conformance';
 
-import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from 'movement-engine/public/run-support';
+import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from 'movement-engine/public/errors';
 import { missingHostMethods, type EngineHost } from 'movement-engine/public/host';
 
 /** The error a recorded thrown error was. The engine branches on three
@@ -51,6 +51,7 @@ const ENGINE_CODES: Record<MovementEngineErrorCode, true> = {
   MOVENG_LIMIT_TEXT_SIZE: true,
   MOVENG_LIMIT_COLLECTION_SIZE: true,
   MOVENG_LIMIT_RESULT_SIZE: true,
+  MOVENG_LIMIT_WALL_CLOCK: true,
 };
 
 function isEngineCode(code: string): code is MovementEngineErrorCode {

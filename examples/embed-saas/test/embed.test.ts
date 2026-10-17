@@ -1,7 +1,7 @@
 // The example end to end, over HTTP: customers save movements (checked on
 // save), a company created in one customer's CRM fires that customer's
 // movements and no other's, a model call is charged to the run, and a run
-// past its limits is stopped.
+// past its limits is stopped, and a run that sleeps parks until its time.
 
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,6 +10,7 @@ import type { Server } from 'node:http';
 import { Embedding, DEFAULT_LIMITS } from '../src/embedding';
 import { FAKE_CALL_MICRODOLLARS, fakeModels } from '../src/models';
 import { saasServer } from '../src/server';
+import { companyCreated } from '../src/crm';
 
 const PRELUDE = `import { crm } from adapters
 import { workspace } from credentials
@@ -82,7 +83,7 @@ test('a run past its step limit is stopped', async () => {
   assert.match(run.outcome.ok ? '' : run.outcome.error, /MOVENG_LIMIT_STEPS/);
 });
 
-test("a run past its cost cap makes no further model call", async () => {
+test("a run past its cost cap makes no further model call, and waits where it stopped", async () => {
   const spend = `${PRELUDE}
 function twice(company: <app-[:Company]->>) {
   one = ai("One line for \${company.Name}")
@@ -96,7 +97,39 @@ listen to app { events: ["company.created"] } fire twice
   embedding.addCustomer('acme', 'acme-key');
   assert.equal((await embedding.save('acme', 'twice', spend)).saved, true);
   const [run] = await embedding.fire('acme', { payload: { id: 'company-1', Name: 'Vireo' }, externalId: 'company-1', eventType: 'company.created', tag: 'company.created', recordType: 'Company' });
-  assert.equal(run.outcome.ok, false);
-  assert.match(run.outcome.ok ? '' : run.outcome.error, /cap/i);
+  // One call spent past the cap: the second is never made. On a host that can
+  // park, the flow suspends there (a limit park, which no timer steps on)
+  // rather than failing.
+  assert.deepEqual(run.outcome, { ok: true, writes: 0, spentMicrodollars: FAKE_CALL_MICRODOLLARS, parked: true });
   assert.deepEqual(embedding.companies.list('acme'), []);
+  assert.deepEqual(await embedding.tick(), []);
+});
+
+test('a run that sleeps parks, and the next tick past its wake steps it on to its write', async () => {
+  let now = new Date('2026-10-17T09:00:00.000Z');
+  const embedding = new Embedding({ models: fakeModels(), now: () => now });
+  embedding.addCustomer('acme', 'acme-key');
+  const followUp = `${PRELUDE}
+function follow_up(company: <app-[:Company]->>) {
+  await sleep(1h)
+  write app-[:Company]-> { Name: "Follow up \${company.Name}" }
+}
+
+listen to app { events: ["company.created"] } fire follow_up
+`;
+  assert.equal((await embedding.save('acme', 'follow_up', followUp)).saved, true);
+  const company = embedding.companies.add('acme', { Name: 'Vireo' });
+  const [run] = await embedding.fire('acme', companyCreated(company));
+  assert.deepEqual(run.outcome, { ok: true, writes: 0, spentMicrodollars: 0, parked: true });
+
+  // Not yet: the hour has not passed.
+  now = new Date('2026-10-17T09:30:00.000Z');
+  assert.deepEqual(await embedding.tick(), []);
+  assert.deepEqual(embedding.companies.list('acme').map((c) => c.Name), ['Vireo']);
+
+  now = new Date('2026-10-17T10:00:01.000Z');
+  assert.deepEqual(await embedding.tick(), [{ movement: 'follow_up', outcome: { ok: true, writes: 1, spentMicrodollars: 0 } }]);
+  assert.deepEqual(embedding.companies.list('acme').map((c) => c.Name), ['Vireo', 'Follow up Vireo']);
+  // Done with: nothing is left to step.
+  assert.deepEqual(await embedding.tick(), []);
 });

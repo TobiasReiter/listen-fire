@@ -6,7 +6,7 @@ import type { Resource } from 'movement-engine/public/adapter';
 
 import { getKnowledgeQb } from '../../lib/kysely';
 import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from 'movement-engine/public/utils';
+import { parseJson } from 'movement-engine/public/json';
 import { embedTexts } from '../embedding';
 import { logger } from 'movement-engine/public/log';
 import { resourceIdSchema } from '../../lib/resource_id';

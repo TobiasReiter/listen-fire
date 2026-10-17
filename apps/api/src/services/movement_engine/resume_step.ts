@@ -6,7 +6,7 @@
 
 import { logger } from 'movement-engine/public/log';
 import { triggerEventSchema, type TriggerEvent } from 'movement-engine/public/inbound';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 
 import type { LanguageVersion } from 'movement-lang';
 import type { HeldRunLease } from 'movement-engine/public/run-host';

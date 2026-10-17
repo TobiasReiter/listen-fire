@@ -40,6 +40,21 @@ export type LiveAdapterResolver = (
   input: Omit<AdapterResolution, 'adapterType'> & { adapterType: string; segmentId: string; teamId: TenantId },
 ) => Adapter | Promise<Adapter>;
 
+/** Whether a credential is a tenant's own. The host asks before it builds an
+ *  instance a run names a credential for, so a run can reach only its own
+ *  tenant's connections whatever id its input carries. */
+export interface CredentialOwnership {
+  belongsTo(input: { teamId: TenantId; credentialsId: string }): boolean | Promise<boolean>;
+}
+
+/** A run named a credential that is not its tenant's. */
+export class CredentialNotTenants extends Error {
+  constructor(credentialsId: string, teamId: TenantId) {
+    super(`credential '${credentialsId}' does not belong to tenant '${teamId}': refused`);
+    this.name = 'CredentialNotTenants';
+  }
+}
+
 /** Each method, as a call into a live instance. A method the instance lacks
  *  is refused by name. */
 const DISPATCH: { [M in AdapterMethod]: (adapter: Adapter, args: AdapterCallMap[M]['args']) => Promise<AdapterCallMap[M]['result']> } = {
@@ -268,6 +283,8 @@ export interface AdapterTable extends HostAdapters {
 
 export function adapterTable(options: {
   resolveLive: LiveAdapterResolver;
+  /** Checked once per instance a run names a credential for, before it is built. */
+  credentials: CredentialOwnership;
   /** The host's open segments: what each is for, and a refusal for one that
    *  is not open. */
   segments: { facts(segmentId: string): SegmentFacts };
@@ -322,9 +339,13 @@ export function adapterTable(options: {
       // The registry is keyed by property lookup, so a slug is read as its
       // text (`String`, which a lookup's key conversion is): a list
       // `["email"]` names `email`. The instance stays the slug's own.
-      return segmentNamed(segmentId).resolve({ resolution, dryRun: dryRun === true }, () =>
-        options.resolveLive({ ...resolution, adapterType: String(resolution.adapterType), segmentId, teamId }),
-      );
+      return segmentNamed(segmentId).resolve({ resolution, dryRun: dryRun === true }, async () => {
+        const { credentialsId } = resolution;
+        if (credentialsId !== undefined && !(await options.credentials.belongsTo({ teamId, credentialsId }))) {
+          throw new CredentialNotTenants(credentialsId, teamId);
+        }
+        return options.resolveLive({ ...resolution, adapterType: String(resolution.adapterType), segmentId, teamId });
+      });
     },
     call,
     async answer(input) {

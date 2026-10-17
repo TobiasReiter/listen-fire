@@ -16,13 +16,13 @@
 
 import type { LanguageVersion } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MovementTraceEntry } from 'movement-engine/public/run-support';
+import type { MovementTraceEntry } from 'movement-engine/public/trace';
 import type { AnyParkedScopeState } from 'engine-contracts';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TriggerEventId } from '../../../generated/kysely/automations/TriggerEvent';
 import type { TriggerEvent } from 'movement-engine/public/inbound';
 
-import { describeError } from 'movement-engine/public/utils';
+import { describeError } from 'movement-engine/public/errors';
 import { logger } from 'movement-engine/public/log';
 import {
   runMovement,

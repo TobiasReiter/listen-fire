@@ -50,7 +50,7 @@ import {
   dispatchTriggerByIdEvent,
   type TriggerIdDispatchResult,
 } from '../triggers/router';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { reportedFailureReason, TriggerRunRecorder } from '../runs/trigger_run';
 import { movementForTrigger } from './execute';
 import { loadTriggerById } from '../storage/tg_table';
@@ -68,7 +68,7 @@ import {
   type AwaitDescription,
 } from '../../movement_engine/await_description';
 import { callbackUrl, listRunCallbacks } from '../../movement_engine/callback_store';
-import { isWriteEffect } from 'movement-engine/public/run-support';
+import { isWriteEffect } from 'movement-engine/public/trace';
 import {
   describeExecutedVersion,
   type ExecutedMovementVersion,

@@ -39,8 +39,8 @@ import { assertModelMapConfigured, modelKeyWarning, providerCredentialsPresent, 
 import { assertKnowledgeLlmModelConfigured, isKnowledgeLlmConfigured, knowledgeLlmModel } from './lib/knowledge/llm';
 import { assertJevConfigured } from './lib/jev/client';
 import { assertRunCostCapConfigured } from 'movement-engine/public/models';
-import { assertExtractionTiersConfigured } from 'movement-engine/public/run-support';
-import { assertMaxCallDepthConfigured } from 'movement-engine/public/run-support';
+import { assertExtractionTiersConfigured } from 'movement-engine/public/boot-checks';
+import { assertMaxCallDepthConfigured, assertSegmentLimitsConfigured } from 'movement-engine/public/boot-checks';
 import { assertWriteLockTimeoutConfigured } from 'movement-engine/public/write-locks';
 import { assertEngineConfigured } from 'movement-engine/public/movement-engine';
 import { assertBrightDataSerpRateConfigured } from './services/web_search';
@@ -111,9 +111,11 @@ assertJevConfigured();
 // dollars is a deployment that believes its runs are capped when they are not.
 assertRunCostCapConfigured();
 
-// A call depth limit set to something that is not a positive whole number is
-// a deployment that believes its recursions are bounded when they are not.
+// A call depth or segment limit set to something that is not a positive
+// whole number is a deployment that believes its runs are bounded when they
+// are not.
 assertMaxCallDepthConfigured();
+assertSegmentLimitsConfigured();
 
 // A lock wait set to something that is not a positive whole number of
 // milliseconds would fail every contended write, or never let one give up.

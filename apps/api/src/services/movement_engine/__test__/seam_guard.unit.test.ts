@@ -104,6 +104,7 @@ const PURE_FILES = [
   'rust_host.ts',
   'rust_stats.ts',
   'rust_wire.ts',
+  'segment_limits.ts',
   'serialize.ts',
   'write_ledger.ts',
 ];
@@ -1773,6 +1774,8 @@ describe('the production host crosses as JSON', () => {
           adapterType === 'email'
             ? createEmailAdapter({ teamId: ROUND_TRIP_TEAM })
             : fakeCrm().adapter,
+        // The fakes' credential ids name no vault row.
+        credentials: { belongsTo: () => true },
         writeSink: (write) => writes.push(write),
         locks: new InMemoryWriteLocks(),
         rawText: inMemoryRawTextStore(),

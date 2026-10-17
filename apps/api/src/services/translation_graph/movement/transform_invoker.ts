@@ -3,7 +3,7 @@
 // in process; any other is the TG transform registry, with the document store
 // a plugin's fetched files land in.
 
-import type { TransformInvocationResult, TransformInvokeInput } from 'movement-engine/public/model-calls';
+import type { TransformInvocationResult, TransformInvokeInput } from 'movement-engine/public/models';
 import type { Costed, Priced } from 'movement-engine/public/host';
 import type { FileRef } from 'movement-engine/public/adapter';
 

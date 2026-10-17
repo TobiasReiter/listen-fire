@@ -32,7 +32,7 @@ import {
   type DeployCheckOutcome,
   type DeployCheckSummary,
 } from '../services/translation_graph/movement/language_upgrade';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 
 function outcomeHeading(outcome: DeployCheckOutcome): string {
   switch (outcome) {

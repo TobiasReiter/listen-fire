@@ -1245,7 +1245,7 @@ scripts/build-movement-wasm.sh    # the artifact, its sha256 and size
 cargo test -p movement-engine     # the executor, builders, evaluator, run, ABI and environment services, natively
 ```
 
-The TypeScript side: `apps/api/src/services/movement_engine/__test__/rust_engine.unit.test.ts`
+The TypeScript side: `packages/movement-engine/services/movement_engine/__test__/rust_engine.unit.test.ts`
 (the shim against a scripted double, and its routes against the host
 manifest), `rust_engine_abi.unit.test.ts` (the committed artifact), `rust_run.unit.test.ts` and `rust_write.unit.test.ts`
 (whole runs on both engines, compared). The oracle for the evaluator and the

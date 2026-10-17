@@ -50,11 +50,11 @@ const dm = (adapter: ReturnType<typeof load>['adapter']) =>
   } as never);
 
 describe('@lf/telegram', () => {
-  it('declares its credential and no signed inbound (a team bot is registered without a secret token)', () => {
+  it('declares its credential and its inbound, verified by the secret token a team bot is registered with', () => {
     const { manifest } = load({ credential: credential({ botToken: 'T' }) });
     expect(manifest.adapterType).toBe('telegram');
     expect(manifest.credentials?.[0]?.name).toBe('telegram');
-    expect(manifest.inbound).toBeUndefined();
+    expect(manifest.inbound).toEqual({ providerKey: 'telegram', scheme: 'telegram_secret_token', signatureHeaders: ['x-telegram-bot-api-secret-token'] });
   });
 
   it('sends with the credential’s bot token at its base URL', async () => {

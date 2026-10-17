@@ -56,11 +56,14 @@ jest.mock('../../../../credentials/secrets_postgres', () => ({
   },
 }));
 
-import { recordingServer, replayingServer, type Exchange } from './parity/exchange';
-import { bootFakeDropbox } from './parity/fake_dropbox';
+import { recordingServer, replayingServer, requestOf, type Exchange, type ExchangeOptions } from '../../__test__/parity/exchange';
+import { bootFakeChannels } from '../../__test__/parity/fake_channels';
 import { runParityScript, type ParitySubject, type TranscriptEntry } from './parity/script';
 
 const FIXTURE = join(__dirname, '__fixtures__/dropbox_parity.json');
+/** An upload or download names its file in `Dropbox-API-Arg`, and an upload's
+ *  bytes are typed: both are part of what a request asked for. */
+const EXCHANGE: ExchangeOptions = { headers: ['dropbox-api-arg', 'content-type'] };
 const TEAM = 'team-parity' as TeamId;
 /** Far enough off that no run of this test ever finds it stale. */
 const EXPIRES_AT = Date.UTC(2099, 0, 1);
@@ -93,8 +96,8 @@ jest.setTimeout(120_000);
 const recording = process.env.DROPBOX_PARITY_RECORD === '1';
 
 (recording ? it : it.skip)('records the legacy adapter against fake-channels', async () => {
-  const fake = await bootFakeDropbox();
-  const proxy = await recordingServer(fake.baseUrl);
+  const fake = await bootFakeChannels({ file: 'dropbox', factory: 'dropboxRoutes', mount: '/dropbox' });
+  const proxy = await recordingServer(fake.baseUrl, EXCHANGE);
   try {
     const transcript = await runParityScript(legacySubject(proxy.baseUrl));
     const fixture: Recording = { transcript, exchanges: proxy.exchanges() };
@@ -112,11 +115,11 @@ function loadRecording(): Recording {
 /** Replay `subjectAt` against the recording: same answers, same requests. */
 async function expectParity(subjectAt: (baseUrl: string) => Promise<ParitySubject> | ParitySubject): Promise<void> {
   const recorded = loadRecording();
-  const server = await replayingServer(recorded.exchanges);
+  const server = await replayingServer(recorded.exchanges, EXCHANGE);
   try {
     const transcript = await runParityScript(await subjectAt(server.baseUrl));
     expect(transcript).toEqual(recorded.transcript);
-    expect(server.requests()).toEqual(recorded.exchanges.map(({ status: _s, response: _r, responseContentType: _c, ...request }) => request));
+    expect(server.requests()).toEqual(recorded.exchanges.map(requestOf));
   } finally {
     await server.close();
   }

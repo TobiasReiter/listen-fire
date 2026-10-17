@@ -42,7 +42,7 @@ import type {
 import type { EphemeralNode } from 'movement-engine/public/catalog';
 import type { Adapter, Fact, Resource } from 'movement-engine/public/adapter';
 import type { StoredUniquenessConstraints } from '../../../knowledge_pipeline/uniqueness_constraints';
-import type { LlmClient } from 'movement-engine/public/model-calls';
+import type { LlmClient } from 'movement-engine/public/models';
 
 import { assembleBundle, type Bundle } from './bundle';
 import { buildSyntheticSchema, type SyntheticSchema } from './schema_synthesis';
@@ -69,7 +69,7 @@ import { runInBatchDedup, type DedupJudge } from './dedup';
 
 // The model call the batcher is handed is its own module (`./llm_call`), so
 // the movement engine can name it without the batcher's storage types.
-export type { LlmCallInput, LlmCallResult, LlmClient } from 'movement-engine/public/model-calls';
+export type { LlmCallInput, LlmCallResult, LlmClient } from 'movement-engine/public/models';
 
 /**
  * One transform's contribution back to the bundle. The dispatcher

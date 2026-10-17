@@ -10,7 +10,7 @@ import type { EngineHost, RenderFile } from '../movement_engine/host';
 import type { ActingUser } from '../translation_graph/adapter';
 import type { DryRunWriteSink } from '../translation_graph/engine/dry_run_adapter';
 
-import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
+import { adapterTable, type CredentialOwnership, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 import { withFileOwners } from '../translation_graph/engine/files/file_owners';
 import { InMemoryWriteLocks, segmentWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import {
@@ -32,6 +32,9 @@ export interface InProcessHostOptions {
   adapters?: Partial<Pick<Parameters<typeof adapterTable>[0], 'around' | 'classify'>> & {
     resolve?: LiveAdapterResolver;
   };
+  /** Whether a credential a run names is its tenant's, asked before its
+   *  instance is built. Absent ⇒ a run that names a credential is refused. */
+  credentials?: CredentialOwnership;
   /** The models slot: the model calls a run makes. Absent ⇒ refused by name. */
   llm?: Partial<EngineHost['llm']>;
   /** The store slot's run half: where parks, callbacks and pinned texts go.
@@ -72,6 +75,11 @@ export function inProcessHost(options: InProcessHostOptions = {}): EngineHost {
       (() => {
         throw notProvided('adapters.resolve');
       }),
+    credentials: options.credentials ?? {
+      belongsTo: () => {
+        throw notProvided('credentials.belongsTo');
+      },
+    },
     ...(adapters.around !== undefined ? { around: adapters.around } : {}),
     ...(adapters.classify !== undefined ? { classify: adapters.classify } : {}),
     ...(options.writeSink !== undefined ? { writeSink: options.writeSink } : {}),

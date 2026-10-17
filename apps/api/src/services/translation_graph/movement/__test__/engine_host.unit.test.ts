@@ -26,11 +26,29 @@ jest.mock('../raw_text_store', () => ({
   postgresRawTextStore: (teamId: string) => postgresRawTextStore(teamId),
 }));
 
+// The vault's answer to "is this credential the team's?", as the test sets it.
+const ownedCredentials = new Map<string, string>();
+const ownershipAsked: Array<{ teamId: string; credentialsId: string }> = [];
+jest.mock('../../../credentials/credential_ownership', () => ({
+  teamCredentials: {
+    belongsTo: async (input: { teamId: string; credentialsId: string }) => {
+      ownershipAsked.push(input);
+      return ownedCredentials.get(input.credentialsId) === input.teamId;
+    },
+  },
+}));
+
 import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import { createRemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
+
+import { hostedDocumentStore } from '../../engine/files/retrieve';
 import { productionEngineHost } from '../engine_host';
 import { inMemoryRawTextStore } from '../raw_text_store';
 import { userEditContext } from 'movement-engine/services/translation_graph/mutation_context';
@@ -41,6 +59,9 @@ const MUTATION_CONTEXT = userEditContext('user-1');
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000e1');
 
 beforeEach(() => {
+  ownedCredentials.clear();
+  ownershipAsked.length = 0;
+  for (const credentialsId of ['cred-a', 'cred-b']) ownedCredentials.set(credentialsId, TEAM_ID);
   fileTextSpends = false;
   resolverStores.length = 0;
   postgresRawTextStore.mockClear();
@@ -166,6 +187,29 @@ describe('productionEngineHost — adapter instances', () => {
     await host.segment.close({ segmentId });
   });
 
+  it("refuses an instance for a credential that is not the segment's team's, asking the vault before building it", async () => {
+    ownedCredentials.set('cred-other', tenantIdOf('00000000-0000-0000-0000-0000000000e2'));
+    const built: Array<string | undefined> = [];
+    const host = productionEngineHost({
+      teamId: teamOfTenant(TEAM_ID),
+      resolveLive: ({ credentialsId }) => {
+        built.push(credentialsId);
+        return liveAdapter([]);
+      },
+    });
+    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2, hostFamiliesVersion: HOST_FAMILIES_VERSION });
+    await expect(host.adapters.resolve({ adapterType: 'attio', credentialsId: 'cred-other', role: 'target', segmentId })).rejects.toThrow(
+      `credential 'cred-other' does not belong to tenant '${TEAM_ID}'`,
+    );
+    await host.adapters.resolve({ adapterType: 'attio', credentialsId: 'cred-a', role: 'target', segmentId });
+    expect(ownershipAsked).toEqual([
+      { teamId: TEAM_ID, credentialsId: 'cred-other' },
+      { teamId: TEAM_ID, credentialsId: 'cred-a' },
+    ]);
+    expect(built).toEqual(['cred-a']);
+    await host.segment.close({ segmentId });
+  });
+
   it('keys an instance by its resolution, for the segment’s team, and refuses a segment that is not open', async () => {
     const asked: Array<{ teamId: string; credentialsId?: string }> = [];
     // A fresh live object every time it is asked, as a registry without a cache would hand out.
@@ -227,3 +271,59 @@ describe('productionEngineHost — priced calls past the budget', () => {
     });
   });
 });
+
+describe('productionEngineHost — what a module spends', () => {
+  // A process module answering over adapter protocol 2: each answer carries
+  // the cost of the paid service it used, whether the call then succeeded or
+  // failed.
+  async function pricedModule(): Promise<{ url: string; close(): Promise<void> }> {
+    const server = createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
+      req.on('end', () => {
+        const { method, params } = JSON.parse(body) as { method: string; params: { fields?: { name?: string } } };
+        const answer =
+          method === 'createRecord' && params.fields?.name !== 'refuse'
+            ? { ok: true, result: { adapterType: 'enrich', externalId: 'e-1', data: {} }, cost: [{ label: 'enrich.lookup', microdollars: 1500 }] }
+            : { ok: false, error: { code: 'adapter_error', message: 'not found upstream', retryable: false }, cost: [{ label: 'enrich.lookup', microdollars: 400 }] };
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
+      close: () => new Promise((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it("charges a module's answered cost to the segment its call ran in, a failed call's too", async () => {
+    const served = await pricedModule();
+    try {
+      const remote = createRemoteAdapter({
+        documents: hostedDocumentStore,
+        config: { teamId: teamOfTenant(TEAM_ID), adapterType: 'enrich', baseUrl: served.url, authStrategy: { kind: 'bearer' }, credentialsId: 'cred-install' },
+        secret: '',
+        cacheScopeId: 'cost',
+        manifest: {
+          adapterType: 'enrich',
+          supportedTriggers: [],
+          runtimeCapabilities: { traversal: { incoming: false, edgeProperties: false }, resources: false },
+          methods: ['createRecord'],
+        },
+      });
+      const host = productionEngineHost({ teamId: teamOfTenant(TEAM_ID), resolveLive: () => remote });
+      const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 5, hostFamiliesVersion: HOST_FAMILIES_VERSION });
+      const { instance } = await host.adapters.resolve({ adapterType: 'enrich', role: 'target', segmentId });
+      const create = (name: string) =>
+        host.adapters.call({ segmentId, instance, method: 'createRecord', args: { recordType: 'Company', fields: { name }, mutationContext: MUTATION_CONTEXT } });
+      await expect(create('Acme')).resolves.toMatchObject({ result: { externalId: 'e-1' } });
+      await expect(create('refuse')).resolves.toMatchObject({ error: { message: expect.stringContaining('not found upstream') } });
+      // The engine charges what the segment's calls spent to the run as the
+      // segment closes (run_context.ts closeRunContext).
+      expect(await host.segment.close({ segmentId })).toEqual({ cost: [{ source: 'adapter:enrich.lookup', microdollars: 1900 }] });
+    } finally {
+      await served.close();
+    }
+  });
+});
+

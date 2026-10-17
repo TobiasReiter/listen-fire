@@ -1,7 +1,7 @@
 // The hosted product's model clients: the shared ones (movement-engine's
 // movement/llm_clients) on this deployment's Anthropic client.
 
-import type { ExtractCallLlmClient } from 'movement-engine/public/model-calls';
+import type { ExtractCallLlmClient } from 'movement-engine/public/models';
 import type { CancelGate } from 'movement-engine/public/movement-engine';
 import type { LlmClient } from '../engine/batched_extraction';
 

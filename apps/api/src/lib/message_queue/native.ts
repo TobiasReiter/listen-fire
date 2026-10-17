@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { nextTick } from 'node:process';
 
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 import { PassThrough } from '../utils/stream';
 
 type NodeOptions<T> =

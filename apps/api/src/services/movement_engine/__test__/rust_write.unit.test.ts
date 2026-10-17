@@ -1675,8 +1675,9 @@ describe('the cost cap in the Rust engine', () => {
       parkedAddress: 's2.b0.s0',
       spentMicrodollars: 1_500,
     });
-    // The second judge is refused by the engine, never asked of the host.
-    expect(rust.asked).toHaveLength(1);
+    // The judge's call past the cap is refused by the engine itself: the host
+    // is asked only the call made under it.
+    expect(rust.asked).toEqual([{ budget: { remainingMicrodollars: 1_000 } }]);
     expect(rust.limitPauses).toEqual([
       { limit: 'cost', capMicrodollars: 1_000, spentMicrodollars: 1_500 },
     ]);

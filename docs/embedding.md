@@ -122,6 +122,7 @@ if (listener.adapter === 'crm' && eventMatchesTriggerScope(event, listener.confi
 ```ts
 const host = inProcessHost({
   adapters: { resolve: ({ adapterType, teamId, credentialsId }) => adapterFor(teamId, credentialsId) },
+  credentials: { belongsTo: ({ teamId, credentialsId }) => vault.tenantOf(credentialsId) === teamId },
   llm: pricedModels({ client: models }),
 });
 ```
@@ -132,12 +133,12 @@ The host has the same slots as `lf.yaml`'s `core:` section ([core slots](core-sl
 |---|---|---|
 | models | `ai(…)` and `extract(…)` calls | `llm: pricedModels({ client, extractCall })`. A client answers `{ parsedJson }` and may report what it cost. The Anthropic clients are `makeAnthropicLlmClient` and `makeAnthropicExtractCallClient` (`public/models`), over `anthropicClient` (`public/anthropic`). |
 | judge | whether a written record is one already there, when the rules alone cannot tell | `llm.arbitrateEntities`. Absent: such a write fails, naming it. |
-| store | parks: `await`, `sleep`, callbacks | `park.sink`, `park.wake`, `park.bindings`, `park.callbacks`, with the run-host store (`public/run-host`) behind them. Absent: a movement that parks fails. Your store must pass the contract suite in `public/testing`. |
+| store | parks: `await`, `sleep`, callbacks | `park.sink`, `park.wake`, `park.bindings`, `park.callbacks`, with the run-host store (`public/run-host`) behind them. Absent: a movement that parks fails. `memoryRunHostStore` (`public/embed`) holds parked runs for one process; a store that must outlive a restart implements `RunHostStore` over your database and must pass the contract suite in `public/testing`. |
 | files | reading a file's text, rendering a file | `files.resolveFileText` (`@listen-fire/file-text` reads PDFs, decks and sheets), `files.render`. |
 
 Two more pieces are yours and have safe defaults:
 
-- **Secrets.** `createSecretsFamily({ backend })` over your vault: one entry per connection, never shared between tenants. `createMemoryVault` is the in-memory one; a real vault implements `SecretsBackend` (resolve, write back at a version, a lock), and the contract cases in `public/secrets-testing` hold it. OAuth 2 refresh is `declaredRefresher` and the family's `refresh`.
+- **Secrets.** `createSecretsFamily({ backend })` over your vault: one entry per connection, never shared between tenants. `createMemoryVault` is the in-memory one; a real vault implements `SecretsBackend` (resolve, write back at a version, a lock), and the contract cases in `public/secrets-testing` hold it. An OAuth 2 credential a module reads through `secretsCredential` (module kit) is refreshed when given `oauth2: { declaration, client }`: before a call when it is about to expire, and when the provider refuses its token, one refresh at a time.
 - **Write locks.** Two runs writing the same record take turns. The default is in memory, which holds within one process; across processes, supply `locks` over your database.
 
 ## 6. Limits and the cost cap
@@ -146,7 +147,7 @@ A customer's movement is code you did not write. Set every limit, and a cost cap
 
 - **`limits`** on the run's input: steps (statements and expressions, the CPU bound), one text's size, one collection's size, and the result's size. Past one, the run fails with `MOVENG_LIMIT_STEPS`, `MOVENG_LIMIT_TEXT_SIZE`, `MOVENG_LIMIT_COLLECTION_SIZE` or `MOVENG_LIMIT_RESULT_SIZE`. Nothing in the movement can catch it. Absent, each is the engine's default, which is generous.
 - **`costCapMicrodollars`** on the run's input: the most the run may spend on model calls and priced plugins. Past it, the engine refuses the next priced call itself. One call already under way may overshoot by its own cost.
-- **The wall clock is yours.** The engine reads no clock. Stop waiting on a run past your deadline (its cancel gate, `control.cancel`, is consulted at every statement).
+- **`maxSegmentSeconds`** on the run's input: how long one segment may take, waits on your host included (default 900, or `MOVEMENT_MAX_SEGMENT_SECONDS`). The engine reads no clock, so the host keeps this one. Past it, the calls already at your host finish, nothing more is asked, and the run fails with `MOVENG_LIMIT_WALL_CLOCK`.
 - **Calls your modules make are not priced.** A module that pays for a service counts against the cap only if it reports its cost.
 
 The full table is [docs/contracts/run-limits.md](contracts/run-limits.md).
@@ -155,11 +156,11 @@ The full table is [docs/contracts/run-limits.md](contracts/run-limits.md).
 
 - Every run names its tenant, and the host answers every call for the tenant of the segment it was made in.
 - Build each tenant's catalog from that tenant's connections only, and keep each tenant's credentials under its own ids.
-- Check in your adapter resolver that the credential id a run names belongs to the run's tenant. The engine passes the id through; holding it to the tenant is yours. The example does this in `crmFor`.
+- Tell the host which tenant owns each credential (`credentials.belongsTo` on `inProcessHost`). Before it builds an instance for the credential a run names, the host asks; a credential that is not the run's tenant's is refused (`CredentialNotTenants`), and a host told nothing refuses every run that names one.
 - A movement reaches the network only through modules. The engine has no network code, and no family takes a URL from a movement.
 
 ## What the example leaves out
 
-- Parks. The example's movements do not `await` or `sleep`; a durable host supplies the store slot (section 5).
+- Parks that outlive the process. The example parks a sleeping run in `memoryRunHostStore` and steps it on with `tick()` (each run gets its own park sink, `runParkSink`, and its due timers are drained under the run's lease, `drainDueTimers`); a restart forgets them.
 - A real vault and a database for write locks.
 - The live Anthropic path is wired (`ANTHROPIC_API_KEY`) but the test uses the fake model.

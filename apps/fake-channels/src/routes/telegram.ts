@@ -4,6 +4,7 @@ import type { EntityStore } from '../store';
 const SVC = 'telegram';
 const MEDIA = 'media';
 const CALLBACK_ACK = 'callback_ack';
+const WEBHOOK = 'webhook';
 
 /**
  * Fake Telegram Bot API. The real adapter's `TelegramClient` builds method
@@ -227,6 +228,60 @@ export function telegramRoutes(store: EntityStore): Router {
     }
     res.setHeader('content-type', 'application/octet-stream');
     res.send(Buffer.from(`fake-telegram-bytes:${filePath}`, 'utf-8'));
+  });
+
+  // setWebhook / deleteWebhook / getWebhookInfo — one webhook per bot token,
+  // as on the real Bot API. Real Telegram refuses a secret_token outside
+  // 1-256 of [A-Za-z0-9_-], so the fake does too: a registration the fake
+  // accepts is one Telegram would.
+  r.post('/bot:token/setWebhook', (req, res) => {
+    const url = req.body?.url;
+    const secretToken = req.body?.secret_token;
+    if (typeof url !== 'string' || url === '') {
+      return res.status(400).json({ ok: false, error_code: 400, description: 'Bad Request: bad webhook: URL is required' });
+    }
+    if (secretToken !== undefined && (typeof secretToken !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(secretToken))) {
+      return res.status(400).json({ ok: false, error_code: 400, description: 'Bad Request: secret token contains unallowed characters' });
+    }
+    const token = req.params.token;
+    const webhook = { url, ...(secretToken !== undefined ? { secret_token: secretToken } : {}), ...(req.body?.allowed_updates !== undefined ? { allowed_updates: req.body.allowed_updates } : {}) };
+    // Replaces, as the real one does: a new registration without a secret has none.
+    store.delete(SVC, WEBHOOK, token);
+    store.create(SVC, WEBHOOK, webhook, token);
+    res.json({ ok: true, result: true, description: 'Webhook was set' });
+  });
+
+  r.post('/bot:token/deleteWebhook', (req, res) => {
+    const existed = store.get(SVC, WEBHOOK, req.params.token) !== null;
+    store.delete(SVC, WEBHOOK, req.params.token);
+    res.json({ ok: true, result: true, description: existed ? 'Webhook was deleted' : 'Webhook is already deleted' });
+  });
+
+  r.post('/bot:token/getWebhookInfo', (req, res) => {
+    const webhook = store.get(SVC, WEBHOOK, req.params.token)?.data as { url?: string; allowed_updates?: string[] } | undefined;
+    res.json({
+      ok: true,
+      result: {
+        url: webhook?.url ?? '',
+        has_custom_certificate: false,
+        pending_update_count: 0,
+        ...(webhook?.allowed_updates !== undefined ? { allowed_updates: webhook.allowed_updates } : {}),
+      },
+    });
+  });
+
+  // Deliver one Update to the bot's registered webhook as Telegram does: a
+  // JSON POST carrying the registered secret in
+  // `X-Telegram-Bot-Api-Secret-Token`. Answers the webhook's status.
+  r.post('/admin/bot:token/deliver', async (req, res) => {
+    const webhook = store.get(SVC, WEBHOOK, req.params.token)?.data as { url?: string; secret_token?: string } | undefined;
+    if (webhook?.url === undefined) return res.status(404).json({ ok: false, description: 'no webhook set for this bot' });
+    const answer = await fetch(webhook.url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(webhook.secret_token !== undefined ? { 'x-telegram-bot-api-secret-token': webhook.secret_token } : {}) },
+      body: JSON.stringify(req.body),
+    });
+    res.json({ ok: true, status: answer.status });
   });
 
   // Inspection surface — the outbox of everything the bot has sent.

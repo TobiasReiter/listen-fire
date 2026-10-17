@@ -7,7 +7,7 @@ import { backOff } from 'exponential-backoff';
 
 import { SECOND } from '../../constants';
 import { getEnvVar } from '../utils/environment';
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 import { logger } from 'movement-engine/public/log';
 import { extractConcatenatedPages } from './page';
 import { getProcessorName, googleOcrClient, googleStorageClient } from './google';

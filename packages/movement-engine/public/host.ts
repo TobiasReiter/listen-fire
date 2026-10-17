@@ -21,5 +21,10 @@ export {
   adapterTable,
   type AdapterTable,
   type ClassifyHostError,
+  CredentialNotTenants,
+  type CredentialOwnership,
   type LiveAdapterResolver,
 } from '../services/translation_graph/engine/adapter_table';
+// The host's segment bookkeeping: what a segment's adapter calls have read,
+// counted and spent, and the scope each call runs in.
+export { hostSegments, segmentScopedCalls } from '../services/translation_graph/segment_scope';

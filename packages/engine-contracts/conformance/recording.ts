@@ -82,6 +82,7 @@ const runInputSchema = z.object({
     })
     .strict()
     .optional(),
+  maxSegmentSeconds: z.number().optional(),
 });
 
 const resumeInputSchema = runInputSchema.extend({

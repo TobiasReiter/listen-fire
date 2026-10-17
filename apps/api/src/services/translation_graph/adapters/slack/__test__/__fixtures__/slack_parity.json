@@ -2678,12 +2678,12 @@
         "step": "post with a mention",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.164.748664",
+          "externalId": "1792263161.922.805557",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.164.748664",
+            "ts": "1792263161.922.805557",
             "name": "Hi <@U001>, see the deck",
-            "url": "slack://archives/C002/p1792243645164.748664"
+            "url": "slack://archives/C002/p1792263161922.805557"
           }
         }
       },
@@ -2691,13 +2691,13 @@
         "step": "reply in the thread",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.176.910252",
+          "externalId": "1792263161.924.482687",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.176.910252",
+            "ts": "1792263161.924.482687",
             "threadTs": "1751500000.000100",
             "name": "On it",
-            "url": "slack://archives/C002/p1792243645176.910252"
+            "url": "slack://archives/C002/p1792263161924.482687"
           }
         }
       },
@@ -2705,13 +2705,13 @@
         "step": "reply to a composite id",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.181.061815",
+          "externalId": "1792263161.925.709322",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.181.061815",
+            "ts": "1792263161.925.709322",
             "threadTs": "1751500000.000100",
             "name": "composite",
-            "url": "slack://archives/C002/p1792243645181.061815"
+            "url": "slack://archives/C002/p1792263161925.709322"
           }
         }
       },
@@ -2719,12 +2719,12 @@
         "step": "post blocks",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.207.752921",
+          "externalId": "1792263161.926.976425",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.207.752921",
+            "ts": "1792263161.926.976425",
             "name": "fallback",
-            "url": "slack://archives/C002/p1792243645207.752921"
+            "url": "slack://archives/C002/p1792263161926.976425"
           }
         }
       },
@@ -2811,242 +2811,266 @@
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/users.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVtYmVycyI6W3siaWQiOiJVMDAwIiwibmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImVtYWlsIjoiZGV2LWxvb3BAbGlzdGVuLWZpcmUubG9jYWwifX0seyJpZCI6IlUwMDEiLCJuYW1lIjoiYWRhIiwicmVhbF9uYW1lIjoiQWRhIE9rYWZvciIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImFkYSIsInJlYWxfbmFtZSI6IkFkYSBPa2Fmb3IiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9fSx7ImlkIjoiVTAwMiIsIm5hbWUiOiJwcml5YSIsInJlYWxfbmFtZSI6IlByaXlhIE9wcyIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6InByaXlhIiwicmVhbF9uYW1lIjoiUHJpeWEgT3BzIiwiZW1haWwiOiJwcml5YUBleGFtcGxlLmNvbSJ9fV19"
+        "response": "{\"ok\":true,\"members\":[{\"id\":\"U000\",\"name\":\"devloop\",\"real_name\":\"Dev Loop\",\"deleted\":false,\"profile\":{\"display_name\":\"devloop\",\"real_name\":\"Dev Loop\",\"email\":\"dev-loop@listen-fire.local\"}},{\"id\":\"U001\",\"name\":\"ada\",\"real_name\":\"Ada Okafor\",\"deleted\":false,\"profile\":{\"display_name\":\"ada\",\"real_name\":\"Ada Okafor\",\"email\":\"ada@example.com\"}},{\"id\":\"U002\",\"name\":\"priya\",\"real_name\":\"Priya Ops\",\"deleted\":false,\"profile\":{\"display_name\":\"priya\",\"real_name\":\"Priya Ops\",\"email\":\"priya@example.com\"}}]}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.history",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMTAwLjAwMDIwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6Ik1ldHJpY3MgZGVjayBhdHRhY2hlZCBmb3IgRm9vIENvcnAifSx7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCJ9XSwiaGFzX21vcmUiOmZhbHNlLCJyZXNwb25zZV9tZXRhZGF0YSI6eyJuZXh0X2N1cnNvciI6IiJ9fQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500100.000200\",\"user\":\"U002\",\"text\":\"Metrics deck attached for Foo Corp\"},{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\"}],\"has_more\":false,\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.members",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVtYmVycyI6WyJVMDAwIiwiVTAwMSIsIlUwMDIiXX0="
+        "response": "{\"ok\":true,\"members\":[\"U000\",\"U001\",\"U002\"]}"
       },
       {
         "method": "POST",
         "path": "/conversations.history",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMTAwLjAwMDIwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6Ik1ldHJpY3MgZGVjayBhdHRhY2hlZCBmb3IgRm9vIENvcnAifSx7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCJ9XSwiaGFzX21vcmUiOmZhbHNlLCJyZXNwb25zZV9tZXRhZGF0YSI6eyJuZXh0X2N1cnNvciI6IiJ9fQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500100.000200\",\"user\":\"U002\",\"text\":\"Metrics deck attached for Foo Corp\"},{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\"}],\"has_more\":false,\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751500000.000100&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCJ9LHsiY2hhbm5lbCI6IkMwMDIiLCJ0cyI6IjE3NTE1MDAyMDAuMDAwMzAwIiwidXNlciI6IlUwMDIiLCJ0ZXh0IjoiQWNtZSBmb2xsb3ctdXA6IHJldmVudWUgaXMgMS4yTSBBUlIiLCJ0aHJlYWRfdHMiOiIxNzUxNTAwMDAwLjAwMDEwMCJ9XX0="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\"},{\"channel\":\"C002\",\"ts\":\"1751500200.000300\",\"user\":\"U002\",\"text\":\"Acme follow-up: revenue is 1.2M ARR\",\"thread_ts\":\"1751500000.000100\"}]}"
       },
       {
         "method": "POST",
         "path": "/users.info",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "user=U001",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidXNlciI6eyJpZCI6IlUwMDEiLCJuYW1lIjoiYWRhIiwicmVhbF9uYW1lIjoiQWRhIE9rYWZvciIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImFkYSIsInJlYWxfbmFtZSI6IkFkYSBPa2Fmb3IiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9fX0="
+        "response": "{\"ok\":true,\"user\":{\"id\":\"U001\",\"name\":\"ada\",\"real_name\":\"Ada Okafor\",\"deleted\":false,\"profile\":{\"display_name\":\"ada\",\"real_name\":\"Ada Okafor\",\"email\":\"ada@example.com\"}}}"
       },
       {
         "method": "POST",
         "path": "/conversations.info",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbCI6eyJpZCI6IkMwMDIiLCJuYW1lIjoiZGVhbGZsb3ciLCJpc19wcml2YXRlIjpmYWxzZSwiaXNfbWVtYmVyIjp0cnVlLCJudW1fbWVtYmVycyI6NX19"
+        "response": "{\"ok\":true,\"channel\":{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5}}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751600000.000100&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOltdfQ=="
+        "response": "{\"ok\":true,\"messages\":[]}"
       },
       {
         "method": "POST",
         "path": "/files.info",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "file=F100",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yIjoiZmlsZV9ub3RfZm91bmQifQ=="
+        "response": "{\"ok\":false,\"error\":\"file_not_found\"}"
       },
       {
         "method": "POST",
         "path": "/conversations.history",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&latest=1751500000.000100&oldest=1751500000.000100&inclusive=true&limit=1",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCJ9XSwiaGFzX21vcmUiOmZhbHNlLCJyZXNwb25zZV9tZXRhZGF0YSI6eyJuZXh0X2N1cnNvciI6IiJ9fQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\"}],\"has_more\":false,\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751500000.000100&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCJ9LHsiY2hhbm5lbCI6IkMwMDIiLCJ0cyI6IjE3NTE1MDAyMDAuMDAwMzAwIiwidXNlciI6IlUwMDIiLCJ0ZXh0IjoiQWNtZSBmb2xsb3ctdXA6IHJldmVudWUgaXMgMS4yTSBBUlIiLCJ0aHJlYWRfdHMiOiIxNzUxNTAwMDAwLjAwMDEwMCJ9XX0="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\"},{\"channel\":\"C002\",\"ts\":\"1751500200.000300\",\"user\":\"U002\",\"text\":\"Acme follow-up: revenue is 1.2M ARR\",\"thread_ts\":\"1751500000.000100\"}]}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751500100.000200&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMTAwLjAwMDIwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6Ik1ldHJpY3MgZGVjayBhdHRhY2hlZCBmb3IgRm9vIENvcnAifV19"
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500100.000200\",\"user\":\"U002\",\"text\":\"Metrics deck attached for Foo Corp\"}]}"
       },
       {
         "method": "POST",
         "path": "/users.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": null,
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVtYmVycyI6W3siaWQiOiJVMDAwIiwibmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImVtYWlsIjoiZGV2LWxvb3BAbGlzdGVuLWZpcmUubG9jYWwifX0seyJpZCI6IlUwMDEiLCJuYW1lIjoiYWRhIiwicmVhbF9uYW1lIjoiQWRhIE9rYWZvciIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImFkYSIsInJlYWxfbmFtZSI6IkFkYSBPa2Fmb3IiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9fSx7ImlkIjoiVTAwMiIsIm5hbWUiOiJwcml5YSIsInJlYWxfbmFtZSI6IlByaXlhIE9wcyIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6InByaXlhIiwicmVhbF9uYW1lIjoiUHJpeWEgT3BzIiwiZW1haWwiOiJwcml5YUBleGFtcGxlLmNvbSJ9fV19"
+        "response": "{\"ok\":true,\"members\":[{\"id\":\"U000\",\"name\":\"devloop\",\"real_name\":\"Dev Loop\",\"deleted\":false,\"profile\":{\"display_name\":\"devloop\",\"real_name\":\"Dev Loop\",\"email\":\"dev-loop@listen-fire.local\"}},{\"id\":\"U001\",\"name\":\"ada\",\"real_name\":\"Ada Okafor\",\"deleted\":false,\"profile\":{\"display_name\":\"ada\",\"real_name\":\"Ada Okafor\",\"email\":\"ada@example.com\"}},{\"id\":\"U002\",\"name\":\"priya\",\"real_name\":\"Priya Ops\",\"deleted\":false,\"profile\":{\"display_name\":\"priya\",\"real_name\":\"Priya Ops\",\"email\":\"priya@example.com\"}}]}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&text=Hi%20%3C%40U001%3E%2C%20see%20the%20deck&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjE2NC43NDg2NjQifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.922.805557\"}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&thread_ts=1751500000.000100&text=On%20it&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjE3Ni45MTAyNTIifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.924.482687\"}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&thread_ts=1751500000.000100&text=composite&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjE4MS4wNjE4MTUifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.925.709322\"}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&text=fallback&blocks=%5B%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*hi*%22%7D%7D%5D&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjIwNy43NTI5MjEifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.926.976425\"}"
       },
       {
         "method": "POST",
         "path": "/reactions.add",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&timestamp=1751500000.000100&name=rocket",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZX0="
+        "response": "{\"ok\":true}"
       },
       {
         "method": "POST",
         "path": "/reactions.add",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-parity",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&timestamp=1751500000.000100&name=rocket",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yIjoiYWxyZWFkeV9yZWFjdGVkIn0="
+        "response": "{\"ok\":false,\"error\":\"already_reacted\"}"
       }
     ]
   },
@@ -4504,13 +4528,13 @@
               "recordType": "Message",
               "identity": {
                 "kind": "stable",
-                "recordId": "C002:1792243645.164.748664",
+                "recordId": "C002:1792263161.922.805557",
                 "data": {
                   "channel": "C002",
                   "text": "Hi <@U001>, see the deck",
                   "blocks": null,
                   "thread_ts": null,
-                  "ts": "1792243645.164.748664",
+                  "ts": "1792263161.922.805557",
                   "user": "bot",
                   "unfurl_links": "false",
                   "unfurl_media": "false"
@@ -4524,7 +4548,7 @@
               "recordType": "Message",
               "identity": {
                 "kind": "stable",
-                "recordId": "C002:1792243645.207.752921",
+                "recordId": "C002:1792263161.926.976425",
                 "data": {
                   "channel": "C002",
                   "text": "fallback",
@@ -4538,7 +4562,7 @@
                     }
                   ],
                   "thread_ts": null,
-                  "ts": "1792243645.207.752921",
+                  "ts": "1792263161.926.976425",
                   "user": "bot",
                   "unfurl_links": "false",
                   "unfurl_media": "false"
@@ -4835,13 +4859,13 @@
               "recordType": "Message",
               "identity": {
                 "kind": "stable",
-                "recordId": "C002:1792243645.176.910252",
+                "recordId": "C002:1792263161.924.482687",
                 "data": {
                   "channel": "C002",
                   "text": "On it",
                   "blocks": null,
                   "thread_ts": "1751500000.000100",
-                  "ts": "1792243645.176.910252",
+                  "ts": "1792263161.924.482687",
                   "user": "bot",
                   "unfurl_links": "false",
                   "unfurl_media": "false"
@@ -4855,13 +4879,13 @@
               "recordType": "Message",
               "identity": {
                 "kind": "stable",
-                "recordId": "C002:1792243645.181.061815",
+                "recordId": "C002:1792263161.925.709322",
                 "data": {
                   "channel": "C002",
                   "text": "composite",
                   "blocks": null,
                   "thread_ts": "1751500000.000100",
-                  "ts": "1792243645.181.061815",
+                  "ts": "1792263161.925.709322",
                   "user": "bot",
                   "unfurl_links": "false",
                   "unfurl_media": "false"
@@ -5800,28 +5824,28 @@
               }
             },
             {
-              "recordId": "C002:1792243645.176.910252",
+              "recordId": "C002:1792263161.924.482687",
               "recordType": "Message",
               "fields": {
                 "channel": "C002",
                 "text": "On it",
                 "blocks": null,
                 "thread_ts": "1751500000.000100",
-                "ts": "1792243645.176.910252",
+                "ts": "1792263161.924.482687",
                 "user": "bot",
                 "unfurl_links": "false",
                 "unfurl_media": "false"
               }
             },
             {
-              "recordId": "C002:1792243645.181.061815",
+              "recordId": "C002:1792263161.925.709322",
               "recordType": "Message",
               "fields": {
                 "channel": "C002",
                 "text": "composite",
                 "blocks": null,
                 "thread_ts": "1751500000.000100",
-                "ts": "1792243645.181.061815",
+                "ts": "1792263161.925.709322",
                 "user": "bot",
                 "unfurl_links": "false",
                 "unfurl_media": "false"
@@ -5863,12 +5887,12 @@
         "step": "post with a mention",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.589.662186",
+          "externalId": "1792263161.965.070705",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.589.662186",
+            "ts": "1792263161.965.070705",
             "name": "Hi <@U001>, see the deck",
-            "url": "slack://archives/C002/p1792243645589.662186"
+            "url": "slack://archives/C002/p1792263161965.070705"
           }
         }
       },
@@ -5876,13 +5900,13 @@
         "step": "reply in the thread",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.601.755731",
+          "externalId": "1792263161.966.405337",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.601.755731",
+            "ts": "1792263161.966.405337",
             "threadTs": "1751500000.000100",
             "name": "On it",
-            "url": "slack://archives/C002/p1792243645601.755731"
+            "url": "slack://archives/C002/p1792263161966.405337"
           }
         }
       },
@@ -5890,13 +5914,13 @@
         "step": "reply to a composite id",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.612.206235",
+          "externalId": "1792263161.968.157743",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.612.206235",
+            "ts": "1792263161.968.157743",
             "threadTs": "1751500000.000100",
             "name": "composite",
-            "url": "slack://archives/C002/p1792243645612.206235"
+            "url": "slack://archives/C002/p1792263161968.157743"
           }
         }
       },
@@ -5904,12 +5928,12 @@
         "step": "post blocks",
         "answer": {
           "adapterType": "slack",
-          "externalId": "1792243645.629.991337",
+          "externalId": "1792263161.971.039549",
           "data": {
             "channelId": "C002",
-            "ts": "1792243645.629.991337",
+            "ts": "1792263161.971.039549",
             "name": "fallback",
-            "url": "slack://archives/C002/p1792243645629.991337"
+            "url": "slack://archives/C002/p1792263161971.039549"
           }
         }
       },
@@ -5996,242 +6020,266 @@
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/users.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVtYmVycyI6W3siaWQiOiJVMDAwIiwibmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImVtYWlsIjoiZGV2LWxvb3BAbGlzdGVuLWZpcmUubG9jYWwifX0seyJpZCI6IlUwMDEiLCJuYW1lIjoiYWRhIiwicmVhbF9uYW1lIjoiQWRhIE9rYWZvciIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImFkYSIsInJlYWxfbmFtZSI6IkFkYSBPa2Fmb3IiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9fSx7ImlkIjoiVTAwMiIsIm5hbWUiOiJwcml5YSIsInJlYWxfbmFtZSI6IlByaXlhIE9wcyIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6InByaXlhIiwicmVhbF9uYW1lIjoiUHJpeWEgT3BzIiwiZW1haWwiOiJwcml5YUBleGFtcGxlLmNvbSJ9fV19"
+        "response": "{\"ok\":true,\"members\":[{\"id\":\"U000\",\"name\":\"devloop\",\"real_name\":\"Dev Loop\",\"deleted\":false,\"profile\":{\"display_name\":\"devloop\",\"real_name\":\"Dev Loop\",\"email\":\"dev-loop@listen-fire.local\"}},{\"id\":\"U001\",\"name\":\"ada\",\"real_name\":\"Ada Okafor\",\"deleted\":false,\"profile\":{\"display_name\":\"ada\",\"real_name\":\"Ada Okafor\",\"email\":\"ada@example.com\"}},{\"id\":\"U002\",\"name\":\"priya\",\"real_name\":\"Priya Ops\",\"deleted\":false,\"profile\":{\"display_name\":\"priya\",\"real_name\":\"Priya Ops\",\"email\":\"priya@example.com\"}}]}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "types=public_channel%2Cprivate_channel&limit=1000",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbHMiOlt7ImlkIjoiQzAwMSIsIm5hbWUiOiJnZW5lcmFsIiwiaXNfcHJpdmF0ZSI6ZmFsc2UsImlzX21lbWJlciI6dHJ1ZSwibnVtX21lbWJlcnMiOjEwfSx7ImlkIjoiQzAwMiIsIm5hbWUiOiJkZWFsZmxvdyIsImlzX3ByaXZhdGUiOmZhbHNlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjo1fSx7ImlkIjoiQzAwMyIsIm5hbWUiOiJwb3J0Zm9saW8iLCJpc19wcml2YXRlIjp0cnVlLCJpc19tZW1iZXIiOnRydWUsIm51bV9tZW1iZXJzIjozfV0sInJlc3BvbnNlX21ldGFkYXRhIjp7Im5leHRfY3Vyc29yIjoiIn19"
+        "response": "{\"ok\":true,\"channels\":[{\"id\":\"C001\",\"name\":\"general\",\"is_private\":false,\"is_member\":true,\"num_members\":10},{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5},{\"id\":\"C003\",\"name\":\"portfolio\",\"is_private\":true,\"is_member\":true,\"num_members\":3}],\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.history",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMTAwLjAwMDIwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6Ik1ldHJpY3MgZGVjayBhdHRhY2hlZCBmb3IgRm9vIENvcnAifSx7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCIsInJlYWN0aW9ucyI6W3sibmFtZSI6InJvY2tldCIsInVzZXJzIjpbImJvdCJdLCJjb3VudCI6MX1dfSx7ImNoYW5uZWwiOiJDMDAyIiwidGV4dCI6IkhpIDxAVTAwMT4sIHNlZSB0aGUgZGVjayIsImJsb2NrcyI6bnVsbCwidGhyZWFkX3RzIjpudWxsLCJ0cyI6IjE3OTIyNDM2NDUuMTY0Ljc0ODY2NCIsInVzZXIiOiJib3QiLCJ1bmZ1cmxfbGlua3MiOiJmYWxzZSIsInVuZnVybF9tZWRpYSI6ImZhbHNlIn0seyJjaGFubmVsIjoiQzAwMiIsInRleHQiOiJmYWxsYmFjayIsImJsb2NrcyI6W3sidHlwZSI6InNlY3Rpb24iLCJ0ZXh0Ijp7InR5cGUiOiJtcmtkd24iLCJ0ZXh0IjoiKmhpKiJ9fV0sInRocmVhZF90cyI6bnVsbCwidHMiOiIxNzkyMjQzNjQ1LjIwNy43NTI5MjEiLCJ1c2VyIjoiYm90IiwidW5mdXJsX2xpbmtzIjoiZmFsc2UiLCJ1bmZ1cmxfbWVkaWEiOiJmYWxzZSJ9XSwiaGFzX21vcmUiOmZhbHNlLCJyZXNwb25zZV9tZXRhZGF0YSI6eyJuZXh0X2N1cnNvciI6IiJ9fQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500100.000200\",\"user\":\"U002\",\"text\":\"Metrics deck attached for Foo Corp\"},{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\",\"reactions\":[{\"name\":\"rocket\",\"users\":[\"bot\"],\"count\":1}]},{\"channel\":\"C002\",\"text\":\"Hi <@U001>, see the deck\",\"blocks\":null,\"thread_ts\":null,\"ts\":\"1792263161.922.805557\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"},{\"channel\":\"C002\",\"text\":\"fallback\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"*hi*\"}}],\"thread_ts\":null,\"ts\":\"1792263161.926.976425\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"}],\"has_more\":false,\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.members",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVtYmVycyI6WyJVMDAwIiwiVTAwMSIsIlUwMDIiXX0="
+        "response": "{\"ok\":true,\"members\":[\"U000\",\"U001\",\"U002\"]}"
       },
       {
         "method": "POST",
         "path": "/conversations.history",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMTAwLjAwMDIwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6Ik1ldHJpY3MgZGVjayBhdHRhY2hlZCBmb3IgRm9vIENvcnAifSx7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCIsInJlYWN0aW9ucyI6W3sibmFtZSI6InJvY2tldCIsInVzZXJzIjpbImJvdCJdLCJjb3VudCI6MX1dfSx7ImNoYW5uZWwiOiJDMDAyIiwidGV4dCI6IkhpIDxAVTAwMT4sIHNlZSB0aGUgZGVjayIsImJsb2NrcyI6bnVsbCwidGhyZWFkX3RzIjpudWxsLCJ0cyI6IjE3OTIyNDM2NDUuMTY0Ljc0ODY2NCIsInVzZXIiOiJib3QiLCJ1bmZ1cmxfbGlua3MiOiJmYWxzZSIsInVuZnVybF9tZWRpYSI6ImZhbHNlIn0seyJjaGFubmVsIjoiQzAwMiIsInRleHQiOiJmYWxsYmFjayIsImJsb2NrcyI6W3sidHlwZSI6InNlY3Rpb24iLCJ0ZXh0Ijp7InR5cGUiOiJtcmtkd24iLCJ0ZXh0IjoiKmhpKiJ9fV0sInRocmVhZF90cyI6bnVsbCwidHMiOiIxNzkyMjQzNjQ1LjIwNy43NTI5MjEiLCJ1c2VyIjoiYm90IiwidW5mdXJsX2xpbmtzIjoiZmFsc2UiLCJ1bmZ1cmxfbWVkaWEiOiJmYWxzZSJ9XSwiaGFzX21vcmUiOmZhbHNlLCJyZXNwb25zZV9tZXRhZGF0YSI6eyJuZXh0X2N1cnNvciI6IiJ9fQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500100.000200\",\"user\":\"U002\",\"text\":\"Metrics deck attached for Foo Corp\"},{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\",\"reactions\":[{\"name\":\"rocket\",\"users\":[\"bot\"],\"count\":1}]},{\"channel\":\"C002\",\"text\":\"Hi <@U001>, see the deck\",\"blocks\":null,\"thread_ts\":null,\"ts\":\"1792263161.922.805557\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"},{\"channel\":\"C002\",\"text\":\"fallback\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"*hi*\"}}],\"thread_ts\":null,\"ts\":\"1792263161.926.976425\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"}],\"has_more\":false,\"response_metadata\":{\"next_cursor\":\"\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751500000.000100&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCIsInJlYWN0aW9ucyI6W3sibmFtZSI6InJvY2tldCIsInVzZXJzIjpbImJvdCJdLCJjb3VudCI6MX1dfSx7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMjAwLjAwMDMwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6IkFjbWUgZm9sbG93LXVwOiByZXZlbnVlIGlzIDEuMk0gQVJSIiwidGhyZWFkX3RzIjoiMTc1MTUwMDAwMC4wMDAxMDAifSx7ImNoYW5uZWwiOiJDMDAyIiwidGV4dCI6Ik9uIGl0IiwiYmxvY2tzIjpudWxsLCJ0aHJlYWRfdHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInRzIjoiMTc5MjI0MzY0NS4xNzYuOTEwMjUyIiwidXNlciI6ImJvdCIsInVuZnVybF9saW5rcyI6ImZhbHNlIiwidW5mdXJsX21lZGlhIjoiZmFsc2UifSx7ImNoYW5uZWwiOiJDMDAyIiwidGV4dCI6ImNvbXBvc2l0ZSIsImJsb2NrcyI6bnVsbCwidGhyZWFkX3RzIjoiMTc1MTUwMDAwMC4wMDAxMDAiLCJ0cyI6IjE3OTIyNDM2NDUuMTgxLjA2MTgxNSIsInVzZXIiOiJib3QiLCJ1bmZ1cmxfbGlua3MiOiJmYWxzZSIsInVuZnVybF9tZWRpYSI6ImZhbHNlIn1dfQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\",\"reactions\":[{\"name\":\"rocket\",\"users\":[\"bot\"],\"count\":1}]},{\"channel\":\"C002\",\"ts\":\"1751500200.000300\",\"user\":\"U002\",\"text\":\"Acme follow-up: revenue is 1.2M ARR\",\"thread_ts\":\"1751500000.000100\"},{\"channel\":\"C002\",\"text\":\"On it\",\"blocks\":null,\"thread_ts\":\"1751500000.000100\",\"ts\":\"1792263161.924.482687\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"},{\"channel\":\"C002\",\"text\":\"composite\",\"blocks\":null,\"thread_ts\":\"1751500000.000100\",\"ts\":\"1792263161.925.709322\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"}]}"
       },
       {
         "method": "POST",
         "path": "/users.info",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "user=U001",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidXNlciI6eyJpZCI6IlUwMDEiLCJuYW1lIjoiYWRhIiwicmVhbF9uYW1lIjoiQWRhIE9rYWZvciIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImFkYSIsInJlYWxfbmFtZSI6IkFkYSBPa2Fmb3IiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9fX0="
+        "response": "{\"ok\":true,\"user\":{\"id\":\"U001\",\"name\":\"ada\",\"real_name\":\"Ada Okafor\",\"deleted\":false,\"profile\":{\"display_name\":\"ada\",\"real_name\":\"Ada Okafor\",\"email\":\"ada@example.com\"}}}"
       },
       {
         "method": "POST",
         "path": "/conversations.info",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwiY2hhbm5lbCI6eyJpZCI6IkMwMDIiLCJuYW1lIjoiZGVhbGZsb3ciLCJpc19wcml2YXRlIjpmYWxzZSwiaXNfbWVtYmVyIjp0cnVlLCJudW1fbWVtYmVycyI6NX19"
+        "response": "{\"ok\":true,\"channel\":{\"id\":\"C002\",\"name\":\"dealflow\",\"is_private\":false,\"is_member\":true,\"num_members\":5}}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751600000.000100&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOltdfQ=="
+        "response": "{\"ok\":true,\"messages\":[]}"
       },
       {
         "method": "POST",
         "path": "/files.info",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "file=F100",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yIjoiZmlsZV9ub3RfZm91bmQifQ=="
+        "response": "{\"ok\":false,\"error\":\"file_not_found\"}"
       },
       {
         "method": "POST",
         "path": "/conversations.history",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&latest=1751500000.000100&oldest=1751500000.000100&inclusive=true&limit=1",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCIsInJlYWN0aW9ucyI6W3sibmFtZSI6InJvY2tldCIsInVzZXJzIjpbImJvdCJdLCJjb3VudCI6MX1dfV0sImhhc19tb3JlIjp0cnVlLCJyZXNwb25zZV9tZXRhZGF0YSI6eyJuZXh0X2N1cnNvciI6IjEifX0="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\",\"reactions\":[{\"name\":\"rocket\",\"users\":[\"bot\"],\"count\":1}]}],\"has_more\":true,\"response_metadata\":{\"next_cursor\":\"1\"}}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751500000.000100&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInVzZXIiOiJVMDAxIiwidGV4dCI6Ik5ldyBkZWFsOiBBY21lIHdhbnRzIGEgdGVybSBzaGVldCIsInJlYWN0aW9ucyI6W3sibmFtZSI6InJvY2tldCIsInVzZXJzIjpbImJvdCJdLCJjb3VudCI6MX1dfSx7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMjAwLjAwMDMwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6IkFjbWUgZm9sbG93LXVwOiByZXZlbnVlIGlzIDEuMk0gQVJSIiwidGhyZWFkX3RzIjoiMTc1MTUwMDAwMC4wMDAxMDAifSx7ImNoYW5uZWwiOiJDMDAyIiwidGV4dCI6Ik9uIGl0IiwiYmxvY2tzIjpudWxsLCJ0aHJlYWRfdHMiOiIxNzUxNTAwMDAwLjAwMDEwMCIsInRzIjoiMTc5MjI0MzY0NS4xNzYuOTEwMjUyIiwidXNlciI6ImJvdCIsInVuZnVybF9saW5rcyI6ImZhbHNlIiwidW5mdXJsX21lZGlhIjoiZmFsc2UifSx7ImNoYW5uZWwiOiJDMDAyIiwidGV4dCI6ImNvbXBvc2l0ZSIsImJsb2NrcyI6bnVsbCwidGhyZWFkX3RzIjoiMTc1MTUwMDAwMC4wMDAxMDAiLCJ0cyI6IjE3OTIyNDM2NDUuMTgxLjA2MTgxNSIsInVzZXIiOiJib3QiLCJ1bmZ1cmxfbGlua3MiOiJmYWxzZSIsInVuZnVybF9tZWRpYSI6ImZhbHNlIn1dfQ=="
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500000.000100\",\"user\":\"U001\",\"text\":\"New deal: Acme wants a term sheet\",\"reactions\":[{\"name\":\"rocket\",\"users\":[\"bot\"],\"count\":1}]},{\"channel\":\"C002\",\"ts\":\"1751500200.000300\",\"user\":\"U002\",\"text\":\"Acme follow-up: revenue is 1.2M ARR\",\"thread_ts\":\"1751500000.000100\"},{\"channel\":\"C002\",\"text\":\"On it\",\"blocks\":null,\"thread_ts\":\"1751500000.000100\",\"ts\":\"1792263161.924.482687\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"},{\"channel\":\"C002\",\"text\":\"composite\",\"blocks\":null,\"thread_ts\":\"1751500000.000100\",\"ts\":\"1792263161.925.709322\",\"user\":\"bot\",\"unfurl_links\":\"false\",\"unfurl_media\":\"false\"}]}"
       },
       {
         "method": "POST",
         "path": "/conversations.replies",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&ts=1751500100.000200&limit=200",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVzc2FnZXMiOlt7ImNoYW5uZWwiOiJDMDAyIiwidHMiOiIxNzUxNTAwMTAwLjAwMDIwMCIsInVzZXIiOiJVMDAyIiwidGV4dCI6Ik1ldHJpY3MgZGVjayBhdHRhY2hlZCBmb3IgRm9vIENvcnAifV19"
+        "response": "{\"ok\":true,\"messages\":[{\"channel\":\"C002\",\"ts\":\"1751500100.000200\",\"user\":\"U002\",\"text\":\"Metrics deck attached for Foo Corp\"}]}"
       },
       {
         "method": "POST",
         "path": "/users.list",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": null,
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwibWVtYmVycyI6W3siaWQiOiJVMDAwIiwibmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImRldmxvb3AiLCJyZWFsX25hbWUiOiJEZXYgTG9vcCIsImVtYWlsIjoiZGV2LWxvb3BAbGlzdGVuLWZpcmUubG9jYWwifX0seyJpZCI6IlUwMDEiLCJuYW1lIjoiYWRhIiwicmVhbF9uYW1lIjoiQWRhIE9rYWZvciIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6ImFkYSIsInJlYWxfbmFtZSI6IkFkYSBPa2Fmb3IiLCJlbWFpbCI6ImFkYUBleGFtcGxlLmNvbSJ9fSx7ImlkIjoiVTAwMiIsIm5hbWUiOiJwcml5YSIsInJlYWxfbmFtZSI6IlByaXlhIE9wcyIsImRlbGV0ZWQiOmZhbHNlLCJwcm9maWxlIjp7ImRpc3BsYXlfbmFtZSI6InByaXlhIiwicmVhbF9uYW1lIjoiUHJpeWEgT3BzIiwiZW1haWwiOiJwcml5YUBleGFtcGxlLmNvbSJ9fV19"
+        "response": "{\"ok\":true,\"members\":[{\"id\":\"U000\",\"name\":\"devloop\",\"real_name\":\"Dev Loop\",\"deleted\":false,\"profile\":{\"display_name\":\"devloop\",\"real_name\":\"Dev Loop\",\"email\":\"dev-loop@listen-fire.local\"}},{\"id\":\"U001\",\"name\":\"ada\",\"real_name\":\"Ada Okafor\",\"deleted\":false,\"profile\":{\"display_name\":\"ada\",\"real_name\":\"Ada Okafor\",\"email\":\"ada@example.com\"}},{\"id\":\"U002\",\"name\":\"priya\",\"real_name\":\"Priya Ops\",\"deleted\":false,\"profile\":{\"display_name\":\"priya\",\"real_name\":\"Priya Ops\",\"email\":\"priya@example.com\"}}]}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&text=Hi%20%3C%40U001%3E%2C%20see%20the%20deck&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjU4OS42NjIxODYifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.965.070705\"}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&thread_ts=1751500000.000100&text=On%20it&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjYwMS43NTU3MzEifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.966.405337\"}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&thread_ts=1751500000.000100&text=composite&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjYxMi4yMDYyMzUifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.968.157743\"}"
       },
       {
         "method": "POST",
         "path": "/chat.postMessage",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&text=fallback&blocks=%5B%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*hi*%22%7D%7D%5D&unfurl_links=false&unfurl_media=false",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6dHJ1ZSwidHMiOiIxNzkyMjQzNjQ1LjYyOS45OTEzMzcifQ=="
+        "response": "{\"ok\":true,\"ts\":\"1792263161.971.039549\"}"
       },
       {
         "method": "POST",
         "path": "/reactions.add",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&timestamp=1751500000.000100&name=rocket",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yIjoiYWxyZWFkeV9yZWFjdGVkIn0="
+        "response": "{\"ok\":false,\"error\":\"already_reacted\"}"
       },
       {
         "method": "POST",
         "path": "/reactions.add",
-        "contentType": "application/x-www-form-urlencoded",
         "authorization": "Bearer xoxb-harness",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
         "body": "channel=C002&timestamp=1751500000.000100&name=rocket",
         "status": 200,
-        "responseContentType": "application/json; charset=utf-8",
-        "response": "eyJvayI6ZmFsc2UsImVycm9yIjoiYWxyZWFkeV9yZWFjdGVkIn0="
+        "response": "{\"ok\":false,\"error\":\"already_reacted\"}"
       }
     ]
   },

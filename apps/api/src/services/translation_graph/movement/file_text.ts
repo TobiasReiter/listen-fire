@@ -42,8 +42,8 @@ import {
   type FileTextReader as PackageFileTextReader,
   type SheetAnalyzer,
 } from 'file-text';
-import type { FileUnreadable } from 'movement-engine/public/model-calls';
-import type { FileTextResolution } from 'movement-engine/public/run-support';
+import type { FileUnreadable } from 'movement-engine/public/models';
+import type { FileTextResolution } from 'movement-engine/public/files';
 import type { FileRef } from 'movement-engine/public/adapter';
 import type { RawTextStore } from './raw_text_store';
 

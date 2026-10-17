@@ -69,7 +69,7 @@ import { writeParentLinks, type ParentLink, type ParentAssociation } from 'movem
 import { logger } from 'movement-engine/public/log';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { apiBaseUrl } from '../../../lib/api_base_url';
-import { describeError } from 'movement-engine/public/utils';
+import { describeError } from 'movement-engine/public/errors';
 import { decryptToken } from '../../../lib/credentials';
 
 export const NATIVE_VALUATIONS_ADAPTER_TYPE = 'native-valuations';

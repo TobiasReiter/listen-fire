@@ -6,6 +6,7 @@
 //   PUT  /customers/:tenant/movements/:name  the movement's source, as text
 //   POST /customers/:tenant/companies        { Name } → the company, and the runs it fired
 //   GET  /customers/:tenant/companies
+//   POST /tick                               step on every parked run whose time has come
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
@@ -31,6 +32,7 @@ async function handle(embedding: Embedding, req: IncomingMessage): Promise<[numb
     embedding.addCustomer(tenant, apiKey);
     return [201, { tenant }];
   }
+  if (req.method === 'POST' && path.length === 1 && path[0] === 'tick') return [200, { runs: await embedding.tick() }];
   if (path[0] !== 'customers' || path.length < 3) return [404, { error: 'not found' }];
   const tenant = path[1];
   if (req.method === 'PUT' && path[2] === 'movements' && path.length === 4) {

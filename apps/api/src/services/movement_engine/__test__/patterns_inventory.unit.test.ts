@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { PATTERNS_PRELUDE, type CaseRecord } from '../../../../../../crates/movement-engine/tests/oracle/patterns_oracle';
 import { PATTERNS, type Ends } from '../../../../../../crates/movement-engine/tests/oracle/patterns_table';
-import { KNOWN_GAPS } from './reachability_gaps';
+import { KNOWN_GAPS } from 'movement-engine/services/movement_engine/__test__/reachability_gaps';
 
 const ORACLE = path.resolve(__dirname, '../../../../../../crates/movement-engine/tests/oracle/patterns.json');
 

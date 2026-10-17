@@ -29,6 +29,7 @@ import {
   impersonateHandler,
   stopImpersonateHandler,
 } from './auth';
+import { remoteAdapterSignInCallbackHandler } from './remote_adapter_callback';
 import {
   inboundEmailHandler,
   resendInboundEmailHandler,
@@ -89,6 +90,7 @@ if (mounts('automations')) {
   authRouter.get('/airtable/callback', authAirtableCallbackHandler);
   authRouter.get('/attio/callback', authAttioCallbackHandler);
   authRouter.get('/dropbox/callback', authDropboxCallbackHandler);
+  authRouter.get('/remote_adapter/callback', remoteAdapterSignInCallbackHandler);
 }
 
 const privateRouter: ReturnType<typeof Router> = Router();

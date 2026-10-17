@@ -19,7 +19,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { HttpExchange } from '../../__test__/parity_http';
+import type { Exchange } from '../../__test__/parity/exchange';
 import type { SlackParitySubject, TranscriptEntry } from './parity/script';
 
 // ── The platform's stores, as the test seeds them ───────────────────────────
@@ -79,8 +79,8 @@ jest.mock('../../../../../lib/anthropic', () => ({
 }));
 
 import { runSlackParityScript } from './parity/script';
-import { recordingHttpServer, replayingHttpServer, requestOf } from '../../__test__/parity_http';
-import { bootFakeProvider } from '../../__test__/parity_fake';
+import { recordingServer, replayingServer, requestOf, type ExchangeOptions } from '../../__test__/parity/exchange';
+import { bootFakeChannels } from '../../__test__/parity/fake_channels';
 import { SlackAdapter } from '../index';
 import { getAdapter } from '../../registry';
 import { BUILTIN_MODULES, builtinModuleInboundVerifier } from '../../builtin_modules';
@@ -88,6 +88,9 @@ import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/s
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
 
 const FIXTURE = join(__dirname, '__fixtures__/slack_parity.json');
+/** Chat providers take form-encoded bodies and file bytes: a request's
+ *  content type is part of what it asked for. */
+const EXCHANGE: ExchangeOptions = { headers: ['content-type'] };
 const TEAM = 'team-parity' as TeamId;
 
 type InstallName = 'workspace' | 'harness' | 'none';
@@ -120,18 +123,18 @@ function legacySubject(name: InstallName, baseUrl: string): SlackParitySubject {
   return { adapter: new SlackAdapter(install.teamId, install.credentialsId), compose: true };
 }
 
-type Recording = Record<InstallName, { transcript: TranscriptEntry[]; exchanges: HttpExchange[] }>;
+type Recording = Record<InstallName, { transcript: TranscriptEntry[]; exchanges: Exchange[] }>;
 
 jest.setTimeout(240_000);
 
 const recording = process.env.SLACK_PARITY_RECORD === '1';
 
 (recording ? it : it.skip)('records the legacy adapter against fake-channels', async () => {
-  const fake = await bootFakeProvider('slack');
+  const fake = await bootFakeChannels({ file: 'slack', factory: 'slackRoutes', mount: '/slack' });
   const fixture: Partial<Recording> = {};
   try {
     for (const name of INSTALLS) {
-      const proxy = await recordingHttpServer(fake.baseUrl);
+      const proxy = await recordingServer(fake.baseUrl, EXCHANGE);
       try {
         const transcript = await runSlackParityScript(legacySubject(name, proxy.baseUrl));
         fixture[name] = { transcript, exchanges: proxy.exchanges() };
@@ -164,7 +167,7 @@ async function expectParity(
   expecting: (recorded: TranscriptEntry[]) => TranscriptEntry[] = (recorded) => recorded,
 ): Promise<void> {
   const recorded = loadRecording()[name];
-  const server = await replayingHttpServer(recorded.exchanges);
+  const server = await replayingServer(recorded.exchanges, EXCHANGE);
   try {
     const transcript = await runSlackParityScript(await subjectAt(server.baseUrl));
     expect(transcript).toEqual(expecting(recorded.transcript));
@@ -213,7 +216,7 @@ async function expectParity(
   it('the module served as a process, over protocol 2, replays identically but for composition (workspace)', async () => {
     const recorded = loadRecording().workspace;
     const served = await serveSlack();
-    const server = await replayingHttpServer(recorded.exchanges, { repeatReads: true });
+    const server = await replayingServer(recorded.exchanges, { ...EXCHANGE, repeatReads: true });
     const nodeFetch = globalThis.fetch;
     globalThis.fetch = sameRealmFetch(nodeFetch);
     try {
@@ -230,7 +233,7 @@ async function expectParity(
       });
       const transcript = (await runSlackParityScript({ adapter: remote, compose: false })).map(unwrapRemoteError);
       const rest = (entries: TranscriptEntry[]) => entries.filter((entry) => entry.step !== 'invokeFieldFunction SLACK_MESSAGE');
-      expect(rest(transcript)).toEqual(rest(withoutIdempotencyKeys(recorded.transcript)));
+      expect(rest(transcript)).toEqual(rest(recorded.transcript));
       // The transport repeats some reads: the client describes a type before
       // naming a file a field answered (RemoteAdapter.getFieldValue), and
       // Slack's Channel description lists the live channels; the kit pages a
@@ -252,17 +255,6 @@ async function expectParity(
     }
   });
 });
-
-/**
- * The recording with every event's `idempotencyKey` dropped: adapter protocol
- * 2's event (`WireDiscriminableEvent`) has no such member, so the key Slack's
- * retries share does not cross the wire and a process-served Slack cannot
- * deduplicate a redelivery by it. A protocol gap, reported; not a difference
- * in the module.
- */
-function withoutIdempotencyKeys(recorded: TranscriptEntry[]): TranscriptEntry[] {
-  return JSON.parse(JSON.stringify(recorded), (key: string, value: unknown) => (key === 'idempotencyKey' ? undefined : value)) as TranscriptEntry[];
-}
 
 /** A refusal as the module raised it: the client wraps every error the wire
  *  carries in its method and code, which says nothing about the module. */

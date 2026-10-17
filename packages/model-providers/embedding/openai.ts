@@ -5,7 +5,7 @@ import type { Resolved } from 'movement-engine/public/models';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
 import { openAiClient } from '../providers/openai';
-import { OPENAI_EMBEDDING_DIMENSIONS } from 'movement-engine/public/model-calls';
+import { OPENAI_EMBEDDING_DIMENSIONS } from 'movement-engine/public/models';
 
 export async function openAiEmbed(
   resolved: Resolved,

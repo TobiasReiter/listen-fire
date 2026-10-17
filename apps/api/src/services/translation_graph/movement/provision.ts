@@ -78,7 +78,7 @@ import type { TriggerRunMode } from '../triggers/run_mode';
 import { mq } from '../../../lib/message_queue';
 import { unsafeCurrentContext } from '../../../services/context';
 import { logger } from 'movement-engine/public/log';
-import { collectFileListeners, type FileListener } from 'movement-engine/public/run-support';
+import { collectFileListeners, type FileListener } from 'movement-engine/public/inbound';
 import { recordUserMilestone, recordTeamMilestone } from '../../../lib/journey';
 import { getAutomationsQb, getCoreQb } from '../../../lib/kysely';
 import { getAdapterManifest, inboundAddressFor } from '../adapters/registry';

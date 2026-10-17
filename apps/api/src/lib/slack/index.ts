@@ -11,7 +11,7 @@ import { logger } from 'movement-engine/public/log';
 import { MINUTE } from '../../constants';
 import { getAutomationsQb } from '../kysely';
 import { decryptToken } from '../credentials';
-import { getErrorMessage } from 'movement-engine/public/utils';
+import { getErrorMessage } from 'movement-engine/public/errors';
 import { notNull } from '../utils/nullability';
 import { services } from '../../adapters/registry';
 import { unsafeCurrentContext } from '../../services/context';

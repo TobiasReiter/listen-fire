@@ -24,4 +24,18 @@ function apiBaseUrl(): string {
   }).replace(/\/$/, '');
 }
 
-export { apiBaseUrl };
+/**
+ * The web app's base URL, where an OAuth provider sends the user back after
+ * granting access (each connector's `/<name>/callback` page). Read only when a
+ * connector that actually redirects is wired up or begun: the composition root
+ * is imported at boot, so an eager read would stop a deployment that connects
+ * nothing from starting at all.
+ */
+function oauthRedirectBaseUrl(): string {
+  return getEnvVar('OAUTH_REDIRECT_BASE_URL', {
+    devDefault: 'http://localhost:3003',
+    because: 'OAuth connectors redirect the user back to it after granting access',
+  });
+}
+
+export { apiBaseUrl, oauthRedirectBaseUrl };

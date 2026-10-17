@@ -6,8 +6,10 @@
 // Nothing is mocked: the team catalog introspects the module over the wire,
 // the dispatch path fires the movement on the engine, and every call reaches
 // the module signed with the install's secret and carrying the connection's
-// credential. Alice's token has expired: the host refreshes it with its OAuth
-// app and writes the rotated tokens back to Alice's row, and only hers.
+// credential. Each user creates their credential as a member does, signing in
+// at the provider through the install's OAuth app (the settings route's begin
+// and callback). Alice's token has expired: the host refreshes it with its
+// OAuth app and writes the rotated tokens back to Alice's row, and only hers.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -31,7 +33,7 @@ import type { ExternalServiceCredentialsId } from '../../../../../generated/kyse
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../../lib/kysely';
 import { decryptToken } from '../../../../../lib/credentials';
 import { cleanupTeam } from '../../../../../test/harness/cleanup';
-import { mintRemoteModuleCredential } from '../../../../credentials/remote_credential';
+import { beginRemoteModuleSignIn, completeRemoteModuleSignIn } from '../../../../credentials/remote_module_connect';
 import { installRemoteAdapterFromManifest } from '../install';
 import { RemoteAdapterManifestInput } from '../manifest';
 import { dispatchTriggerByIdEvent } from '../../../triggers/router';
@@ -80,6 +82,21 @@ async function serveModule(): Promise<string> {
     });
   });
   return `http://127.0.0.1:${port}/`;
+}
+
+/** A member's sign-in, as the settings route runs it: begin, the provider's
+ *  consent sending its code back, and the callback completing it. */
+async function signInAs(input: { user: string; name: string; expired?: boolean }): Promise<string> {
+  const { url } = await beginRemoteModuleSignIn({
+    teamId,
+    userId: null,
+    adapterType: 'hubspot',
+    declaredCredential: 'oauth',
+    name: input.name,
+  });
+  const state = new URL(url).searchParams.get('state') ?? '';
+  const code = fake.authorize(input.user, { expired: input.expired === true });
+  return (await completeRemoteModuleSignIn({ state, code })).credentialsId;
 }
 
 async function credentialFields(id: string): Promise<Record<string, string>> {
@@ -146,9 +163,9 @@ beforeAll(async () => {
   const manifest = RemoteAdapterManifestInput.parse({ ...(answer as object), baseUrl, authStrategy: { kind: 'bearer' } });
   await installRemoteAdapterFromManifest({ teamId, manifest, secret: SERVER_SECRET, oauthClients: { oauth: CLIENT } });
 
-  // Two users' credentials for it.
-  alice = (await mintRemoteModuleCredential({ teamId, adapterType: 'hubspot', declaredCredential: 'oauth', name: 'alice_hubspot', fields: fake.signIn('alice', { expired: true }) })).credentialsId;
-  bob = (await mintRemoteModuleCredential({ teamId, adapterType: 'hubspot', declaredCredential: 'oauth', name: 'bob_hubspot', fields: fake.signIn('bob') })).credentialsId;
+  // Two users' credentials for it, each signed in at the provider.
+  alice = await signInAs({ user: 'alice', name: 'alice_hubspot', expired: true });
+  bob = await signInAs({ user: 'bob', name: 'bob_hubspot' });
 }, 60_000);
 
 afterAll(async () => {
