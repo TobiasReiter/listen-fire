@@ -38,17 +38,17 @@ const NAME = 'listener-retire-probe';
 
 const BODY = `import { manual, \`${FAKE_CRM_ADAPTER_TYPE}\` as crm } from adapters
 
-runs = manual()
-other = manual()
-df = crm()
+runs = connect manual
+other = connect manual
+df = connect crm
 
-movement probe(go: <runs-[:\`Invocation\`]->>) {
+function probe(go: <runs-[:\`Invocation\`]->>) {
   write df-[:\`${FAKE_CRM_COMPANY_TYPE}\`]-> {
     Name: "Vireo Robotics"
   }
 }
 
-movement second(go: <other-[:\`Invocation\`]->>) {
+function second(go: <other-[:\`Invocation\`]->>) {
   write df-[:\`${FAKE_CRM_COMPANY_TYPE}\`]-> {
     Name: "Second Robotics"
   }

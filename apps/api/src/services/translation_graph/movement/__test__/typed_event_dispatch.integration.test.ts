@@ -25,7 +25,7 @@ jest.mock('../../adapters/resolve', () => {
   return { ...actual, resolveAdapter: jest.fn() };
 });
 
-import { eventAddressKey } from 'movement-lang';
+import { eventAddressKey, CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../../generated/kysely/automations/Trigger';
@@ -198,11 +198,11 @@ const NOTIFY_NEW_COMPANY = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement notify_new_company(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function notify_new_company(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    ev-[co:Companies]-> {',
   '      write chat-[:messages]-> {',
   '        channel: "#alerts"',
@@ -230,7 +230,7 @@ async function seedMovementWithAttioTrigger(teamId: TeamId): Promise<{
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: 'Notify new company', source: NOTIFY_NEW_COMPANY } as any)
+    .values({ id: movementId, team_id: teamId, name: 'Notify new company', source: NOTIFY_NEW_COMPANY, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   const triggerId = randomUUID() as TriggerId;

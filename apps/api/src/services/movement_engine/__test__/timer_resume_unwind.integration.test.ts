@@ -204,6 +204,17 @@ const PRELUDE = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
+  '',
+];
+
+// The version 3 programs below keep the spelling version 3 reads (they run on
+// the TypeScript engine, pinned to 3); the rest are in the version 5 spelling.
+const PRELUDE_V3 = [
+  'import { attio, slack } from adapters',
+  'import { acme_main, acme_slack } from credentials',
+  '',
   'crm = attio(credentials: acme_main)',
   'chat = slack(credentials: acme_slack)',
   '',
@@ -212,8 +223,8 @@ const PRELUDE = [
 // §10.3 / §10.9 — fan-out sleep inside an `if`, trailing top-level write.
 const FANOUT_THEN_TAIL = [
   ...PRELUDE,
-  'movement fanout_then_tail(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function fanout_then_tail(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    ev-[c:Contacts]-> {',
   '      await sleep(1s)',
   '      write chat-[:messages]-> {',
@@ -233,8 +244,8 @@ const FANOUT_THEN_TAIL = [
 
 const ASSIGNED_FANOUT = [
   ...PRELUDE,
-  'movement assigned_fanout(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function assigned_fanout(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    xs = ev-[c:Contacts]-> {',
   '      await sleep(1s)',
   '      return write chat-[:messages]-> {',
@@ -244,7 +255,7 @@ const ASSIGNED_FANOUT = [
   '    }',
   '    write chat-[:messages]-> {',
   '      channel: "#done"',
-  '      text: "count=${COUNT(xs)}"',
+  '      text: "count=${count(xs)}"',
   '    }',
   '  }',
   '}',
@@ -252,7 +263,7 @@ const ASSIGNED_FANOUT = [
   'listen to crm { events: ["record.created"] } fire assigned_fanout',
 ].join('\n');
 const PARALLEL_TAIL_V3 = [
-  ...PRELUDE,
+  ...PRELUDE_V3,
   'movement parallel_tail_v3(ev: <crm-[:`Webhook Event`]->>) {',
   '  r = await parallel([',
   '    () => {',
@@ -284,7 +295,7 @@ const PARALLEL_TAIL_V3 = [
 // §10.5 under language version 3 — if > parallel([…]) > fan-out. One arm holds
 // the fan-out, the other a sleep; joins close bottom-up (fan-out → combinator).
 const DEEP_NEST_V3 = [
-  ...PRELUDE,
+  ...PRELUDE_V3,
   'movement deep_nest_v3(ev: <crm-[:`Webhook Event`]->>) {',
   '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
   '    r = await parallel([',
@@ -324,8 +335,8 @@ const DEEP_NEST_V3 = [
 // §10.6 — non-join re-park: the trailing continuation ITSELF contains a sleep.
 const IF_THEN_SLEEP_TAIL = [
   ...PRELUDE,
-  'movement if_then_sleep_tail(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function if_then_sleep_tail(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    await sleep(1s)',
   '    write chat-[:messages]-> {',
   '      channel: "#alerts"',
@@ -349,8 +360,8 @@ const IF_THEN_SLEEP_TAIL = [
 // + branch exports SURVIVE — the exact mid-crash state to re-scan.
 const FANOUT_TAIL_REPARK = [
   ...PRELUDE,
-  'movement fanout_tail_repark(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function fanout_tail_repark(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    ev-[c:Contacts]-> {',
   '      await sleep(1s)',
   '      write chat-[:messages]-> {',
@@ -384,7 +395,7 @@ async function seedMovement(
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source } as any)
+    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source, language_version: opts.languageVersion ?? CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   await mintMovementVersionIfChanged({ teamId, movementId, source: opts.source, languageVersion: opts.languageVersion ?? CURRENT_LANGUAGE_VERSION });

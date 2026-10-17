@@ -198,11 +198,11 @@ const FANOUT_SLEEP = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement fanout_sleep_notify(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function fanout_sleep_notify(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    ev-[c:Contacts]-> {',
   '      await sleep(1s)',
   '      write chat-[:messages]-> {',
@@ -233,11 +233,11 @@ const FANOUT_THEN_TAIL = [
   'import { attio, slack } from adapters',
   'import { acme_main, acme_slack } from credentials',
   '',
-  'crm = attio(credentials: acme_main)',
-  'chat = slack(credentials: acme_slack)',
+  'crm = connect attio using acme_main',
+  'chat = connect slack using acme_slack',
   '',
-  'movement fanout_then_tail(ev: <crm-[:`Webhook Event`]->>) {',
-  '  if ev IS <crm-[:`Webhook Event` WHERE `action` == "record.created"]->> {',
+  'function fanout_then_tail(ev: <crm-[:`Webhook Event`]->>) {',
+  '  if (ev is <crm-[:`Webhook Event` WHERE `action` == "record.created"]->>) {',
   '    ev-[c:Contacts]-> {',
   '      await sleep(1s)',
   '      write chat-[:messages]-> {',
@@ -270,7 +270,7 @@ async function seedMovement(
   await getAutomationsQb(['movement'])
     .insertInto('movement')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source } as any)
+    .values({ id: movementId, team_id: teamId, name: opts.name, source: opts.source, language_version: CURRENT_LANGUAGE_VERSION } as any)
     .execute();
 
   await mintMovementVersionIfChanged({ teamId, movementId, source: opts.source, languageVersion: CURRENT_LANGUAGE_VERSION });
