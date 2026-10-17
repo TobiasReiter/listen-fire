@@ -27,8 +27,10 @@
 // has no cursor to resume from.
 //
 // `resolveFileRef` answers by URL: bytes never ride the envelope, so a file
-// crosses the wire only when its ref carries a fetchable `url` (the client
-// fetches it). A ref without one answers `method_not_implemented`.
+// crosses the wire only at a fetchable `url` (the client fetches it): the
+// ref's own, else — when the server can hold bytes (`exposeFile`, as
+// serve-module does) — a URL of the server's own for the stream the adapter
+// resolves. Otherwise a ref without one answers `method_not_implemented`.
 //
 // Dependency-light by design: Node `http` types only, no express.
 
@@ -37,6 +39,9 @@ import { fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROTOCOL_VERSION, RpcR
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
 import type { Adapter } from 'movement-engine/public/adapter';
+import type { ServedFile } from './served_files';
+
+import { Readable } from 'node:stream';
 import type { MethodName, RpcResponseShape, WireCredentialShape } from 'engine-contracts';
 
 /**
@@ -282,6 +287,8 @@ export async function answerAdapterRequest(
     adapter: Adapter;
     manifest: () => unknown;
     warn: (message: string) => void;
+    /** Hold a resolved file's bytes for one fetch; its URL. */
+    exposeFile?: (file: ServedFile) => string;
   },
   request: CheckedRequest,
 ): Promise<ProtocolAnswer> {
@@ -306,6 +313,18 @@ export async function answerAdapterRequest(
         status: 200,
         body: { ok: true, result: { url: ref.url, ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}) } },
       };
+    }
+    const { exposeFile } = opts;
+    if (exposeFile !== undefined) {
+      try {
+        const resolved = await call({ ref });
+        if (!isResolvedFile(resolved)) throw new Error('resolveFileRef answered no stream');
+        const contentType = resolved.contentType ?? ref.contentType;
+        const url = exposeFile({ stream: resolved.stream, ...(contentType !== undefined ? { contentType } : {}) });
+        return { status: 200, body: { ok: true, result: { url, ...(contentType !== undefined ? { contentType } : {}) } } };
+      } catch (err) {
+        return { status: 200, body: errorAnswer(method, err) };
+      }
     }
     return {
       status: 200,
@@ -480,4 +499,11 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
     typeof value === 'object' &&
     typeof Reflect.get(value, Symbol.asyncIterator) === 'function'
   );
+}
+
+/** An in-process `resolveFileRef` answer: a Node stream and its type. */
+function isResolvedFile(value: unknown): value is { stream: Readable; contentType?: string } {
+  if (value === null || typeof value !== 'object') return false;
+  const contentType: unknown = Reflect.get(value, 'contentType');
+  return Reflect.get(value, 'stream') instanceof Readable && (contentType === undefined || typeof contentType === 'string');
 }

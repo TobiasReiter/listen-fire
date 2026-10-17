@@ -3,7 +3,9 @@
 // that request — its tenant (the team header), its credential (the envelope's)
 // — so nothing of one install's call outlives it. A credential the module
 // changes (`ctx.credential.update`) rides back as the answer's
-// `credentialUpdate`, on a failure too.
+// `credentialUpdate`, on a failure too. A file whose bytes the module
+// resolves (`resolveFileRef`) is held for one fetch at a URL of the server's
+// own (`served_files.ts`).
 
 import { ADAPTER_TEAM_HEADER } from 'movement-engine/public/adapter';
 
@@ -13,6 +15,7 @@ import { METHODS, type MethodName, type RpcResponseShape, type WireCredentialSha
 import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog } from './define';
 
 import { moduleContext, noCredential } from './in_process';
+import { servedFiles, type ServedFiles } from './served_files';
 import { loadedModule, moduleManifest, type LoadedModule } from './manifest';
 import {
   UNAUTHORIZED,
@@ -38,6 +41,9 @@ export interface ModuleServerOptions {
    *  every request: protocol 2 carries none, so a served module is one
    *  install's. */
   constructionArgs?: Readonly<Record<string, string>>;
+  /** Where callers reach this server, for the URLs of the files it holds.
+   *  Default: the address each request reached it at (its Host header). */
+  publicUrl?: string;
 }
 
 function headerValue(headers: IncomingHttpHeaders, name: string): string | undefined {
@@ -118,7 +124,12 @@ async function answerModuleMethod(loaded: LoadedModule, request: CheckedRequest)
 const MODULE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>(['refreshCredential', 'invokePlugin', 'poll', 'runPeriodic']);
 
 /** One request, answered by the module built for it. */
-async function answer(options: ModuleServerOptions, req: IncomingMessage, request: CheckedRequest): Promise<ProtocolAnswer> {
+async function answer(
+  options: ModuleServerOptions,
+  req: IncomingMessage,
+  request: CheckedRequest,
+  files: ServedFiles,
+): Promise<ProtocolAnswer> {
   const { definition } = options;
   const updates: Record<string, string> = {};
   const credential = requestCredential(definition, request.credential, updates);
@@ -149,7 +160,12 @@ async function answer(options: ModuleServerOptions, req: IncomingMessage, reques
         ? await answerModuleMethod(loaded, request)
         : loaded.kind === 'adapter'
           ? await answerAdapterRequest(
-              { adapter: loaded.instance, warn: (message) => options.log.warn(message), manifest: () => moduleManifest(loaded) },
+              {
+                adapter: loaded.instance,
+                warn: (message) => options.log.warn(message),
+                manifest: () => moduleManifest(loaded),
+                exposeFile: (file) => files.expose(file, options.publicUrl ?? `http://${headerValue(req.headers, 'host') ?? '127.0.0.1'}`),
+              },
               request,
             )
           : null;
@@ -162,7 +178,9 @@ async function answer(options: ModuleServerOptions, req: IncomingMessage, reques
 
 /** The HTTP handler that serves one module over adapter protocol 2. */
 export function createModuleProtocolHandler(options: ModuleServerOptions): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const files = servedFiles();
   return async function handle(req, res) {
+    if (files.serve(req, res)) return;
     if (options.authenticate && !options.authenticate(req.headers)) {
       sendAnswer(res, UNAUTHORIZED);
       return;
@@ -172,6 +190,6 @@ export function createModuleProtocolHandler(options: ModuleServerOptions): (req:
       sendAnswer(res, read.answer);
       return;
     }
-    sendAnswer(res, await answer(options, req, read.request));
+    sendAnswer(res, await answer(options, req, read.request, files));
   };
 }

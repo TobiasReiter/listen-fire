@@ -8,7 +8,8 @@
 // production (`inProcessValidationDefault`). A line may add what its module
 // needs of the host beyond that: how its stored payload reads as fields, the
 // platform's OAuth app that refreshes its token, its dev-loop fake, its kv and
-// files. The module declares the rest —
+// files. A file the module reads out is named as the install's, as a module
+// served as a process has its files named. The module declares the rest —
 // its poll, its periodic tasks, its signed inbound — and the platform acts on
 // the declarations, so nothing here names what a module does.
 
@@ -41,6 +42,7 @@ import {
   type SecretsFamily,
 } from 'movement-engine/public/secrets';
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
+import { ownedFilesAdapter } from 'movement-engine/public/modules';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { GOOGLE_SHEETS_MANIFEST } from '@lf/google-sheets/manifest';
@@ -237,7 +239,7 @@ function platformHost(
 export function loadBuiltinModule(entry: AdapterModuleLine, install: BuiltinInstall): InProcessAdapterModule {
   const definition = entry.load();
   const baseUrlOverride = harnessBaseUrl(entry, definition, install.teamId);
-  return adapterInProcess(definition, {
+  const loaded = adapterInProcess(definition, {
     tenant: install.teamId,
     ...platformHost(entry, definition, install),
     log: logger,
@@ -245,6 +247,9 @@ export function loadBuiltinModule(entry: AdapterModuleLine, install: BuiltinInst
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
     validateResults: inProcessValidationDefault(process.env),
   });
+  // The files it reads out name this install, as a served module's do.
+  const owner = { adapterType: definition.manifest.adapterType, ...(install.credentialsId !== undefined ? { credentialsId: install.credentialsId } : {}) };
+  return { ...loaded, adapter: ownedFilesAdapter(loaded.adapter, owner) };
 }
 
 /** The manifest of a built-in on a module line, without loading it. */

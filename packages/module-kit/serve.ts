@@ -37,6 +37,8 @@ export interface ServeModuleOptions {
   stateDir?: string;
   /** The install's construction arguments, for every request. */
   constructionArgs?: Readonly<Record<string, string>>;
+  /** Where callers reach this server (behind a proxy), for file URLs. */
+  publicUrl?: string;
 }
 
 export async function serveModule(options: ServeModuleOptions): Promise<{ port: number; server: Server }> {
@@ -53,6 +55,7 @@ export async function serveModule(options: ServeModuleOptions): Promise<{ port: 
     kvFor: stateDir !== undefined ? (tenant) => fileKv(stateDir, tenant) : () => noKv,
     ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
     ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
+    ...(options.publicUrl !== undefined ? { publicUrl: options.publicUrl } : {}),
     ...(token !== undefined ? { authenticate: (headers) => headers.authorization === `Bearer ${token}` } : {}),
   });
   const server = createServer((req, res) => {
@@ -103,8 +106,8 @@ export function parseConstructionArgs(text: string): Record<string, string> {
 }
 
 /** The command line: `serve-module <module> [--port N] [--host H]`; PORT,
- *  MODULE_TOKEN, MODULE_BASE_URL_OVERRIDE, MODULE_STATE_DIR and
- *  MODULE_CONSTRUCTION_ARGS from the environment. */
+ *  MODULE_TOKEN, MODULE_BASE_URL_OVERRIDE, MODULE_STATE_DIR,
+ *  MODULE_CONSTRUCTION_ARGS and MODULE_PUBLIC_URL from the environment. */
 export async function main(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): Promise<void> {
   const args = [...argv];
   const flag = (name: string): string | undefined => {
@@ -128,6 +131,7 @@ export async function main(argv: readonly string[], env: Readonly<Record<string,
     ...(env.MODULE_CONSTRUCTION_ARGS !== undefined && env.MODULE_CONSTRUCTION_ARGS !== ''
       ? { constructionArgs: parseConstructionArgs(env.MODULE_CONSTRUCTION_ARGS) }
       : {}),
+    ...(env.MODULE_PUBLIC_URL !== undefined && env.MODULE_PUBLIC_URL !== '' ? { publicUrl: env.MODULE_PUBLIC_URL } : {}),
   });
   process.stdout.write(`listening ${served.port}\n`);
 }

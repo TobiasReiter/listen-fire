@@ -5,6 +5,8 @@ export * from './define';
 export * from './manifest';
 export * from './in_process';
 export * from './file_kv';
+export * from './files';
+export * from './served_files';
 export * from './module_server';
 export * from './serve';
 export {

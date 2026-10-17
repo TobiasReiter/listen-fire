@@ -141,7 +141,11 @@ export async function postRpc(opts: {
 
   if (!res.ok) throw new RemoteTransportError(res.status, opts.method);
 
-  const body = parseWireResult(RpcResponse, await res.json(), {
+  // Parsed here rather than by `res.json()`: its objects are made by fetch's
+  // own realm, and a caller that tells a file descriptor by its prototype
+  // (`fileDescriptorOf`) must see this realm's plain objects (a jest VM is
+  // another realm than Node's fetch).
+  const body = parseWireResult(RpcResponse, JSON.parse(await res.text()), {
     method: opts.method,
     adapter: opts.baseUrl,
   });
