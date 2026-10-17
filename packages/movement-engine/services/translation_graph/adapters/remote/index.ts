@@ -31,7 +31,7 @@
 
 import { Readable } from 'node:stream';
 
-import { isPlainObject, METHODS, WireManifestProtocolVersion } from 'engine-contracts';
+import { CREDENTIAL_REFUSED_CODE, isPlainObject, METHODS, WireManifestProtocolVersion } from 'engine-contracts';
 
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type {
@@ -399,7 +399,9 @@ export class RemoteAdapter implements Adapter {
       bound.binding.ref,
       {
         ...(bound.refresher !== undefined ? { refresher: bound.refresher } : {}),
-        isUnauthorized: (error) => error instanceof RemoteProtocolError && error.error.code === 'unauthorized',
+        // `credential_refused`: the module says the provider refused the token.
+        isUnauthorized: (error) =>
+          error instanceof RemoteProtocolError && (error.error.code === 'unauthorized' || error.error.code === CREDENTIAL_REFUSED_CODE),
       },
       (record) =>
         send({ name: bound.declaration.name, fields: declaredFields(bound.declaration, record.fields) }, (update) =>

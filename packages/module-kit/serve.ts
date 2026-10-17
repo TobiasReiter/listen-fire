@@ -7,7 +7,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { resolve as resolvePath } from 'node:path';
 
-import type { ModuleDefinition, ModuleLog, ModuleModels } from './define';
+import { moduleSlug, type ModuleDefinition, type ModuleLog, type ModuleModels, type ModuleSpend } from './define';
+import { hostModels } from './host_models';
 
 import { fileKv } from './file_kv';
 import { refusingFiles, refusingKv, refusingModels } from './in_process';
@@ -47,9 +48,9 @@ export interface ServeModuleOptions {
   /** Where callers reach this server (behind a proxy), for file URLs.
    *  Default: the address it binds. */
   publicUrl?: string;
-  /** Models to lend the module (an embedder's). The command line lends none,
-   *  so a module call that asks one is refused by name there. */
-  models?: ModuleModels;
+  /** Models to lend the module (an embedder's), or the host's models door
+   *  (`hostModels`). Absent: a module call that asks one is refused by name. */
+  models?: ModuleModels | ((spend: ModuleSpend) => ModuleModels);
 }
 
 export async function serveModule(options: ServeModuleOptions): Promise<{ port: number; server: Server }> {
@@ -154,6 +155,16 @@ export async function main(argv: readonly string[], env: Readonly<Record<string,
       ? { constructionArgs: parseConstructionArgs(env.MODULE_CONSTRUCTION_ARGS) }
       : {}),
     ...(env.MODULE_PUBLIC_URL !== undefined && env.MODULE_PUBLIC_URL !== '' ? { publicUrl: env.MODULE_PUBLIC_URL } : {}),
+    // A host that serves the models door names itself (LF_HOST_URL) and the
+    // token its doors take from this process (LF_HOST_TOKEN).
+    ...(env.LF_HOST_URL !== undefined && env.LF_HOST_URL !== ''
+      ? {
+          models: hostModels({
+            url: `${env.LF_HOST_URL.replace(/\/$/, '')}/api/public/adapter/${moduleSlug(definition.name)}/models`,
+            headers: env.LF_HOST_TOKEN !== undefined && env.LF_HOST_TOKEN !== '' ? { authorization: `Bearer ${env.LF_HOST_TOKEN}` } : {},
+          }),
+        }
+      : {}),
   });
   process.stdout.write(`listening ${served.port}\n`);
 }

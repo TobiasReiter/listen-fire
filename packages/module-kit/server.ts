@@ -211,6 +211,10 @@ export interface CheckedRequest {
    *  gate, not a transform. */
   params: unknown;
   credential?: WireCredentialShape;
+  /** Every declared credential the host sent (protocol 2's `credentials`). */
+  credentials?: WireCredentialShape[];
+  /** The install's declared settings. */
+  settings?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -257,7 +261,16 @@ export async function readProtocolRequest(
   if (!validated.success) {
     return { ok: false, answer: { status: 200, body: errorEnvelope('bad_request', describeParamsError(method, validated.error), false) } };
   }
-  return { ok: true, request: { method, params, ...(parsed.credential !== undefined ? { credential: parsed.credential } : {}) } };
+  return {
+    ok: true,
+    request: {
+      method,
+      params,
+      ...(parsed.credential !== undefined ? { credential: parsed.credential } : {}),
+      ...(parsed.credentials !== undefined ? { credentials: parsed.credentials } : {}),
+      ...(parsed.settings !== undefined ? { settings: parsed.settings } : {}),
+    },
+  };
 }
 
 /** The `manifest` answer for an adapter, synthesised from its readonly props. */
