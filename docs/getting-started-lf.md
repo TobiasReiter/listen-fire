@@ -1,6 +1,6 @@
 # Getting started with `lf`
 
-`lf` runs movements from a project folder on your machine. Build it with `cargo build --release -p lf` (the binary is `target/release/lf`), or install a release.
+`lf` runs movements from a project folder on your machine. Install it with `cargo install listen-fire`, build it with `cargo build --release -p listen-fire` (the binary is `target/release/lf`), or install a release.
 
 ## 1. Make a project
 

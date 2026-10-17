@@ -68,7 +68,7 @@ pub struct TokenCounts {
     pub cache_creation: u64,
 }
 
-static PRICES_TEXT: &str = include_str!("../../../packages/movement-engine/lib/models/prices.json");
+static PRICES_TEXT: &str = include_str!("../data/prices.json");
 
 fn prices() -> &'static BTreeMap<String, Price> {
     static PRICES: OnceLock<BTreeMap<String, Price>> = OnceLock::new();
@@ -141,6 +141,14 @@ pub fn provider_key(credentials: &Credentials) -> Result<ProviderKey, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The published crate carries its own copy of the price table (a crate
+    /// cannot include a file outside itself): it is the TypeScript one.
+    #[test]
+    fn the_crates_price_table_is_the_engine_packages() {
+        let theirs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/movement-engine/lib/models/prices.json")).unwrap();
+        assert_eq!(PRICES_TEXT, theirs, "copy packages/movement-engine/lib/models/prices.json to crates/lf/data/prices.json");
+    }
 
     /// The names the TypeScript registry holds as chat models, in its order.
     fn registry_chat_models() -> Vec<String> {

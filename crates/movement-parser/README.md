@@ -1,4 +1,4 @@
-# movement-parser
+# listen-fire-parser
 
 The movement-language parser and expression lowering in Rust, compiled to
 WASM and called from TypeScript through `packages/movement-lang/wasm/loader.ts`.
@@ -39,7 +39,7 @@ No wasm-bindgen and no wasm-pack: the crate exports a hand-written C ABI.
 
 ```bash
 scripts/build-movement-wasm.sh  # release builds of both artifacts (below), each one's sha256 and size
-cargo test -p movement-parser   # native unit tests
+cargo test -p listen-fire-parser   # native unit tests
 ```
 
 Two artifacts are committed in `packages/movement-lang/wasm/`, so the pnpm

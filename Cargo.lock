@@ -561,36 +561,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lf"
-version = "0.11.0"
-dependencies = [
- "base64",
- "bytes",
- "getrandom 0.4.3",
- "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
- "indexmap",
- "jiff",
- "movement-checker",
- "movement-engine",
- "movement-parser",
- "rusqlite",
- "rustls",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tokio",
- "tokio-postgres",
- "tokio-rustls",
- "url",
- "uuid",
- "webpki-roots",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -614,6 +584,72 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "listen-fire"
+version = "0.11.0"
+dependencies = [
+ "base64",
+ "bytes",
+ "getrandom 0.4.3",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "indexmap",
+ "jiff",
+ "listen-fire-checker",
+ "listen-fire-engine",
+ "listen-fire-parser",
+ "rusqlite",
+ "rustls",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tokio",
+ "tokio-postgres",
+ "tokio-rustls",
+ "url",
+ "uuid",
+ "webpki-roots",
+]
+
+[[package]]
+name = "listen-fire-checker"
+version = "0.11.0"
+dependencies = [
+ "indexmap",
+ "jiff",
+ "jiff-tzdb",
+ "listen-fire-parser",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "listen-fire-engine"
+version = "0.11.0"
+dependencies = [
+ "icu_normalizer",
+ "jiff",
+ "jiff-tzdb",
+ "listen-fire-checker",
+ "listen-fire-parser",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "listen-fire-parser"
+version = "0.11.0"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -662,42 +698,6 @@ dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "movement-checker"
-version = "0.1.0"
-dependencies = [
- "indexmap",
- "jiff",
- "jiff-tzdb",
- "movement-parser",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "movement-engine"
-version = "0.1.0"
-dependencies = [
- "icu_normalizer",
- "jiff",
- "jiff-tzdb",
- "movement-checker",
- "movement-parser",
- "serde",
- "serde_json",
- "url",
-]
-
-[[package]]
-name = "movement-parser"
-version = "0.1.0"
-dependencies = [
- "indexmap",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -913,6 +913,14 @@ dependencies = [
  "hashlink",
  "libsqlite3-sys",
  "smallvec",
+]
+
+[[package]]
+name = "rust-embed-example"
+version = "0.0.0"
+dependencies = [
+ "listen-fire",
+ "serde_json",
 ]
 
 [[package]]

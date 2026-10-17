@@ -1,12 +1,20 @@
 [package]
-name = "movement-parser"
-version = "0.1.0"
-edition = "2024"
-publish = false
-license = "Apache-2.0"
-description = "The movement-language parser, exposed to TypeScript through a C ABI over WASM"
+name = "listen-fire-parser"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "The listen-fire movement language parser: source to AST, expression lowering and the catalog snapshot"
+readme = "README.md"
+keywords = ["movement", "automation", "dsl", "workflow", "listen-fire"]
+categories = ["parser-implementations", "compilers"]
+include = ["src/**/*", "Cargo.toml", "README.md"]
 
 [lib]
+name = "movement_parser"
 # cdylib is the WASM artifact; rlib lets `cargo test` link the crate natively.
 crate-type = ["cdylib", "rlib"]
 

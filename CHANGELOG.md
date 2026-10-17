@@ -50,6 +50,11 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-crates
+
+- The Rust crates are ready to publish (not published): `listen-fire-parser`, `listen-fire-checker`, `listen-fire-engine`, and the facade `listen-fire`, which re-exports them and installs `lf` (`cargo install listen-fire`; crates/lf is that crate, its CLI dependencies behind the default `cli` feature). All four at 0.11.0; `cargo publish --dry-run` of the four together is green. `cargo build -p lf` is now `-p listen-fire`.
+- Embedding the engine in Rust: `listen_fire::engine::embed` checks a movement and runs/resumes it on an event, its host families as traits (store, models, judge, files, adapters, modules, secrets, clock and ids, trace) over the same requests the WASM boundary carries. [`examples/rust-embed`](examples/rust-embed) is a toy game loop running a movement when a monster is slain.
+
 ### r-embed
 
 - Embedding: a product can let its customers write and run movements in its own process ([docs/embedding.md](docs/embedding.md), [`examples/embed-saas`](examples/embed-saas)). New entry `@listen-fire/engine/public/embed` (the in-process host, adapter introspection, the listen routing table, priced model clients); `RunInput.limits` carries the segment limits from a TypeScript host, and `movement.wasm` is rebuilt so they hold.

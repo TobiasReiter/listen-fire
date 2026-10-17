@@ -1,6 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["crates/lf", "crates/movement-checker", "crates/movement-engine", "crates/movement-parser"]
+members = ["crates/lf", "crates/movement-checker", "crates/movement-engine", "crates/movement-parser", "examples/rust-embed"]
+
+# One release version for the toolchain: the three library crates and the
+# `listen-fire` facade (crates/lf, which installs `lf`) publish together.
+[workspace.package]
+version = "0.11.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/listen-fire/listen-fire"
+homepage = "https://github.com/listen-fire/listen-fire"
+rust-version = "1.85"
 
 # The committed WASM artifact is built with this profile; the CI check
 # rebuilds it and compares bytes, so changing it means rebuilding and

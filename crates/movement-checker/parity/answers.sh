@@ -10,4 +10,4 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
 WORK="${PARITY_WORK:-$ROOT/target/parity}"
 (cd "$ROOT/packages/movement-lang" && node -r ../../apps/api/node_modules/ts-node/register/transpile-only "$HERE/answer_reference.ts" "$WORK")
-cargo run --quiet --release -p movement-checker --example answer_parity -- "$WORK"
+cargo run --quiet --release -p listen-fire-checker --example answer_parity -- "$WORK"
