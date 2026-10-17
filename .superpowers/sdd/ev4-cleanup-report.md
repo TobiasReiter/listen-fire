@@ -1,0 +1,6 @@
+# ev4-cleanup report
+
+1. checks:corpus: the readers pass (HARVEST_CORPUS set) skips the upgrade-rate floor; the final pass still enforces it (85.8% vs floor 85.8%). Test-only version 99 accepted in checks_regression and programs_regression. Full `pnpm checks:corpus` exit 0, no FAIL line, no v99 warning from checks_regression.
+2. Fake OAuth: the fake store is already a SQLite file (survives a stack restart in the same worktree); the real gap was the shared dev database keeping a credential the (fresh/reset) store never issued. Reproduced (invalid_grant), then `dev:oauth setup` re-signs in place when the provider does not know the stored refresh token (prints resignedIn). Proved: setup, stack restart, expire, run: refresh ok.
+3. inbound_work: drains are scoped to the test's team (drainUntilIdle teamId). 17/17 passed twice in a row and once after the work drain+store suites (integration, test DB, one at a time).
+4. Dev PDF with text layer: apps/fake-channels/assets/dev-document.pdf (jsPDF-generated); `dev:inject whatsapp --media-type document` seeds it; `dev:whatsapp setup` adds wa_document_intake. Proof: inject, blob URL bytes, file-text extractPdfText returns the three text lines with no OCR. The LLM extractOne step could not complete (no Anthropic key in the dev loop: 401).
