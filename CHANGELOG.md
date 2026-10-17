@@ -418,9 +418,11 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 
 ### Changed
 
-- The API's WebAssembly artifact (`movement.wasm`) is 1,527,856 bytes gzipped with version 5's
-  surface and its refusals, under CI's failure line of 1,572,864 bytes (1.5 MiB) by 44,008 bytes.
-  The browser's parser artifact (`movement_parser.wasm`) is 361,029 bytes gzipped.
+- The API's WebAssembly artifact (`movement.wasm`) is 1,266,053 bytes gzipped, down from
+  1,527,856: the Rust engine runs only version 5 and later, so what it kept to answer as the
+  TypeScript engine does is gone (admission, the expression-evaluation export, syntax trees in
+  parked state). That is under CI's failure line of 1,572,864 bytes (1.5 MiB) by 306,811 bytes.
+  The browser's parser artifact (`movement_parser.wasm`) is 362,737 bytes gzipped.
 - **A program that runs on the Rust engine is checked by the Rust checker.** Every run on the Rust
   engine (an automation pinned to version 5 or later, any run under `MOVEMENT_ENGINE=rust`, every
   `lf` run, and their resumes) is checked inside the engine, with no `check.program` request to the
