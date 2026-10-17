@@ -13,35 +13,6 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ## [Unreleased]
 
-### sr-bugs (for the integrator's consolidated version 5 entry)
-
-- Version 5: an event whose system the catalog does not describe is still a record. Written into a json field (whole, inside a value, through a name, or handed back by a closure) it is refused at save (MOV_WRITE_FIELD_TYPE), as a described one is; before, the run wrote the engine's own description of it. A second name for it keeps the read refusal (MOV_EVENT_UNDESCRIBED). Versions 1–4 unchanged.
-- Version 5: a file-level value holds a value only (new MOV_FILE_VALUE_RUNS). A call to a function or a plugin (written whole or nested in the value), a write, an extraction, a walk, a wait, a callback or a node there is refused at save. The engines already failed such a run; a file's values are worked out before every run and again on every resume, so a call there would run, and spend, each time. A literal, a built-in's value, a closure and a construction stay.
-- The Rust engine runs an extraction call's written `model` when the run carries no model list (a custom embedder), instead of refusing it: the checker held the model to nothing, so the host's model call answers for it.
-
-### shrink-routes (for the integrator's consolidated version 5 entry)
-
-- The Rust engine runs only language version 5 and later. A run pinned to 1–4 sent to it is refused
-  by name (`language_version_runs_on_typescript`) before anything is asked.
-- Admission is gone: the checker is the one gate. A construct the Rust engine does not run now fails
-  the run where it is met (`MOVENG_UNSUPPORTED`), not before the run starts.
-- A parked state the Rust engine cannot read fails its resume, naming why.
-- For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
-  exports `callEvalExpression`. `MOVEMENT_ENGINE=rust` no longer sends single expressions of a
-  TypeScript run to Rust.
-- A run's engine is its pinned language version, with no fallback: 5 and later the Rust engine,
-  1–4 the TypeScript engine. The TypeScript engine no longer runs version 5. A version-5 run the
-  Rust engine will not run fails with `MOVENG_UNSUPPORTED`, naming the reason.
-- A version-5 run the TypeScript engine parked (under the old emergency switch) cannot resume and
-  fails saying so; a version-4 run a Rust park left resumes on the TypeScript engine.
-- Self-hosting: `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`, `MOVEMENT_ENGINE_DRY_RUN_EVERY` and
-  `MOVEMENT_ENGINE_V5_ON_TS` are retired, and boot refuses any of them set. The admission dry run,
-  its daily roll-up and `pnpm engine:refusals` are gone. `GET /api/v1/system/engine-stats` answers
-  only the Rust segments' counters.
-- The `trigger_run.engine_reason` column is dropped (it was always null), by an ordinary migration
-  operators run normally; the operator run views no longer carry `engineReason`. `engine` stays.
-- `lf` refuses a project, or a parked run, pinned below version 5, saying to run `lf upgrade`.
-
 Language version 5, **Dancing Wren**, arrives. New automations are written in it. Every change in
 it is a refusal, so an automation that uses a retired form has an error under 5, stays on its
 version, shows Review and behaves exactly as before; rewrite the form and upgrade (`lf upgrade`,
@@ -62,12 +33,6 @@ for any file or a program on stdin. `AT(x, "k")` is rewritten to `x["k"]`, which
 refusal (`x.k` would read the field). A narrowing a host registers matches a hop's WHERE however
 the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
-
-### shrink-park (for the integrator's consolidated version 5 entry)
-
-- **A paused version 5 run resumes on the library text it paused with.** Before, a resumed run read the libraries it imports from the team's saved files as they were at the resume, so an edit while it waited reached the rest of the run (code already parked kept its own copy). Now the pause pins every library the run linked, and the whole resumed run reads those texts. The movement's own text was already pinned to its version. Versions 1–4 are unchanged.
-- **Park state contract version 2** (docs/contracts/park-state.md), written and read only by the Rust engine (language version 5 on). A paused run keeps all of its run state as before; code (a closure, a kept walk, a body-local node declaration, a run-time arm) is named by its place in the pinned program instead of carried as its syntax tree, and a collection op by its span. The TypeScript engine (versions 1–4) writes and reads version 1, and refuses a version 2 state by name. No version 2 state predates this (version 5 is unreleased).
-- **Library texts a pause pins are kept once, by hash.** Self-hosted Postgres gains `automations.park_library_source` (migration `20261016_120000_park_library_source`); `lf` gains a `park_library_source` table in its state file. An embedder may serve the new optional host family `park.sources` (`save`, `load`); without it, a pause carries each library's text itself.
 
 ### Language version 5, Dancing Wren: what breaks
 
@@ -256,8 +221,18 @@ for byte; on text already in the version 5 spelling it changes nothing.
   values is what either arm may be: `IF c THEN p.Name ELSE p.Email END` may be absent, so a
   required field refuses it (`MOV_ABSENT_REQUIRED`). Why: each was untyped and ran unchecked. Under
   3 and 4 what this refuses is an upgrade warning; a closure value is called only from 5.
+- **An undescribed event written into a json field is refused** (from version 5). An event whose system the catalog does not describe is still a record. Written into a json field (whole, inside a value, through a name, or handed back by a closure) it is refused at save (MOV_WRITE_FIELD_TYPE), as a described one is; before, the run wrote the engine's own description of it. A second name for it keeps the read refusal (MOV_EVENT_UNDESCRIBED). Versions 1–4 unchanged.
+- **A file-level value holds a value only** (`MOV_FILE_VALUE_RUNS`, from version 5). A call to a function or a plugin (written whole or nested in the value), a write, an extraction, a walk, a wait, a callback or a node there is refused at save. The engines already failed such a run; a file's values are worked out before every run and again on every resume, so a call there would run, and spend, each time. A literal, a built-in's value, a closure and a construction stay.
+- **A walk inside an expression off a record that may be absent is refused too** (`MOV_ABSENT_REQUIRED`,
+  from version 5): `count(found-[c:company]->)`, `exists(found-[c:company]->)`, a hop read in a write
+  field (`found-[c:company]->.name`), a hop in an interpolation or a condition, where `found` is an
+  `extractOne(…)` answer, a `match` that may find nothing, an unguarded pick. Why: the run fails at the
+  hop when the record is absent, as it does for a block, and the checker said nothing. `exists(found)`
+  has no hop and answers false for an absent record, so it is allowed. Guard the walk:
+  `if (found != null) { … }`. Under 1–4 nothing changes; a move up across 5 is an upgrade warning,
+  which holds the pin.
 
-### shrink-parity: version 5 runs as Rust does, not as JavaScript did
+### Language version 5, Dancing Wren: it runs as Rust does, not as JavaScript did
 
 Version 5 runs only on the Rust engine, so the machinery that copied JavaScript's quirks is gone.
 Each line is a difference a version 5 run can show; versions 1 to 4 are unchanged.
@@ -319,7 +294,6 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - **A map keeps its keys in the order they were first set**, a number-like key included:
   `{ z: 0, "10": 1, "2": 2 }` lists `z`, `10`, `2` (JavaScript listed `2`, `10`, `z`). TEXT.SERIALISE
   still sorts keys, as texts: `"10"` before `"2"`.
-<!-- shrink-parity:end -->
 
 ### Language version 5, Dancing Wren: new
 
@@ -370,6 +344,39 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   (`c-[f:Resources]-> { … f.URL … }`), its landing typed with `Name`, `URL` and `Type`. The
   adapter matches it by its reserved address, so a team's ontology edge named `Resources` stays
   the ontology's.
+
+### Language version 5, Dancing Wren: where it runs, and pauses
+
+- **A run's engine is its pinned language version, with no fallback.** Version 5 and later run on
+  the Rust engine, 1 to 4 on the TypeScript engine. The Rust engine refuses a run pinned below 5
+  by name (`language_version_runs_on_typescript`) before it asks anything, and the TypeScript
+  engine no longer runs version 5.
+- **The checker is the one gate.** The Rust engine no longer screens a program before it runs
+  (admission is gone). A construct it does not run fails the run where it is met
+  (`MOVENG_UNSUPPORTED`, naming the reason), possibly after earlier writes; a checked program that
+  reaches one is a checker or engine bug, and a test runs every version 5 program in the repository
+  to catch it.
+- A parked state the Rust engine cannot read fails its resume, naming why. A version 5 run the
+  TypeScript engine parked (under the old emergency switch) cannot resume and fails saying so; a
+  version 4 run a Rust park left resumes on the TypeScript engine.
+- The Rust engine runs an extraction call's written `model` when the run carries no model list (a
+  custom embedder), instead of refusing it: the checker held the model to nothing, so the host's
+  model call answers for it.
+- A host in any process zone runs version 5 alike: a date-time with no offset is UTC, so the shim
+  sends no zone, and a process under a zone `Intl` cannot name (`TZ=GMT+3`) no longer fails its runs.
+- **A paused version 5 run resumes on the library text it paused with.** Before, a resumed run read the libraries it imports from the team's saved files as they were at the resume, so an edit while it waited reached the rest of the run (code already parked kept its own copy). Now the pause pins every library the run linked, and the whole resumed run reads those texts. The movement's own text was already pinned to its version. Versions 1–4 are unchanged.
+- **Park state contract version 2** (docs/contracts/park-state.md), written and read only by the Rust engine (language version 5 on). A paused run keeps all of its run state as before; code (a closure, a kept walk, a body-local node declaration, a run-time arm) is named by its place in the pinned program instead of carried as its syntax tree, and a collection op by its span. The TypeScript engine (versions 1–4) writes and reads version 1, and refuses a version 2 state by name. No version 2 state predates this (version 5 is unreleased).
+- **Library texts a pause pins are kept once, by hash.** Self-hosted Postgres gains `automations.park_library_source` (migration `20261016_120000_park_library_source`); `lf` gains a `park_library_source` table in its state file. An embedder may serve the new optional host family `park.sources` (`save`, `load`); without it, a pause carries each library's text itself.
+- `lf` refuses a project, or a parked run, pinned below version 5, saying to run `lf upgrade`.
+- Self-hosting: `MOVEMENT_ENGINE`, `MOVEMENT_ENGINE_FALLBACK`, `MOVEMENT_ENGINE_DRY_RUN_EVERY` and
+  `MOVEMENT_ENGINE_V5_ON_TS` are retired, and boot refuses any of them set. The admission dry run,
+  its daily roll-up and `pnpm engine:refusals` are gone. `GET /api/v1/system/engine-stats` answers
+  only the Rust segments' counters.
+- Self-hosting: the `trigger_run.engine_reason` column is dropped (it was always null), by an
+  ordinary migration operators run normally; the operator run views no longer carry
+  `engineReason`. `engine` stays.
+- For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
+  exports `callEvalExpression`.
 
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
@@ -1085,17 +1092,6 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   through it.
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
-
-### shrink-absent
-
-- **A walk inside an expression off a record that may be absent is refused too** (`MOV_ABSENT_REQUIRED`,
-  from version 5): `count(found-[c:company]->)`, `exists(found-[c:company]->)`, a hop read in a write
-  field (`found-[c:company]->.name`), a hop in an interpolation or a condition, where `found` is an
-  `extractOne(…)` answer, a `match` that may find nothing, an unguarded pick. Why: the run fails at the
-  hop when the record is absent, as it does for a block, and the checker said nothing. `exists(found)`
-  has no hop and answers false for an absent record, so it is allowed. Guard the walk:
-  `if (found != null) { … }`. Under 1–4 nothing changes; a move up across 5 is an upgrade warning,
-  which holds the pin.
 
 ## [v0.11.0] - 2026-10-12
 
