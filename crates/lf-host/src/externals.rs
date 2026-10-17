@@ -360,7 +360,8 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
     let served: Vec<String>;
     let command_line = match &external.manifest.module {
         Some(module) => {
-            served = [serve_module_command(project, name)?, vec![module.clone()]].concat();
+            let module = bundled_module(module).unwrap_or_else(|| module.clone());
+            served = [serve_module_command(project, name)?, vec![module]].concat();
             Some(served.as_slice())
         }
         None => external.manifest.command.as_deref(),
@@ -408,6 +409,27 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
     Ok((format!("http://127.0.0.1:{port}/"), Some(child)))
 }
 
+/// Where the release's built-in modules live: `LF_MODULES_DIR`, else
+/// `<prefix>/share/lf/modules` for a binary at `<prefix>/bin/lf` (what
+/// install.sh lays down), else `modules/` beside the binary.
+fn bundled_modules_root() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("LF_MODULES_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let bin = exe.parent()?;
+    [bin.parent()?.join("share/lf/modules"), bin.join("modules")].into_iter().find(|candidate| candidate.is_dir())
+}
+
+/// `@lf/<name>` names a built-in module of the release: its folder in the
+/// bundle, or None when this install has no such module (the name then goes
+/// to serve-module as written, so a project's own node_modules still works).
+fn bundled_module(module: &str) -> Option<String> {
+    let name = module.strip_prefix("@lf/")?;
+    let folder = bundled_modules_root()?.join(name);
+    folder.is_dir().then(|| folder.display().to_string())
+}
+
 /// How a `module` external is served: `LF_SERVE_MODULE` when set, else the
 /// module kit's `serve-module` as the TypeScript lf finds it
 /// (`require.resolve('module-kit/bin/serve-module.cjs')`): the project's
@@ -428,6 +450,11 @@ fn serve_module_command(project: &Project, external: &str) -> Result<Vec<String>
             .find(|path| path.is_file())
             .map(|path| vec!["node".to_string(), path.display().to_string()])
     };
+    // The modules bundle a release installs beside the binary: module-kit in
+    // its node_modules, each module a folder beside it.
+    if let Some(command) = bundled_modules_root().and_then(|root| script(&root)) {
+        return Ok(command);
+    }
     let from_binary = std::env::current_exe().ok().and_then(|exe| exe.canonicalize().ok());
     let bases = project.root.ancestors().chain(from_binary.iter().flat_map(|exe| exe.ancestors().skip(1)));
     for base in bases {

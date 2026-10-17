@@ -3,6 +3,7 @@
 //! `lf-host` until it replaces the TypeScript `lf` (apps/cli), whose commands,
 //! project format, state file and output it keeps.
 //!
+//!   lf-host init [dir]                       scaffold a starter project
 //!   lf-host check [--dir <project>]          the TypeScript `lf check`
 //!   lf-host run --event <file> [--dry-run]   route an event to its listens and run each
 //!   lf-host resume [<run-id>]                step a parked run, or drain due work and every parked run
@@ -48,6 +49,7 @@ mod file_ref;
 mod http;
 mod http_out;
 mod inbound;
+mod init;
 mod json;
 mod llm_calls;
 mod models;
@@ -78,7 +80,7 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
+const USAGE: &str = "usage: lf-host <init|check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
        lf-host run --event <file.json> [--dry-run]
        lf-host run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
        lf-host resume [<run-id>]
@@ -90,6 +92,7 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|serve|c
        lf-host --contract-secrets <secrets file | env>
        lf-host --contract-doors
        lf-host --project-schema
+  init      scaffold a starter project in the folder (default: the current one): lf.yaml, a movement, .gitignore
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
   run       route the event file's event to the listens it matches and run each (as `lf run --event`)
@@ -107,11 +110,7 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|serve|c
   --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
   --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
-{CREDENTIAL_USAGE}
-not yet here (the TypeScript lf has them): init";
-
-/// The commands the TypeScript lf has that this binary does not yet.
-const NOT_YET: &[&str] = &["init"];
+{CREDENTIAL_USAGE}";
 
 struct Args {
     command: Option<String>,
@@ -243,6 +242,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         Ok(project)
     };
     match command.as_str() {
+        "init" => init::run(&args.rest.first().map(PathBuf::from).unwrap_or_else(|| args.dir.clone()), &mut out),
         "check" => check::run(&load()?, &mut out).await,
         "catalog" => match check::open_checking(&load()?).await? {
             check::Opened::Ready(checking) => {
@@ -321,10 +321,6 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         "cancel" => {
             let project = load()?;
             serve::cancel_command(&store_of(&args, &project)?, args.rest.first().map(String::as_str), args.reason.as_deref(), &mut out).await
-        }
-        other if NOT_YET.contains(&other) => {
-            eprintln!("lf-host: `{other}` is not in lf-host yet; use the TypeScript lf for it");
-            Ok(2)
         }
         other => {
             eprintln!("unknown command \"{other}\"\n{}", USAGE.replace("{CREDENTIAL_USAGE}", credential_cmd::USAGE));

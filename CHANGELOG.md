@@ -53,6 +53,9 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 ### r-deploy
 
 - A container image for the Rust `lf` (`deploy/lf/`): `lf-host serve` for the webhook and callback doors and `lf-host drain --until-idle --max-seconds N` for workers, on the Postgres store (`LF_STORE_URL`, TLS). A compose file for a local trial and a page on scale-from-zero platforms. `serve` listens on the address `LF_BIND` names (default loopback).
+### r-dist
+
+`lf` ships as a download. Tagging `lf-v<version>` builds `lf` for macOS (arm64, x64) and Linux (x64, arm64, static) and attaches the archives and `SHA256SUMS` to a GitHub release (`.github/workflows/lf-release.yml`); `scripts/dist/install.sh` verifies the checksum and installs to `~/.local` (or `--system` for `/usr/local`). `lf init [dir]` scaffolds a starter project (`lf.yaml`, one movement that checks clean, `.gitignore` for `.lf/` and secrets). Built-in modules ride in each archive (`share/lf/modules`, found beside the binary or at `LF_MODULES_DIR`); an external names one as `module: "@lf/dealroom"`. Modules are TypeScript, so running one needs node.
 
 ### lfr-upgrade
 
