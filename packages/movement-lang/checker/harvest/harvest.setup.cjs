@@ -258,6 +258,7 @@ jest.mock(RUST_CHECK, () => {
         ...(options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
         snapshot: plain(snapshot),
         diagnostics: JSON.parse(canonical(diagnostics)),
+        file: testFile,
       });
     } catch (e) {
       // A text the TypeScript parse refuses is not a check record.
@@ -295,7 +296,9 @@ jest.mock(CHECK, () => {
         ...(options && options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {}),
         snapshot,
         diagnostics: JSON.parse(canonical(result.diagnostics)),
-        ...(notes.length > 0 ? { note: notes.join('; '), file: testFile } : {}),
+        ...(notes.length > 0 ? { note: notes.join('; ') } : {}),
+        // Where the text lives: the pin holds only its hash (../../conformance/checks_pin.ts).
+        file: testFile,
       });
     } catch (e) {
       records.push({ harvestError: String(e && e.stack ? e.stack : e), file: testFile });

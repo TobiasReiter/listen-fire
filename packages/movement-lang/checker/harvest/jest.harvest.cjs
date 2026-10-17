@@ -3,9 +3,11 @@
 // conformance corpora, under their own language version), `current` (this
 // package's own tests, under the current version), `api-v4` (the engine's
 // version-4 conformance corpus in apps/api) or `api-current` (the engine's own
-// tests in apps/api, under the current version); HARVEST_OUT names the JSON
+// tests in apps/api, under the current version), or `readers` / `api-readers`
+// (below); HARVEST_OUT names the JSON
 // lines file to append to. ./build_fixture.cjs folds the output into the
-// checks fixture. From packages/movement-lang:
+// checks pin; ./harvest.sh runs every corpus and the fold. From
+// packages/movement-lang:
 //
 //   HARVEST_CORPUS=v1 HARVEST_OUT=/tmp/checks.jsonl \
 //     node ../../apps/api/node_modules/jest/bin/jest.js \
@@ -26,6 +28,12 @@ const CORPORA = {
   current: { root: PACKAGE, config: 'jest.config.borrowed.cjs' },
   'api-v4': { root: API, config: 'src/test/jest-conformance-v4.config.ts' },
   'api-current': { root: API, config: 'src/test/jest-unit.config.ts', testMatch: [ENGINE_TESTS] },
+  // The tests that read the assembled corpus (CHECKS_CORPUS=1) and check
+  // programs of their own made from it: the upgrade loop's rewrites and the
+  // engine oracles' programs respelled to version 5. ./harvest.sh runs them
+  // second, over the corpus the first pass assembled.
+  readers: { root: PACKAGE, config: 'jest.config.borrowed.cjs', testMatch: ['<rootDir>/checker/__test__/upgrade_corpus.unit.test.ts'] },
+  'api-readers': { root: API, config: 'src/test/jest-unit.config.ts', testMatch: ['<rootDir>/src/services/movement_engine/__test__/reachability.unit.test.ts'] },
 };
 
 const corpus = process.env.HARVEST_CORPUS;
