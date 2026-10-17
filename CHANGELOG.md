@@ -38,6 +38,10 @@ for byte; on text already in the version 5 spelling it changes nothing.
 
 - `lf-host upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.
 
+### r-docs
+
+- [Getting started with `lf`](docs/getting-started-lf.md): init, write, connect a module, add a credential, run, serve. The handbook chapters and `examples/lf-acme` already read in the version 5 surface and check clean.
+
 ### Language version 5, Dancing Wren: what breaks
 
 - **A field read off text is refused** (`MOV_TEXT_HAS_NO_FIELDS`, from version 5). `t.Name` where
