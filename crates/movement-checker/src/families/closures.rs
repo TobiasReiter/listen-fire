@@ -534,12 +534,15 @@ impl Checker<'_> {
         } else {
             vec![as_value(element.clone())]
         };
-        let (returns, shape) = match &op.r#fn {
+        // `kept_present`: a FILTER's closure keeps only members that are there (`keepsPresent`).
+        let (returns, shape, kept_present) = match &op.r#fn {
             ArmExpression::Closure { closure, span } => {
                 if closure.params.len() != arity {
                     self.report_arm_arity(spelling, arity, closure.params.len(), closure.params.first().map(|p| p.name.as_str()), *span);
                 }
-                let (returned, suspends) = self.check_closure_supplied(closure, scope, None, &format!("the function for '{spelling}'"), arity, &supplied);
+                let keeps = if op.op == CollectionOp::Filter { closure.params.first().map(|p| p.name.as_str()) } else { None };
+                let given = crate::checker::Supplied { count: arity, types: &supplied, keeps };
+                let (returned, suspends) = self.check_closure_supplied(closure, scope, None, &format!("the function for '{spelling}'"), given);
                 if suspends && before(self.version, 3) {
                     self.report(
                         codes::COLLECTION_OP_SUSPENDS,
@@ -563,7 +566,7 @@ impl Checker<'_> {
                 self.check_members_fit_params(op, spelling, &callee, &bound, &members);
                 self.absorb_suspend(suspends);
                 let returns = Some(!returned.returns.is_empty() || closure.return_type.is_some());
-                (returns, self.closure_returns(closure, returned.value, scope))
+                (returns, self.closure_returns(closure, returned.value, scope), returned.kept_present)
             }
             ArmExpression::Ref { name, span } => {
                 let returns = self.check_named_arm(name, *span, spelling, scope, arity);
@@ -571,7 +574,7 @@ impl Checker<'_> {
                 let callee = format!("'{name}'");
                 self.check_members_fields_in_hand(spelling, &callee, &named, &members, *span);
                 self.check_members_fit_params(op, spelling, &callee, &named, &members);
-                (returns, self.named_function_return(name, scope))
+                (returns, self.named_function_return(name, scope), false)
             }
         };
         if op.op != CollectionOp::Map && returns == Some(false) {
@@ -616,7 +619,9 @@ impl Checker<'_> {
         }
         let value = match op.op {
             CollectionOp::Map => returned.map(|r| list_of(r, ordering)),
-            CollectionOp::Filter => element.map(|e| list_of(e, ordering)),
+            // Present, where the function's own test keeps only members that
+            // are there (version 5; TypeScript's inferred type predicate).
+            CollectionOp::Filter => element.map(|e| list_of(if kept_present && since(self.version, 5) { crate::types::field::strip_absent(&e).clone() } else { e }, ordering)),
             CollectionOp::Reduce => returned.or(carried),
             CollectionOp::Groupby => element.map(|e| Ty::Dict { of: Rc::new(list_of(e, ordering)), shape: None }),
             CollectionOp::Keyby => element.map(|e| Ty::Dict { of: Rc::new(e), shape: None }),

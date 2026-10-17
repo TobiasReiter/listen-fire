@@ -80,7 +80,7 @@ fn under_5_a_builtins_number_parameter_refuses_one() {
 fn under_5_a_fold_refuses_a_list_that_may_hold_an_absent_member() {
     assert_eq!(
         absent("  ys = map(xs, (x) => Number.parse(t))\n  s = List.sum(ys)", 5, None),
-        vec![("error", format!("'ys' may hold an absent member ({MAYBE}), and List.sum reads an absent member as 0. Drop the absent members first ('List.sum(List.compact(ys))'), or fill them ('List.sum(map(ys, (x) => coalesce(x, 0)))').{SEE}"))]
+        vec![("error", format!("'ys' may hold an absent member ({MAYBE}), and List.sum reads an absent member as 0. Drop the absent members first ('List.sum(List.compact(ys))' or 'List.sum(filter(ys, (x) => x != null))'), or fill them ('List.sum(map(ys, (x) => coalesce(x, 0)))').{SEE}"))]
     );
     assert_eq!(absent("  ys = map(xs, (x) => Number.parse(t))\n  s = List.max(ys)", 5, None).len(), 1);
 }

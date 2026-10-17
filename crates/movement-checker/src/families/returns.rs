@@ -32,12 +32,22 @@ pub struct ReturnCollector {
     pub returns: Vec<Returned>,
     /// Why a `return` here is refused, when the body hands nothing back.
     pub refuses: Option<String>,
+    /// A filter's function: its member parameter, and whether each `return`
+    /// that may keep a member proves the member present there (`keepsPresent`).
+    pub keeps: Option<Keeps>,
+}
+
+pub struct Keeps {
+    pub member: String,
+    pub present: Vec<bool>,
 }
 
 /// A walked body: each `return` in it, and the one value they close into.
 pub struct Body {
     pub returns: Vec<Returned>,
     pub value: ReturnShape,
+    /// Every `return` that may keep a member proves it present (`keeps`).
+    pub kept_present: bool,
 }
 
 /// `UNKNOWN_RETURN`: it may well return, and nobody can say what.
@@ -61,11 +71,18 @@ fn record_of(position: &Position) -> Ty {
 impl Checker<'_> {
     /// `checkBody`: a body's statements, collecting its `return`s.
     pub fn check_body(&mut self, statements: &[Statement], scope: ScopeId, what: String) -> Body {
-        self.return_stack.push(ReturnCollector { what, returns: Vec::new(), refuses: None });
+        self.check_body_keeping(statements, scope, what, None)
+    }
+
+    /// `checkBody`, asking of each `return` whether it keeps `keeps` present.
+    pub fn check_body_keeping(&mut self, statements: &[Statement], scope: ScopeId, what: String, keeps: Option<&str>) -> Body {
+        let keeps = keeps.map(|member| Keeps { member: member.to_string(), present: Vec::new() });
+        self.return_stack.push(ReturnCollector { what, returns: Vec::new(), refuses: None, keeps });
         self.check_statement_list(statements, scope);
         let collector = self.return_stack.pop().expect("the body's own collector");
         let value = self.close_returns(&collector);
-        Body { returns: collector.returns, value }
+        let kept = collector.keeps.map(|keeps| keeps.present).unwrap_or_default();
+        Body { returns: collector.returns, value, kept_present: !kept.is_empty() && kept.iter().all(|present| *present) }
     }
 
     /// `checkReturn`: what this `return` hands back, against the nearest
@@ -91,7 +108,39 @@ impl Checker<'_> {
         let bound = self.check_rvalue(&statement.value, scope, None, statement.span);
         let types = self.bound_types(None, &statement.value, &bound, scope).unwrap_or_default();
         let shape = ReturnShape { returns: true, plane: PlaneType { pos: types.pos.map(Box::new), field: types.field }, may_hold: types.may_hold };
+        let member = self.return_stack.last().and_then(|collector| collector.keeps.as_ref()).map(|keeps| keeps.member.clone());
+        if let Some(member) = member
+            && let Some(present) = self.keeps_present(&statement.value, &member, scope, statement.span)
+            && let Some(keeps) = self.return_stack.last_mut().and_then(|collector| collector.keeps.as_mut())
+        {
+            keeps.present.push(present);
+        }
         self.collect_return(statement.span, shape);
+    }
+
+    /// `keepsPresent`: whether a filter's function, answering at this
+    /// `return`, proves its member present — TypeScript's inferred type
+    /// predicate, which makes `xs.filter(x => x != null)` a `T[]`. The member
+    /// is what the body's own narrowing has made of it here (an `if` arm, a
+    /// guard clause above), and what the returned value proves when it
+    /// holds. `None` for a `return false`, which keeps nothing.
+    fn keeps_present(&mut self, value: &RValue, member: &str, scope: ScopeId, span: Span) -> Option<bool> {
+        use movement_parser::lowering::expression::{Expression, StaticValue};
+        let answered = self.scopes.open(Some(scope));
+        if let RValue::Expr { expr } = value
+            && let Ok(expr) = crate::slots::expression_of_slot(expr)
+        {
+            if matches!(expr, Expression::Static { value: StaticValue::Bool(false) }) {
+                return None;
+            }
+            self.narrow_presence(&expr, scope, answered, span);
+        }
+        let Resolution::Found(id) = self.scopes.resolve(answered, member) else { return Some(false) };
+        let types = &self.scopes.symbol(id).types;
+        Some(match (&types.pos, &types.field) {
+            (None, Some(field)) => !matches!(field, Ty::Absent) && !is_maybe_absent(Some(field)),
+            _ => crate::binding_types::symbol_position(types).is_some_and(|position| !matches!(position, Position::MaybeEmpty(_))),
+        })
     }
 
     /// `conciseCallReturnsNothing`: is this concise body's call one whose

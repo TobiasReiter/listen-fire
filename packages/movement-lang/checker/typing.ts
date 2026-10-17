@@ -2666,7 +2666,8 @@ export type NumberReader =
  * answers nothing), so the run would compute a number nobody meant, silently.
  * The remedy is written from the author's own operand when it is printable:
  * a `!= null` guard, or a fallback; a fold's is to drop the absent members
- * (`List.compact`, which types as the list without them) or fill them. The message is the version 5 one; `refuseAbsentNumber` frames it
+ * (`List.compact`, or a `filter` whose test keeps only present members — each
+ * types as the list without them) or fill them. The message is the version 5 one; `refuseAbsentNumber` frames it
  * for a move up.
  */
 export function absentNumberMessage(type: FieldType, source: string | undefined, reader: NumberReader): string {
@@ -2674,7 +2675,7 @@ export function absentNumberMessage(type: FieldType, source: string | undefined,
   if (reader.kind === 'fold') {
     const subject = source !== undefined ? `'${source}' may hold an absent member` : 'This list may hold an absent member';
     const xs = source ?? '…';
-    return `${subject} (${shown}), and ${reader.builtin} reads an absent member as 0. Drop the absent members first ('${reader.builtin}(MULTI(${xs}))'), or fill them ('${reader.builtin}(map(${xs}, (x) => coalesce(x, 0)))').`;
+    return `${subject} (${shown}), and ${reader.builtin} reads an absent member as 0. Drop the absent members first ('${reader.builtin}(MULTI(${xs}))' or '${reader.builtin}(filter(${xs}, (x) => x != null))'), or fill them ('${reader.builtin}(map(${xs}, (x) => coalesce(x, 0)))').`;
   }
   const subject = source !== undefined ? `'${source}' may be absent` : 'This value may be absent';
   const needs =

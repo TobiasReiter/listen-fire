@@ -75,7 +75,7 @@ describe('under version 5', () => {
 
   it('a fold refuses a list that may hold an absent member', () => {
     expect(absent('  ys = map(xs, (x) => Number.parse(t))\n  s = List.sum(ys)', 5)).toEqual([
-      ['error', `'ys' may hold an absent member (${MAYBE}), and List.sum reads an absent member as 0. Drop the absent members first ('List.sum(List.compact(ys))'), or fill them ('List.sum(map(ys, (x) => coalesce(x, 0)))').${SEE}`],
+      ['error', `'ys' may hold an absent member (${MAYBE}), and List.sum reads an absent member as 0. Drop the absent members first ('List.sum(List.compact(ys))' or 'List.sum(filter(ys, (x) => x != null))'), or fill them ('List.sum(map(ys, (x) => coalesce(x, 0)))').${SEE}`],
     ]);
     expect(absent('  ys = map(xs, (x) => Number.parse(t))\n  s = List.max(ys)', 5)).toHaveLength(1);
   });

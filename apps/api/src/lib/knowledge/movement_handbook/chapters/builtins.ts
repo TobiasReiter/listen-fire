@@ -81,7 +81,7 @@ map(ch-[m:Messages]->, (m) => { write graph-[:note]-> { text: m.Text } })
 
 ### filter
 
-\`filter(list, f)\` or \`filter(list, f, settings)\` → the members \`f\` answered \`true\` for, in order, always present. \`f\` must give a boolean — \`return\` one, or write the condition as the body. \`settings\` is the same record \`map\` takes; a member whose predicate fails is not kept.
+\`filter(list, f)\` or \`filter(list, f, settings)\` → the members \`f\` answered \`true\` for, in order, always present. \`f\` must give a boolean — \`return\` one, or write the condition as the body. \`settings\` is the same record \`map\` takes; a member whose predicate fails is not kept. A test that keeps only members that are there (\`(x) => x != null\`) answers a list of present members.
 
 \`\`\`
 kept = filter(lines, (t) => { return Text.length(t) > 0 })
@@ -425,7 +425,7 @@ host2 = Url.host("acme.com")                             # "acme.com" — no sch
 
 ### List.sum
 
-\`List.sum(list of number)\` → \`number\`, always present, reads any order — the total. \`0\` over an empty list. A list that may hold an absent member is refused: \`List.compact\` it first.
+\`List.sum(list of number)\` → \`number\`, always present, reads any order — the total. \`0\` over an empty list. A list that may hold an absent member is refused: \`List.compact\` it first, or \`filter(xs, (x) => x != null)\`.
 
 \`\`\`
 total = List.sum(co-[o:Orders]->.Amount)

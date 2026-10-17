@@ -65,6 +65,10 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 
 - **From language version 5, arithmetic on a value that may be absent is refused** (`MOV_ABSENT_REQUIRED`): `+ - * / %`, unary `-`, a built-in's number parameter, and `List.sum`/`avg`/`min`/`max` over a list that may hold an absent member. Why: the engine reads an absent value as 0 there, silently. Guard it, `coalesce` it, or `List.compact` the list; the diagnostic writes the guard and the fallback from the operand. Versions 1 to 4 run as before; a move up across 5 is an upgrade warning ([migration guide §18](docs/language/dancing-wren-migration.md#18-arithmetic-needs-a-number-that-is-there)).
 
+### tidy-filternarrow
+
+- **From language version 5, `filter(xs, (x) => x != null)` answers a list of present members**, as TypeScript's inferred type predicate types `xs.filter(x => x != null)`. The narrowing is the function's own test: every `return` that may keep a member must prove it present (`!= null`, `!(x == null)`, a conjunction, a guard clause that returns `false`). So the filtered list clears `MOV_ABSENT_REQUIRED` on `List.sum`/`avg`/`min`/`max`, whose fix now offers this form too. Versions 1 to 4 unchanged ([migration guide §18](docs/language/dancing-wren-migration.md#18-arithmetic-needs-a-number-that-is-there)).
+
 ### tidy-rust2
 
 - A third-party store module fills lf's store slot: an externals folder whose `lf-external.yaml` says `kind: core`, `slot: store` and its `command`, named by lf.yaml's `core: { store: <name> }`. lf starts it and speaks the store slot's wire to it, JSON-RPC on its stdin and stdout ([docs/contracts/store-slot.md](docs/contracts/store-slot.md), within adapter protocol 2): the methods `lf --contract-store` serves, plus `store.open` with the module's settings. `lf connect <name>` asks its declared settings and opens it once. `lf --contract-store-slot` serves the project's store slot, so the run host's contract suite runs through a module. The models, judge and files slots still take only a built-in.
