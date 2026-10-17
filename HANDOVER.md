@@ -1,16 +1,21 @@
 # HANDOVER — the cloud-native branch (written 2026-10-12 for a new Claude account)
 
 ## What this branch is
-`cloud-native` rewrites Listen-Fire's movement engine in Rust (`crates/movement-engine`, loaded as WebAssembly behind a JSON host boundary) so that the TypeScript engine can be deleted. The governing rule: a program the TypeScript engine runs either runs IDENTICALLY on Rust or is refused at admission by name; a mid-run failure where TypeScript proceeds is a divergence unless `crates/movement-engine/README.md` "Known divergences" lists it with its reason. The end state is zero refusals, then the TypeScript engine goes.
+`cloud-native` rewrites Listen-Fire's movement engine in Rust (`crates/movement-engine`, loaded as WebAssembly behind a JSON host boundary) so that the TypeScript engine can be deleted.
+
+**Since 2026-10-16 the rule is by version, not by admission.** A run's pinned language version alone picks its engine: version 5 and later runs only on Rust, versions 1 to 4 only on TypeScript. There is no admission step, no fallback and no engine setting (`MOVEMENT_ENGINE` and its companions are refused at boot). The checker is the one gate; a construct the Rust engine has no case for fails the run mid-way with `MOVENG_UNSUPPORTED` naming it (`crates/movement-engine/README.md`, "Refusals"). The sections below dated 2026-10-12 describe the admission era and are kept as the record of that state.
+
+The rule at the 2026-10-12 handover was: a program the TypeScript engine runs either runs IDENTICALLY on Rust or is refused at admission by name; a mid-run failure where TypeScript proceeds is a divergence unless "Known divergences" lists it with its reason.
 
 ## Where things are
 - Design and plans (gitignored, on Henry's machine — copy the folder): `plans/cloud-native-2026-10-06/` — `DESIGN.md` + amendments (read the amendments of 2026-10-09 end state, 2026-10-10 data is never an engine object, 2026-10-11 the engine knows no users or teams, 2026-10-12 the shippable binary), `DEFERRED.md`, `CHUNK-07-STATUS.md` (complete), `CHUNK-08-STATUS.md` (in progress), `orientation/engine-chunk8-refusals.md` (the refusal inventory by mechanism), `orientation/engine-chunk8-bugs.md` (chunk 8B: the bugs to fix after the refusals), `PLAN-08A-zero-refusals.md`.
 - The working ledger (gitignored): `.superpowers/sdd/PLAN-08A-zero-refusals/progress.md` — every task, review, fix round and ruling, newest at the bottom; the briefs and reports beside it.
 - Claude's memory for this repo (on Henry's machine — copy the folder): `~/.claude/projects/-Users-henrystanford-src-listen-fire/memory/` (`cloud-native-effort.md` is the running summary; `MEMORY.md` the index).
-- Committed documentation: `crates/movement-engine/README.md` (the port list — every admission reason, open or closed — and Known divergences), `docs/contracts/` (the five host contracts with drift guards), `docs/engine-host.md`, `CHANGELOG.md` Unreleased.
+- Committed documentation: `crates/movement-engine/README.md` (its refusals — every reason the engine still emits — and Known divergences), `docs/contracts/` (the five host contracts with drift guards), `docs/engine-host.md`, `CHANGELOG.md` Unreleased.
 
 ## How to measure
-- `MOVEMENT_ENGINE=rust pnpm test:conformance:v1|v2|v3` from `apps/api`: the teardown prints whole runs vs floors, refused per reason (ceilings), mirrored failures, `unreproduced` (must be 0), shim faults (0), declines. Replays: the six replay suites under `services/movement_engine` (0 divergences). The admission matrix: `ADMISSION_REPORT=1 MOVEMENT_ENGINE=rust pnpm test:unit --testPathPattern rust_admission_matrix`. The oracles: `crates/movement-engine/tests/oracle/generate.ts` (one family at a time; CI checks "oracle is current").
+- The Rust engine (version 5): `cargo test -p movement-engine` (its oracles included), and from `apps/api` the `rust_*` suites under `services/movement_engine/__test__` (scoped: `pnpm test:unit --testPathPattern 'movement_engine/__test__/rust_'`). `scripts/movement-engine-gate.sh` runs the whole local gate. The oracles: `crates/movement-engine/tests/oracle/generate.ts` (one family at a time; CI checks "oracle is current").
+- The TypeScript engine (versions 1 to 4): `pnpm test:conformance:v1|v2|v3|v4` from `apps/api`, and the recorded-run replays under `services/movement_engine/conformance` (the TypeScript engine in process and over the HTTP host double). There is no engine setting to pass.
 - Standing rules that each cost an incident: never unscoped `pnpm test:unit`; never build the language package in place; never source `apps/api/.env` (grep DATABASE_URL_TEST, port 9432); one implementer per checkout; never edit a frozen corpus (triage by name); never amend.
 
 ## State at handover (2026-10-12)
