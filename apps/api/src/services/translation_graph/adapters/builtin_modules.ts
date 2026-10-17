@@ -43,11 +43,14 @@ import {
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { GOOGLE_SHEETS_MANIFEST } from '@lf/google-sheets/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
-import { postgresSecrets, type PayloadShape } from '../../credentials/secrets_postgres';
+import { camelTokenPayloadShape, postgresSecrets, type PayloadShape } from '../../credentials/secrets_postgres';
+import { grantedItemsKv } from '../../credentials/granted_items';
+import { googleIntegrationsApp } from '../../../adapters/google/authClient';
 import { credentialTypeOf } from './credential_type';
 
 export type BuiltinLine = 'legacy' | 'module';
@@ -105,7 +108,23 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
   affinity: { kind: 'adapter', line: 'legacy' },
   airtable: { kind: 'adapter', line: 'legacy' },
   attio: { kind: 'adapter', line: 'legacy' },
-  google_sheets: { kind: 'adapter', line: 'legacy' },
+  google_sheets: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: GOOGLE_SHEETS_MANIFEST,
+    load: () => {
+      const { googleSheetsModule }: typeof import('@lf/google-sheets') = require('@lf/google-sheets');
+      return googleSheetsModule;
+    },
+    // The connect flow stores `{ accessToken, refreshToken, expiresAt }`.
+    storedAs: camelTokenPayloadShape,
+    hostApp: googleIntegrationsApp,
+    harnessService: 'GOOGLE_SHEETS',
+    kv: (install) =>
+      install.credentialsId !== undefined
+        ? grantedItemsKv(install.credentialsId, { teamId: install.teamId })
+        : refusingKv('Google Sheets: no credential is connected, so there are no granted spreadsheets. Connect Google Sheets.'),
+  },
   google_drive: { kind: 'adapter', line: 'legacy' },
   dropbox: { kind: 'adapter', line: 'legacy' },
   gmail: { kind: 'adapter', line: 'legacy' },

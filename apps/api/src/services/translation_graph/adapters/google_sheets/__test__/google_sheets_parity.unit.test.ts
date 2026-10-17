@@ -95,6 +95,8 @@ import type { Adapter } from 'movement-engine/public/adapter';
 import { writeFileKv } from 'module-kit';
 import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
+import { getAdapter } from '../../registry';
+import { BUILTIN_MODULES } from '../../builtin_modules';
 import { createGoogleSheetsAdapter } from '../index';
 import { recordingServer, replayingServer, type Exchange, type ExchangeRequest } from '../../dealroom/__test__/parity/exchange';
 import { bootFakeChannels } from '../../__test__/parity/fake_channels';
@@ -230,6 +232,26 @@ async function serveSheets(env: Record<string, string>): Promise<{ url: string; 
 
   it('the legacy line replays identically', async () => {
     await expectParity(legacySubject);
+  });
+
+  it('the module in process, through the platform registry, replays identically', async () => {
+    expect(BUILTIN_MODULES.google_sheets?.line).toBe('module');
+    await expectParity((baseUrl) => {
+      seedGrants();
+      mockHarness.baseUrl = baseUrl;
+      mockPayloads.clear();
+      // The payload exactly as the connect flow stores it.
+      mockPayloads.set(CREDENTIAL, { accessToken: PARITY_ACCESS_TOKEN, refreshToken: 'parity-refresh', expiresAt: EXPIRES_AT });
+      return {
+        adapter: (at) =>
+          getAdapter({
+            adapterType: 'google_sheets',
+            teamId: TEAM,
+            credentialsId: CREDENTIAL,
+            ...(at?.spreadsheet !== undefined ? { constructionArgs: { spreadsheet: at.spreadsheet } } : {}),
+          }),
+      };
+    });
   });
 
   it('the module served as a process, over protocol 2, replays identically', async () => {
