@@ -33,6 +33,7 @@
 use movement_parser::lowering::expression::{AggregationFunction, ArithmeticOp, Expression, FilterOperator, LogicalOp, StaticValue};
 
 use crate::codes;
+use crate::families::calls::is_nested_call_name;
 use crate::diagnostic::Severity;
 use crate::types::field::{
     BaseKind, CollectionOrder, Ty, base_kinds, collection_element_of, collection_order_of, comparison_category, describe_field_type,
@@ -70,15 +71,26 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
             }
             if let Some(message) = arithmetic_operands_message(*op, left, right, l, r) {
                 typing.report(codes::ARITH_NON_NUMERIC, message);
+                return;
+            }
+            let reader = NumberReader::Operator(arith_symbol(*op));
+            if !left_opaque {
+                refuse_absent_number(typing, left, l, &reader);
+            }
+            if !right_opaque {
+                refuse_absent_number(typing, right, r, &reader);
             }
         }
-        Expression::Negate { .. } => {
+        Expression::Negate { expression } => {
             let inner = operands[0].as_ref();
-            if require_transparent(typing, inner, "negated") && may_be_closure(inner) {
+            let opaque = require_transparent(typing, inner, "negated");
+            if opaque && may_be_closure(inner) {
                 return;
             }
             if let Some(message) = negate_operand_message(inner) {
                 typing.report(codes::ARITH_NON_NUMERIC, message);
+            } else if !opaque {
+                refuse_absent_number(typing, expression, inner, &NumberReader::Negate);
             }
         }
         Expression::Compare { op, left, right } => {
@@ -122,13 +134,17 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
             let element = inner.map(unwrap_list);
             match fn_ {
                 AggregationFunction::Sum | AggregationFunction::Avg => {
-                    require_transparent(typing, element.as_ref(), "added up");
+                    if !require_transparent(typing, element.as_ref(), "added up") {
+                        refuse_absent_members(typing, expression, inner, *fn_);
+                    }
                 }
                 AggregationFunction::Join => {
                     require_transparent(typing, element.as_ref(), "joined into text");
                 }
                 AggregationFunction::Min | AggregationFunction::Max => {
-                    require_transparent(typing, element.as_ref(), "ordered");
+                    if !require_transparent(typing, element.as_ref(), "ordered") {
+                        refuse_absent_members(typing, expression, inner, *fn_);
+                    }
                 }
                 _ => {}
             }
@@ -341,13 +357,104 @@ fn operand_source(expr: &Expression) -> Option<String> {
     match expr {
         Expression::Property { property_type_id, .. } => Some(quote_name(property_type_id)),
         Expression::Meta { key } => Some(format!("@{key}")),
-        Expression::AliasRef { name } => Some(quote_name(name)),
-        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => match &**expression {
+        // A nested call's binding (`f(x).Score`) is a name the author never
+        // wrote.
+        Expression::AliasRef { name } if !is_nested_call_name(name) => Some(quote_name(name)),
+        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && !is_nested_call_name(root) => match &**expression {
             Expression::Property { property_type_id, .. } => Some(format!("{}.{}", quote_name(root), quote_name(property_type_id))),
             _ => None,
         },
         _ => None,
     }
+}
+
+/// What reads a number, for `absent_number_message` (`NumberReader`; a fold's
+/// is `absent_members_message`).
+pub enum NumberReader<'a> {
+    Operator(&'a str),
+    Negate,
+    Param { builtin: &'a str, param: &'a str },
+}
+
+/// `absentNumberMessage`: from version 5 a number that may be absent is
+/// refused wherever a number is computed from it, as TypeScript refuses
+/// `n + 1` on `number | undefined` — the engine reads an absent value as 0
+/// there (or answers nothing), so the run would compute a number nobody
+/// meant, silently. The remedy is written from the author's own operand when
+/// it is printable.
+fn absent_number_message(ty: &Ty, source: Option<&str>, reader: &NumberReader) -> String {
+    let shown = describe_field_type(ty);
+    let subject = match source {
+        Some(s) => format!("'{s}' may be absent"),
+        None => "This value may be absent".to_string(),
+    };
+    let needs = match reader {
+        NumberReader::Operator(op) => format!("'{op}' needs a number on both sides (it reads an absent value as 0)"),
+        NumberReader::Negate => "unary '-' needs a number (it reads an absent value as 0)".to_string(),
+        NumberReader::Param { builtin, param } => format!("{builtin}'s '{param}' takes a number"),
+    };
+    let remedy = match source {
+        Some(s) => format!("Guard it ('if ({s} != null) {{ … }}'), or fall back to a value that is always there ('coalesce({s}, 0)')"),
+        None => "Guard it with a '!= null' test, or fall back to a value that is always there ('coalesce(…, 0)')".to_string(),
+    };
+    format!("{subject} ({shown}), and {needs}. {remedy}.")
+}
+
+/// `absentNumberMessage` for a fold: its remedy drops the absent members
+/// (`List.compact`, which types as the list without them) or fills them.
+fn absent_members_message(element: &Ty, source: Option<&str>, builtin: &str) -> String {
+    let subject = match source {
+        Some(s) => format!("'{s}' may hold an absent member"),
+        None => "This list may hold an absent member".to_string(),
+    };
+    let xs = source.unwrap_or("…");
+    format!(
+        "{subject} ({}), and {builtin} reads an absent member as 0. Drop the absent members first ('{builtin}(MULTI({xs}))'), or fill them ('{builtin}(map({xs}, (x) => coalesce(x, 0)))').",
+        describe_field_type(element)
+    )
+}
+
+/// `refuseAbsentNumber`: from version 5, a number computed from a value that
+/// may be absent is refused; versions 1–4 read the absent value as 0, and a
+/// move up across 5 is warned of.
+pub fn refuse_absent_number(typing: &mut Typing, operand: &Expression, ty: Option<&Ty>, reader: &NumberReader) {
+    let Some(ty @ (Ty::MaybeAbsent(_) | Ty::Absent)) = ty else { return };
+    let message = absent_number_message(ty, operand_source(operand).as_deref(), reader);
+    report_absent_number(typing, message);
+}
+
+/// `refuseAbsentMembers`: `refuse_absent_number` for a fold over a list that
+/// may hold an absent member.
+fn refuse_absent_members(typing: &mut Typing, list: &Expression, ty: Option<&Ty>, fn_: AggregationFunction) {
+    let Some(ty) = ty.filter(|ty| crate::types::infer::may_hold_empty_item(ty)) else { return };
+    let Some(element) = collection_element_of(ty) else { return };
+    let builtin = match fn_ {
+        AggregationFunction::Sum => "SUM",
+        AggregationFunction::Avg => "AVG",
+        AggregationFunction::Min => "MIN",
+        AggregationFunction::Max => "MAX",
+        _ => return,
+    };
+    let message = absent_members_message(&element, operand_source(list).as_deref(), builtin);
+    report_absent_number(typing, message);
+}
+
+fn report_absent_number(typing: &mut Typing, message: String) {
+    if typing.version < 5 {
+        return;
+    }
+    if typing.upgrade_crosses(5) {
+        typing.report_upgrade(
+            codes::ABSENT_REQUIRED,
+            format!(
+                "since {} a number computed from a value that may be absent is refused; before, the absent value was read as 0. {}, then upgrade.",
+                crate::version::describe(5),
+                message.strip_suffix('.').unwrap_or(&message)
+            ),
+        );
+        return;
+    }
+    typing.report(codes::ABSENT_REQUIRED, message);
 }
 
 /// `checkNegateOperand`.

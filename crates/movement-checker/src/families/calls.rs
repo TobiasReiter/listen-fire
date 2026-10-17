@@ -154,6 +154,12 @@ fn check_builtin_args(typing: &mut Typing, builtin: &Builtin, args: &[Option<Ty>
         }
         let Some(ty) = ty else { continue };
         if param_accepts(param.ty, ty) {
+            if param.ty == ParamType::Number
+                && let Some(expr) = exprs.get(index)
+            {
+                let reader = crate::families::values::NumberReader::Param { builtin: builtin.name, param: param.name };
+                crate::families::values::refuse_absent_number(typing, expr, Some(ty), &reader);
+            }
             continue;
         }
         typing.report(
@@ -504,6 +510,11 @@ fn head_hops_extent(head: &movement_parser::ast::PathHead, probe_len: usize, at:
 /// `spanOfExtent`.
 pub fn span_of_extent(slot: &ExprSlot, at: At) -> Span {
     Span { start: span_within(slot, Some(at.start)).start, end: span_within(slot, Some(at.end)).start }
+}
+
+/// `isNestedCallName`: whether `name` is one a nested call was bound to.
+pub fn is_nested_call_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c))
 }
 
 /// `nestedCallName`: the name a call hoisted out of an expression is bound

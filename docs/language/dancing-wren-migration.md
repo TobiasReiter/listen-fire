@@ -23,7 +23,8 @@ Section 2 respells the whole surface; nothing in it changes what a program means
 - [15. `parallel` is retired for `all`; combinators take arguments and no `await`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await)
 - [16. The extraction keyword is retired](#16-the-extraction-keyword-is-retired)
 - [17. A value that may be one of several records reads only what every one offers](#17-a-value-that-may-be-one-of-several-records-reads-only-what-every-one-offers)
-- [18. Diagnostic code index](#18-diagnostic-code-index)
+- [18. Arithmetic needs a number that is there](#18-arithmetic-needs-a-number-that-is-there)
+- [19. Diagnostic code index](#19-diagnostic-code-index)
 
 ## 1. How the pin moves
 
@@ -445,7 +446,25 @@ write who { Domains: ["a.com"] }  # refused: People has no Domains
 - The fix: read the field where you know which record you hold (inside the arm, or after an `IS` test), or read a field every member has.
 - Writing in place to a union (`write who { … }`) is held to every member on every version: a field one member lacks is `MOV_WRITE_UNKNOWN_FIELD`, said of that member. Before, it was an internal error, so it never ran.
 
-## 18. Diagnostic code index
+## 18. Arithmetic needs a number that is there
+
+A number computed from a value that may be absent is refused (`MOV_ABSENT_REQUIRED`), as TypeScript refuses `n + 1` on `number | undefined`.
+
+```
+n = Number.parse(t)                  # number | absent
+m = n + 1                            # refused: n may be absent
+m = coalesce(n, 0) + 1               # a fallback
+if (n != null) { m = n + 1 }         # a guard (or a guard clause that leaves)
+m = n != null ? n + 1 : 0            # a conditional
+s = List.sum(List.compact(ys))       # a list that may hold absent members: drop them first
+```
+
+- It covers `+ - * / %`, unary `-`, a built-in's number parameter (`Number.round(n)`, `Date.addDays(d, n)`), and `List.sum`, `List.avg`, `List.min` and `List.max` over a list that may hold an absent member.
+- Why: the engine reads an absent value as 0 there. `n + 1` answered 1 for a number that was never found, and `List.avg` counted an absent member as 0. Nothing said so.
+- The fix: guard the value, give it a fallback with `coalesce`, or drop (`List.compact`) or fill (`map(xs, (x) => coalesce(x, 0))`) a list's absent members. The diagnostic writes the guard and the fallback from your own operand.
+- Under 1 to 4 the program runs as before; a move up across 5 is an upgrade warning.
+
+## 19. Diagnostic code index
 
 | Code | Where |
 | --- | --- |
@@ -468,7 +487,7 @@ write who { Domains: ["a.com"] }  # refused: People has no Domains
 | `MOV_HANDLE_FILE_NOT_SENT` | [A write handle's unsent file is not a file](#11-a-write-handles-unsent-file-is-not-a-file) |
 | `MOV_META_HOP_RETIRED` | [`#` hops are retired](#4--hops-are-retired-a-plugin-is-a-function) |
 | `MOV_PARALLEL_RETIRED` | [`parallel` is retired for `all`](#15-parallel-is-retired-for-all-combinators-take-arguments-and-no-await) (with the `all` rewrite for arms written down) |
-| `MOV_ABSENT_REQUIRED` | [The extraction keyword is retired](#16-the-extraction-keyword-is-retired) (a block's walk off a record that may be absent: an `extractOne` answer, a `match`, an unguarded pick; since 5, an upgrade warning on a move up across 5) |
+| `MOV_ABSENT_REQUIRED` | [The extraction keyword is retired](#16-the-extraction-keyword-is-retired) (a block's walk off a record that may be absent: an `extractOne` answer, a `match`, an unguarded pick; since 5, an upgrade warning on a move up across 5); [arithmetic on a value that may be absent](#18-arithmetic-needs-a-number-that-is-there) |
 | `MOV_PRESENCE_TEST_ON_TEXT` | [The extraction keyword is retired](#16-the-extraction-keyword-is-retired) (a null test on a `<text>` field of an `extract` or `extractOne` record; since 5, an upgrade warning on a move up across 5) |
 | `MOV_PRESENCE_OF_RETURNED` | [Operators, conditionals and presence](#operators-conditionals-and-presence) (warning, on a move up across 5: a null test on a block's returned records) |
 | `MOV_IN_MEMORY_HOP_ORDER` | [Walk brackets](#walk-brackets) (warning, on a move up across 5: `ORDER BY` or `LIMIT` on a hop over records the run already holds, which 4 ignored) |
