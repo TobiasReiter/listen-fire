@@ -14,7 +14,6 @@ describe('the declarations', () => {
     const manifest = moduleManifest(
       loadedModule(gmailModule, {
         credential,
-        credentialNamed: () => credential,
         spend: { charge: () => undefined },
         fetch,
         log: silentLog,

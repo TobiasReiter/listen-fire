@@ -26,12 +26,11 @@ pub const ADAPTER_TEAM_HEADER: &str = "x-listen-fire-team";
 /// credential (`CREDENTIAL_REFUSED_CODE`): refreshed and retried once.
 pub const CREDENTIAL_REFUSED_CODE: &str = "credential_refused";
 
-/// What a request carries beside its params: the connection's credential,
-/// every declared credential held for it, and the install's settings.
+/// What a request carries beside its params: the one credential the
+/// connection names, and the install's settings.
 #[derive(Default)]
 pub struct Carried {
     pub credential: Option<serde_json::Value>,
-    pub credentials: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
 }
 
@@ -177,7 +176,7 @@ async fn post(call: Call<'_>, carried: Carried, update: &mut Option<Js>) -> Resu
         "cacheScopeId": call.cache_scope_id,
         "params": call.params,
     });
-    for (key, value) in [("credential", carried.credential), ("credentials", carried.credentials), ("settings", carried.settings)] {
+    for (key, value) in [("credential", carried.credential), ("settings", carried.settings)] {
         if let Some(value) = value {
             body[key] = value;
         }

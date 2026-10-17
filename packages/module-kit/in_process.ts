@@ -35,8 +35,6 @@ import { moduleManifest, type LoadedModule } from './manifest';
 export interface ModuleHost {
   tenant: string;
   credential: ModuleCredential;
-  /** The module's other declared credentials, by name. Default: the first alone. */
-  credentialNamed?: (name: string) => ModuleCredential;
   /** Where the module's spend is charged. Default: nowhere (a host that meters nothing). */
   spend?: ModuleSpend;
   /** Default: the global fetch. */
@@ -70,9 +68,6 @@ export function inProcessValidationDefault(env: Readonly<Record<string, string |
 export function moduleContext(host: ModuleHost): ModuleContext {
   return {
     credential: host.credential,
-    credentialNamed:
-      host.credentialNamed ??
-      ((name) => (name === host.credential.name ? host.credential : noCredential(`this host sends credential "${host.credential.name}" alone, not "${name}"`))),
     spend: host.spend ?? { charge: () => undefined },
     fetch: host.fetch ?? fetch,
     log: host.log,

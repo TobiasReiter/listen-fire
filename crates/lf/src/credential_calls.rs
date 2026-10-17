@@ -105,8 +105,22 @@ pub async fn send(
     let unauthorized =
         |error: &SendError| matches!(error, SendError::Rpc(RpcError::Protocol { code, .. }) if code == "unauthorized" || code == CREDENTIAL_REFUSED_CODE);
 
-    // The protocol carries one credential per request: the first declared.
-    let Some(declaration) = target.declarations.first() else {
+    // The protocol carries one credential per request, under the declared
+    // alternative it fills (its binding; a hand written one fills the first).
+    let declared = match &credential.binding {
+        Binding::Credential(name) => match target.declarations.iter().find(|d| d.name == *name) {
+            Some(declaration) => Some(declaration),
+            None if target.declarations.is_empty() => None,
+            None => {
+                return Err(SendError::Before(format!(
+                    "credential \"{}\" is bound to \"{name}\", which module \"{}\" does not declare",
+                    credential.name, target.external.manifest.name
+                )));
+            }
+        },
+        _ => target.declarations.first(),
+    };
+    let Some(declaration) = declared else {
         let Some(refresher) = fields_refresher(credential) else {
             let bearer = bearer_for(&Record::of(current_fields(credential)))?;
             return post(target, credentials, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
@@ -146,24 +160,12 @@ pub async fn send(
 
 async fn post(target: &Target<'_>, credentials: &Credentials, sending: &Sending<'_>, bearer: Option<&str>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
     let name = &target.external.manifest.name;
-    // The module's other declared credentials, each the first entry bound
-    // to it: the connection names only the first.
-    let others: Vec<serde_json::Value> = match &credential {
-        None => Vec::new(),
-        Some(first) => std::iter::once(first.clone())
-            .chain(target.declarations.iter().skip(1).filter_map(|declaration| {
-                let bound = credentials.iter().find(|c| c.external == *name && c.binding == Binding::Credential(declaration.name.clone()))?;
-                Some(json!({ "name": declaration.name, "fields": declared_fields(declaration, &current_fields(bound)) }))
-            }))
-            .collect(),
-    };
     let settings = install_of(credentials, name).map(|install| {
         let fields = current_fields(install);
         serde_json::Value::Object(target.settings.iter().filter_map(|s| fields.get(s).map(|v| (s.clone(), json!(v)))).collect())
     });
     let carried = Carried {
         credential,
-        credentials: if others.len() > 1 { Some(serde_json::Value::Array(others)) } else { None },
         settings: settings.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())),
     };
     let call = Call {

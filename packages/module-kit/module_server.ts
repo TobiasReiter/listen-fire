@@ -54,40 +54,32 @@ function headerValue(headers: IncomingHttpHeaders, name: string): string | undef
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** The request's credentials as the module reads them, by declared name;
- *  updates are collected for the answer, per credential. */
-function requestCredentials(
+/** The request's one credential as the module reads it; an update is
+ *  collected for the answer. The name it carries is the declared alternative
+ *  it fills. */
+function requestCredential(
   definition: ModuleDefinition,
   request: CheckedRequest,
   updates: Map<string, Record<string, string>>,
-): { first: ModuleCredential; named: (name: string) => ModuleCredential } {
-  const sent = new Map<string, WireCredentialShape>();
-  for (const credential of request.credentials ?? []) sent.set(credential.name, credential);
-  if (request.credential !== undefined) sent.set(request.credential.name, request.credential);
-  const built = new Map<string, ModuleCredential>();
-  const named = (name: string): ModuleCredential => {
-    const known = built.get(name);
-    if (known !== undefined) return known;
-    if (!definition.credentials.some((declared) => declared.name === name)) {
-      return noCredential(`module ${definition.name} declares no credential "${name}"`);
-    }
-    const carried = sent.get(name);
-    if (carried === undefined) return noCredential(`module ${definition.name}: the request carried no "${name}" credential`);
-    let fields: CredentialFields = { ...carried.fields };
-    const credential: ModuleCredential = {
-      name,
-      fields: async () => fields,
-      update: async (changed) => {
-        fields = { ...fields, ...changed };
-        updates.set(name, { ...(updates.get(name) ?? {}), ...changed });
-      },
-    };
-    built.set(name, credential);
-    return credential;
+): ModuleCredential {
+  const carried = request.credential;
+  if (carried === undefined) {
+    return noCredential(
+      definition.credentials.length === 0 ? `module ${definition.name} declares no credential` : `module ${definition.name}: the request carried no credential`,
+    );
+  }
+  if (!definition.credentials.some((declared) => declared.name === carried.name)) {
+    return noCredential(`module ${definition.name} declares no credential "${carried.name}"`);
+  }
+  let fields: CredentialFields = { ...carried.fields };
+  return {
+    name: carried.name,
+    fields: async () => fields,
+    update: async (changed) => {
+      fields = { ...fields, ...changed };
+      updates.set(carried.name, { ...(updates.get(carried.name) ?? {}), ...changed });
+    },
   };
-  const declared = definition.credentials[0];
-  const first = declared === undefined ? noCredential(`module ${definition.name} declares no credential`) : named(declared.name);
-  return { first, named };
 }
 
 /** The module's own methods (beyond an adapter's), answered from its instance. */
@@ -147,7 +139,7 @@ async function answer(
 ): Promise<ProtocolAnswer> {
   const { definition, publicUrl } = options;
   const updates = new Map<string, Record<string, string>>();
-  const credentials = requestCredentials(definition, request, updates);
+  const credential = requestCredential(definition, request, updates);
   const costs: WireCostLineShape[] = [];
   const spend: ModuleSpend = { charge: (line) => void costs.push(line) };
   const models = typeof options.models === 'function' ? options.models(spend) : options.models;
@@ -159,8 +151,7 @@ async function answer(
       definition,
       moduleContext({
         tenant,
-        credential: credentials.first,
-        credentialNamed: credentials.named,
+        credential,
         spend,
         log: options.log,
         files: options.files,
@@ -195,12 +186,9 @@ async function answer(
     answered?.body ?? errorEnvelope('method_not_implemented', `Module ${definition.name} does not implement "${request.method}".`, false);
   const status = answered?.status ?? 200;
   const withCost: RpcResponseShape = costs.length === 0 ? body : { ...body, cost: costs };
-  // The answer carries one credentialUpdate: the first declared credential's
-  // when it changed, else the first that did.
-  const changed = updates.get(credentials.first.name) !== undefined ? credentials.first.name : [...updates.keys()][0];
+  const changed = updates.get(credential.name);
   if (changed === undefined) return { status, body: withCost };
-  if (updates.size > 1) options.log.warn(`module ${definition.name}: several credentials changed in one call; only "${changed}"'s change is sent back`);
-  return { status, body: { ...withCost, credentialUpdate: { name: changed, fields: updates.get(changed) ?? {} } } };
+  return { status, body: { ...withCost, credentialUpdate: { name: credential.name, fields: changed } } };
 }
 
 /** The HTTP handler that serves one module over adapter protocol 2. */

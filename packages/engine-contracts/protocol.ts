@@ -41,7 +41,8 @@ export const WireManifestProtocolVersion = z.literal(MANIFEST_PROTOCOL_VERSION, 
 export const WireCredentialFields = z.record(z.string(), z.string());
 
 /** The resolved credential a request carries to a module that declares one
- *  (`credentials` on the manifest): the credential the CONNECTION names
+ *  (`credentials` on the manifest, each declaration an ALTERNATIVE way to
+ *  connect): the credential the CONNECTION names
  *  (`connect hs_alice using alice_hubspot`), under the declared name it fills.
  *  The install's own server secret is the request's auth header, never this. */
 export const WireCredential = z.object({
@@ -78,12 +79,11 @@ export const RpcRequest = z.object({
   cacheScopeId: z.string(),
   params: z.unknown(),
   /** Within version 2: absent for a server that declares no credential. The
-   *  first declared credential, as the connection names it. */
+   *  one credential the connection names (`using`), under the declared
+   *  alternative it fills. Never more than one: a module that needs two
+   *  secrets declares them as fields of one credential. A `credentials` list
+   *  from an older host is ignored. */
   credential: WireCredential.optional(),
-  /** Within version 2: every credential the module declares that the host
-   *  holds for this connection, `credential` among them. Absent from an older
-   *  host, which sends `credential` alone. */
-  credentials: z.array(WireCredential).optional(),
   /** Within version 2: the install's declared settings. */
   settings: WireModuleSettingValues.optional(),
 });
