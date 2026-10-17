@@ -123,7 +123,7 @@ line = domain != null ? "\${domain}" : ""
 
 ### unary minus
 
-\`-x\` → \`number\` — arithmetic negation. The operand must already be a number; coerce first if it isn't (\`-Number.parse(x)\`). Parenthesise a sub-expression the same as any arithmetic: \`-(a + b)\`.
+\`-x\` → \`number\` — arithmetic negation. The operand must already be a number that is there: coerce first if it isn't (\`-coalesce(Number.parse(x), 0)\`), and narrow or \`coalesce\` one that may be absent. Parenthesise a sub-expression the same as any arithmetic: \`-(a + b)\`.
 
 \`\`\`
 delta = -(after - before)
@@ -131,7 +131,7 @@ delta = -(after - before)
 
 ### remainder
 
-\`a % b\` → \`number\` — same precedence as \`*\` and \`/\`, left-associative. TypeScript semantics: the sign follows the dividend (\`-7 % 20\` is \`-7\`, not \`13\`). Both operands must already be numbers, the same rule every arithmetic operator has; division by zero answers \`null\`.
+\`a % b\` → \`number\` — same precedence as \`*\` and \`/\`, left-associative. TypeScript semantics: the sign follows the dividend (\`-7 % 20\` is \`-7\`, not \`13\`). Both operands must already be numbers that are there (narrow or \`coalesce\` one that may be absent), the same rule every arithmetic operator has; division by zero answers \`null\`.
 
 \`\`\`
 leftover = amount % batch_size
@@ -425,7 +425,7 @@ host2 = Url.host("acme.com")                             # "acme.com" — no sch
 
 ### List.sum
 
-\`List.sum(list of number)\` → \`number\`, always present, reads any order — the total. \`0\` over an empty list.
+\`List.sum(list of number)\` → \`number\`, always present, reads any order — the total. \`0\` over an empty list. A list that may hold an absent member is refused: \`List.compact\` it first.
 
 \`\`\`
 total = List.sum(co-[o:Orders]->.Amount)

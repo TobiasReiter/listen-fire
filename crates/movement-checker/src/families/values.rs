@@ -357,7 +357,9 @@ fn operand_source(expr: &Expression) -> Option<String> {
         Expression::Property { property_type_id, .. } => Some(quote_name(property_type_id)),
         Expression::Meta { key } => Some(format!("@{key}")),
         Expression::AliasRef { name } => Some(quote_name(name)),
-        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() => match &**expression {
+        // A read off a value that is no name (`first(xs).Score`) is rooted at
+        // the position placeholder, which the author never wrote.
+        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && root != POSITION_SENTINEL => match &**expression {
             Expression::Property { property_type_id, .. } => Some(format!("{}.{}", quote_name(root), quote_name(property_type_id))),
             _ => None,
         },

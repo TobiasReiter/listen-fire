@@ -258,7 +258,7 @@ A separate and stronger thing is a value typed as *possibly not there at all* �
 
 Reading such a value is always fine, and so is interpolating it — it prints as nothing. Testing it needs no guard either. \`==\` and \`!=\` take it on either side: a missing value equals only \`null\`, so \`o.stage == "Seed"\` is false and \`o.stage != "Seed"\` true when the model found nothing. A condition takes a \`<boolean>\` that may be missing and reads a missing one as false — \`if (o.viable) { … }\`, \`o.viable ? a : b\`, \`a && o.viable\`, \`!o.viable\`.
 
-What is refused is **using** it somewhere a value is genuinely required — a write field, a write or traversal target, a field read off it, an ordered comparison (\`<\`, \`<=\`, \`>\`, \`>=\`) — and the refusal comes while you write rather than at run time. There is no "it will probably be there".
+What is refused is **using** it somewhere a value is genuinely required — a write field, a write or traversal target, a field read off it, an ordered comparison (\`<\`, \`<=\`, \`>\`, \`>=\`), arithmetic (\`n + 1\`, \`-n\`, \`Number.round(n)\`, and \`List.sum\`, \`List.avg\`, \`List.min\` or \`List.max\` over a list that may hold an absent member) — and the refusal comes while you write rather than at run time. There is no "it will probably be there".
 
 Four things discharge it, and one of them always fits:
 
@@ -272,7 +272,9 @@ Four things discharge it, and one of them always fits:
 - **Test it with \`==\`.** Comparing against \`null\` (\`x == null\` / \`x != null\`) is the dedicated presence test, and the one place \`==\` is deliberately loose: \`null\` and absent mean the same thing here, so it's legal against *any* possibly-missing value. Comparing against a present value works too and narrows the same way (\`if (a.Answer == "pursue") { … }\` is legal even though \`a.Answer\` may be absent). Either way, the arm that took the comparison knows the value is present — and for \`== null\` used as a guard clause (\`if (x == null) { fail("…") }\`), so does everything **after** the \`if\`, not just the arm. A test on a field read off a bound record proves the record too (\`if (channel.Topic != null)\`), so that arm may write off \`channel\`. The value-level form \`x != null ? … : …\` narrows only its first branch. See *narrowing-past-a-guard* in the branching chapter.
 - **Fall back with \`coalesce\`.** \`coalesce(a, b)\` answers the first of its arguments that has a value, so the moment one of them always does — a literal, or anything already known to be there — the result always does too: \`Name: coalesce(only(msg-[:Attachments]->.Name), "no attachment")\`. A \`coalesce\` whose arguments might *all* be empty is itself possibly-empty and is refused in the same places, so the one-argument form discharges nothing at all.
 
-Ordered comparisons get no licence from the \`?:\` fill — there is no write field to fill — so either give the value a fallback with \`coalesce\`, or prove presence first (a guard clause, a \`!= null\` test, a traversal gate) and order *inside* the branch — or, for a guard clause, the code after it — that proved it.
+For a list that may hold absent members, drop them (\`List.sum(List.compact(xs))\`) or fill them (\`List.sum(map(xs, (x) => coalesce(x, 0)))\`) before folding.
+
+Ordered comparisons and arithmetic get no licence from the \`?:\` fill — there is no write field to fill — so either give the value a fallback with \`coalesce\`, or prove presence first (a guard clause, a \`!= null\` test, a traversal gate) and order *inside* the branch — or, for a guard clause, the code after it — that proved it.
 
 ### helper-families
 
@@ -524,7 +526,7 @@ function \`Intake\`(m: <inbox-[:Email]->>) {
     company = write crm-[:Companies]-> {
       Name:        Text.slug(m.Subject)
       Description: Currency.codeFromFigure(m.Body)
-      \`Team Size\`: Number.parse(m.Body)
+      \`Team Size\` ?: Number.parse(m.Body)
     }
     write company-[:Tasks]-> {
       Content:  "Follow up on \${m.Subject}"

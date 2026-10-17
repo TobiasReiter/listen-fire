@@ -127,7 +127,9 @@ describe.each<LanguageVersion>([3, 4, 5])("a function's returns join by the same
 
 describe.each<LanguageVersion>([3, 4, 5])("a list literal's members join by the same rule (version %i)", version => {
   it('a member of [lead, co] reads only what both offer', () => {
-    expect(codes(version, [LEAD, CO, '  both = [lead, co]', '  x = FIRST(both).Score + 1'])).toEqual([]);
+    // From 5 a list's first member may be absent, so its Score is guarded before arithmetic.
+    const score = version >= 5 ? '  x = COALESCE(FIRST(both).Score, 0) + 1' : '  x = FIRST(both).Score + 1';
+    expect(codes(version, [LEAD, CO, '  both = [lead, co]', score])).toEqual([]);
     expect(codes(version, [LEAD, CO, '  both = [lead, co]', '  x = FIRST(both).Email'])).toEqual([
       ['MOV_UNKNOWN_PROPERTY', from5(version)],
     ]);

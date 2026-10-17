@@ -272,7 +272,7 @@ describe('what stays silent', () => {
 
   it('an operand this layer cannot see', () => {
     expectClean(onDeal('  write c-[:deals]-> { Amount: ai("how many") + 1 }'));
-    expectClean(onDeal('  write c-[:deals]-> { Amount: Number.parse(d.`Name`) + 1 }'));
+    expectClean(onDeal('  write c-[:deals]-> { Amount: 1 + ai("how many") }'));
   });
 
   it('a boolean condition is untouched — this is an arithmetic rule only', () => {
@@ -332,7 +332,7 @@ describe('unary minus operand typing', () => {
   });
 
   it('an operand this layer cannot see stays silent', () => {
-    expectClean(onDeal('  write c-[:deals]-> { Amount: -Number.parse(d.`Name`) }'));
+    expectClean(onDeal('  write c-[:deals]-> { Amount: -ai("how many") }'));
   });
 });
 

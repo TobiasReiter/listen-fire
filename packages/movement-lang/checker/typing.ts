@@ -2753,9 +2753,12 @@ function operandSource(expr: Expression): string | undefined {
   if (expr.type === 'property') return quoteName(expr.propertyTypeId);
   if (expr.type === 'meta') return `@${expr.key}`;
   if (expr.type === 'alias_ref') return quoteName(expr.name);
+  // A read off a value that is no name (`first(xs).Score`) is rooted at the
+  // position placeholder, which the author never wrote.
   if (
     expr.type === 'traverse'
     && expr.aliasRoot !== undefined
+    && expr.aliasRoot !== POSITION_SENTINEL
     && expr.steps.length === 0
     && expr.expression.type === 'property'
   ) {
