@@ -299,7 +299,7 @@ batches = Number.ceil(count(rows) / 50)
 
 ### Number.parse
 
-\`Number.parse(value)\` → \`number\` — coerces text to a number. Text that is not a number gives nothing, so guard it (\`?:\`, \`coalesce\`, or a check) where the text comes from outside. \`NUMBER(value)\` is its spelling inside walk brackets.
+\`Number.parse(value)\` → \`number | absent\` — coerces text to a number, and is absent when the text is no number. Guard it (\`n != null\`) or give it a fallback (\`coalesce\`, \`?:\`) where a value is required. \`NUMBER(value)\` is its spelling inside walk brackets.
 
 \`\`\`
 n = Number.parse(msg.Subject) ?: 0

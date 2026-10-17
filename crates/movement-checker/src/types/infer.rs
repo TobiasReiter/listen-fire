@@ -1163,6 +1163,10 @@ impl<'a> Typing<'a> {
             _ => {}
         }
         if let Some(coerced) = bare_coercer_returns(function) {
+            // From version 5 `Number.parse` answers nothing for text that is no number.
+            if function == "number" && since(self.version, 5) {
+                return Some(maybe_absent(coerced));
+            }
             return Some(coerced);
         }
         if let Some(spec) = stdlib_function_by_id(function) {
