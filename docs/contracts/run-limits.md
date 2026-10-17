@@ -45,7 +45,7 @@ lf and the TypeScript host read each engine limit from the environment, as they 
 - Every priced host call is handed the remaining budget, and reports what it spent.
 - A model call (`AI()`, `extract`, the identity judge) and a priced plugin are refused by the engine itself once the run has spent its cap. The host is never asked. Before this release a model call relied on the host refusing past its budget, so a host that ignored the budget could overspend.
 - A call already under way can overshoot the cap by what that one call costs. The next priced call is refused.
-- Module calls are not priced. A module that spends money on a paid service is not counted against the cap unless it is a priced plugin.
+- A module call is priced only by what the module reports it spent (`ctx.spend.charge`, carried back as its answer's `cost`). The host charges that to the run, whether the call succeeded or failed. The cap sees it once the segment the call ran in ends, so a module's spend can overshoot within one segment. A module that reports nothing is not counted.
 
 ## A movement reaches the network only through modules
 
