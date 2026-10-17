@@ -1365,6 +1365,18 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
   signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
 
+### lfr-serve
+
+- `lf-host serve` serves what `lf serve` does: a provider's webhook deliveries (and the older
+  `/hooks/<external>/<install>` address), an external's emit and wake pushes, callback calls at
+  `/api/cb/<id>`, and due work drained every second. Deliveries are verified by the same seven
+  signature schemes and the same signed-inbound rule, with the same 100 KB and 1 MB limits.
+- `lf-host` runs callbacks: a run mints them, `lf-host call <id> --body <file>` or the door calls
+  them, and the body runs once under the run's lease. `lf-host cancel <run> [--reason]` cancels a
+  run, and `lf-host run --webhook` takes one delivery. Either binary can resume what the other
+  left, callbacks included.
+- `lf-host` reads lf.yaml's `publicUrl`; a callback's link is under it.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
