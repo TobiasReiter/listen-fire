@@ -486,7 +486,7 @@ that phone's team, so wire `pnpm dev:whatsapp setup` first (it creates a
 `phone_number` row → the dev-loop user + a whatsapp movement trigger).
 `--media` is the interesting path: Meta delivers media by *id*, which the
 dispatcher downloads out-of-band. The wrapper first seeds the bytes (a 1×1
-PNG for `image`, a tiny PDF for `document`) into the **fake Meta media
+PNG for `image`, a one-page PDF with a text layer for `document` — `apps/fake-channels/assets/dev-document.pdf`, so extraction reads real text) into the **fake Meta media
 endpoint** (`POST /whatsapp/media`), then fires the webhook. The dispatcher
 resolves them through the real path because the dev loop points
 `WHATSAPP_GRAPH_BASE_URL` at `${FAKE_CHANNELS_URL}/whatsapp/graph` (two

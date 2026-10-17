@@ -689,14 +689,9 @@ interface WhatsappInjectArgs {
 /** A 1×1 PNG — the bytes seeded for an injected image. */
 const FAKE_WHATSAPP_IMAGE_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-/** A minimal valid one-page PDF — the bytes seeded for an injected document. */
-const FAKE_WHATSAPP_PDF_B64 = Buffer.from(
-  '%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
-    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
-    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>endobj\n' +
-    'trailer<</Root 1 0 R>>\n%%EOF\n',
-  'utf-8',
-).toString('base64');
+/** A one-page PDF with a text layer — the bytes seeded for an injected
+ *  document, so file-text's extraction has something to read end to end. */
+const WHATSAPP_PDF_ASSET = path.resolve(__dirname, '../../../../fake-channels/assets/dev-document.pdf');
 
 /**
  * Seed the inbound media bytes into the fake Meta Cloud API so the
@@ -774,7 +769,7 @@ async function injectWhatsapp(args: WhatsappInjectArgs) {
       mediaType === 'document' ? 'doc.pdf' : mediaType === 'audio' ? undefined : 'image.jpeg';
     const base64 =
       mediaType === 'document'
-        ? FAKE_WHATSAPP_PDF_B64
+        ? readFileSync(WHATSAPP_PDF_ASSET).toString('base64')
         : mediaType === 'audio'
           ? readFileSync(
               path.resolve(__dirname, '../../../../fake-channels/assets/voice-sample.ogg'),
