@@ -1,8 +1,7 @@
 {
-  "name": "@listen-fire/shared",
-  "private": true,
+  "name": "@lf/shared",
   "license": "Apache-2.0",
-  "version": "0.0.1",
+  "version": "0.11.0",
   "description": "Shared library for Listen-Fire code to be used across client and server",
   "engines": {
     "node": "22.20.0"
@@ -10,11 +9,51 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
+    "prepack": "node ../../scripts/build-packages.cjs ."
   },
   "main": "index.ts",
   "type": "commonjs",
   "dependencies": {
     "typescript": "5.5.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/listen-fire/listen-fire.git",
+    "directory": "packages/shared"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      "./package.json": "./package.json",
+      "./cron": {
+        "types": "./dist/cron/index.d.ts",
+        "default": "./dist/cron/index.js"
+      },
+      "./timezone": {
+        "types": "./dist/timezone/index.d.ts",
+        "default": "./dist/timezone/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "default": "./dist/*.js"
+      }
+    },
+    "typesVersions": {
+      "*": {
+        "cron": [
+          "dist/cron/index.d.ts"
+        ],
+        "timezone": [
+          "dist/timezone/index.d.ts"
+        ],
+        "*": [
+          "dist/*"
+        ]
+      }
+    }
   }
 }

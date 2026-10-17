@@ -1,0 +1,26 @@
+{
+  "name": "embed-saas-example",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "A SaaS that lets its customers write and run movements inside its product: the engine in process, through its public entries only (docs/embedding.md)",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "scripts": {
+    "start": "node --require tsx/cjs src/server.ts",
+    "code:type-check": "tsc --pretty --noEmit",
+    "test": "node --test --require tsx/cjs test/*.test.ts"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "@lf/engine": "workspace:*",
+    "@lf/engine-contracts": "workspace:*",
+    "@lf/module-kit": "workspace:*",
+    "tsx": "4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "typescript": "5.5.4"
+  }
+}

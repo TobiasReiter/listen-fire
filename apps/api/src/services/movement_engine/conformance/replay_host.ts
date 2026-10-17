@@ -47,6 +47,10 @@ const ENGINE_CODES: Record<MovementEngineErrorCode, true> = {
   MOVENG_CALL_DEPTH: true,
   MOVENG_PARK_NONSERIALIZABLE: true,
   MOVENG_ERROR: true,
+  MOVENG_LIMIT_STEPS: true,
+  MOVENG_LIMIT_TEXT_SIZE: true,
+  MOVENG_LIMIT_COLLECTION_SIZE: true,
+  MOVENG_LIMIT_RESULT_SIZE: true,
 };
 
 function isEngineCode(code: string): code is MovementEngineErrorCode {

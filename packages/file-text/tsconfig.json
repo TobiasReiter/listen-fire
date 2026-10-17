@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "exclude": ["node_modules", "jest.config.borrowed.cjs"]
+  "exclude": ["node_modules", "dist", "jest.config.borrowed.cjs"]
 }

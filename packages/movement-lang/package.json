@@ -1,8 +1,7 @@
 {
-  "name": "movement-lang",
-  "private": true,
+  "name": "@lf/movement-lang",
   "license": "Apache-2.0",
-  "version": "0.0.1",
+  "version": "0.11.0",
   "description": "The data-movement language: parser, checker, and lowering for movements",
   "engines": {
     "node": "22.20.0"
@@ -20,18 +19,52 @@
     "harvest:programs": "T=$(mktemp -d) && for c in v1 v2 v3 current; do HARVEST_CORPUS=$c HARVEST_OUT=$T/$c.jsonl node ../../apps/api/node_modules/jest/bin/jest.js --config parser/harvest/jest.harvest.cjs || exit 1; done && node parser/harvest/build_fixture.cjs v1=$T/v1.jsonl v2=$T/v2.jsonl v3=$T/v3.jsonl current=$T/current.jsonl",
     "harvest:slots": "T=$(mktemp -d) && for c in v1 v2 v3 current; do HARVEST_CORPUS=$c HARVEST_OUT=$T/$c.jsonl node ../../apps/api/node_modules/jest/bin/jest.js --config parser/expression/harvest/jest.harvest.cjs || exit 1; done && node parser/expression/harvest/build_fixture.cjs v1=$T/v1.jsonl v2=$T/v2.jsonl v3=$T/v3.jsonl current=$T/current.jsonl",
     "harvest:checks": "checker/harvest/harvest.sh --pin",
-    "checks:corpus": "checker/harvest/harvest.sh"
+    "checks:corpus": "checker/harvest/harvest.sh",
+    "prepack": "node ../../scripts/build-packages.cjs ."
   },
   "main": "index.ts",
   "types": "index.ts",
   "type": "commonjs",
   "dependencies": {
-    "@listen-fire/shared": "workspace:*",
+    "@lf/shared": "workspace:^",
     "typescript": "5.5.4"
   },
   "devDependencies": {
+    "@listen-fire/shared": "workspace:@lf/shared@*",
     "@types/jest": "29.5.14",
     "jest": "29.7.0",
     "ts-jest": "29.2.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/listen-fire/listen-fire.git",
+    "directory": "packages/movement-lang"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "default": "./dist/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "typesVersions": {
+      "*": {
+        "*": [
+          "dist/*",
+          "*"
+        ]
+      }
+    }
   }
 }

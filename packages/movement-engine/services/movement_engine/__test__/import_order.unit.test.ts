@@ -13,7 +13,7 @@ describe('the engine modules', () => {
       });
       expect(() => require('../expression')).not.toThrow();
     });
-    jest.dontMock('movement-engine/services/movement_engine/run');
+    jest.dontMock('../run');
   });
 
   it('load with the evaluator first, run.ts included', () => {

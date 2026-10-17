@@ -1,8 +1,7 @@
 {
-  "name": "movement-engine",
-  "private": true,
+  "name": "@lf/engine",
   "license": "Apache-2.0",
-  "version": "0.0.1",
+  "version": "0.11.0",
   "description": "The movement engine and its host contract, moved out of apps/api so every shell (the hosted product, the `lf` command line) runs the same engine: the TypeScript engine, the Rust engine's shim, the EngineHost families, and the adapter and model types they reach. Paths mirror apps/api/src so the move stayed mechanical. Its own tests borrow apps/api's jest runner (jest.config.borrowed.cjs); engine tests that need the platform still live in apps/api. Embedders reach it only through public/* (the exports map); the internals resolve only under the `movement-engine-internals` condition, which only test runners set",
   "engines": {
     "node": "22.20.0"
@@ -22,24 +21,53 @@
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit",
-    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
+    "prepack": "node ../../scripts/build-packages.cjs ."
   },
   "type": "commonjs",
   "dependencies": {
-    "#shared": "workspace:@listen-fire/shared@*",
     "@anthropic-ai/sdk": "^0.126.0",
-    "engine-contracts": "workspace:*",
+    "@lf/engine-contracts": "workspace:^",
+    "@lf/movement-lang": "workspace:^",
+    "@lf/shared": "workspace:^",
     "exponential-backoff": "3.1.1",
     "google-auth-library": "10.3.0",
     "jsonrepair": "3.8.0",
-    "movement-lang": "workspace:*",
     "safe-stable-stringify": "2.5.0",
     "winston": "3.14.2",
     "zod": "4.1.12"
   },
   "devDependencies": {
+    "#shared": "workspace:@lf/shared@*",
     "@types/jest": "29.5.14",
     "@types/node": "20.16.5",
+    "engine-contracts": "workspace:@lf/engine-contracts@*",
+    "movement-lang": "workspace:@lf/movement-lang@*",
     "typescript": "5.5.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/listen-fire/listen-fire.git",
+    "directory": "packages/movement-engine"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      "./package.json": "./package.json",
+      "./public/*": {
+        "types": "./dist/public/*.d.ts",
+        "default": "./dist/public/*.js"
+      }
+    },
+    "typesVersions": {
+      "*": {
+        "public/*": [
+          "dist/public/*"
+        ]
+      }
+    }
   }
 }

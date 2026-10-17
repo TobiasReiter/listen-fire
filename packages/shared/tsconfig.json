@@ -4,5 +4,5 @@
     "target": "es2022",
     "module": "commonjs"
   },
-  "exclude": ["node_modules", "**/__test__/**"]
+  "exclude": ["node_modules", "dist", "**/__test__/**"]
 }

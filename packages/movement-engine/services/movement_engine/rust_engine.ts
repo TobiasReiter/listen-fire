@@ -529,6 +529,9 @@ function segmentInput(
       // How many named calls deep the run may nest (version 3): the
       // deployment's, read here for the same reason.
       maxCallDepth: maxCallDepth(),
+      // What one segment may consume (docs/contracts/run-limits.md); each
+      // absent one is the engine's default.
+      ...(input.limits !== undefined ? { limits: input.limits } : {}),
       // What this deployment buys for each extraction tier: read here so the
       // engine reads no environment; the built-in table where it names none.
       extractionTiers: extractionTierAssignments(),
@@ -742,6 +745,11 @@ function engineErrorCode(code: unknown): MovementEngineErrorCode {
     case 'MOVENG_LANGUAGE_VERSION':
     case 'MOVENG_PARSE':
     case 'MOVENG_CHECK':
+    // A limit the host set (`limits`, docs/contracts/run-limits.md).
+    case 'MOVENG_LIMIT_STEPS':
+    case 'MOVENG_LIMIT_TEXT_SIZE':
+    case 'MOVENG_LIMIT_COLLECTION_SIZE':
+    case 'MOVENG_LIMIT_RESULT_SIZE':
       return code;
     default:
       throw new RustShimError(`the Rust evaluator threw an unknown code ${String(code)}`);

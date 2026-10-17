@@ -70,14 +70,14 @@ jobs:
       # The contract docs' drift guards: each doc's version line, shape blocks
       # and the index table against packages/engine-contracts. Seconds, no DB.
       - name: Contract docs drift guards
-        run: pnpm --filter engine-contracts test
+        run: pnpm --filter @lf/engine-contracts test
       - name: Shared package tests
-        run: pnpm --filter @listen-fire/shared test
+        run: pnpm --filter @lf/shared test
       # movement-lang's own suite (parser, checker, engine-facing units): the
       # language is what every saved movement is pinned to, so it is gated
       # whole here rather than only in part by movement-wasm.
       - name: movement-lang tests
-        run: pnpm --filter movement-lang test
+        run: pnpm --filter @lf/movement-lang test
       - name: Smoke tests
         env:
           NODE_OPTIONS: --max-old-space-size=4096

@@ -88,6 +88,22 @@ export interface RunInput {
    * here ⇒ the instance is constructed with no credential.
    */
   credentialIds?: Readonly<Record<string, string>>;
+  /** What each segment of the run may consume (docs/contracts/run-limits.md).
+   *  Absent ⇒ the engine's defaults. Version 5 and later (the Rust engine). */
+  limits?: SegmentLimits;
+}
+
+/** A segment's limits, each a whole positive number; an absent one is the
+ *  engine's default (docs/contracts/run-limits.md). */
+export interface SegmentLimits {
+  /** Statements run plus expressions evaluated. Default 10,000,000. */
+  maxSteps?: number;
+  /** One text's size, in UTF-8 bytes. Default 16 MiB. */
+  maxTextBytes?: number;
+  /** One list's members, or one map's keys. Default 1,000,000. */
+  maxCollectionItems?: number;
+  /** The segment's result, as JSON text. Default 64 MiB. */
+  maxResultBytes?: number;
 }
 
 export interface ResumeInput extends RunInput {

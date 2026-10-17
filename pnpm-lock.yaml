@@ -28,7 +28,7 @@ importers:
         specifier: workspace:@listen-fire/trpc@*
         version: link:../../packages/trpc
       '@listen-fire/shared':
-        specifier: workspace:*
+        specifier: workspace:@lf/shared@*
         version: link:../../packages/shared
       '@react-oauth/google':
         specifier: 0.12.1
@@ -98,7 +98,7 @@ importers:
   apps/api:
     dependencies:
       '#shared':
-        specifier: workspace:@listen-fire/shared@*
+        specifier: workspace:@lf/shared@*
         version: link:../../packages/shared
       '@anthropic-ai/sdk':
         specifier: ^0.126.0
@@ -320,7 +320,7 @@ importers:
         specifier: 16.4.5
         version: 16.4.5
       engine-contracts:
-        specifier: workspace:*
+        specifier: workspace:@lf/engine-contracts@*
         version: link:../../packages/engine-contracts
       exceljs:
         specifier: ^4.4.0
@@ -338,7 +338,7 @@ importers:
         specifier: 4.2.0
         version: 4.2.0(winston@3.14.2)
       file-text:
-        specifier: workspace:*
+        specifier: workspace:@lf/file-text@*
         version: link:../../packages/file-text
       form-data:
         specifier: 4.0.0
@@ -401,16 +401,16 @@ importers:
         specifier: 4.0.3
         version: 4.0.3
       model-providers:
-        specifier: workspace:*
+        specifier: workspace:@lf/model-providers@*
         version: link:../../packages/model-providers
       module-kit:
-        specifier: workspace:*
+        specifier: workspace:@lf/module-kit@*
         version: link:../../packages/module-kit
       movement-engine:
-        specifier: workspace:*
+        specifier: workspace:@lf/engine@*
         version: link:../../packages/movement-engine
       movement-lang:
-        specifier: workspace:*
+        specifier: workspace:@lf/movement-lang@*
         version: link:../../packages/movement-lang
       mustache:
         specifier: 4.2.0
@@ -585,13 +585,13 @@ importers:
   apps/cli:
     dependencies:
       engine-contracts:
-        specifier: workspace:*
+        specifier: workspace:@lf/engine-contracts@*
         version: link:../../packages/engine-contracts
       module-kit:
-        specifier: workspace:*
+        specifier: workspace:@lf/module-kit@*
         version: link:../../packages/module-kit
       movement-engine:
-        specifier: workspace:*
+        specifier: workspace:@lf/engine@*
         version: link:../../packages/movement-engine
       tsx:
         specifier: 4.21.0
@@ -668,7 +668,7 @@ importers:
         specifier: ^1.2.3
         version: 1.2.3
       '@listen-fire/shared':
-        specifier: workspace:*
+        specifier: workspace:@lf/shared@*
         version: link:../../packages/shared
       '@react-oauth/google':
         specifier: 0.12.1
@@ -719,7 +719,7 @@ importers:
         specifier: ^0.574.0
         version: 0.574.0(react@18.3.1)
       movement-lang:
-        specifier: workspace:^
+        specifier: workspace:@lf/movement-lang@*
         version: link:../../packages/movement-lang
       next:
         specifier: 15.5.12
@@ -804,32 +804,54 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
+  examples/embed-saas:
+    dependencies:
+      '@lf/engine':
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      tsx:
+        specifier: 4.21.0
+        version: 4.21.0
+    devDependencies:
+      '@types/node':
+        specifier: 22.19.15
+        version: 22.19.15
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
   modules/affinity:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
         version: link:../../packages/shared
       date-fns:
         specifier: 3.6.0
         version: 3.6.0
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
       exponential-backoff:
         specifier: 3.1.1
         version: 3.1.1
       lodash:
         specifier: 4.17.21
         version: 4.17.21
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       tldts:
         specifier: 6.1.44
         version: 6.1.44
@@ -837,6 +859,9 @@ importers:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
@@ -846,207 +871,297 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/airtable:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:^
         version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       exponential-backoff:
         specifier: 3.1.1
         version: 3.1.1
       lru-cache:
         specifier: 10.4.3
         version: 10.4.3
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/attio:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:^
         version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       exponential-backoff:
         specifier: 3.1.1
         version: 3.1.1
       lru-cache:
         specifier: 10.4.3
         version: 10.4.3
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/dealroom:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/dropbox:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/evertrace:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/gmail:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      '@lf/google-sheets':
-        specifier: workspace:*
-        version: link:../google-sheets
-      engine-contracts:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:^
         version: link:../../packages/engine-contracts
+      '@lf/google-sheets':
+        specifier: workspace:^
+        version: link:../google-sheets
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       googleapis:
         specifier: 164.1.0
         version: 164.1.0
       html-to-text:
         specifier: 9.0.5
         version: 9.0.5
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/html-to-text':
         specifier: 9.0.4
         version: 9.0.4
@@ -1056,24 +1171,36 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/google-drive:
     dependencies:
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
       '@lf/google-sheets':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../google-sheets
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
       googleapis:
         specifier: 164.1.0
         version: 164.1.0
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
       zod:
         specifier: 4.1.12
         version: 4.1.12
@@ -1084,178 +1211,262 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/google-sheets:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:^
         version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       exponential-backoff:
         specifier: 3.1.1
         version: 3.1.1
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/granola:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/slack:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
+      '@lf/engine':
+        specifier: workspace:^
+        version: link:../../packages/movement-engine
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
         version: link:../../packages/shared
       '@slack/web-api':
         specifier: 7.11.0
         version: 7.11.0
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
-        version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
-        version: link:../../packages/movement-lang
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/telegram:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   modules/web:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../../packages/shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../../packages/engine-contracts
-      file-text:
-        specifier: workspace:*
-        version: link:../../packages/file-text
-      module-kit:
-        specifier: workspace:*
-        version: link:../../packages/module-kit
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../../packages/movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../../packages/engine-contracts
+      '@lf/file-text':
+        specifier: workspace:^
+        version: link:../../packages/file-text
+      '@lf/module-kit':
+        specifier: workspace:^
+        version: link:../../packages/module-kit
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../../packages/movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       zod:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../../packages/shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../../packages/engine-contracts
+      file-text:
+        specifier: workspace:@lf/file-text@*
+        version: link:../../packages/file-text
+      module-kit:
+        specifier: workspace:@lf/module-kit@*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../../packages/movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   packages/engine-contracts:
     dependencies:
-      movement-lang:
-        specifier: workspace:*
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../movement-lang
       zod:
         specifier: 4.1.12
@@ -1264,6 +1475,9 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
@@ -1313,8 +1527,8 @@ importers:
 
   packages/model-providers:
     dependencies:
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../movement-engine
       zod:
         specifier: 4.1.12
@@ -1335,6 +1549,9 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../movement-engine
       openai:
         specifier: 5.22.0
         version: 5.22.0(ws@8.18.0)(zod@4.1.12)
@@ -1344,18 +1561,18 @@ importers:
 
   packages/module-kit:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../shared
-      engine-contracts:
-        specifier: workspace:*
-        version: link:../engine-contracts
-      movement-engine:
-        specifier: workspace:*
+      '@lf/engine':
+        specifier: workspace:^
         version: link:../movement-engine
-      movement-lang:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
+        version: link:../engine-contracts
+      '@lf/movement-lang':
+        specifier: workspace:^
         version: link:../movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../shared
       tsx:
         specifier: 4.21.0
         version: 4.21.0
@@ -1363,27 +1580,42 @@ importers:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../engine-contracts
+      movement-engine:
+        specifier: workspace:@lf/engine@*
+        version: link:../movement-engine
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   packages/movement-engine:
     dependencies:
-      '#shared':
-        specifier: workspace:@listen-fire/shared@*
-        version: link:../shared
       '@anthropic-ai/sdk':
         specifier: ^0.126.0
         version: 0.126.0(zod@4.1.12)
-      engine-contracts:
-        specifier: workspace:*
+      '@lf/engine-contracts':
+        specifier: workspace:^
         version: link:../engine-contracts
+      '@lf/movement-lang':
+        specifier: workspace:^
+        version: link:../movement-lang
+      '@lf/shared':
+        specifier: workspace:^
+        version: link:../shared
       exponential-backoff:
         specifier: 3.1.1
         version: 3.1.1
@@ -1393,9 +1625,6 @@ importers:
       jsonrepair:
         specifier: 3.8.0
         version: 3.8.0
-      movement-lang:
-        specifier: workspace:*
-        version: link:../movement-lang
       safe-stable-stringify:
         specifier: 2.5.0
         version: 2.5.0
@@ -1406,25 +1635,37 @@ importers:
         specifier: 4.1.12
         version: 4.1.12
     devDependencies:
+      '#shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      engine-contracts:
+        specifier: workspace:@lf/engine-contracts@*
+        version: link:../engine-contracts
+      movement-lang:
+        specifier: workspace:@lf/movement-lang@*
+        version: link:../movement-lang
       typescript:
         specifier: 5.5.4
         version: 5.5.4
 
   packages/movement-lang:
     dependencies:
-      '@listen-fire/shared':
-        specifier: workspace:*
+      '@lf/shared':
+        specifier: workspace:^
         version: link:../shared
       typescript:
         specifier: 5.5.4
         version: 5.5.4
     devDependencies:
+      '@listen-fire/shared':
+        specifier: workspace:@lf/shared@*
+        version: link:../shared
       '@types/jest':
         specifier: 29.5.14
         version: 29.5.14
@@ -1456,7 +1697,7 @@ importers:
   packages/story-view:
     dependencies:
       '@listen-fire/shared':
-        specifier: workspace:*
+        specifier: workspace:@lf/shared@*
         version: link:../shared
       esbuild:
         specifier: 0.23.1
@@ -1465,7 +1706,7 @@ importers:
         specifier: ^0.574.0
         version: 0.574.0(react@18.3.1)
       movement-lang:
-        specifier: workspace:*
+        specifier: workspace:@lf/movement-lang@*
         version: link:../movement-lang
       react:
         specifier: 18.3.1
@@ -1490,7 +1731,7 @@ importers:
   packages/trpc:
     dependencies:
       '@listen-fire/shared':
-        specifier: workspace:*
+        specifier: workspace:@lf/shared@*
         version: link:../shared
       '@prisma/client':
         specifier: 5.22.0
@@ -1499,10 +1740,10 @@ importers:
         specifier: 0.27.4
         version: 0.27.4
       movement-engine:
-        specifier: workspace:*
+        specifier: workspace:@lf/engine@*
         version: link:../movement-engine
       movement-lang:
-        specifier: workspace:*
+        specifier: workspace:@lf/movement-lang@*
         version: link:../movement-lang
       story-view:
         specifier: workspace:*
@@ -18195,7 +18436,7 @@ snapshots:
   extract-pg-schema@5.8.0(@electric-sql/pglite@0.3.14)(better-sqlite3@11.10.0):
     dependencies:
       knex: 3.1.0(better-sqlite3@11.10.0)(pg@8.16.3)
-      knex-pglite: 0.12.1(@electric-sql/pglite@0.3.14)(knex@3.1.0(better-sqlite3@11.10.0)(pg@8.12.0))
+      knex-pglite: 0.12.1(@electric-sql/pglite@0.3.14)(knex@3.1.0(better-sqlite3@11.10.0)(pg@8.16.3))
       pg: 8.16.3
       pg-query-emscripten: 5.1.0
       ramda: 0.31.3
@@ -19857,7 +20098,7 @@ snapshots:
 
   kleur@4.1.5: {}
 
-  knex-pglite@0.12.1(@electric-sql/pglite@0.3.14)(knex@3.1.0(better-sqlite3@11.10.0)(pg@8.12.0)):
+  knex-pglite@0.12.1(@electric-sql/pglite@0.3.14)(knex@3.1.0(better-sqlite3@11.10.0)(pg@8.16.3)):
     dependencies:
       '@electric-sql/pglite': 0.3.14
       knex: 3.1.0(better-sqlite3@11.10.0)(pg@8.16.3)

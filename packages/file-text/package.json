@@ -1,15 +1,15 @@
 {
-  "name": "file-text",
-  "private": true,
+  "name": "@lf/file-text",
   "license": "Apache-2.0",
-  "version": "0.0.1",
+  "version": "0.11.0",
   "description": "A file's text: PDF (text layer, then an injected OCR), PowerPoint decks, spreadsheets and CSV, and audio (an injected transcriber). Bytes, OCR, transcription, the spreadsheet model call and the logger are all injected, so any shell can read files without the hosted product",
   "engines": {
     "node": "22.20.0"
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit",
-    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs",
+    "prepack": "node ../../scripts/build-packages.cjs ."
   },
   "main": "index.ts",
   "types": "index.ts",
@@ -30,5 +30,37 @@
     "@types/tmp": "0.2.6",
     "@types/yauzl-promise": "4.0.1",
     "typescript": "5.5.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/listen-fire/listen-fire.git",
+    "directory": "packages/file-text"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "default": "./dist/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "typesVersions": {
+      "*": {
+        "*": [
+          "dist/*",
+          "*"
+        ]
+      }
+    }
   }
 }
