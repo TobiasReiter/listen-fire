@@ -29,8 +29,4 @@ export const KNOWN_GAPS: readonly string[] = [
   "MOVENG_UNSUPPORTED: rootless EXISTS() is not supported by the movement engine yet (root th",
   "MOVENG_UNSUPPORTED: rootless block heads (relative traversal) is not supported by the move",
   "MOVENG_UNSUPPORTED: unique by on a shape write is not supported by the movement engine yet",
-  // What the host answers decides these; each should end as the host's
-  // runtime failure, not a refusal by construct.
-  "MOVENG_UNSUPPORTED: the function DOMAIN_OF() is not supported by the movement engine yet (",
-  "MOVENG_RUNTIME: '…' reads a collection of values and got nothing — the checker should have",
 ];

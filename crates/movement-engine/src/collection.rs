@@ -405,11 +405,15 @@ impl Run<'_> {
         let source = self.evaluate_slot(&expr.source, scope).await?;
         let source_trail = self.trail_or_none(&source.prov, scope);
         let Js::Array(list) = &source.value else {
-            let got = if source.value.is_nullish() { "nothing".to_string() } else { source.value.type_of().to_string() };
-            return Err(Stop::Thrown(Failure::engine(
-                "MOVENG_RUNTIME",
-                format!("'{spelling}' reads a collection of values and got {got} — the checker should have caught this"),
-            )));
+            // Nothing is what a read answers where the host holds no value
+            // (a field the record leaves empty), which no save check sees;
+            // a value of another type is one the check let through.
+            let message = if source.value.is_nullish() {
+                format!("'{spelling}' reads a collection of values and got nothing (the value it reads is empty)")
+            } else {
+                format!("'{spelling}' reads a collection of values and got {} — the checker should have caught this", source.value.type_of())
+            };
+            return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", message)));
         };
         let members = list.items().clone();
         let init = match (&expr.init, expr.op) {

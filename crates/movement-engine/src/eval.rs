@@ -886,12 +886,17 @@ impl<'a> Evaluator<'a> {
                 return Err(EvalError::Fallback(format!("{id} is not a built-in this engine runs")));
             };
             // Built-ins always win; any other name is a function the write
-            // field advertises, or unsupported, named, before its arguments
-            // are read.
+            // field advertises. The checker lets one through only in a write
+            // field's value, and which functions a field offers is what the
+            // system describes at run time: one it does not offer fails the
+            // run on that answer, named, before its arguments are read.
             if !reader.field_function(id) {
-                return Err(EvalError::unsupported(
-                    &format!("the function {}()", crate::js::to_upper_case(id)),
-                    "built-in functions run everywhere; an integration-provided function runs only as a write-field value on a field that advertises it",
+                return Err(EvalError::engine(
+                    "MOVENG_RUNTIME",
+                    format!(
+                        "{}() is not a built-in function, and the field this value is written to does not offer it (an integration-provided function runs only on a field whose system advertises it)",
+                        crate::js::to_upper_case(id)
+                    ),
                 ));
             }
             let mut values = Vec::new();
