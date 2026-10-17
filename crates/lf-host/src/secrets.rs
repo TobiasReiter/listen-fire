@@ -55,24 +55,43 @@ pub fn load_secrets(project: &Project, env: &[(String, String)]) -> Result<Crede
             if name == "sops" {
                 continue;
             }
-            let shape = || format!("{}: credential \"{name}\" needs an `external` and string fields", path.display());
-            let serde_yaml::Value::Mapping(entry) = raw else { return Err(shape()) };
-            let mut external = None;
-            let mut fields = BTreeMap::new();
-            for (key, value) in entry {
-                let (serde_yaml::Value::String(key), serde_yaml::Value::String(value)) = (key, value) else { return Err(shape()) };
-                if key == "external" {
-                    external = Some(value);
-                } else {
-                    fields.insert(key, value);
-                }
-            }
-            let external = external.filter(|e| !e.is_empty()).ok_or_else(shape)?;
+            let (external, fields) = parse_entry(raw).map_err(|why| format!("{}: entry \"{name}\" {why}", path.display()))?;
             credentials.push(Credential { name, external, fields });
         }
     }
     apply_environment(&mut credentials, env)?;
     Ok(credentials)
+}
+
+/// One entry: the external it belongs to (`module:`, written by `lf connect` /
+/// `lf credential`, or a hand-written `external:`) and its fields. A user
+/// credential's `credential:` names the declared credential it binds; it is
+/// not a field.
+fn parse_entry(raw: serde_yaml::Value) -> Result<(String, BTreeMap<String, String>), String> {
+    let shape = || "needs `module` (or a hand-written `external`) and string fields".to_string();
+    let serde_yaml::Value::Mapping(entry) = raw else { return Err(shape()) };
+    let (mut external, mut module) = (None, None);
+    let mut fields = BTreeMap::new();
+    for (key, value) in entry {
+        let (serde_yaml::Value::String(key), serde_yaml::Value::String(value)) = (key, value) else { return Err(shape()) };
+        match key.as_str() {
+            "external" => external = Some(value),
+            "module" => module = Some(value),
+            "credential" => {}
+            _ => {
+                fields.insert(key, value);
+            }
+        }
+    }
+    let owner = match (external, module) {
+        (Some(_), Some(_)) => return Err("names both `external` and `module`; keep one".into()),
+        (Some(owner), None) | (None, Some(owner)) => owner,
+        (None, None) => return Err(shape()),
+    };
+    if owner.is_empty() {
+        return Err(shape());
+    }
+    Ok((owner, fields))
 }
 
 fn read_secrets_file(path: &Path) -> Result<Vec<(String, serde_yaml::Value)>, String> {
@@ -208,4 +227,26 @@ pub fn missing_credentials(
         }
     }
     missing
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_entry;
+
+    fn entry(yaml: &str) -> Result<(String, Vec<(String, String)>), String> {
+        parse_entry(serde_yaml::from_str(yaml).unwrap()).map(|(owner, fields)| (owner, fields.into_iter().collect()))
+    }
+
+    #[test]
+    fn entries_written_by_the_commands_and_by_hand_both_read() {
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(entry("module: hubspot\nclient_id: app\n"), Ok(("hubspot".into(), vec![pair("client_id", "app")])));
+        assert_eq!(
+            entry("module: hubspot\ncredential: hubspot\naccess_token: t\n"),
+            Ok(("hubspot".into(), vec![pair("access_token", "t")]))
+        );
+        assert_eq!(entry("external: acme_crm\ntoken: x\n"), Ok(("acme_crm".into(), vec![pair("token", "x")])));
+        assert!(entry("external: a\nmodule: b\n").unwrap_err().contains("both"));
+        assert!(entry("credential: c\ntoken: x\n").is_err());
+    }
 }

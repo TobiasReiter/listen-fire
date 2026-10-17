@@ -1,177 +1,215 @@
-// `lf connect <credential>`: connect an OAuth 2 credential the way its
-// external's manifest declares (`credentials[].oauth2`), through the engine's
-// connect flow, the same one the hosted product's OAuth flows run on. lf opens
-// the provider's authorize page, takes the redirect on a loopback listener
-// (RFC 8252), exchanges the code, and writes the tokens to the secrets file
-// the credential is in, through the secrets family.
-//
-// The credential must already name its external and lf's registered app at
-// the provider (`client_id`, and `client_secret` unless the provider takes a
-// public client): those are the operator's, and connect only adds the tokens.
+// `lf connect <module>`: set up a module for this project, once, by prompts —
+// never by editing the secrets file. Everything the module needs before any
+// user signs in:
+//   - installed: an `externals/<name>/lf-external.yaml`, serving a module
+//     package with serve-module, or reaching a module run separately at its
+//     server URL;
+//   - its install's secrets: the server secret a separately-run module checks
+//     (the external's `auth` field), the webhook secret its inbound deliveries
+//     are signed with, and the OAuth app's client id and secret, stored once
+//     per module, with the redirect port the app registered.
+// User credentials are not set up here: `lf credential add --module <module>`.
+// With no module named, it lists the modules it knows.
 
-import { spawn } from 'node:child_process';
-import { createServer, type Server } from 'node:http';
-import { createOAuth2Connector, storeGrant, type OAuth2Declaration } from 'movement-engine/public/secrets';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { stringify } from 'yaml';
 import type { WireCredentialDeclarationShape } from 'engine-contracts';
 import { LOCAL_TENANT } from './host';
-import { scanExternals, startExternals } from './externals';
+import { EXTERNAL_MANIFEST, scanExternals, startExternals, type External, type RunningExternal } from './externals';
+import { DEFAULT_WEBHOOK_SECRET_FIELD, inboundSetupOf } from './doors';
+import { loopbackRedirectUri, publicRedirectUri } from './oauth_redirect';
 import type { Project } from './project';
-import { loadSecrets, secretsOf, type Credential } from './secrets';
+import type { Prompter } from './prompt';
+import { bindingOf, changeEntry, entryContent, installOf, loadSecrets, secretsFileForWrites, type Credential } from './secrets';
 
-const CALLBACK_PATH = '/callback';
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+/** The install's fields for the OAuth app at the provider. */
+export const CLIENT_ID_FIELD = 'client_id';
+export const CLIENT_SECRET_FIELD = 'client_secret';
+/** The loopback port the app registered (`http://127.0.0.1:<port>/callback`); 0: any. */
+export const REDIRECT_PORT_FIELD = 'redirect_port';
+/** The server secret field of a separately-run module lf connect installs. */
+const SERVER_SECRET_FIELD = 'server_secret';
 
-export interface ConnectOptions {
-  /** The loopback port the provider redirects to; 0 picks a free one. A
-   *  provider that matches redirect URIs exactly needs the registered one. */
-  redirectPort?: number;
-  /** Open the authorize URL in the system browser (default); otherwise only
-   *  print it. */
-  openBrowser?: boolean;
-  timeoutMs?: number;
-  /** Where progress lines go. */
-  print?: (line: string) => void;
+/** An installed external named by its name, its folder, or the module it serves. */
+export function findExternal(project: Project, ref: string): External | undefined {
+  return scanExternals(project).find((e) => e.manifest.name === ref || e.manifest.module === ref || e.dir === join(project.externalsDir, ref));
 }
 
-export async function connectCredential(project: Project, name: string, options: ConnectOptions = {}): Promise<{ external: string }> {
-  const print = options.print ?? ((line: string) => process.stdout.write(`${line}\n`));
-  const credentials = loadSecrets(project);
-  const credential = credentials.get(name);
-  if (credential === undefined) {
-    throw new Error(
-      `credential "${name}" is not in the secrets. Add it first, naming its external and your app at the provider:\n` +
-        `  ${name}:\n    external: <external>\n    client_id: <your app's client id>\n    client_secret: <your app's client secret>`,
-    );
-  }
-  if (credential.origin.file === undefined) {
-    throw new Error(`credential "${name}" comes from the environment only; lf connect writes the tokens to a secrets file, so add "${name}" to one first`);
-  }
-  const clientId = credential.fields.client_id;
-  if (clientId === undefined || clientId === '') {
-    throw new Error(`credential "${name}" has no client_id: add your app's client id (and client_secret) at the provider to it first`);
-  }
-  const clientSecret = credential.fields.client_secret;
-  const oauth2 = await declaredOAuth2(project, credential, credentials);
-
-  const listener = await loopback(options.redirectPort ?? 0);
-  try {
-    const connector = createOAuth2Connector({
-      oauth2,
-      client: { clientId, ...(clientSecret !== undefined ? { clientSecret } : {}) },
-      redirectUri: listener.redirectUri,
-    });
-    const url = connector.begin();
-    print(`open this URL to connect "${name}" (${credential.external}):\n  ${url}`);
-    if (options.openBrowser !== false) openInBrowser(url);
-    const back = await listener.next(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    try {
-      const grant = await connector.complete(back);
-      await storeGrant(secretsOf(credential), name, grant);
-      back.answer(200, `Connected "${name}". You can close this tab.`);
-    } catch (error) {
-      back.answer(400, `Connecting "${name}" failed: ${error instanceof Error ? error.message : String(error)}`);
-      throw error;
-    }
-    print(`connected ${name} (${credential.external}); its tokens are in ${credential.origin.file.path}`);
-    return { external: credential.external };
-  } finally {
-    await listener.close();
-  }
-}
-
-/** The external's declaration of this credential, from its manifest answer:
- *  its one `oauth2` credential, or the one named like this credential. */
-async function declaredOAuth2(project: Project, credential: Credential, credentials: Map<string, Credential>): Promise<OAuth2Declaration> {
-  const external = scanExternals(project).find((e) => e.manifest.name === credential.external);
-  if (external === undefined) throw new Error(`credential "${credential.name}" is for external "${credential.external}", which is not installed in ${project.externalsDir}`);
+/** Start one external long enough to read its manifest answer. */
+export async function readManifest(project: Project, external: External, install: Credential | undefined): Promise<RunningExternal> {
+  const credentials = new Map<string, Credential>(install !== undefined ? [[install.name, install]] : []);
   const running = await startExternals({ project, externals: [external], credentials, tenant: LOCAL_TENANT });
-  let declared: WireCredentialDeclarationShape[];
-  try {
-    declared = running.get(credential.external)?.credentials ?? [];
-  } finally {
-    for (const r of running.values()) r.stop();
-  }
-  const oauth2 = declared.flatMap((d) => (d.kind === 'oauth2' ? [d] : []));
-  const chosen = oauth2.length === 1 ? oauth2[0] : oauth2.find((d) => d.name === credential.name);
-  if (chosen === undefined) {
-    throw new Error(
-      oauth2.length === 0
-        ? `external "${credential.external}" declares no oauth2 credential in its manifest; there is nothing to connect`
-        : `external "${credential.external}" declares several oauth2 credentials (${oauth2.map((d) => d.name).join(', ')}); name the secrets entry like the one to connect`,
+  for (const r of running.values()) r.stop();
+  const answer = running.get(external.manifest.name);
+  if (answer === undefined) throw new Error(`external "${external.manifest.name}" did not answer its manifest`);
+  return answer;
+}
+
+export function oauth2Of(declared: WireCredentialDeclarationShape[]): Extract<WireCredentialDeclarationShape, { kind: 'oauth2' }>[] {
+  return declared.flatMap((d) => (d.kind === 'oauth2' ? [d] : []));
+}
+
+/** `lf connect` with no module: the installed externals, and module packages
+ *  the project can install. */
+export function knownModules(project: Project): string[] {
+  const credentials = loadSecrets(project);
+  const lines: string[] = [];
+  const installed = scanExternals(project);
+  for (const external of installed) {
+    const how = external.manifest.module !== undefined ? `module ${external.manifest.module}` : external.manifest.url !== undefined ? `at ${external.manifest.url}` : 'command';
+    const install = installOf(credentials, external.manifest.name);
+    const users = [...credentials.values()].filter((c) => c.external === external.manifest.name && bindingOf(c).kind !== 'install').map((c) => c.name);
+    lines.push(
+      `${external.manifest.name}  installed (${how}); ${install !== undefined ? `install set up (${install.name})` : 'install not set up'}; credentials: ${users.length > 0 ? users.join(', ') : 'none'}`,
     );
   }
-  return chosen.oauth2;
+  const installedModules = new Set(installed.flatMap((e) => (e.manifest.module !== undefined ? [e.manifest.module] : [])));
+  for (const name of modulePackages(project)) {
+    if (!installedModules.has(name)) lines.push(`${name}  not installed (lf connect ${name})`);
+  }
+  return lines;
 }
 
-interface Redirect {
-  state: string;
-  code: string;
-  answer(status: number, text: string): void;
+/** The `@lf/*` packages in the project's node_modules. */
+function modulePackages(project: Project): string[] {
+  const scope = join(project.root, 'node_modules', '@lf');
+  if (!existsSync(scope)) return [];
+  return readdirSync(scope, { withFileTypes: true })
+    .filter((e) => e.isDirectory() || e.isSymbolicLink())
+    .map((e) => `@lf/${e.name}`);
 }
 
-/** A listener on the loopback interface for the provider's one redirect. */
-async function loopback(port: number): Promise<{ redirectUri: string; next(timeoutMs: number): Promise<Redirect>; close(): Promise<void> }> {
-  let deliver: ((redirect: Redirect) => void) | undefined;
-  let refuse: ((error: Error) => void) | undefined;
-  const server: Server = createServer((req, res) => {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (req.method !== 'GET' || url.pathname !== CALLBACK_PATH) {
-      res.writeHead(404, { 'content-type': 'text/plain' });
-      res.end('not found');
-      return;
+export interface ConnectModuleOptions {
+  prompter: Prompter;
+  /** A separately-run module's server URL (asked when the module is neither
+   *  installed nor a package the project has). */
+  url?: string;
+}
+
+export async function connectModule(project: Project, ref: string, options: ConnectModuleOptions): Promise<{ external: string; install: string }> {
+  const { prompter } = options;
+  const credentials = loadSecrets(project);
+  const found = findExternal(project, ref);
+  const { external, created } = found !== undefined ? { external: found, created: false } : await installExternal(project, ref, options);
+  const name = external.manifest.name;
+  try {
+    const existing = [installOf(credentials, name)].find((c) => c !== undefined && bindingOf(c).kind !== 'credential');
+    if (existing !== undefined && (existing.origin.file === undefined || existing.origin.envFields.size > 0)) {
+      throw new Error(`the install of "${name}" ("${existing.name}") comes from the environment, which lf cannot write; change it there`);
     }
-    const answer = (status: number, text: string) => {
-      res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end(`${text}\n`);
+    const fields: Record<string, string> = { ...(existing?.fields ?? {}) };
+    const cleared = new Set<string>();
+    const current = (field: string) => (fields[field] !== undefined && fields[field] !== '' ? { default: fields[field] } : {});
+
+    // The server secret is needed to read the manifest of a module that checks it.
+    const auth = external.manifest.auth;
+    if (auth !== undefined) {
+      fields[auth.field] = await prompter.ask(`the secret ${name}'s server checks (field "${auth.field}")`, { secret: true, ...current(auth.field) });
+    }
+    const provisional: Credential = {
+      name: existing?.name ?? freeName(credentials, name),
+      external: name,
+      binding: { kind: 'install' },
+      fields,
+      origin: { envFields: new Set() },
     };
-    const error = url.searchParams.get('error');
-    const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
-    if (error !== null || code === null || state === null) {
-      const why = error !== null ? `the provider answered ${error}${describe(url.searchParams.get('error_description'))}` : 'the redirect carried no code or state';
-      answer(400, `Connecting failed: ${why}`);
-      refuse?.(new Error(`connect failed: ${why}`));
-      return;
+    const running = await readManifest(project, external, provisional);
+
+    const inbound = inboundSetupOf(running);
+    if (inbound !== undefined) {
+      const generated = randomBytes(24).toString('hex');
+      const field = inbound.secretField ?? DEFAULT_WEBHOOK_SECRET_FIELD;
+      fields[field] = await prompter.ask(`the secret ${name}'s webhooks are signed with (field "${field}"; enter generates one)`, {
+        secret: true,
+        default: fields[field] !== undefined && fields[field] !== '' ? fields[field] : generated,
+      });
     }
-    deliver?.({ state, code, answer });
-  });
-  await new Promise<void>((ok, fail) => {
-    server.once('error', fail);
-    server.listen(port, '127.0.0.1', () => ok());
-  });
-  const address = server.address();
-  if (address === null || typeof address !== 'object') throw new Error('the loopback listener has no address');
-  return {
-    redirectUri: `http://127.0.0.1:${address.port}${CALLBACK_PATH}`,
-    next: (timeoutMs) =>
-      new Promise<Redirect>((ok, fail) => {
-        const timer = setTimeout(() => fail(new Error(`no redirect came back within ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
-        deliver = (redirect) => {
-          clearTimeout(timer);
-          ok(redirect);
-        };
-        refuse = (error) => {
-          clearTimeout(timer);
-          fail(error);
-        };
-      }),
-    close: () =>
-      new Promise<void>((ok) => {
-        server.closeAllConnections();
-        server.close(() => ok());
-      }),
-  };
+
+    const oauth2 = oauth2Of(running.credentials);
+    if (oauth2.length > 0) {
+      prompter.print(`${name} signs users in with OAuth 2 (${oauth2.map((d) => d.name).join(', ')}): your app at the provider, once for every credential`);
+      fields[CLIENT_ID_FIELD] = await prompter.ask("your app's client id", current(CLIENT_ID_FIELD));
+      const secret = await prompter.ask("your app's client secret (empty for a public client)", { secret: true, optional: true, ...current(CLIENT_SECRET_FIELD) });
+      if (secret !== '') fields[CLIENT_SECRET_FIELD] = secret;
+      else {
+        delete fields[CLIENT_SECRET_FIELD];
+        cleared.add(CLIENT_SECRET_FIELD);
+      }
+      const port = await prompter.ask('the loopback port your app registered for its redirect (0: any port)', { default: fields[REDIRECT_PORT_FIELD] ?? '0' });
+      if (!/^\d+$/.test(port) || Number(port) > 65535) throw new Error(`the redirect port must be a number from 0 to 65535, not "${port}"`);
+      fields[REDIRECT_PORT_FIELD] = port;
+      prompter.print('register these redirect URIs with the provider:');
+      prompter.print(
+        Number(port) === 0
+          ? `  ${loopbackRedirectUri(0).replace(':0', ':<any port>')}   (lf credential add; a provider that matches the port exactly needs a fixed one: lf connect ${name} again)`
+          : `  ${loopbackRedirectUri(Number(port))}   (lf credential add, and --headless)`,
+      );
+      if (project.publicUrl !== undefined) prompter.print(`  ${publicRedirectUri(project.publicUrl)}   (lf credential add --public, through lf serve)`);
+    }
+
+    const file = existing?.origin.file ?? secretsFileForWrites(project);
+    const install: Credential = { ...provisional, binding: existing !== undefined ? bindingOf(existing) : { kind: 'install' } };
+    await changeEntry(file, install.name, {
+      kind: 'replace',
+      // A refresh beside this keeps its tokens: they are not an install's.
+      next: (stored) => {
+        const kept = Object.entries(stored ?? {}).filter(([field]) => !cleared.has(field));
+        return { ...Object.fromEntries(kept), ...entryContent(install) };
+      },
+    });
+    prompter.print(`connected ${name}: its install is "${install.name}" in ${file.path}`);
+    const declared = running.credentials.map((d) => d.name);
+    if (declared.length > 0) prompter.print(`next, a user credential: lf credential add --module ${name} <name>`);
+    return { external: name, install: install.name };
+  } catch (error) {
+    if (created) rmSync(external.dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
-function describe(text: string | null): string {
-  return text !== null && text !== '' ? ` (${text})` : '';
+/** `name`, or `name_install` when an entry of another kind holds it. */
+function freeName(credentials: Map<string, Credential>, name: string): string {
+  return credentials.has(name) ? `${name}_install` : name;
 }
 
-/** The system's own opener; a failure to open is not fatal, the URL is printed. */
-function openInBrowser(url: string): void {
-  const [command, args] =
-    process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
-  const child = spawn(command, args, { stdio: 'ignore', detached: true });
-  child.on('error', () => {});
-  child.unref();
+/** Install `ref`: a module package the project has, else a module run
+ *  separately at a server URL. */
+async function installExternal(project: Project, ref: string, options: ConnectModuleOptions): Promise<{ external: External; created: true }> {
+  const asPackage = options.url === undefined ? resolvesFrom(project.root, ref) : false;
+  const url = asPackage ? undefined : (options.url ?? (await options.prompter.ask(`"${ref}" is not installed or a package here; the server URL of the separately-run module`)));
+  if (url !== undefined && !/^https?:\/\//.test(url)) throw new Error(`the server URL must be http(s), not "${url}"`);
+  const name = externalNameOf(ref);
+  const dir = join(project.externalsDir, name);
+  if (existsSync(join(dir, EXTERNAL_MANIFEST))) throw new Error(`${dir} already holds another external; connect it by its name`);
+  // A path is kept absolute: the manifest is read from the external's folder.
+  const module = ref.startsWith('.') ? resolve(project.root, ref) : ref;
+  const manifest = asPackage
+    ? { name, kind: 'adapter' as const, protocol: 2 as const, module, env: {} }
+    : { name, kind: 'adapter' as const, protocol: 2 as const, url: url ?? '', auth: { kind: 'bearer' as const, field: SERVER_SECRET_FIELD }, env: {} };
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, EXTERNAL_MANIFEST),
+    `# Installed by \`lf connect ${ref}\`.\n${stringify(asPackage ? { name, module } : { name, url, auth: manifest.auth })}`,
+  );
+  options.prompter.print(`installed ${ref} as externals/${name}`);
+  return { external: { dir, manifest }, created: true };
+}
+
+/** The external's name for a module reference: the package's own name
+ *  without its scope (`@acme/hubspot` → `hubspot`), or a URL's host. */
+function externalNameOf(ref: string): string {
+  const last = ref.split('/').filter((part) => part !== '').at(-1) ?? ref;
+  return last.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+function resolvesFrom(root: string, ref: string): boolean {
+  if (ref.startsWith('.') || ref.startsWith('/')) return existsSync(resolve(root, ref));
+  try {
+    require.resolve(ref, { paths: [root] });
+    return true;
+  } catch {
+    return false;
+  }
 }
