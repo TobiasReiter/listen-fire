@@ -713,7 +713,8 @@ movement outer(n: <number>) {
 
 describe('a state written before body steps existed', () => {
   // `parked_run.state` as a park at a root-level sleep wrote it before this
-  // change: no `frames`, no `journal`, an address of `stmt` steps only.
+  // change: no `frames`, no `journal`, an address of `stmt` steps only. A
+  // version 1 state, so a version 4 run (the TypeScript engine) resumes it.
   const OLD_STATE: ParkedScopeState = {
     version: 1,
     address: 's1',
@@ -735,6 +736,7 @@ describe('a state written before body steps existed', () => {
         ].join('\n'),
       ),
       parks: makeParkSink(),
+      languageVersion: 4,
     };
     h.parks.parks.set('s1', { kind: 'timer', state: OLD_STATE });
     const { result, kg } = await resumeAt(h, 's1');

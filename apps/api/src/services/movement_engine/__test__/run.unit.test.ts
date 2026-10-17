@@ -2225,7 +2225,9 @@ describe('unsupported constructs raise MOVENG_UNSUPPORTED naming the construct',
   // Extraction and traversal-headed blocks RUN since E2 — see
   // extraction.unit.test.ts. The still-unsupported boundaries:
 
-  it('file-level extract expressions', async () => {
+  // From version 5 a file-level value holds a value only: the checker refuses
+  // the extraction before the run starts, so it never reaches the engine.
+  it('a file-level extraction ends at the check (MOV_FILE_VALUE_RUNS)', async () => {
     await expectUnsupported(
       [
         PRELUDE,
@@ -2244,7 +2246,7 @@ describe('unsupported constructs raise MOVENG_UNSUPPORTED naming the construct',
         '  }',
         '}',
       ].join('\n'),
-      /MOVENG_UNSUPPORTED: file-level extract expressions/,
+      /MOVENG_CHECK[\s\S]*MOV_FILE_VALUE_RUNS/,
     );
   });
 

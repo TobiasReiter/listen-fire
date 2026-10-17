@@ -1,11 +1,12 @@
 // A parked state names its contract version, and every entry that reads one
 // back (a resume, a race settlement, a callback body) checks it before it
-// rehydrates anything: a version this release does not read is refused,
-// loudly, on either engine.
+// rehydrates anything. Each engine reads its own version: the TypeScript
+// engine (language versions 1–4) writes and reads 1, the Rust engine (5 on)
+// writes and reads 2. A version neither reads, or the other engine's, is
+// refused loudly.
 
-import { tenantIdOf } from 'engine-contracts';
+import { tenantIdOf, type AnyParkedScopeState } from 'engine-contracts';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { ParkedScopeState } from 'movement-engine/services/movement_engine/serialize';
 
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
@@ -16,14 +17,27 @@ import { makeFakeParkSink, makeTestHost } from 'movement-engine/services/movemen
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000078');
 const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
-const SOURCE = `import { manual } from adapters
+/** The same flow as each engine's language version spells it. */
+const SOURCES = {
+  4: `import { manual } from adapters
+runs = manual()
+movement nap(go: <runs-[:Invocation]->>) {
+  await sleep(1h)
+  x = 1
+}
+listen to runs {} fire nap
+`,
+  5: `import { manual } from adapters
 runs = connect manual
 function nap(go: <runs-[:Invocation]->>) {
   await sleep(1h)
   x = 1
 }
 listen to runs {} fire nap
-`;
+`,
+} as const;
+
+type Pin = keyof typeof SOURCES;
 
 function manualEvent(): TriggerEvent {
   return {
@@ -35,11 +49,12 @@ function manualEvent(): TriggerEvent {
   };
 }
 
-function runInput() {
+function runInput(languageVersion: Pin) {
   const resolved: string[] = [];
   const park = makeFakeParkSink();
   const input = {
-    source: SOURCE,
+    source: SOURCES[languageVersion],
+    languageVersion,
     event: manualEvent(),
     teamId: TEAM_ID,
     catalog: staticCatalogSnapshot({}),
@@ -59,8 +74,8 @@ function runInput() {
   return { input, park, resolved };
 }
 
-async function parkedState(): Promise<ParkedScopeState> {
-  const { input, park } = runInput();
+async function parkedState(languageVersion: Pin): Promise<AnyParkedScopeState> {
+  const { input, park } = runInput(languageVersion);
   const result = await runMovement(input);
   expect(result.parked).toBe(true);
   const [timer] = park.timerParks;
@@ -70,47 +85,63 @@ async function parkedState(): Promise<ParkedScopeState> {
   return JSON.parse(JSON.stringify(timer.state));
 }
 
-async function statesOfEachVersion(): Promise<{ current: ParkedScopeState; future: ParkedScopeState }> {
-  const current = await parkedState();
-  return { current, future: JSON.parse(JSON.stringify({ ...current, version: 2 })) };
-}
+/** `state` restamped as another version, as a state from elsewhere arrives. */
+const restamped = (state: AnyParkedScopeState, version: number): AnyParkedScopeState =>
+  JSON.parse(JSON.stringify({ ...state, version }));
 
-const REFUSAL = 'the parked state carries park state version 2, which this release does not read (supported: 1)';
+const UNREAD = 'the parked state carries park state version 3, which this release does not read (supported: 1, 2)';
 
-describe.each(['ts', 'rust'] as const)('a parked state of a version this release does not read (%s engine)', (engine) => {
-  let previous: string | undefined;
-  beforeEach(() => {
-    previous = process.env.MOVEMENT_ENGINE;
-    process.env.MOVEMENT_ENGINE = engine;
-  });
-  afterEach(() => {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  });
+/** Each pin, the version its engine writes, and how it refuses the other's. */
+const ENGINES = [
+  {
+    pin: 4,
+    engine: 'TypeScript',
+    writes: 1,
+    other: 2,
+    refusal: 'the parked state carries park state version 2, which only the Rust engine reads (the TypeScript engine reads version 1)',
+  },
+  {
+    pin: 5,
+    engine: 'Rust',
+    writes: 2,
+    other: 1,
+    refusal: "this run's parked state does not read (resume_state_version)",
+  },
+] as const;
 
-  it('is refused by a resume before anything is rehydrated, while version 1 resumes', async () => {
-    const { current, future } = await statesOfEachVersion();
-    const refused = runInput();
-    await expect(resumeMovement({ ...refused.input, state: future })).rejects.toThrow(REFUSAL);
-    expect(refused.resolved).toEqual([]);
-
-    const resumed = await resumeMovement({ ...runInput().input, state: current });
+describe.each(ENGINES)('a parked state on the $engine engine (language version $pin)', ({ pin, writes, other, refusal }) => {
+  it(`is written as version ${writes}, and resumes`, async () => {
+    const current = await parkedState(pin);
+    expect(current.version).toBe(writes);
+    const resumed = await resumeMovement({ ...runInput(pin).input, state: current });
     expect(resumed.parked).toBeUndefined();
   });
 
-  it('is refused by a race settlement before anything is rehydrated', async () => {
-    const { future } = await statesOfEachVersion();
-    const refused = runInput();
-    await expect(settleRaceFrame({ ...refused.input, state: future, frameAddress: 's0' })).rejects.toThrow(REFUSAL);
+  it("refuses the other engine's version on a resume, before anything is rehydrated", async () => {
+    const state = restamped(await parkedState(pin), other);
+    const refused = runInput(pin);
+    await expect(resumeMovement({ ...refused.input, state })).rejects.toThrow(refusal);
     expect(refused.resolved).toEqual([]);
   });
 
-  it('is refused by a callback body before anything is rehydrated', async () => {
-    const { future } = await statesOfEachVersion();
-    const refused = runInput();
-    await expect(fireCallbackBody({ ...refused.input, state: future, values: {}, callIndex: 0 })).rejects.toThrow(
-      REFUSAL,
-    );
+  it('refuses a version this release does not read on a resume, before anything is rehydrated', async () => {
+    const state = restamped(await parkedState(pin), 3);
+    const refused = runInput(pin);
+    await expect(resumeMovement({ ...refused.input, state })).rejects.toThrow(UNREAD);
+    expect(refused.resolved).toEqual([]);
+  });
+
+  it('refuses a version this release does not read on a race settlement, before anything is rehydrated', async () => {
+    const state = restamped(await parkedState(pin), 3);
+    const refused = runInput(pin);
+    await expect(settleRaceFrame({ ...refused.input, state, frameAddress: 's0' })).rejects.toThrow(UNREAD);
+    expect(refused.resolved).toEqual([]);
+  });
+
+  it('refuses a version this release does not read on a callback body, before anything is rehydrated', async () => {
+    const state = restamped(await parkedState(pin), 3);
+    const refused = runInput(pin);
+    await expect(fireCallbackBody({ ...refused.input, state, values: {}, callIndex: 0 })).rejects.toThrow(UNREAD);
     expect(refused.resolved).toEqual([]);
   });
 });
