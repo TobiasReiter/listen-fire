@@ -51,6 +51,7 @@ const ENGINE_CODES: Record<MovementEngineErrorCode, true> = {
   MOVENG_LIMIT_TEXT_SIZE: true,
   MOVENG_LIMIT_COLLECTION_SIZE: true,
   MOVENG_LIMIT_RESULT_SIZE: true,
+  MOVENG_LIMIT_WALL_CLOCK: true,
 };
 
 function isEngineCode(code: string): code is MovementEngineErrorCode {

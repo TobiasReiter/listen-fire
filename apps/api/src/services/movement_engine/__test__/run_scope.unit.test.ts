@@ -167,6 +167,7 @@ describe('the per-segment Affinity call ceiling', () => {
     };
     const table = adapterTable({
       resolveLive: () => counting,
+      credentials: { belongsTo: () => true },
       segments: { facts: () => ({ teamId: TEAM_ID }) },
       ...segmentScopedCalls,
     });
