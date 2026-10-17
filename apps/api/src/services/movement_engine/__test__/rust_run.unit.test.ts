@@ -530,19 +530,20 @@ describe('IS <Decl> of a record a system describes', () => {
 });
 
 describe('the file scope, as interpretFileStatement reads it', () => {
-  // Chunk 7A Task 6: a file-level extraction, block, write or call fails the
-  // run with the engine's own error before any body; any other right-hand
-  // side binds nothing; a file-level statement runs nothing.
+  // From version 5 a file-level value holds a value only: a file-level
+  // extraction, write or call ends the run at the check (MOV_FILE_VALUE_RUNS),
+  // before a segment opens; a value binds; a file-level statement runs
+  // nothing.
   const movement = (body: string) => `function m(msg: <inbox-[:message]->>) {\n${body}\n}`;
-  it('fails, binds nothing or runs nothing', async () => {
+  it('ends at the check, or runs nothing', async () => {
     // Where the run ends: in the engine (`segment`), or at the check, before
-    // a segment opens (`check`: the snapshot describes no `fetch_url`).
+    // a segment opens (`check`).
     for (const [source, ends] of [
-      [`node N: "n" {\n  a: <text> "a"\n}\nr = extract(["a"], N)\n${movement('  x = 1')}`, 'segment'],
+      [`node N: "n" {\n  a: <text> "a"\n}\nr = extract(["a"], N)\n${movement('  x = 1')}`, 'check'],
       [`import { fetchUrl } from plugins\npage = fetchUrl("x")\n${movement('  x = 1')}`, 'check'],
-      [`w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`, 'segment'],
+      [`w = write crm-[:companies]-> { name: "a" }\n${movement('  x = 1')}`, 'check'],
       [`write crm-[:companies]-> { name: "a" }\n${movement('  x = msg.\`subject\`')}`, 'segment'],
-      [`n = node { title: "t" }\n${movement('  x = n.\`title\`')}`, 'segment'],
+      [`n = node { title: "t" }\n${movement('  x = n.\`title\`')}`, 'check'],
     ] as const) {
       await run({ source, event: webhook({ subject: 'Acme' }), ...(ends === 'check' ? { endsAtCheck: true as const } : {}) });
       expect(rustRunStats).toMatchObject(ends === 'segment' ? { segments: 1 } : { segments: 0, endedAtCheck: 1 });

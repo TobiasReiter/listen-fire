@@ -2594,44 +2594,47 @@ exports[`a whole run in the Rust engine traces a field the payload does not carr
 }
 `;
 
-exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 1`] = `
-{
-  "appends": [],
-  "calls": [],
-  "causeClass": "MovementEngineError",
-  "error": "MovementEngineError: MOVENG_UNSUPPORTED: file-level extract expressions is not supported by the movement engine yet (extraction runs inside a movement body, where the event is in scope)",
-  "errorClass": "MovementEngineError",
-  "resolved": [],
-  "trace": [],
-}
-`;
-
-exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 2`] = `
+exports[`the file scope, as interpretFileStatement reads it ends at the check, or runs nothing 1`] = `
 {
   "appends": [],
   "calls": [],
   "causeClass": "MovementEngineError",
   "error": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:
-  MOV_IMPORT_UNKNOWN (line 5): Unknown plugin 'fetchUrl' in 'plugins'",
+  MOV_FILE_VALUE_RUNS (line 8): 'r' is a file-level value, worked out before every run with no event in scope, so it holds a value only — not an extraction. Do it inside the function that uses it.",
   "errorClass": "MovementEngineError",
   "resolved": [],
   "trace": [],
 }
 `;
 
-exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 3`] = `
+exports[`the file scope, as interpretFileStatement reads it ends at the check, or runs nothing 2`] = `
 {
   "appends": [],
   "calls": [],
   "causeClass": "MovementEngineError",
-  "error": "MovementEngineError: MOVENG_UNSUPPORTED: file-level writes is not supported by the movement engine yet (writes run inside a movement body)",
+  "error": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:
+  MOV_IMPORT_UNKNOWN (line 5): Unknown plugin 'fetchUrl' in 'plugins'
+  MOV_FILE_VALUE_RUNS (line 6): 'page' is a file-level value, worked out before every run with no event in scope, so it holds a value only — not a call to 'fetchUrl'. Do it inside the function that uses it.",
   "errorClass": "MovementEngineError",
   "resolved": [],
   "trace": [],
 }
 `;
 
-exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 4`] = `
+exports[`the file scope, as interpretFileStatement reads it ends at the check, or runs nothing 3`] = `
+{
+  "appends": [],
+  "calls": [],
+  "causeClass": "MovementEngineError",
+  "error": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:
+  MOV_FILE_VALUE_RUNS (line 5): 'w' is a file-level value, worked out before every run with no event in scope, so it holds a value only — not a write. Do it inside the function that uses it.",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
+  "trace": [],
+}
+`;
+
+exports[`the file scope, as interpretFileStatement reads it ends at the check, or runs nothing 4`] = `
 {
   "appends": [],
   "calls": [
@@ -2671,28 +2674,15 @@ exports[`the file scope, as interpretFileStatement reads it fails, binds nothing
 }
 `;
 
-exports[`the file scope, as interpretFileStatement reads it fails, binds nothing or runs nothing 5`] = `
+exports[`the file scope, as interpretFileStatement reads it ends at the check, or runs nothing 5`] = `
 {
   "appends": [],
   "calls": [],
   "causeClass": "MovementEngineError",
-  "error": "MovementEngineError: MOVENG_RUNTIME: 'n' is not in scope — the checker should have caught this",
-  "errorClass": "MovementRunFailed",
-  "partial": {
-    "extractionSites": {},
-    "movementName": "m",
-    "trace": [],
-    "writes": [],
-  },
-  "resolved": [
-    {
-      "adapterType": "email",
-      "credentialsId": "cred-dealflow_inbox",
-      "role": "source",
-      "segmentId": "test-segment-1",
-      "teamId": "00000000-0000-0000-0000-0000000000a1",
-    },
-  ],
+  "error": "MovementEngineError: MOVENG_CHECK: the movement program failed checking:
+  MOV_FILE_VALUE_RUNS (line 5): 'n' is a file-level value, worked out before every run with no event in scope, so it holds a value only — not a node. Do it inside the function that uses it.",
+  "errorClass": "MovementEngineError",
+  "resolved": [],
   "trace": [],
 }
 `;
