@@ -34,6 +34,11 @@ refusal (`x.k` would read the field). A narrowing a host registers matches a hop
 the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
 
+### r-safety
+
+- A segment now has host-set limits with safe defaults: a step budget, one text's size, one list's or map's size, and the result's size; past one the segment ends coded `MOVENG_LIMIT_*`, never forgiven by `onError`. lf reads them from `MOVEMENT_MAX_STEPS`, `MOVEMENT_MAX_TEXT_BYTES`, `MOVEMENT_MAX_COLLECTION_ITEMS`, `MOVEMENT_MAX_RESULT_BYTES`, and keeps a per-segment wall clock (`MOVEMENT_MAX_SEGMENT_SECONDS`, default 900). The table and the network review: [docs/contracts/run-limits.md](docs/contracts/run-limits.md).
+- The engine itself refuses a model call once the run has spent its cost cap, so the cap holds on any host.
+
 ### lfr-upgrade
 
 - `lf-host upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.

@@ -182,7 +182,9 @@ pub struct SegmentInput {
     /// environment. Absent: the built-in table.
     #[serde(default)]
     pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
-    /// What this segment may consume (crate::limits); absent: the defaults.
+    /// What this segment may consume (crate::limits), the deployment's
+    /// `MOVEMENT_MAX_*` knobs: the shim reads them, so the engine reads no
+    /// environment. Absent: the defaults.
     #[serde(default)]
     pub limits: crate::limits::Limits,
 }
