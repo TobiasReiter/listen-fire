@@ -33,6 +33,7 @@
 use movement_parser::lowering::expression::{AggregationFunction, ArithmeticOp, Expression, FilterOperator, LogicalOp, StaticValue};
 
 use crate::codes;
+use crate::families::calls::is_nested_call_name;
 use crate::diagnostic::Severity;
 use crate::types::field::{
     BaseKind, CollectionOrder, Ty, base_kinds, collection_element_of, collection_order_of, comparison_category, describe_field_type,
@@ -356,10 +357,10 @@ fn operand_source(expr: &Expression) -> Option<String> {
     match expr {
         Expression::Property { property_type_id, .. } => Some(quote_name(property_type_id)),
         Expression::Meta { key } => Some(format!("@{key}")),
-        Expression::AliasRef { name } => Some(quote_name(name)),
-        // A read off a value that is no name (`first(xs).Score`) is rooted at
-        // the position placeholder, which the author never wrote.
-        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && root != POSITION_SENTINEL => match &**expression {
+        // A nested call's binding (`f(x).Score`) is a name the author never
+        // wrote.
+        Expression::AliasRef { name } if !is_nested_call_name(name) => Some(quote_name(name)),
+        Expression::Traverse { alias_root: Some(root), steps, expression } if steps.is_empty() && !is_nested_call_name(root) => match &**expression {
             Expression::Property { property_type_id, .. } => Some(format!("{}.{}", quote_name(root), quote_name(property_type_id))),
             _ => None,
         },

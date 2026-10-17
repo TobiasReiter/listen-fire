@@ -49,6 +49,7 @@ import {
 } from '../expression/stdlib';
 import { builtinParamAt, builtinUnder, describeBuiltin, lookupBuiltin, type Builtin } from './standard_library';
 import { extractCallNestedMessage } from './calls';
+import { isNestedCallName } from './nested_calls';
 import { neverAsAny } from '../never';
 import { before, changedBetween, describeLanguageVersion, since, type LanguageVersion } from '../language_version';
 import { Span } from '../parser/ast';
@@ -2752,13 +2753,12 @@ function literalText(expr: Expression): string | undefined {
 function operandSource(expr: Expression): string | undefined {
   if (expr.type === 'property') return quoteName(expr.propertyTypeId);
   if (expr.type === 'meta') return `@${expr.key}`;
-  if (expr.type === 'alias_ref') return quoteName(expr.name);
-  // A read off a value that is no name (`first(xs).Score`) is rooted at the
-  // position placeholder, which the author never wrote.
+  // A nested call's binding (`f(x).Score`) is a name the author never wrote.
+  if (expr.type === 'alias_ref') return isNestedCallName(expr.name) ? undefined : quoteName(expr.name);
   if (
     expr.type === 'traverse'
     && expr.aliasRoot !== undefined
-    && expr.aliasRoot !== POSITION_SENTINEL
+    && !isNestedCallName(expr.aliasRoot)
     && expr.steps.length === 0
     && expr.expression.type === 'property'
   ) {

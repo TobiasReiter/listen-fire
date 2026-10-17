@@ -512,6 +512,11 @@ pub fn span_of_extent(slot: &ExprSlot, at: At) -> Span {
     Span { start: span_within(slot, Some(at.start)).start, end: span_within(slot, Some(at.end)).start }
 }
 
+/// `isNestedCallName`: whether `name` is one a nested call was bound to.
+pub fn is_nested_call_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c))
+}
+
 /// `nestedCallName`: the name a call hoisted out of an expression is bound
 /// to. The TypeScript spells it `#call@<line>:<col>` and rewrites only the
 /// slot's tree; Rust rewrites the slot's text and reparses it, so the name is
