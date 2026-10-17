@@ -6,7 +6,7 @@
 // reference). Each mode runs in its own process against one local fake
 // Granola, constructing the adapter per round as the hosted resolver does.
 //
-//   pnpm bench            all modes, interleaved, 5 runs each
+//   pnpm bench            all modes, interleaved, 5 runs each (BENCH_RUNS=n for more)
 //   pnpm bench <mode>     one run of one mode (JSON)
 
 import { spawnSync } from 'node:child_process';
@@ -100,20 +100,29 @@ async function runOne(mode: Mode): Promise<Record<string, number>> {
     data: { title: 'Meeting 1', attendees: [{ email: 'ceo@acme.com' }] },
   });
   const samples: number[] = [];
+  const cpuSamples: number[] = [];
   for (let round = 0; round < WARMUP + ROUNDS; round++) {
     const start = process.hrtime.bigint();
+    const cpuStart = process.cpuUsage();
     const { adapter, poll } = subjectFor(`key-${round}`);
     await adapter.describe('Meeting Note');
     await adapter.getFieldValue({ position: note, fieldId: 'Title' });
     await adapter.getRelated({ position: note, fieldId: 'Attendees', direction: 'outgoing' });
     await adapter.getRelated({ position: meta, fieldId: 'Meetings', direction: 'outgoing', limit: 2 });
     await poll({ config: {}, checkpoint: { updatedAfter: '2026-06-03T12:00:00.000Z' } });
-    if (round >= WARMUP) samples.push(Number(process.hrtime.bigint() - start) / 1e6);
+    if (round >= WARMUP) {
+      samples.push(Number(process.hrtime.bigint() - start) / 1e6);
+      const cpu = process.cpuUsage(cpuStart);
+      cpuSamples.push((cpu.user + cpu.system) / 1e3);
+    }
   }
   fake.close();
   samples.sort((a, b) => a - b);
+  cpuSamples.sort((a, b) => a - b);
   return {
     p50: percentile(samples, 50),
+    // CPU time per round: wall time on a busy host mostly measures the host.
+    cpuP50: percentile(cpuSamples, 50),
     p99: percentile(samples, 99),
     rssMb: process.memoryUsage().rss / 1e6,
     rssGrowthMb: (process.memoryUsage().rss - rssBefore) / 1e6,
@@ -136,7 +145,7 @@ async function main(): Promise<void> {
   // Interleaved, five rounds of every mode, so a busy machine slows each
   // mode alike; the median of each figure is reported.
   const runs: Record<string, Array<Record<string, number>>> = {};
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < Number(process.env.BENCH_RUNS ?? 5); i++) {
     for (const m of MODES) {
       const child = spawnSync(process.execPath, ['--require', TSX, __filename, m], { cwd: __dirname, encoding: 'utf8' });
       if (child.status !== 0) throw new Error(child.stderr);
@@ -152,7 +161,7 @@ async function main(): Promise<void> {
   for (const m of MODES) {
     const row = results[m] ?? {};
     const delta = (k: string) => (base[k] ? `${(((row[k] ?? 0) / base[k] - 1) * 100).toFixed(1)}%` : '');
-    console.log(`${m.padEnd(10)} p50 ${row.p50}ms (${delta('p50')})  p99 ${row.p99}ms (${delta('p99')})  rss ${row.rssMb}MB (${delta('rssMb')})  boot ${row.bootMs}ms (${delta('bootMs')})`);
+    console.log(`${m.padEnd(10)} p50 ${row.p50}ms (${delta('p50')})  cpu ${row.cpuP50}ms (${delta('cpuP50')})  p99 ${row.p99}ms (${delta('p99')})  rss ${row.rssMb}MB (${delta('rssMb')})  boot ${row.bootMs}ms (${delta('bootMs')})`);
   }
 }
 
