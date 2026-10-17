@@ -72,6 +72,8 @@ export interface World {
   askAnswer: (token: string, raw: unknown) => unknown;
   enqueueFails: boolean;
   captureFails: boolean;
+  /** The trigger event store refuses a write. */
+  storeFails: boolean;
   telegramBuiltin: (raw: unknown) => unknown;
   slackEvents: (raw: unknown) => unknown;
   whatsappSender: { teamId: string | null; displayName: string | null };
@@ -80,6 +82,13 @@ export interface World {
   resendFetch: unknown;
   emailActingUser: unknown;
   emailTriggerLive: boolean;
+  /** What Mailgun routing reads: the service-address table, the Directory's
+   *  people (email -> the teams they can act for), who may act, and the
+   *  trigger a routing key names within a team. */
+  mailRoutes: { address: string; team_id: string; is_service_email: boolean; accepts_plus_addressing: boolean }[];
+  mailMembers: Record<string, { teamId: string; userId: string }[]>;
+  mailAccess: Record<string, boolean>;
+  mailKeyTriggers: Record<string, { id: string; kind: string }>;
   /** Rows the valuations webhook_subscription table holds for the calling team. */
   valuationsRows: Record<string, unknown>[];
 }
@@ -126,6 +135,7 @@ export function freshWorld(): World {
     askAnswer: () => ({ kind: 'not_found' }),
     enqueueFails: false,
     captureFails: false,
+    storeFails: false,
     telegramBuiltin: () => ({ result: { ok: true, classification: 'no_message' } }),
     slackEvents: () => ({ ok: true, classification: 'dispatched', eventsProcessed: 1 }),
     whatsappSender: { teamId: 'team-1', displayName: 'Ada' },
@@ -133,6 +143,10 @@ export function freshWorld(): World {
     resendFetch: null,
     emailActingUser: null,
     emailTriggerLive: true,
+    mailRoutes: [],
+    mailMembers: {},
+    mailAccess: {},
+    mailKeyTriggers: {},
     valuationsRows: [],
   };
 }

@@ -1,0 +1,89 @@
+[
+  {
+    "id": "signed-event-acknowledged",
+    "door": "mailgun_events",
+    "note": "A correctly signed event is acknowledged 200 and nothing is kept.",
+    "request": {
+      "method": "POST",
+      "path": "/api/webhook/mailgun/event",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"signature\":{\"timestamp\":\"1792238400\",\"token\":\"golden-mailgun-token-0001\",\"signature\":\"efd8f9dae4f290929eb5e0ea31a22b8994446a10165faae7b9fe178ebe7a56cb\"},\"event-data\":{\"event\":\"delivered\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": "2"
+      },
+      "body": "OK"
+    },
+    "effects": []
+  },
+  {
+    "id": "bad-signature",
+    "door": "mailgun_events",
+    "note": "A signature made with another key is 406, so Mailgun does not retry.",
+    "request": {
+      "method": "POST",
+      "path": "/api/webhook/mailgun/event",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"signature\":{\"timestamp\":\"1792238400\",\"token\":\"golden-mailgun-token-0001\",\"signature\":\"34b1017d553271d6d91836b6a65e501a2f209343bf8a9b6ca471388a6d5ebccf\"},\"event-data\":{\"event\":\"delivered\"}}"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "signature-of-another-length",
+    "door": "mailgun_events",
+    "note": "A signature of the wrong length is judged like any other wrong signature.",
+    "request": {
+      "method": "POST",
+      "path": "/api/webhook/mailgun/event",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"signature\":{\"timestamp\":\"1792238400\",\"token\":\"golden-mailgun-token-0001\",\"signature\":\"abc\"},\"event-data\":{\"event\":\"delivered\"}}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "49"
+      },
+      "body": "{\"error\":{\"code\":500,\"message\":\"Internal error\"}}"
+    },
+    "effects": []
+  },
+  {
+    "id": "no-signature-object",
+    "door": "mailgun_events",
+    "note": "A body with no signature block cannot be judged.",
+    "request": {
+      "method": "POST",
+      "path": "/api/webhook/mailgun/event",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"event-data\":{\"event\":\"delivered\"}}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "49"
+      },
+      "body": "{\"error\":{\"code\":500,\"message\":\"Internal error\"}}"
+    },
+    "effects": []
+  }
+]
