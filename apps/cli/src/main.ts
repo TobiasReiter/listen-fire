@@ -10,7 +10,12 @@
 //   lf runs
 //   lf call <callback-id> [--body <values.json>]
 //   lf cancel <run-id> [--reason <text>]
-//   lf connect <credential> [--redirect-port N] [--no-browser]
+//   lf connect [<module>] [--url <server url>]
+//   lf credential add --module <module> [<name>] [--credential <declared>] [redirect options]
+//   lf credential update <name> [--no-reauthorize] [redirect options]
+//   lf credential delete <name>
+//   lf credential list
+//     redirect options: --redirect-port N  --no-browser  --headless  --public
 //
 // Every command takes --ephemeral (state in a temporary file) and --dir <project>.
 
@@ -30,7 +35,9 @@ import {
   type RunOutcome,
   type Session,
 } from './runs';
-import { connectCredential } from './connect';
+import { connectModule, knownModules } from './connect';
+import { addCredential, deleteCredential, listCredentials, updateCredential, type RedirectChoice } from './credentials';
+import { terminalPrompter } from './prompt';
 import { receiveWebhook } from './doors';
 import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
@@ -38,7 +45,7 @@ import { checkFile } from './sources';
 import { upgradeProject } from './upgrade';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 
-const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel|connect> [options]
+const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel|connect|credential> [options]
   lf init [dir]
   lf check
   lf upgrade [--check] [--all]   rewrite the movement files into the current language version by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
@@ -49,7 +56,12 @@ const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel|c
   lf runs
   lf call <callback-id> [--body <values.json>]   call a callback, as its url's POST does (the values: a JSON object)
   lf cancel <run-id> [--reason <text>]           cancel a run: settled failed now, or at its next statement if another lf is stepping it
-  lf connect <credential> [--redirect-port N] [--no-browser]   connect an OAuth credential its external declares: sign in at the provider, tokens written to the secrets file
+  lf connect [<module>] [--url <server url>]     set a module up: install it, its server and webhook secrets, its OAuth app (no module: list the ones known)
+  lf credential add --module <module> [<name>] [--credential <declared>]   a user credential for the module: sign in at the provider, or its fields
+  lf credential update <name> [--no-reauthorize]   sign in again and edit its fields
+  lf credential delete <name>
+  lf credential list
+    signing in: --redirect-port N (the port your app registered)  --no-browser  --headless (paste the redirect back)  --public (through lf serve at publicUrl)
 options: --dir <project folder>  --ephemeral (state in a temporary file)`;
 
 async function main(argv: string[]): Promise<number> {
@@ -69,8 +81,14 @@ async function main(argv: string[]): Promise<number> {
       header: { type: 'string', multiple: true, default: [] },
       port: { type: 'string', default: String(DEFAULT_PORT) },
       reason: { type: 'string' },
-      'redirect-port': { type: 'string', default: '0' },
+      'redirect-port': { type: 'string' },
       'no-browser': { type: 'boolean', default: false },
+      headless: { type: 'boolean', default: false },
+      public: { type: 'boolean', default: false },
+      'no-reauthorize': { type: 'boolean', default: false },
+      module: { type: 'string' },
+      credential: { type: 'string' },
+      url: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -245,16 +263,86 @@ async function main(argv: string[]): Promise<number> {
       }
     }
     case 'connect': {
-      const name = rest[0];
-      if (name === undefined) {
-        process.stderr.write('lf connect needs a credential name\n');
+      const project = loadProject(values.dir);
+      const ref = rest[0];
+      if (ref === undefined) {
+        const known = knownModules(project);
+        process.stdout.write(known.length > 0 ? `${known.join('\n')}\n` : `no modules known here; install one: lf connect <package or name>\n`);
+        return 0;
+      }
+      const prompter = terminalPrompter();
+      try {
+        await connectModule(project, ref, { prompter, ...(values.url !== undefined ? { url: values.url } : {}) });
+      } finally {
+        prompter.close();
+      }
+      return 0;
+    }
+    case 'credential': {
+      const project = loadProject(values.dir);
+      const [action, name] = rest;
+      if (action === 'list') {
+        const lines = listCredentials(project);
+        process.stdout.write(lines.length > 0 ? `${lines.join('\n')}\n` : 'no credentials\n');
+        return 0;
+      }
+      if (values.headless && values.public) {
+        process.stderr.write('lf credential: --headless and --public are two ways back from the provider; pick one\n');
         return 2;
       }
-      await connectCredential(loadProject(values.dir), name, {
-        redirectPort: Number(values['redirect-port']),
-        openBrowser: !values['no-browser'],
-      });
-      return 0;
+      const port = values['redirect-port'];
+      if (port !== undefined && !/^\d+$/.test(port)) {
+        process.stderr.write(`--redirect-port: a port number, not "${port}"\n`);
+        return 2;
+      }
+      const redirect: RedirectChoice = {
+        how: values.headless ? 'headless' : values.public ? 'public' : 'loopback',
+        ...(port !== undefined ? { port: Number(port) } : {}),
+        openBrowser: !values['no-browser'] && !values.headless,
+      };
+      const prompter = terminalPrompter();
+      try {
+        switch (action) {
+          case 'add':
+            if (values.module === undefined) {
+              process.stderr.write('lf credential add needs --module <module>\n');
+              return 2;
+            }
+            await addCredential(project, {
+              module: values.module,
+              ...(name !== undefined ? { name } : {}),
+              ...(values.credential !== undefined ? { declared: values.credential } : {}),
+              redirect,
+              prompter,
+            });
+            return 0;
+          case 'update':
+            if (name === undefined) {
+              process.stderr.write('lf credential update needs a credential name\n');
+              return 2;
+            }
+            await updateCredential(project, {
+              name,
+              ...(values.credential !== undefined ? { declared: values.credential } : {}),
+              reauthorize: !values['no-reauthorize'],
+              redirect,
+              prompter,
+            });
+            return 0;
+          case 'delete':
+            if (name === undefined) {
+              process.stderr.write('lf credential delete needs a credential name\n');
+              return 2;
+            }
+            await deleteCredential(project, { name, prompter });
+            return 0;
+          default:
+            process.stderr.write(`lf credential: add, update, delete or list, not "${action ?? ''}"\n`);
+            return 2;
+        }
+      } finally {
+        prompter.close();
+      }
     }
     default:
       process.stderr.write(`unknown command "${command}"\n${USAGE}\n`);

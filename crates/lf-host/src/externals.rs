@@ -18,8 +18,10 @@ use tokio::process::{Child, Command};
 
 use crate::json::{Js, Obj};
 use crate::project::Project;
-use crate::protocol::{Call, post_rpc, shape_error};
-use crate::secrets::{Credential, Credentials, credential_for, refuse_stale};
+use crate::credential_calls::{Sending, Target, send};
+use crate::oauth2::{Declaration, declarations_of};
+use crate::protocol::shape_error;
+use crate::secrets::{Credentials, credential_for};
 
 pub const EXTERNAL_MANIFEST: &str = "lf-external.yaml";
 
@@ -130,6 +132,11 @@ pub struct RunningExternal {
     pub webhook_event_type_id: Option<String>,
     /// The package of plugins it serves (`plugins`: `{ package, plugins }`).
     pub plugins: Option<Js>,
+    /// The credentials its manifest declares (`credentials`); the first is
+    /// sent on each call (src/credential_calls.rs).
+    pub credential_declarations: Vec<Declaration>,
+    /// Its manifest answer as it came (what `lf connect` reads of it).
+    pub manifest_answer: Js,
     /// The started process; killed when this is dropped.
     _child: Option<Child>,
 }
@@ -162,31 +169,15 @@ pub fn plugin_external_for<'r>(running: &'r [RunningExternal], plugin: &str) -> 
     running.iter().find(|r| r.serves_plugin(plugin))
 }
 
-/// The `Authorization` secret a call to this external carries.
-pub fn call_secret<'c>(external: &External, credential: Option<&'c Credential>) -> Result<Option<&'c str>, String> {
-    let Some(auth) = &external.manifest.auth else { return Ok(None) };
-    let name = &external.manifest.name;
-    let Some(credential) = credential else {
-        return Err(format!("external \"{name}\" needs a credential (its auth field is \"{}\")", auth.field));
-    };
-    match credential.fields.get(&auth.field) {
-        Some(secret) => Ok(Some(secret.as_str())),
-        None => Err(format!("credential \"{}\" has no \"{}\" field, which external \"{name}\" sends", credential.name, auth.field)),
-    }
-}
-
 /// One call to a running external, under the credential its secrets name.
 pub async fn rpc(running: &RunningExternal, credentials: &Credentials, tenant: &str, method: &str, params: serde_json::Value) -> Result<Js, String> {
-    call(&running.external, &running.base_url, credentials, tenant, method, params).await
+    let target = Target { external: &running.external, base_url: &running.base_url, declarations: &running.credential_declarations, methods: &running.methods };
+    call(&target, credentials, tenant, method, params).await
 }
 
-async fn call(external: &External, base_url: &str, credentials: &Credentials, tenant: &str, method: &str, params: serde_json::Value) -> Result<Js, String> {
-    let credential = credential_for(credentials, &external.manifest.name);
-    if let Some(credential) = credential {
-        refuse_stale(credential, jiff::Timestamp::now().as_millisecond())?;
-    }
-    let bearer = call_secret(external, credential)?;
-    Ok(post_rpc(Call { base_url, bearer, team_id: tenant, method, cache_scope_id: "<none>", params }).await?)
+async fn call(target: &Target<'_>, credentials: &Credentials, tenant: &str, method: &str, params: serde_json::Value) -> Result<Js, String> {
+    let credential = credential_for(credentials, &target.external.manifest.name);
+    Ok(send(target, credentials, credential, credential, Sending { tenant, method, cache_scope_id: "<none>", params }).await?)
 }
 
 /// Start (or reach) every external and read its manifest.
@@ -195,7 +186,8 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
     for external in externals {
         let (base_url, child) = reach(project, external).await?;
         let name = &external.manifest.name;
-        let raw = call(external, &base_url, credentials, tenant, "manifest", json!({})).await?;
+        let target = Target { external, base_url: &base_url, declarations: &[], methods: &[] };
+        let raw = call(&target, credentials, tenant, "manifest", json!({})).await?;
         let version = raw.get("protocolVersion");
         if !matches!(version, Some(Js::Num(n)) if n.as_f64() == Some(MANIFEST_PROTOCOL_VERSION as f64)) {
             let got = version.map(Js::to_json).unwrap_or_else(|| "nothing".into());
@@ -207,6 +199,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
         if manifest.adapter_type != *name {
             return Err(format!("external folder \"{name}\" serves \"{}\"; the names must agree", manifest.adapter_type));
         }
+        let credential_declarations = declarations_of(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?;
         if external.manifest.kind == "plugin" && manifest.plugins.is_none() {
             return Err(format!("external \"{name}\" is a plugin external, but its manifest declares no plugins"));
         }
@@ -219,6 +212,8 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             runtime_capabilities: manifest.runtime_capabilities,
             webhook_event_type_id: manifest.webhook_event_type_id,
             plugins: manifest.plugins,
+            credential_declarations,
+            manifest_answer: raw,
             _child: child,
         });
     }

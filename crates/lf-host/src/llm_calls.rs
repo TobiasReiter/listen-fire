@@ -337,7 +337,7 @@ mod tests {
 
     use super::*;
     use crate::anthropic::tests::{Scripted, fake_anthropic, stream_of};
-    use crate::secrets::Credential;
+    use crate::secrets::{Binding, Credential, Origin};
 
     fn parsed(text: &str) -> String {
         parse_json_reply(text).to_json()
@@ -358,7 +358,9 @@ mod tests {
         vec![Credential {
             name: "anthropic".into(),
             external: "anthropic".into(),
+            binding: Binding::Legacy,
             fields: [("api_key".to_string(), "k".to_string()), ("base_url".to_string(), base_url.to_string())].into_iter().collect(),
+            origin: Origin::default(),
         }]
     }
 

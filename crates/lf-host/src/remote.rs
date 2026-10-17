@@ -16,13 +16,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use crate::documents::Documents;
-use crate::externals::{RunningExternal, call_secret};
+use crate::credential_calls::{Sending, Target, send};
+use crate::externals::RunningExternal;
 use crate::file_ref::{Owner, descriptor_of, owned_file_source, owner_of, wire_position, wire_resource_record, wire_resource_shaped, wire_source};
 use crate::json::{Js, Obj};
 use crate::obj;
 use crate::project::Project;
-use crate::protocol::{Call, RpcError, post_rpc};
-use crate::secrets::{Credential, Credentials, credential_for, refuse_stale};
+use crate::protocol::RpcError;
+use crate::secrets::{Credential, Credentials, credential_for};
 use crate::wire::{Hv, json_of_js};
 use crate::wire_results;
 
@@ -298,19 +299,9 @@ impl<'s> SegmentAdapters<'s> {
         let ext = self.externals;
         let running = self.running(instance);
         let credential: Option<&Credential> = instance.credential.map(|i| &ext.credentials[i]);
-        if let Some(credential) = credential {
-            refuse_stale(credential, jiff::Timestamp::now().as_millisecond()).map_err(CallFailure::adapter)?;
-        }
-        let bearer = call_secret(&running.external, credential).map_err(CallFailure::adapter)?;
-        let raw = post_rpc(Call {
-            base_url: &running.base_url,
-            bearer,
-            team_id: ext.tenant,
-            method,
-            cache_scope_id: &instance.cache_scope,
-            params: json_of_js(&params),
-        })
-        .await?;
+        let target = Target { external: &running.external, base_url: &running.base_url, declarations: &running.credential_declarations, methods: &running.methods };
+        let sending = Sending { tenant: ext.tenant, method, cache_scope_id: &instance.cache_scope, params: json_of_js(&params) };
+        let raw = send(&target, ext.credentials, credential, credential, sending).await?;
         wire_results::check(method, &running.external.manifest.name, &raw)
             .map_err(|message| CallFailure::Adapter { message, name: Some("RemoteResponseShapeError".into()), status: None })
     }

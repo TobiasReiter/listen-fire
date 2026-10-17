@@ -1382,6 +1382,52 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
   signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
 
+### ev4-lfcreds
+
+- lf's secrets file is no longer edited by hand. `lf connect <module>` sets a module up once: it
+  installs it if needed (a module package the project has, or a separately-run module at its
+  server URL), then asks for its install's secrets — the server secret, the webhook secret
+  (generated on enter), and your OAuth app's client id and secret with the loopback port it
+  registered — and prints the redirect URIs to register. It never asks for a user's credential.
+  `lf connect` with no module lists the modules it knows and whether each is set up.
+- `lf credential add --module <module> [name]` creates a named user credential bound to that
+  module and the credential its manifest declares (`--credential <declared>` when it declares
+  several): it signs in at the provider for an OAuth 2 one, through a loopback redirect (default),
+  `--headless` (print the sign-in URL, paste back the URL the browser was sent to), or `--public`
+  (through `lf serve` at lf.yaml's `publicUrl`, at `/oauth/callback`); a static one's fields are
+  asked for. `lf credential update <name>` signs in again (`--no-reauthorize` to only edit
+  fields), `lf credential delete <name>`, `lf credential list` (never a value). The OAuth app
+  stays with the install and is not copied into a user's credential.
+- Each entry records what it is for: `module:` alone is a module's install, `module:` +
+  `credential:` a user credential. An entry written by hand (`external:`) reads as before; `lf
+  credential update` records its binding and keeps every field and its name, so webhook URLs
+  naming it keep working. Writes go through the secrets file's lock, plain or SOPS (`sops set` /
+  `sops unset`, never decrypted onto disk); a credential with fields from the environment is
+  refused, since lf cannot write the environment.
+- `lf connect <credential>` (wave 3) is replaced by `lf credential update <credential>`.
+
+### lfr-secrets
+
+- The Rust `lf-host` refreshes credentials. Before, it refused a call whose OAuth token was about
+  to expire. Now it refreshes the token, as the TypeScript `lf` does:
+  - when the token expires within 30 s, and once more when a call answers `unauthorized`;
+  - from a module's declared `oauth2` credential (the standard grant at the declared token URL), or
+    by the module's own `refreshCredential`, or by lf's `refresh_token` + `token_url` convention;
+  - written back to where the fields came from: the plain secrets file in place (comments and order
+    kept), a SOPS file through `sops set`, and for the environment, this run only, with one warning.
+- One refresh at a time per credential. Within a process the callers share one refresh. Across
+  processes they take the lock file beside the secrets file, the same lock the TypeScript `lf`
+  takes, so the two binaries never spend one refresh token twice.
+- `lf-host` sends a module the credential its manifest declares, on every call. Only the declared
+  fields go, and only over HTTPS or to a loopback address. A `credentialUpdate` the module answers
+  is written back, from a failed answer too.
+- `lf-host connect [<module>]` and `lf-host credential add|update|delete|list` match the TypeScript
+  `lf` commands, file format and output. Sign-in works by loopback, `--headless`, or `--public`.
+  `--public` finishes through `lf serve`'s `GET /oauth/callback`; lf-host provides the handler, and
+  its `serve` mounts it.
+- `lf-host completion <bash|zsh|fish>` prints a tab-completion script. It completes the subcommands
+  and their flags, the installed and known module names, and the credential names.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

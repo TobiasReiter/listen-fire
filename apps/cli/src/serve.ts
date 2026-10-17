@@ -5,6 +5,8 @@
 // older name for the same door; an external's pushes arrive at
 // `/api/public/adapter/<external>/{emit,wake}` and are queued; a
 // callback's call arrives at `/api/cb/<id>` (its url) and runs its body;
+// a provider's OAuth redirect for `lf credential add --public` arrives at
+// GET `/oauth/callback` and is handed to the waiting command;
 // due work — an emitted event, a parked run's timer, a queued await wake — is
 // drained on a tick, and at once when a push queues some.
 //
@@ -14,6 +16,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { answerDelivery, answerEmit, answerWake, PAYLOAD_TOO_LARGE, type InboundAnswer } from 'movement-engine/public/inbound';
 import { createLfInboundStores, deliverInline, hookTarget, type LfInboundOptions, type LfInboundStores } from './doors';
+import { deliverPublicRedirect, PUBLIC_CALLBACK_PATH } from './oauth_redirect';
 import { callCallback, drainWork, type CallOutcome, type RunOutcome, type Session } from './runs';
 
 /** The largest body a door reads; a larger batch is split by its sender. */
@@ -104,6 +107,11 @@ export async function serve(
     const headers: Record<string, string | undefined> = {};
     for (const [key, value] of Object.entries(req.headers)) headers[key] = Array.isArray(value) ? value[0] : value;
     const [path = '', query = ''] = (req.url ?? '').split('?');
+    if (req.method === 'GET' && path === PUBLIC_CALLBACK_PATH) {
+      const { status, text } = deliverPublicRedirect(session.project.lfDir, query);
+      res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }).end(`${text}\n`);
+      return;
+    }
     if (req.method !== 'POST') return json(res, 404, { error: 'not found' });
 
     const callback = /^\/api\/cb\/([^/]+)\/?$/.exec(path);

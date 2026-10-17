@@ -4,8 +4,16 @@
 //
 // WHERE THEY COME FROM (a field's origin is tracked, so a refreshed token can
 // be written back to where it came from):
-//   1. The file: YAML keyed by credential name → `external: <name>` plus string
-//      fields. `LF_SECRETS_FILE=<path>` names it (a mounted secret); otherwise
+//   1. The file: YAML keyed by entry name, each one string fields plus what
+//      it is bound to (written by `lf connect` and `lf credential`, never by
+//      hand):
+//        `module: <external>` alone — the module's install: its server
+//          secret, webhook secret, and the OAuth app's client id and secret;
+//        `module: <external>` + `credential: <declared>` — a user credential
+//          for one credential the module's manifest declares;
+//        `external: <external>` — an entry written by hand before those
+//          commands, both an install and a credential, read as before; `lf
+//          credential update` records its binding. `LF_SECRETS_FILE=<path>` names it (a mounted secret); otherwise
 //      `<project>/.lf/secrets.yaml`, else `~/.config/lf/secrets.yaml`. It is
 //      SOPS-compatible: a file carrying SOPS metadata is read with `sops -d`
 //      and written back with `sops set` (never decrypted onto disk).
@@ -49,6 +57,7 @@ import {
 } from 'movement-engine/public/secrets';
 import type { Project } from './project';
 import { scanMovements } from './sources';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 /** Where a credential's fields came from. */
 export interface CredentialOrigin {
@@ -58,14 +67,64 @@ export interface CredentialOrigin {
   envFields: Set<string>;
 }
 
+/** What a secrets entry is for. */
+export type CredentialBinding =
+  /** `external:`, hand-written: an install and a credential in one. */
+  | { kind: 'legacy' }
+  /** `module:` alone: the module's install (`lf connect <module>`). */
+  | { kind: 'install' }
+  /** `module:` + `credential:`: a user credential for the module's declared
+   *  credential `declared` (`lf credential add`). */
+  | { kind: 'credential'; declared: string };
+
 export interface Credential {
   name: string;
+  /** The external (installed module) it belongs to: `external:` or `module:`. */
   external: string;
+  /** Absent: hand-written, as `{ kind: 'legacy' }` (a credential a caller
+   *  builds in memory names none). */
+  binding?: CredentialBinding;
   fields: Record<string, string>;
   origin: CredentialOrigin;
 }
 
-const Entry = z.object({ external: z.string().min(1) }).catchall(z.string());
+/** The keys of an entry that say what it is bound to, never a field. */
+export const BINDING_KEYS = ['external', 'module', 'credential'] as const;
+
+const Entry = z
+  .object({ external: z.string().min(1).optional(), module: z.string().min(1).optional(), credential: z.string().min(1).optional() })
+  .catchall(z.string());
+
+type ParsedEntry = { external: string; binding: CredentialBinding; fields: Record<string, string> };
+
+/** An entry's binding and fields; a string naming what is wrong with it otherwise. */
+function parseEntry(raw: unknown): ParsedEntry | string {
+  const entry = Entry.safeParse(raw);
+  if (!entry.success) return 'needs `module` (or a hand-written `external`) and string fields';
+  const { external, module, credential, ...fields } = entry.data;
+  if (external !== undefined) {
+    if (module !== undefined || credential !== undefined) return 'names both `external` and `module`/`credential`; keep one';
+    return { external, binding: { kind: 'legacy' }, fields };
+  }
+  if (module === undefined) return credential !== undefined ? 'names a `credential` but no `module`' : 'needs `module` (or a hand-written `external`)';
+  return { external: module, binding: credential !== undefined ? { kind: 'credential', declared: credential } : { kind: 'install' }, fields };
+}
+
+export function bindingOf(credential: Pick<Credential, 'binding'>): CredentialBinding {
+  return credential.binding ?? { kind: 'legacy' };
+}
+
+/** The entry as written to a secrets file: its binding keys first. */
+export function entryContent(credential: Pick<Credential, 'external' | 'binding' | 'fields'>): Record<string, string> {
+  const binding = bindingOf(credential);
+  const head: Record<string, string> =
+    binding.kind === 'legacy'
+      ? { external: credential.external }
+      : binding.kind === 'install'
+        ? { module: credential.external }
+        : { module: credential.external, credential: binding.declared };
+  return { ...head, ...credential.fields };
+}
 
 /** The provider key a model call reads (`anthropic: { external: model, api_key: … }`). */
 export const MODEL_CREDENTIAL = 'anthropic';
@@ -89,19 +148,16 @@ export function loadSecrets(project: Project, env: NodeJS.ProcessEnv = process.e
     const { content, encrypted } = readSecretsFile(path);
     for (const [name, raw] of Object.entries(content)) {
       if (name === 'sops') continue;
-      const entry = Entry.safeParse(raw);
-      if (!entry.success) {
-        throw new Error(`${path}: credential "${name}" needs an \`external\` and string fields`);
-      }
-      const { external, ...fields } = entry.data;
-      credentials.set(name, { name, external, fields, origin: { file: { path, encrypted }, envFields: new Set() } });
+      const entry = parseEntry(raw);
+      if (typeof entry === 'string') throw new Error(`${path}: entry "${name}" ${entry}`);
+      credentials.set(name, { name, ...entry, origin: { file: { path, encrypted }, envFields: new Set() } });
     }
   }
   applyEnvironment(credentials, env);
   return credentials;
 }
 
-function readSecretsFile(path: string): { content: Record<string, unknown>; encrypted: boolean } {
+export function readSecretsFile(path: string): { content: Record<string, unknown>; encrypted: boolean } {
   const text = readFileSync(path, 'utf8');
   const parsed: unknown = parse(text) ?? {};
   if (!isRecord(parsed)) throw new Error(`${path}: expected a mapping of credential names`);
@@ -127,7 +183,7 @@ function applyEnvironment(credentials: Map<string, Credential>, env: NodeJS.Proc
     }
     let credential = [...credentials.values()].find((c) => c.name.toLowerCase() === credentialName);
     if (credential === undefined) {
-      credential = { name: credentialName, external: '', fields: {}, origin: { envFields: new Set() } };
+      credential = { name: credentialName, external: '', binding: { kind: 'legacy' }, fields: {}, origin: { envFields: new Set() } };
       credentials.set(credentialName, credential);
     }
     if (field === 'external') {
@@ -214,7 +270,7 @@ const LOCK_POLL_MS = 20;
 
 /** A secrets file's lock: a file created exclusively beside it. One left by a
  *  process that died is taken over once it is older than LOCK_STALE_MS. */
-async function withFileLock<T>(path: string, body: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(path: string, body: () => Promise<T>): Promise<T> {
   const lock = `${path}.lock`;
   const started = Date.now();
   for (;;) {
@@ -247,12 +303,10 @@ function isErrno(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && error.code === code;
 }
 
-/** One credential's fields in a secrets file's content, without `external`. */
+/** One credential's fields in a secrets file's content, without its binding. */
 function entryFields(content: Record<string, unknown>, name: string): Record<string, string> | null {
-  const entry = Entry.safeParse(content[name]);
-  if (!entry.success) return null;
-  const { external: _external, ...fields } = entry.data;
-  return fields;
+  const entry = parseEntry(content[name]);
+  return typeof entry === 'string' ? null : entry.fields;
 }
 
 /**
@@ -295,6 +349,81 @@ export function fileSecrets(path: string, options: { encrypted?: boolean } = {})
     assertWritable: async (name) => assertSopsRuns(name, path, encrypted),
   };
   return backend;
+}
+
+// ── Whole entries: what `lf connect` and `lf credential` write ──────────────
+// A refresh changes fields of an entry (the family above). Creating an entry,
+// replacing one (its binding recorded, a field cleared) and deleting one are
+// the commands' alone, under the same lock, so a refresh in `lf serve` beside
+// them is never lost: a replace re-reads the entry under the lock and the
+// caller merges over what is there now.
+
+/** The file new entries go to: the one secrets are read from, else the
+ *  project's `.lf/secrets.yaml` (created, readable by its owner only). */
+export function secretsFileForWrites(project: Project, env: NodeJS.ProcessEnv = process.env): { path: string; encrypted: boolean } {
+  const paths = secretsPaths(project, env);
+  const path = paths.find((p) => existsSync(p));
+  if (path !== undefined) return { path, encrypted: readSecretsFile(path).encrypted };
+  const named = env.LF_SECRETS_FILE;
+  if (named !== undefined && named !== '') throw new Error(`LF_SECRETS_FILE points at ${named}, which does not exist`);
+  const created = join(project.lfDir, 'secrets.yaml');
+  writeFileSync(created, '# Written by `lf connect` and `lf credential`; not edited by hand.\n', { mode: 0o600 });
+  return { path: created, encrypted: false };
+}
+
+export type EntryChange =
+  /** Create `name`; refused when it exists. */
+  | { kind: 'create'; entry: Record<string, string> }
+  /** Replace `name` by what `next` makes of it as stored now (null: it is gone). */
+  | { kind: 'replace'; next: (current: Record<string, string> | null) => Record<string, string> }
+  | { kind: 'delete' };
+
+/** Change one whole entry of a secrets file, under its lock. */
+export async function changeEntry(file: { path: string; encrypted: boolean }, name: string, change: EntryChange): Promise<void> {
+  const { path, encrypted } = file;
+  if (name === 'sops') throw new Error('"sops" is the SOPS metadata of a secrets file, not an entry name');
+  await withFileLock(path, async () => {
+    if (encrypted) await assertSopsRuns(name, path, true);
+    const raw = readSecretsFile(path).content[name];
+    const current = isRecord(raw) ? Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v)])) : null;
+    let entry: Record<string, string> | null;
+    switch (change.kind) {
+      case 'create':
+        if (current !== null) throw new Error(`${path} already has an entry "${name}"`);
+        entry = change.entry;
+        break;
+      case 'replace':
+        entry = change.next(current);
+        break;
+      case 'delete':
+        if (current === null) throw new Error(`${path} has no entry "${name}"`);
+        entry = null;
+        break;
+      default:
+        return neverAsAny(change);
+    }
+    const key = `[${JSON.stringify(name)}]`;
+    if (encrypted) {
+      const args = entry === null ? ['unset', path, key] : ['set', path, key, JSON.stringify(entry)];
+      const run = spawnSync('sops', args, { encoding: 'utf8' });
+      if (run.error !== undefined) throw new Error(`${path} is encrypted with SOPS and \`sops\` could not be run (${run.error.message}); install sops`);
+      if (run.status !== 0) throw new Error(`sops ${args[0]} on ${path} failed: ${redactSecrets(run.stderr.trim(), Object.values(entry ?? current ?? {}))}`);
+      return;
+    }
+    const document = parseDocument(readFileSync(path, 'utf8'));
+    if (entry === null) document.deleteIn([name]);
+    else document.setIn([name], document.createNode(entry));
+    const staging = join(dirname(path), `.${name}.secrets.tmp`);
+    writeFileSync(staging, document.toString(), { mode: 0o600 });
+    renameSync(staging, path);
+  });
+}
+
+/** The install of `external`: its `module:`-only entry, else (hand-written)
+ *  the first entry for it, as before the commands. */
+export function installOf(credentials: Map<string, Credential>, external: string): Credential | undefined {
+  const forExternal = [...credentials.values()].filter((c) => c.external === external);
+  return forExternal.find((c) => bindingOf(c).kind === 'install') ?? forExternal.find((c) => bindingOf(c).kind === 'legacy') ?? forExternal[0];
 }
 
 async function assertSopsRuns(name: string, path: string, encrypted: boolean): Promise<void> {

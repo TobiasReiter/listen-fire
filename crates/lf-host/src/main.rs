@@ -10,7 +10,11 @@
 //!   lf-host runs                             the runs, most recent first
 //!   lf-host drain [--until-idle] [--max-seconds N]  a worker over the work queue (scale from zero)
 //!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
+//!   lf-host connect [<module>]               set a module up (src/connect.rs)
+//!   lf-host credential add|update|delete|list   user credentials (src/credential_cmd.rs)
+//!   lf-host completion <bash|zsh|fish>       the shell's tab completion
 //!   lf-host --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
+//!   lf-host --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
 //!
 //! `run`, `resume`, `runs` and `drain` keep run state where `--store <spec>`
 //! (or lf.yaml's `store:`) says: a SQLite file, `.lf/state.db` by default,
@@ -23,24 +27,35 @@ mod anthropic;
 mod backend;
 mod catalog;
 mod check;
+mod completion;
+mod connect;
+mod contract_secrets;
 mod contract_store;
+mod credential_calls;
+mod credential_cmd;
 mod documents;
 mod drain;
 mod externals;
 mod file_ref;
+mod http_out;
 mod json;
 mod llm_calls;
 mod models;
+mod oauth2;
+mod oauth_redirect;
 mod park_files;
 mod pg_store;
 mod project;
+mod prompt;
 mod protocol;
 mod remote;
 mod routing;
 mod run_host;
 mod runs;
 mod schema;
+mod secret_stores;
 mod secrets;
+mod secrets_family;
 mod segment;
 mod sources;
 mod store;
@@ -51,11 +66,12 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
+const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
        lf-host run --event <file.json> [--dry-run]
        lf-host resume [<run-id>]
        lf-host drain [--until-idle] [--max-seconds <n>]
        lf-host --contract-store <state.db|postgres://…> [--team <uuid>]
+       lf-host --contract-secrets <secrets file | env>
        lf-host --project-schema
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
@@ -68,6 +84,8 @@ const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs|drain> [--dir
   --team    the tenant (a uuid) of a Postgres store's rows
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
+  --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
+{CREDENTIAL_USAGE}
 not yet here (the TypeScript lf has them): init, serve, call, cancel, run --webhook";
 
 /// The commands the TypeScript lf has that this binary does not yet.
@@ -143,6 +161,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 }
 
 async fn run(argv: Vec<String>) -> Result<i32, String> {
+    if let Some(code) = credential_cmd::dispatch(&argv).await {
+        return code;
+    }
+    if let [flag, target] = argv.as_slice()
+        && flag == "--contract-secrets"
+    {
+        return contract_secrets::serve(std::path::Path::new(target)).await.map(|()| 0);
+    }
     let args = parse_args(&argv)?;
     if let Some(spec) = &args.contract_store {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -156,7 +182,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         return Ok(0);
     }
     let Some(command) = args.command.clone().filter(|_| !args.help) else {
-        writeln!(out, "{USAGE}").map_err(|e| e.to_string())?;
+        writeln!(out, "{}", USAGE.replace("{CREDENTIAL_USAGE}", credential_cmd::USAGE)).map_err(|e| e.to_string())?;
         return Ok(if args.help { 0 } else { 2 });
     };
     match command.as_str() {
@@ -227,7 +253,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             Ok(2)
         }
         other => {
-            eprintln!("unknown command \"{other}\"\n{USAGE}");
+            eprintln!("unknown command \"{other}\"\n{}", USAGE.replace("{CREDENTIAL_USAGE}", credential_cmd::USAGE));
             Ok(2)
         }
     }
