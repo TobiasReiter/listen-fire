@@ -1392,6 +1392,18 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   from its provider (set `MODULE_PUBLIC_URL` when callers reach it through a proxy).
 - The platform's own Drive calls (the older pipeline outputs) now get their token per call from the
   platform's Google client, and send through Node's fetch instead of node-fetch.
+- Gmail is a module: `@lf/gmail` (`modules/gmail`). Nothing changes for a team using it: the same
+  requests, answers and sends (the mailbox search, a message's fields, its attachments and their
+  bytes, sends and replies with files, and the poll for arriving mail with its checkpoint), held by
+  a recording of the old adapter, for a signed-in mailbox and a delegated one, replayed against the
+  module in process and as a process. Switching back is one line (`BUILTIN_MODULES`).
+- Gmail's credential reaches the module as one set of fields whichever way the mailbox was
+  connected. A signed-in mailbox is refreshed by the platform five minutes before expiry and stored
+  back as before; a delegated mailbox's tokens are minted per scope by the deployment's service
+  account, held in memory until they near expiry (previously minted per call) and never stored.
+  The mailbox allowlist is checked before the module is handed anything.
+- In the dev loop a delegated Gmail mailbox now authenticates to the fake with a placeholder bearer
+  token instead of an API key parameter.
 
 ## [v0.11.0] - 2026-10-12
 
