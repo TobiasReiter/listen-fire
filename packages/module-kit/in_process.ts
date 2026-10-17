@@ -17,6 +17,7 @@ import type {
   ModuleContext,
   ModuleCredential,
   ModuleFiles,
+  ModuleIdentities,
   ModuleKv,
   ModuleLog,
   ModuleModels,
@@ -40,8 +41,11 @@ export interface ModuleHost {
   kv: ModuleKv;
   /** Default: refused by name (a host with no models to lend). */
   models?: ModuleModels;
+  /** Default: none kept (`refusingIdentities`). */
+  identities?: ModuleIdentities;
   baseUrlOverride?: string;
   constructionArgs?: Readonly<Record<string, string>>;
+  credentialRef?: string;
   /** Check every answer against the protocol's result schema. */
   validateResults: boolean;
 }
@@ -66,10 +70,12 @@ export function moduleContext(host: ModuleHost): ModuleContext {
     files: host.files,
     kv: host.kv,
     models: host.models ?? refusingModels('this host lends no models to its modules'),
+    identities: host.identities ?? refusingIdentities('this host keeps no linked identities'),
     config: {
       tenant: host.tenant,
       ...(host.baseUrlOverride !== undefined ? { baseUrlOverride: host.baseUrlOverride } : {}),
       constructionArgs: host.constructionArgs ?? {},
+      ...(host.credentialRef !== undefined ? { credentialRef: host.credentialRef } : {}),
     },
   };
 }
@@ -251,6 +257,17 @@ export function refusingKv(reason: string): ModuleKv {
       throw new Error(reason);
     },
     list: async () => {
+      throw new Error(reason);
+    },
+  };
+}
+
+export function refusingIdentities(reason: string): ModuleIdentities {
+  return {
+    list: async () => {
+      throw new Error(reason);
+    },
+    find: async () => {
       throw new Error(reason);
     },
   };

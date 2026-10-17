@@ -10,7 +10,9 @@
 // `?answer=` link idiom is no longer taught; the door still recognises it while
 // live automations are re-authored.
 
-import type { HandbookSection } from 'movement-engine/lib/handbook_section';
+import type { AdapterManifest } from 'movement-engine/public/adapter';
+
+type HandbookSection = NonNullable<AdapterManifest['handbookSection']>;
 
 export const TELEGRAM_HANDBOOK_SECTION: HandbookSection = {
   title: 'Telegram — bot chats, keyboards, and acting in the chat',

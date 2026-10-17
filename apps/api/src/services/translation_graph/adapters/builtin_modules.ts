@@ -34,6 +34,7 @@ import {
   type ModuleDefinition,
   type ModuleFiles,
   type ModuleKv,
+  type ModuleIdentities,
   type PluginModuleDefinition,
 } from 'module-kit';
 import {
@@ -56,6 +57,8 @@ import { GMAIL_MANIFEST } from '@lf/gmail/manifest';
 import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
 import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
 import { ATTIO_MANIFEST } from '@lf/attio/manifest';
+import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
+import { SLACK_MANIFEST } from '@lf/slack/manifest';
 import { pluginDeclarationNamed, pluginProgramName } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -69,6 +72,9 @@ import { gmailModuleCredential } from '../../../adapters/gmail/module_credential
 import { credentialTypeOf } from './credential_type';
 import { hostedModels } from './module_host';
 import { oauthAppFromEnv } from './module_credentials';
+import { builtInBotToken } from './telegram/shared_bot';
+import { telegramIdentities } from './telegram/identities';
+import { teamIdSchema } from '../../../lib/team_id';
 
 export type BuiltinLine = 'legacy' | 'module';
 
@@ -95,6 +101,15 @@ export interface ModuleLineHost {
   kv?: (install: BuiltinInstall) => ModuleKv;
   /** The install's files. Default: refused, by name. */
   files?: (install: BuiltinInstall) => ModuleFiles;
+  /** A shared bot or app the platform runs for every team that connects it:
+   *  its credential's fields stand in for an install with no credential, and
+   *  fill each field an install's credential leaves blank (a team that
+   *  connected the shared bot stores no token). The module sees an ordinary
+   *  credential. */
+  sharedCredential?: () => CredentialFields | undefined;
+  /** Who linked their provider account to a user of the team (the record the
+   *  platform's own handshake keeps). Default: refused, by name. */
+  identities?: (teamId: TeamId) => ModuleIdentities;
 }
 
 /** One built-in's line. A module line names how to load the module, and the
@@ -131,6 +146,9 @@ const WEB_MODULE_LINE: BuiltinModuleLine = {
     return webModule;
   },
 };
+
+/** Built once, on the Slack line's first use. */
+let platformSlackModule: AdapterModuleDefinition | undefined;
 
 /**
  * Every built-in that becomes a module (plan 22 #1), by adapter type or
@@ -264,8 +282,40 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
     harnessService: 'GOOGLE_GMAIL',
     files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/gmail' }),
   },
-  telegram: { kind: 'adapter', line: 'legacy' },
-  slack: { kind: 'adapter', line: 'legacy' },
+  telegram: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: TELEGRAM_MANIFEST,
+    load: () => {
+      const { telegramModule }: typeof import('@lf/telegram') = require('@lf/telegram');
+      return telegramModule;
+    },
+    // The platform's shared bot, for a team that connected it (an empty
+    // credential) or connected nothing.
+    sharedCredential: () => {
+      const botToken = builtInBotToken();
+      return botToken === null ? undefined : { botToken };
+    },
+    identities: telegramIdentities,
+  },
+  slack: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: SLACK_MANIFEST,
+    // The platform's own definition: its model for the composition function,
+    // its redemption of a file any owner holds.
+    load: () => {
+      if (platformSlackModule === undefined) {
+        const { slackModuleWith }: typeof import('@lf/slack') = require('@lf/slack');
+        const { platformSlackChat, platformSlackFile }: typeof import('./slack') = require('./slack');
+        platformSlackModule = slackModuleWith({
+          chat: platformSlackChat,
+          readFile: (ref, ctx) => platformSlackFile(ref, teamIdSchema.parse(ctx.config.tenant)),
+        });
+      }
+      return platformSlackModule;
+    },
+  },
   // The bundled plugins (Henry 2026-10-17: plugins are modules too), all six
   // in one module, `@lf/web`. Each plugin keeps its own line.
   'fetch-url': WEB_MODULE_LINE,
@@ -316,14 +366,24 @@ export const HOST_REFRESH_WINDOW_MS = 5 * 60_000;
 function storedCredential(
   definition: ModuleDefinition,
   install: BuiltinInstall,
-  options: { secrets: SecretsFamily; hostApp?: () => HostOAuthApp | undefined },
+  options: { secrets: SecretsFamily; hostApp?: () => HostOAuthApp | undefined; shared?: () => CredentialFields | undefined },
 ): ModuleCredential {
-  const { secrets, hostApp } = options;
+  const { secrets, hostApp, shared } = options;
   const declared = definition.credentials[0];
   const displayName = definition.kind === 'adapter' ? definition.manifest.displayName : definition.name;
   if (declared === undefined) return noCredential(`module ${definition.name} declares no credential`);
   const ref = install.credentialsId;
   if (ref === undefined) {
+    const sharedFields = shared?.();
+    if (sharedFields !== undefined) {
+      return {
+        name: declared.name,
+        fields: async () => sharedFields,
+        update: async () => {
+          throw new Error(`${displayName}: the platform's shared credential is not written back from a module`);
+        },
+      };
+    }
     return noCredential(`${displayName}: no credential is connected for team ${install.teamId} (credentialsId unset). Connect ${displayName}.`);
   }
   const refreshes = declared.kind === 'oauth2' && hostApp !== undefined;
@@ -350,8 +410,8 @@ function storedCredential(
     name: declared.name,
     fields: async () => {
       const record = await secrets.resolve(ref);
-      if (!refreshes || !expiresWithin(record.fields, HOST_REFRESH_WINDOW_MS)) return record.fields;
-      return refreshed(record.version);
+      if (!refreshes || !expiresWithin(record.fields, HOST_REFRESH_WINDOW_MS)) return filledFrom(record.fields, shared?.());
+      return filledFrom(await refreshed(record.version), shared?.());
     },
     update: async (fields) => {
       await secrets.update(ref, fields);
@@ -360,6 +420,14 @@ function storedCredential(
     // app (one refresh at a time, however many calls ask).
     ...(refreshes ? { refresh: async () => refreshed((await secrets.resolve(ref)).version) } : {}),
   };
+}
+
+/** `stored`, with each field it leaves blank taken from `shared`. The same
+ *  object when nothing is filled, so a module's per-credential cache holds. */
+function filledFrom(stored: CredentialFields, shared: CredentialFields | undefined): CredentialFields {
+  if (shared === undefined) return stored;
+  const blanks = Object.entries(shared).filter(([name]) => (stored[name] ?? '').trim() === '');
+  return blanks.length === 0 ? stored : { ...stored, ...Object.fromEntries(blanks) };
 }
 
 /** The dev loop's fake for the test-harness team, by the service the line
@@ -372,13 +440,13 @@ function harnessBaseUrl(entry: AdapterModuleLine, definition: AdapterModuleDefin
 }
 
 /** What the platform hosts a module line's module with, for one install:
- *  the stored credential, and the line's kv and files (refused by name
- *  where the line names none). */
+ *  the stored credential, and the line's kv, files and linked identities
+ *  (refused by name where the line names none). */
 function platformHost(
   entry: ModuleLineHost,
   definition: ModuleDefinition,
   install: BuiltinInstall,
-): { credential: ModuleCredential; kv: ModuleKv; files: ModuleFiles } {
+): { credential: ModuleCredential; kv: ModuleKv; files: ModuleFiles; identities?: ModuleIdentities } {
   const secrets = createSecretsFamily({
     backend: postgresSecrets({ teamId: install.teamId, ...(entry.storedAs !== undefined ? { shape: entry.storedAs } : {}) }),
     warn: (message) => logger.warn(message),
@@ -387,9 +455,14 @@ function platformHost(
   return {
     credential:
       entry.credential?.(install) ??
-      storedCredential(definition, install, { secrets, ...(entry.hostApp !== undefined ? { hostApp: entry.hostApp } : {}) }),
+      storedCredential(definition, install, {
+        secrets,
+        ...(entry.hostApp !== undefined ? { hostApp: entry.hostApp } : {}),
+        ...(entry.sharedCredential !== undefined ? { shared: entry.sharedCredential } : {}),
+      }),
     kv: entry.kv?.(install) ?? refusingKv(unavailable('ctx.kv')),
     files: entry.files?.(install) ?? refusingFiles(unavailable('ctx.files')),
+    ...(entry.identities !== undefined ? { identities: entry.identities(install.teamId) } : {}),
   };
 }
 
@@ -404,6 +477,7 @@ export function loadBuiltinModule(entry: AdapterModuleLine, install: BuiltinInst
     models: hostedModels,
     ...(baseUrlOverride !== undefined ? { baseUrlOverride } : {}),
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
+    ...(install.credentialsId !== undefined ? { credentialRef: install.credentialsId } : {}),
     validateResults: inProcessValidationDefault(process.env),
   });
   // The files it reads out name this install, as a served module's do.

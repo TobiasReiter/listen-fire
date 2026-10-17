@@ -15,9 +15,9 @@
 //
 // C8 / M6 / M7
 
-import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
+import type { ModuleLog } from 'module-kit';
+import type { getSlackClient } from './api_client';
 
-import { logger } from 'movement-engine/services/logger';
 
 type SlackClient = ReturnType<typeof getSlackClient>;
 
@@ -103,7 +103,7 @@ export function normalizeMrkdwn(text: string): string {
     .replace(/^#{1,6}[ \t]+/gm, ''); // strip markdown headings
 }
 
-async function fetchChannelRoster(client: SlackClient, channelId: string): Promise<RosterMember[]> {
+async function fetchChannelRoster(client: SlackClient, channelId: string, log: ModuleLog): Promise<RosterMember[]> {
   try {
     const [users, channelMembers] = await Promise.all([
       client.api.users.list({}),
@@ -119,7 +119,7 @@ async function fetchChannelRoster(client: SlackClient, channelId: string): Promi
         ),
       }));
   } catch (error) {
-    logger.warn('[SlackAdapter] failed to fetch channel roster for mention resolution', { error });
+    log.warn('[SlackAdapter] failed to fetch channel roster for mention resolution', { error });
     return [];
   }
 }
@@ -134,8 +134,9 @@ export async function finalizeMessageText(input: {
   client: SlackClient;
   channelId: string;
   text: string;
+  log: ModuleLog;
 }): Promise<string> {
   const hasMentions = /@\[[^\]]+\]/.test(input.text);
-  const roster = hasMentions ? await fetchChannelRoster(input.client, input.channelId) : [];
+  const roster = hasMentions ? await fetchChannelRoster(input.client, input.channelId, input.log) : [];
   return normalizeMrkdwn(resolveMentions(input.text, roster));
 }

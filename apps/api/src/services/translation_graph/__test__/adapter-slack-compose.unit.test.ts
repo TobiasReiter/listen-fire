@@ -22,7 +22,8 @@ jest.mock('../../../lib/anthropic', () => ({
 import type { TeamId } from '../../../generated/kysely/core/Team';
 
 import { SlackAdapter, SLACK_MESSAGE_TYPE_ID } from '../adapters/slack';
-import { composeSlackMessage } from '../adapters/slack/compose';
+import { composeSlackMessage } from '@lf/slack/compose';
+import { platformSlackChat } from '../adapters/slack';
 
 const TEAM_ID = 'team-1' as TeamId;
 const COMPOSED = '*Thanks @[Ada Okafor] for leading the Acme round!* 🎉';
@@ -49,7 +50,7 @@ describe('SLACK_MESSAGE — advertisement', () => {
 
 describe('composeSlackMessage', () => {
   it('builds a Slack system prompt + a user message carrying the brief and data', async () => {
-    const out = await composeSlackMessage({
+    const out = await composeSlackMessage(platformSlackChat, {
       instructions: 'thank them for leading the round',
       data: ['Ada Okafor', 'Acme Series A'],
     });
@@ -64,13 +65,13 @@ describe('composeSlackMessage', () => {
   });
 
   it('drops null/undefined/empty data values from the user message', async () => {
-    await composeSlackMessage({ instructions: 'hi', data: [null, undefined, '', 'Keep'] });
+    await composeSlackMessage(platformSlackChat, { instructions: 'hi', data: [null, undefined, '', 'Keep'] });
     expect(mockChatCalls[0].userMessage).toContain('Keep');
     expect(mockChatCalls[0].userMessage).not.toMatch(/-\s*$/m); // no empty bullet line
   });
 
   it('renders array data as a joined value', async () => {
-    await composeSlackMessage({ instructions: 'hi', data: [['a', 'b', 'c']] });
+    await composeSlackMessage(platformSlackChat, { instructions: 'hi', data: [['a', 'b', 'c']] });
     expect(mockChatCalls[0].userMessage).toContain('a, b, c');
   });
 });

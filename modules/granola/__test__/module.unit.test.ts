@@ -17,8 +17,10 @@ function contextOver(fields: () => CredentialFields, config: { baseUrlOverride?:
       return new Response(JSON.stringify({ notes: [], hasMore: false, cursor: null }), { status: 200 });
     }) as typeof fetch,
     log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-    files: { put: refuse, read: refuse },
-    kv: { get: refuse, set: refuse, delete: refuse },
+    files: { put: refuse, read: refuse, expose: refuse },
+    kv: { get: refuse, set: refuse, delete: refuse, list: refuse },
+    models: { chat: refuse, chatStructured: refuse },
+    identities: { list: refuse, find: refuse },
     config: { tenant: 'team-1', constructionArgs: {}, ...config },
   };
   return Object.assign(ctx, { requests });

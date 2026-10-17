@@ -66,7 +66,7 @@ async function runOne(mode: Mode): Promise<Record<string, number>> {
       tenant: 't',
       credential: { name: 'dropbox', fields: async () => fields, update: async () => {} },
       log: quiet,
-      files: { ...files, put: async () => ({ __brand: 'FileRef' as const }) },
+      files: { ...files, put: async () => ({ __brand: 'FileRef' as const }), expose: async () => Promise.reject(new Error('no')) },
       kv: kit.refusingKv('none'),
       validateResults: mode === 'validated',
     }).adapter;

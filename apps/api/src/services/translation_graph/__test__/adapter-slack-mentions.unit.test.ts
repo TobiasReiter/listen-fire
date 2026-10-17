@@ -9,6 +9,7 @@
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
+import type { SlackWriteHost } from '@lf/slack/write';
 
 import {
   matchMember,
@@ -17,11 +18,25 @@ import {
   normalizeMrkdwn,
   finalizeMessageText,
   type RosterMember,
-} from '../adapters/slack/mentions';
-import { createUnifiedMessage } from '../adapters/slack/write';
+} from '@lf/slack/mentions';
+import { createUnifiedMessage } from '@lf/slack/write';
 
 
 type SlackClient = ReturnType<typeof getSlackClient>;
+
+
+/** What a write reaches beyond Slack, for these tests: the mock client's
+ *  `fetch` stands in for the host's, and no file is redeemed. */
+function hostOf(client: unknown): SlackWriteHost {
+  const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+  return {
+    log: quiet,
+    fetch: ((url: unknown, init: unknown) => (client as { fetch(u: unknown, i: unknown): Promise<Response> }).fetch(url, init)) as typeof fetch,
+    readFile: async () => {
+      throw new Error('no file is redeemed in this test');
+    },
+  };
+}
 
 const ROSTER: RosterMember[] = [
   { id: 'U_FRANK', names: ['frank', 'Frank Smith'] },
@@ -121,7 +136,7 @@ function makeRosterClient(opts?: { failRoster?: boolean }): { client: SlackClien
 describe('finalizeMessageText', () => {
   it('resolves mentions against the channel roster', async () => {
     const { client } = makeRosterClient();
-    const out = await finalizeMessageText({ client, channelId: 'C1', text: 'hi @[frank]' });
+    const out = await finalizeMessageText({ client, log: hostOf(client).log, channelId: 'C1', text: 'hi @[frank]' });
     expect(out).toBe('hi <@U_FRANK>');
   });
 
@@ -130,14 +145,14 @@ describe('finalizeMessageText', () => {
     const client = {
       api: { users: { list: async () => { fetched = true; return { members: [] }; } } },
     } as unknown as SlackClient;
-    const out = await finalizeMessageText({ client, channelId: 'C1', text: 'plain **bold**' });
+    const out = await finalizeMessageText({ client, log: hostOf(client).log, channelId: 'C1', text: 'plain **bold**' });
     expect(out).toBe('plain *bold*');
     expect(fetched).toBe(false);
   });
 
   it('degrades to plain text when the roster fetch fails', async () => {
     const { client } = makeRosterClient({ failRoster: true });
-    const out = await finalizeMessageText({ client, channelId: 'C1', text: 'hi @[frank]' });
+    const out = await finalizeMessageText({ client, log: hostOf(client).log, channelId: 'C1', text: 'hi @[frank]' });
     expect(out).toBe('hi frank');
   });
 });
@@ -147,7 +162,7 @@ describe('createUnifiedMessage — posts resolved text', () => {
     const { client, posts } = makeRosterClient();
     await createUnifiedMessage({
       client,
-      teamId: 'team-1' as TeamId,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'welcome @[Frank Smith]!' },
     });

@@ -64,7 +64,7 @@ describe('a file a module reads out', () => {
   });
 
   it('in process, is named as the install’s, and its bytes come from the module', async () => {
-    const adapter = inProcess({ put: async () => Promise.reject(new Error('no')), read: async () => Promise.reject(new Error('no')) });
+    const adapter = inProcess({ put: async () => Promise.reject(new Error('no')), expose: async () => Promise.reject(new Error('no')), read: async () => Promise.reject(new Error('no')) });
     const ref = await adapter.getFieldValue({ position: blob('b1'), fieldId: 'Bytes' });
     expect(ref).toEqual({ __brand: 'FileRef', name: 'b1.txt', contentType: 'text/plain', source: ownedBy('b1') });
     // A field the catalog does not declare a file stays as it came.
@@ -138,7 +138,7 @@ describe('a file handed to a module', () => {
         fetched.push(String(input));
         return new Response('from the url');
       }) as typeof fetch,
-      files: { put: async () => Promise.reject(new Error('no')), read: async () => Promise.reject(new Error('not through files')) },
+      files: { put: async () => Promise.reject(new Error('no')), expose: async () => Promise.reject(new Error('no')), read: async () => Promise.reject(new Error('not through files')) },
     };
     const bytes = await readHandedFile(ctx, { __brand: 'FileRef', url: 'https://files.test/1' });
     expect(Buffer.from(bytes).toString('utf8')).toBe('from the url');
@@ -148,7 +148,7 @@ describe('a file handed to a module', () => {
   it('refuses a url that does not answer', async () => {
     const ctx = {
       fetch: (async () => new Response('gone', { status: 410 })) as typeof fetch,
-      files: { put: async () => Promise.reject(new Error('no')), read: async () => Promise.reject(new Error('no')) },
+      files: { put: async () => Promise.reject(new Error('no')), expose: async () => Promise.reject(new Error('no')), read: async () => Promise.reject(new Error('no')) },
     };
     await expect(readHandedFile(ctx, { __brand: 'FileRef', name: 'a.txt', url: 'https://files.test/1' })).rejects.toThrow(
       "the file 'a.txt' could not be fetched from its url (status 410)",
@@ -159,6 +159,7 @@ describe('a file handed to a module', () => {
     const read: FileRef[] = [];
     const adapter = inProcess({
       put: async () => Promise.reject(new Error('no')),
+      expose: async () => Promise.reject(new Error('no')),
       read: async (ref) => {
         read.push(ref);
         return new Uint8Array(Buffer.from('from the host'));

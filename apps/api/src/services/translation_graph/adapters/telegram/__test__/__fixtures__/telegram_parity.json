@@ -1,0 +1,4539 @@
+{
+  "byo": {
+    "transcript": [
+      {
+        "step": "listEntryPoints",
+        "answer": [
+          {
+            "typeId": "telegram:message",
+            "displayName": "Message",
+            "writable": false,
+            "readable": false,
+            "fires": true
+          },
+          {
+            "typeId": "telegram:attachment",
+            "displayName": "Attachment",
+            "writable": false,
+            "readable": false
+          },
+          {
+            "typeId": "telegram:linked_user",
+            "displayName": "Linked User",
+            "collectionName": "Linked Users",
+            "description": "A person who has linked Telegram via the connect handshake.",
+            "writable": false,
+            "readable": true
+          }
+        ]
+      },
+      {
+        "step": "describe Message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Linked User",
+        "answer": {
+          "typeId": "telegram:linked_user",
+          "displayName": "Linked User",
+          "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+          "fields": [
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The private chat id a send targets (= the Telegram user id)."
+            },
+            {
+              "fieldId": "email",
+              "displayName": "Email",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Listen-Fire account email this Telegram user linked as."
+            },
+            {
+              "fieldId": "linked_at",
+              "displayName": "Linked At",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the link handshake completed (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "messages",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Messages",
+              "writable": true,
+              "readable": false,
+              "description": "Send a message into this person's private bot chat (write-only — the Bot API cannot list a chat's history). The chat id is the linked user's own id."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Attachment",
+        "answer": {
+          "typeId": "telegram:attachment",
+          "displayName": "Attachment",
+          "fields": [
+            {
+              "fieldId": "file_id",
+              "displayName": "File Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Bot API file id — resolves to the file bytes."
+            },
+            {
+              "fieldId": "name",
+              "displayName": "Name",
+              "kind": "string",
+              "writable": false,
+              "required": true
+            },
+            {
+              "fieldId": "contentType",
+              "displayName": "Content Type",
+              "kind": "string",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "size",
+              "displayName": "Size",
+              "kind": "number",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "data",
+              "displayName": "File",
+              "kind": "file",
+              "writable": false,
+              "required": false
+            }
+          ],
+          "references": []
+        }
+      },
+      {
+        "step": "describe telegram:message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Nonexistent",
+        "answer": null
+      },
+      {
+        "step": "edgesFrom meta",
+        "answer": {
+          "descriptor": {
+            "typeId": "meta",
+            "displayName": "Telegram",
+            "description": "A Telegram connection. The people who have linked their account can be listed; conversations cannot — a message has to arrive.",
+            "fields": [],
+            "references": [
+              {
+                "fieldId": "telegram:message",
+                "targetTypeId": "telegram:message",
+                "cardinality": "one",
+                "direction": "outgoing",
+                "name": "Message",
+                "fires": true,
+                "readable": false,
+                "description": "Somebody messaging the bot — what a listen delivers."
+              },
+              {
+                "fieldId": "telegram:linked_user",
+                "targetTypeId": "telegram:linked_user",
+                "cardinality": "many",
+                "direction": "outgoing",
+                "name": "Linked Users",
+                "description": "People who have linked their Telegram account to Listen-Fire.",
+                "sequenced": "arrival"
+              }
+            ]
+          },
+          "targetPositions": {
+            "telegram:message": {
+              "adapterType": "telegram",
+              "recordType": "telegram:message",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            },
+            "telegram:linked_user": {
+              "adapterType": "telegram",
+              "recordType": "telegram:linked_user",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            }
+          },
+          "targetNodes": {
+            "telegram:message": {
+              "typeId": "telegram:message",
+              "displayName": "Message",
+              "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+              "fields": [
+                {
+                  "fieldId": "message_id",
+                  "displayName": "Message Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Telegram message id."
+                },
+                {
+                  "fieldId": "text",
+                  "displayName": "Text",
+                  "kind": "string",
+                  "writable": true,
+                  "required": true,
+                  "uiHint": "textarea",
+                  "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+                },
+                {
+                  "fieldId": "reply_markup",
+                  "displayName": "Reply Markup",
+                  "kind": "json",
+                  "writable": true,
+                  "readable": false,
+                  "required": false,
+                  "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+                },
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The id of the chat the message belongs to — the value to send a reply back to."
+                },
+                {
+                  "fieldId": "chat_type",
+                  "displayName": "Chat Type",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "private / group / supergroup / channel."
+                },
+                {
+                  "fieldId": "sender_id",
+                  "displayName": "Sender Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The numeric id of the user who sent the message."
+                },
+                {
+                  "fieldId": "sender_username",
+                  "displayName": "Sender Username",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The @username of the sender, when set."
+                },
+                {
+                  "fieldId": "sender_first_name",
+                  "displayName": "Sender First Name",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The sender's first name."
+                },
+                {
+                  "fieldId": "date",
+                  "displayName": "Date",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the message was sent (ISO-8601)."
+                }
+              ]
+            },
+            "telegram:linked_user": {
+              "typeId": "telegram:linked_user",
+              "displayName": "Linked User",
+              "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+              "fields": [
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The private chat id a send targets (= the Telegram user id)."
+                },
+                {
+                  "fieldId": "email",
+                  "displayName": "Email",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Listen-Fire account email this Telegram user linked as."
+                },
+                {
+                  "fieldId": "linked_at",
+                  "displayName": "Linked At",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the link handshake completed (ISO-8601)."
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "step": "listEventTypes",
+        "answer": [
+          {
+            "tag": "message",
+            "positionType": "telegram:message"
+          }
+        ]
+      },
+      {
+        "step": "runtimeCapabilities",
+        "answer": {
+          "traversal": {
+            "incoming": false,
+            "edgeProperties": false
+          },
+          "resources": false
+        }
+      },
+      {
+        "step": "preprocessInbound text",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "42",
+                "text": "Closed the round!",
+                "chat_id": "777",
+                "chat_type": "private",
+                "sender_id": "777",
+                "sender_username": "adas",
+                "sender_first_name": "Ada",
+                "date": "2023-11-14T22:13:20.000Z",
+                "attachments": []
+              },
+              "externalId": "42",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound media",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "43",
+                "text": "the deck",
+                "chat_id": "-1001",
+                "chat_type": "supergroup",
+                "sender_id": "888",
+                "sender_first_name": "Bo",
+                "date": "2023-11-14T22:15:00.000Z",
+                "attachments": [
+                  {
+                    "file_id": "DOC1",
+                    "name": "deck.pdf",
+                    "contentType": "application/pdf",
+                    "size": 1234
+                  },
+                  {
+                    "file_id": "PH_L",
+                    "name": "photo_PHl.jpg",
+                    "contentType": "image/jpeg",
+                    "size": 9000
+                  },
+                  {
+                    "file_id": "VO1",
+                    "name": "voice_VO1u.ogg",
+                    "contentType": "audio/ogg",
+                    "size": 55
+                  },
+                  {
+                    "file_id": "AU1",
+                    "name": "song.mp3",
+                    "contentType": "audio/mpeg",
+                    "size": 77
+                  }
+                ]
+              },
+              "externalId": "43",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound callback_query",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound malformed",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound not an object",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "Message.Text",
+        "answer": "the deck"
+      },
+      {
+        "step": "Message.Chat Id",
+        "answer": "-1001"
+      },
+      {
+        "step": "Message.Chat Type",
+        "answer": "supergroup"
+      },
+      {
+        "step": "Message.Sender Id",
+        "answer": "888"
+      },
+      {
+        "step": "Message.Sender First Name",
+        "answer": "Bo"
+      },
+      {
+        "step": "Message.Date",
+        "answer": "2023-11-14T22:15:00.000Z"
+      },
+      {
+        "step": "Message.Message Id",
+        "answer": "43"
+      },
+      {
+        "step": "Message.Reply Markup",
+        "answer": null
+      },
+      {
+        "step": "Message.Nope",
+        "answer": {
+          "error": "'Nope' is not a known field of 'Message' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+        }
+      },
+      {
+        "step": "Message Attachments",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "DOC1",
+                  "name": "deck.pdf",
+                  "contentType": "application/pdf",
+                  "size": 1234
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "PH_L",
+                  "name": "photo_PHl.jpg",
+                  "contentType": "image/jpeg",
+                  "size": 9000
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "VO1",
+                  "name": "voice_VO1u.ogg",
+                  "contentType": "audio/ogg",
+                  "size": 55
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "AU1",
+                  "name": "song.mp3",
+                  "contentType": "audio/mpeg",
+                  "size": 77
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Attachments incoming",
+        "answer": []
+      },
+      {
+        "step": "Attachment 0.Name",
+        "answer": "deck.pdf"
+      },
+      {
+        "step": "Attachment 0.Content Type",
+        "answer": "application/pdf"
+      },
+      {
+        "step": "Attachment 0.Size",
+        "answer": 1234
+      },
+      {
+        "step": "Attachment 0.File Id",
+        "answer": "DOC1"
+      },
+      {
+        "step": "Attachment 0.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "deck.pdf",
+          "contentType": "application/pdf",
+          "size": 1234,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-byo",
+            "handle": "DOC1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 1.Name",
+        "answer": "photo_PHl.jpg"
+      },
+      {
+        "step": "Attachment 1.Content Type",
+        "answer": "image/jpeg"
+      },
+      {
+        "step": "Attachment 1.Size",
+        "answer": 9000
+      },
+      {
+        "step": "Attachment 1.File Id",
+        "answer": "PH_L"
+      },
+      {
+        "step": "Attachment 1.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "photo_PHl.jpg",
+          "contentType": "image/jpeg",
+          "size": 9000,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-byo",
+            "handle": "PH_L"
+          }
+        }
+      },
+      {
+        "step": "Attachment 2.Name",
+        "answer": "voice_VO1u.ogg"
+      },
+      {
+        "step": "Attachment 2.Content Type",
+        "answer": "audio/ogg"
+      },
+      {
+        "step": "Attachment 2.Size",
+        "answer": 55
+      },
+      {
+        "step": "Attachment 2.File Id",
+        "answer": "VO1"
+      },
+      {
+        "step": "Attachment 2.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "voice_VO1u.ogg",
+          "contentType": "audio/ogg",
+          "size": 55,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-byo",
+            "handle": "VO1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 3.Name",
+        "answer": "song.mp3"
+      },
+      {
+        "step": "Attachment 3.Content Type",
+        "answer": "audio/mpeg"
+      },
+      {
+        "step": "Attachment 3.Size",
+        "answer": 77
+      },
+      {
+        "step": "Attachment 3.File Id",
+        "answer": "AU1"
+      },
+      {
+        "step": "Attachment 3.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "song.mp3",
+          "contentType": "audio/mpeg",
+          "size": 77,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-byo",
+            "handle": "AU1"
+          }
+        }
+      },
+      {
+        "step": "Attachment without file_id .File",
+        "answer": null
+      },
+      {
+        "step": "foreign position",
+        "answer": {
+          "error": "TelegramAdapter.getFieldValue received a position from a different adapter ('slack')."
+        }
+      },
+      {
+        "step": "resolveFileRef document",
+        "answer": {
+          "contentType": "application/octet-stream",
+          "text": "fake-telegram-bytes:documents/DOC1.bin"
+        }
+      },
+      {
+        "step": "resolveFileRef without a handle",
+        "answer": {
+          "error": "telegram.resolveFileRef: FileRef has no source handle to resolve."
+        }
+      },
+      {
+        "step": "Linked Users",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Linked User",
+              "identity": {
+                "kind": "stable",
+                "recordId": "777",
+                "data": {
+                  "chat_id": "777",
+                  "email": "Ada@Example.com ",
+                  "linked_at": "2026-06-01T12:00:00.000Z"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Sender linked",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Linked User",
+              "identity": {
+                "kind": "stable",
+                "recordId": "777",
+                "data": {
+                  "chat_id": "777",
+                  "email": "Ada@Example.com ",
+                  "linked_at": "2026-06-01T12:00:00.000Z"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Sender unlinked",
+        "answer": []
+      },
+      {
+        "step": "extractActor linked",
+        "answer": {
+          "identifier": "777",
+          "scheme": "email",
+          "adapterType": "telegram",
+          "email": "ada@example.com",
+          "name": "Ada",
+          "label": "@adas"
+        }
+      },
+      {
+        "step": "extractActor unlinked",
+        "answer": null
+      },
+      {
+        "step": "getActorCandidates linked",
+        "answer": [
+          {
+            "identity": {
+              "identifier": "777",
+              "scheme": "email",
+              "adapterType": "telegram",
+              "email": "ada@example.com",
+              "name": "Ada",
+              "label": "@adas"
+            },
+            "source": "originator"
+          }
+        ]
+      },
+      {
+        "step": "getActorCandidates no sender",
+        "answer": []
+      },
+      {
+        "step": "meta other edge",
+        "answer": []
+      },
+      {
+        "step": "createRecord DM",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "1",
+          "data": {
+            "message_id": "1",
+            "chat_id": "777",
+            "text": "Hello Ada",
+            "name": "Hello Ada"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply with keyboard",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "2",
+          "data": {
+            "message_id": "2",
+            "chat_id": "777",
+            "text": "Approve?",
+            "name": "Approve?"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply, empty markup",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "3",
+          "data": {
+            "message_id": "3",
+            "chat_id": "777",
+            "text": "plain",
+            "name": "plain"
+          }
+        }
+      },
+      {
+        "step": "createRecord no parent",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message is created along an edge — DM a linked user (`u-[:Messages]->`) or reply to a message (`msg-[:Replies]->`). There is no top-level send."
+        }
+      },
+      {
+        "step": "createRecord empty text",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message needs a non-empty Text."
+        }
+      },
+      {
+        "step": "createRecord markup list",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: Reply Markup must be a single Telegram reply_markup object, got a list (the keyboard rows go inside `inline_keyboard`)."
+        }
+      },
+      {
+        "step": "createRecord reply without chat",
+        "answer": {
+          "error": "TelegramAdapter.createRecord(reply): the parent message carries no chat_id — its parent data must include `chat_id` (inbound payload / write handle)."
+        }
+      },
+      {
+        "step": "createRecord wrong edge",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message cannot be created along 'Linked User'-[:Replies]->."
+        }
+      },
+      {
+        "step": "updateRecord",
+        "answer": {
+          "error": "TelegramAdapter.updateRecord: Telegram messages are not updatable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "deleteRecord",
+        "answer": {
+          "error": "TelegramAdapter.deleteRecord: Telegram messages are not deletable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "answerCallbackQuery",
+        "answer": null
+      },
+      {
+        "step": "answerCallbackQuery bare",
+        "answer": null
+      },
+      {
+        "step": "clearReplyMarkup",
+        "answer": {
+          "error": "Telegram editMessageReplyMarkup failed (status 400, code 400): Bad Request: message to edit not found"
+        }
+      }
+    ],
+    "exchanges": [
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/getFile",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "file_id": "DOC1"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+      },
+      {
+        "method": "GET",
+        "path": "/file/botBYO-TOKEN/documents/DOC1.bin",
+        "contentType": null,
+        "authorization": null,
+        "body": null,
+        "status": 200,
+        "responseContentType": "application/octet-stream",
+        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Hello Ada"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjEsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJIZWxsbyBBZGEifX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Approve?",
+          "reply_to_message_id": 42,
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "Yes",
+                  "callback_data": "cb_1"
+                }
+              ]
+            ]
+          }
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjIsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJBcHByb3ZlPyIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyLCJyZXBseV9tYXJrdXAiOnsiaW5saW5lX2tleWJvYXJkIjpbW3sidGV4dCI6IlllcyIsImNhbGxiYWNrX2RhdGEiOiJjYl8xIn1dXX19fQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "plain",
+          "reply_to_message_id": 42
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjMsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJwbGFpbiIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyfX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/answerCallbackQuery",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "callback_query_id": "cbq-1",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/answerCallbackQuery",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "callback_query_id": "cbq-2"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/editMessageReplyMarkup",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "message_id": 50
+        },
+        "status": 400,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6ZmFsc2UsImVycm9yX2NvZGUiOjQwMCwiZGVzY3JpcHRpb24iOiJCYWQgUmVxdWVzdDogbWVzc2FnZSB0byBlZGl0IG5vdCBmb3VuZCJ9"
+      }
+    ]
+  },
+  "empty": {
+    "transcript": [
+      {
+        "step": "listEntryPoints",
+        "answer": [
+          {
+            "typeId": "telegram:message",
+            "displayName": "Message",
+            "writable": false,
+            "readable": false,
+            "fires": true
+          },
+          {
+            "typeId": "telegram:attachment",
+            "displayName": "Attachment",
+            "writable": false,
+            "readable": false
+          },
+          {
+            "typeId": "telegram:linked_user",
+            "displayName": "Linked User",
+            "collectionName": "Linked Users",
+            "description": "A person who has linked Telegram via the connect handshake.",
+            "writable": false,
+            "readable": true
+          }
+        ]
+      },
+      {
+        "step": "describe Message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Linked User",
+        "answer": {
+          "typeId": "telegram:linked_user",
+          "displayName": "Linked User",
+          "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+          "fields": [
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The private chat id a send targets (= the Telegram user id)."
+            },
+            {
+              "fieldId": "email",
+              "displayName": "Email",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Listen-Fire account email this Telegram user linked as."
+            },
+            {
+              "fieldId": "linked_at",
+              "displayName": "Linked At",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the link handshake completed (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "messages",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Messages",
+              "writable": true,
+              "readable": false,
+              "description": "Send a message into this person's private bot chat (write-only — the Bot API cannot list a chat's history). The chat id is the linked user's own id."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Attachment",
+        "answer": {
+          "typeId": "telegram:attachment",
+          "displayName": "Attachment",
+          "fields": [
+            {
+              "fieldId": "file_id",
+              "displayName": "File Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Bot API file id — resolves to the file bytes."
+            },
+            {
+              "fieldId": "name",
+              "displayName": "Name",
+              "kind": "string",
+              "writable": false,
+              "required": true
+            },
+            {
+              "fieldId": "contentType",
+              "displayName": "Content Type",
+              "kind": "string",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "size",
+              "displayName": "Size",
+              "kind": "number",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "data",
+              "displayName": "File",
+              "kind": "file",
+              "writable": false,
+              "required": false
+            }
+          ],
+          "references": []
+        }
+      },
+      {
+        "step": "describe telegram:message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Nonexistent",
+        "answer": null
+      },
+      {
+        "step": "edgesFrom meta",
+        "answer": {
+          "descriptor": {
+            "typeId": "meta",
+            "displayName": "Telegram",
+            "description": "A Telegram connection. The people who have linked their account can be listed; conversations cannot — a message has to arrive.",
+            "fields": [],
+            "references": [
+              {
+                "fieldId": "telegram:message",
+                "targetTypeId": "telegram:message",
+                "cardinality": "one",
+                "direction": "outgoing",
+                "name": "Message",
+                "fires": true,
+                "readable": false,
+                "description": "Somebody messaging the bot — what a listen delivers."
+              },
+              {
+                "fieldId": "telegram:linked_user",
+                "targetTypeId": "telegram:linked_user",
+                "cardinality": "many",
+                "direction": "outgoing",
+                "name": "Linked Users",
+                "description": "People who have linked their Telegram account to Listen-Fire.",
+                "sequenced": "arrival"
+              }
+            ]
+          },
+          "targetPositions": {
+            "telegram:message": {
+              "adapterType": "telegram",
+              "recordType": "telegram:message",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            },
+            "telegram:linked_user": {
+              "adapterType": "telegram",
+              "recordType": "telegram:linked_user",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            }
+          },
+          "targetNodes": {
+            "telegram:message": {
+              "typeId": "telegram:message",
+              "displayName": "Message",
+              "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+              "fields": [
+                {
+                  "fieldId": "message_id",
+                  "displayName": "Message Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Telegram message id."
+                },
+                {
+                  "fieldId": "text",
+                  "displayName": "Text",
+                  "kind": "string",
+                  "writable": true,
+                  "required": true,
+                  "uiHint": "textarea",
+                  "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+                },
+                {
+                  "fieldId": "reply_markup",
+                  "displayName": "Reply Markup",
+                  "kind": "json",
+                  "writable": true,
+                  "readable": false,
+                  "required": false,
+                  "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+                },
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The id of the chat the message belongs to — the value to send a reply back to."
+                },
+                {
+                  "fieldId": "chat_type",
+                  "displayName": "Chat Type",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "private / group / supergroup / channel."
+                },
+                {
+                  "fieldId": "sender_id",
+                  "displayName": "Sender Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The numeric id of the user who sent the message."
+                },
+                {
+                  "fieldId": "sender_username",
+                  "displayName": "Sender Username",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The @username of the sender, when set."
+                },
+                {
+                  "fieldId": "sender_first_name",
+                  "displayName": "Sender First Name",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The sender's first name."
+                },
+                {
+                  "fieldId": "date",
+                  "displayName": "Date",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the message was sent (ISO-8601)."
+                }
+              ]
+            },
+            "telegram:linked_user": {
+              "typeId": "telegram:linked_user",
+              "displayName": "Linked User",
+              "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+              "fields": [
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The private chat id a send targets (= the Telegram user id)."
+                },
+                {
+                  "fieldId": "email",
+                  "displayName": "Email",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Listen-Fire account email this Telegram user linked as."
+                },
+                {
+                  "fieldId": "linked_at",
+                  "displayName": "Linked At",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the link handshake completed (ISO-8601)."
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "step": "listEventTypes",
+        "answer": [
+          {
+            "tag": "message",
+            "positionType": "telegram:message"
+          }
+        ]
+      },
+      {
+        "step": "runtimeCapabilities",
+        "answer": {
+          "traversal": {
+            "incoming": false,
+            "edgeProperties": false
+          },
+          "resources": false
+        }
+      },
+      {
+        "step": "preprocessInbound text",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "42",
+                "text": "Closed the round!",
+                "chat_id": "777",
+                "chat_type": "private",
+                "sender_id": "777",
+                "sender_username": "adas",
+                "sender_first_name": "Ada",
+                "date": "2023-11-14T22:13:20.000Z",
+                "attachments": []
+              },
+              "externalId": "42",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound media",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "43",
+                "text": "the deck",
+                "chat_id": "-1001",
+                "chat_type": "supergroup",
+                "sender_id": "888",
+                "sender_first_name": "Bo",
+                "date": "2023-11-14T22:15:00.000Z",
+                "attachments": [
+                  {
+                    "file_id": "DOC1",
+                    "name": "deck.pdf",
+                    "contentType": "application/pdf",
+                    "size": 1234
+                  },
+                  {
+                    "file_id": "PH_L",
+                    "name": "photo_PHl.jpg",
+                    "contentType": "image/jpeg",
+                    "size": 9000
+                  },
+                  {
+                    "file_id": "VO1",
+                    "name": "voice_VO1u.ogg",
+                    "contentType": "audio/ogg",
+                    "size": 55
+                  },
+                  {
+                    "file_id": "AU1",
+                    "name": "song.mp3",
+                    "contentType": "audio/mpeg",
+                    "size": 77
+                  }
+                ]
+              },
+              "externalId": "43",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound callback_query",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound malformed",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound not an object",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "Message.Text",
+        "answer": "the deck"
+      },
+      {
+        "step": "Message.Chat Id",
+        "answer": "-1001"
+      },
+      {
+        "step": "Message.Chat Type",
+        "answer": "supergroup"
+      },
+      {
+        "step": "Message.Sender Id",
+        "answer": "888"
+      },
+      {
+        "step": "Message.Sender First Name",
+        "answer": "Bo"
+      },
+      {
+        "step": "Message.Date",
+        "answer": "2023-11-14T22:15:00.000Z"
+      },
+      {
+        "step": "Message.Message Id",
+        "answer": "43"
+      },
+      {
+        "step": "Message.Reply Markup",
+        "answer": null
+      },
+      {
+        "step": "Message.Nope",
+        "answer": {
+          "error": "'Nope' is not a known field of 'Message' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+        }
+      },
+      {
+        "step": "Message Attachments",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "DOC1",
+                  "name": "deck.pdf",
+                  "contentType": "application/pdf",
+                  "size": 1234
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "PH_L",
+                  "name": "photo_PHl.jpg",
+                  "contentType": "image/jpeg",
+                  "size": 9000
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "VO1",
+                  "name": "voice_VO1u.ogg",
+                  "contentType": "audio/ogg",
+                  "size": 55
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "AU1",
+                  "name": "song.mp3",
+                  "contentType": "audio/mpeg",
+                  "size": 77
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Attachments incoming",
+        "answer": []
+      },
+      {
+        "step": "Attachment 0.Name",
+        "answer": "deck.pdf"
+      },
+      {
+        "step": "Attachment 0.Content Type",
+        "answer": "application/pdf"
+      },
+      {
+        "step": "Attachment 0.Size",
+        "answer": 1234
+      },
+      {
+        "step": "Attachment 0.File Id",
+        "answer": "DOC1"
+      },
+      {
+        "step": "Attachment 0.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "deck.pdf",
+          "contentType": "application/pdf",
+          "size": 1234,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-empty",
+            "handle": "DOC1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 1.Name",
+        "answer": "photo_PHl.jpg"
+      },
+      {
+        "step": "Attachment 1.Content Type",
+        "answer": "image/jpeg"
+      },
+      {
+        "step": "Attachment 1.Size",
+        "answer": 9000
+      },
+      {
+        "step": "Attachment 1.File Id",
+        "answer": "PH_L"
+      },
+      {
+        "step": "Attachment 1.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "photo_PHl.jpg",
+          "contentType": "image/jpeg",
+          "size": 9000,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-empty",
+            "handle": "PH_L"
+          }
+        }
+      },
+      {
+        "step": "Attachment 2.Name",
+        "answer": "voice_VO1u.ogg"
+      },
+      {
+        "step": "Attachment 2.Content Type",
+        "answer": "audio/ogg"
+      },
+      {
+        "step": "Attachment 2.Size",
+        "answer": 55
+      },
+      {
+        "step": "Attachment 2.File Id",
+        "answer": "VO1"
+      },
+      {
+        "step": "Attachment 2.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "voice_VO1u.ogg",
+          "contentType": "audio/ogg",
+          "size": 55,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-empty",
+            "handle": "VO1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 3.Name",
+        "answer": "song.mp3"
+      },
+      {
+        "step": "Attachment 3.Content Type",
+        "answer": "audio/mpeg"
+      },
+      {
+        "step": "Attachment 3.Size",
+        "answer": 77
+      },
+      {
+        "step": "Attachment 3.File Id",
+        "answer": "AU1"
+      },
+      {
+        "step": "Attachment 3.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "song.mp3",
+          "contentType": "audio/mpeg",
+          "size": 77,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-empty",
+            "handle": "AU1"
+          }
+        }
+      },
+      {
+        "step": "Attachment without file_id .File",
+        "answer": null
+      },
+      {
+        "step": "foreign position",
+        "answer": {
+          "error": "TelegramAdapter.getFieldValue received a position from a different adapter ('slack')."
+        }
+      },
+      {
+        "step": "resolveFileRef document",
+        "answer": {
+          "contentType": "application/octet-stream",
+          "text": "fake-telegram-bytes:documents/DOC1.bin"
+        }
+      },
+      {
+        "step": "resolveFileRef without a handle",
+        "answer": {
+          "error": "telegram.resolveFileRef: FileRef has no source handle to resolve."
+        }
+      },
+      {
+        "step": "Linked Users",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Linked User",
+              "identity": {
+                "kind": "stable",
+                "recordId": "777",
+                "data": {
+                  "chat_id": "777",
+                  "email": "Ada@Example.com ",
+                  "linked_at": "2026-06-01T12:00:00.000Z"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Sender linked",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Linked User",
+              "identity": {
+                "kind": "stable",
+                "recordId": "777",
+                "data": {
+                  "chat_id": "777",
+                  "email": "Ada@Example.com ",
+                  "linked_at": "2026-06-01T12:00:00.000Z"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Sender unlinked",
+        "answer": []
+      },
+      {
+        "step": "extractActor linked",
+        "answer": {
+          "identifier": "777",
+          "scheme": "email",
+          "adapterType": "telegram",
+          "email": "ada@example.com",
+          "name": "Ada",
+          "label": "@adas"
+        }
+      },
+      {
+        "step": "extractActor unlinked",
+        "answer": null
+      },
+      {
+        "step": "getActorCandidates linked",
+        "answer": [
+          {
+            "identity": {
+              "identifier": "777",
+              "scheme": "email",
+              "adapterType": "telegram",
+              "email": "ada@example.com",
+              "name": "Ada",
+              "label": "@adas"
+            },
+            "source": "originator"
+          }
+        ]
+      },
+      {
+        "step": "getActorCandidates no sender",
+        "answer": []
+      },
+      {
+        "step": "meta other edge",
+        "answer": []
+      },
+      {
+        "step": "createRecord DM",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "4",
+          "data": {
+            "message_id": "4",
+            "chat_id": "777",
+            "text": "Hello Ada",
+            "name": "Hello Ada"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply with keyboard",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "5",
+          "data": {
+            "message_id": "5",
+            "chat_id": "777",
+            "text": "Approve?",
+            "name": "Approve?"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply, empty markup",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "6",
+          "data": {
+            "message_id": "6",
+            "chat_id": "777",
+            "text": "plain",
+            "name": "plain"
+          }
+        }
+      },
+      {
+        "step": "createRecord no parent",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message is created along an edge — DM a linked user (`u-[:Messages]->`) or reply to a message (`msg-[:Replies]->`). There is no top-level send."
+        }
+      },
+      {
+        "step": "createRecord empty text",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message needs a non-empty Text."
+        }
+      },
+      {
+        "step": "createRecord markup list",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: Reply Markup must be a single Telegram reply_markup object, got a list (the keyboard rows go inside `inline_keyboard`)."
+        }
+      },
+      {
+        "step": "createRecord reply without chat",
+        "answer": {
+          "error": "TelegramAdapter.createRecord(reply): the parent message carries no chat_id — its parent data must include `chat_id` (inbound payload / write handle)."
+        }
+      },
+      {
+        "step": "createRecord wrong edge",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message cannot be created along 'Linked User'-[:Replies]->."
+        }
+      },
+      {
+        "step": "updateRecord",
+        "answer": {
+          "error": "TelegramAdapter.updateRecord: Telegram messages are not updatable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "deleteRecord",
+        "answer": {
+          "error": "TelegramAdapter.deleteRecord: Telegram messages are not deletable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "answerCallbackQuery",
+        "answer": null
+      },
+      {
+        "step": "answerCallbackQuery bare",
+        "answer": null
+      },
+      {
+        "step": "clearReplyMarkup",
+        "answer": {
+          "error": "Telegram editMessageReplyMarkup failed (status 400, code 400): Bad Request: message to edit not found"
+        }
+      }
+    ],
+    "exchanges": [
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/getFile",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "file_id": "DOC1"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+      },
+      {
+        "method": "GET",
+        "path": "/file/botSHARED-BOT-TOKEN/documents/DOC1.bin",
+        "contentType": null,
+        "authorization": null,
+        "body": null,
+        "status": 200,
+        "responseContentType": "application/octet-stream",
+        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Hello Ada"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjQsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJIZWxsbyBBZGEifX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Approve?",
+          "reply_to_message_id": 42,
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "Yes",
+                  "callback_data": "cb_1"
+                }
+              ]
+            ]
+          }
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjUsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJBcHByb3ZlPyIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyLCJyZXBseV9tYXJrdXAiOnsiaW5saW5lX2tleWJvYXJkIjpbW3sidGV4dCI6IlllcyIsImNhbGxiYWNrX2RhdGEiOiJjYl8xIn1dXX19fQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "plain",
+          "reply_to_message_id": 42
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjYsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJwbGFpbiIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyfX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "callback_query_id": "cbq-1",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "callback_query_id": "cbq-2"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/editMessageReplyMarkup",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "message_id": 50
+        },
+        "status": 400,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6ZmFsc2UsImVycm9yX2NvZGUiOjQwMCwiZGVzY3JpcHRpb24iOiJCYWQgUmVxdWVzdDogbWVzc2FnZSB0byBlZGl0IG5vdCBmb3VuZCJ9"
+      }
+    ]
+  },
+  "harness": {
+    "transcript": [
+      {
+        "step": "listEntryPoints",
+        "answer": [
+          {
+            "typeId": "telegram:message",
+            "displayName": "Message",
+            "writable": false,
+            "readable": false,
+            "fires": true
+          },
+          {
+            "typeId": "telegram:attachment",
+            "displayName": "Attachment",
+            "writable": false,
+            "readable": false
+          },
+          {
+            "typeId": "telegram:linked_user",
+            "displayName": "Linked User",
+            "collectionName": "Linked Users",
+            "description": "A person who has linked Telegram via the connect handshake.",
+            "writable": false,
+            "readable": true
+          }
+        ]
+      },
+      {
+        "step": "describe Message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Linked User",
+        "answer": {
+          "typeId": "telegram:linked_user",
+          "displayName": "Linked User",
+          "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+          "fields": [
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The private chat id a send targets (= the Telegram user id)."
+            },
+            {
+              "fieldId": "email",
+              "displayName": "Email",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Listen-Fire account email this Telegram user linked as."
+            },
+            {
+              "fieldId": "linked_at",
+              "displayName": "Linked At",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the link handshake completed (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "messages",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Messages",
+              "writable": true,
+              "readable": false,
+              "description": "Send a message into this person's private bot chat (write-only — the Bot API cannot list a chat's history). The chat id is the linked user's own id."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Attachment",
+        "answer": {
+          "typeId": "telegram:attachment",
+          "displayName": "Attachment",
+          "fields": [
+            {
+              "fieldId": "file_id",
+              "displayName": "File Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Bot API file id — resolves to the file bytes."
+            },
+            {
+              "fieldId": "name",
+              "displayName": "Name",
+              "kind": "string",
+              "writable": false,
+              "required": true
+            },
+            {
+              "fieldId": "contentType",
+              "displayName": "Content Type",
+              "kind": "string",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "size",
+              "displayName": "Size",
+              "kind": "number",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "data",
+              "displayName": "File",
+              "kind": "file",
+              "writable": false,
+              "required": false
+            }
+          ],
+          "references": []
+        }
+      },
+      {
+        "step": "describe telegram:message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Nonexistent",
+        "answer": null
+      },
+      {
+        "step": "edgesFrom meta",
+        "answer": {
+          "descriptor": {
+            "typeId": "meta",
+            "displayName": "Telegram",
+            "description": "A Telegram connection. The people who have linked their account can be listed; conversations cannot — a message has to arrive.",
+            "fields": [],
+            "references": [
+              {
+                "fieldId": "telegram:message",
+                "targetTypeId": "telegram:message",
+                "cardinality": "one",
+                "direction": "outgoing",
+                "name": "Message",
+                "fires": true,
+                "readable": false,
+                "description": "Somebody messaging the bot — what a listen delivers."
+              },
+              {
+                "fieldId": "telegram:linked_user",
+                "targetTypeId": "telegram:linked_user",
+                "cardinality": "many",
+                "direction": "outgoing",
+                "name": "Linked Users",
+                "description": "People who have linked their Telegram account to Listen-Fire.",
+                "sequenced": "arrival"
+              }
+            ]
+          },
+          "targetPositions": {
+            "telegram:message": {
+              "adapterType": "telegram",
+              "recordType": "telegram:message",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            },
+            "telegram:linked_user": {
+              "adapterType": "telegram",
+              "recordType": "telegram:linked_user",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            }
+          },
+          "targetNodes": {
+            "telegram:message": {
+              "typeId": "telegram:message",
+              "displayName": "Message",
+              "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+              "fields": [
+                {
+                  "fieldId": "message_id",
+                  "displayName": "Message Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Telegram message id."
+                },
+                {
+                  "fieldId": "text",
+                  "displayName": "Text",
+                  "kind": "string",
+                  "writable": true,
+                  "required": true,
+                  "uiHint": "textarea",
+                  "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+                },
+                {
+                  "fieldId": "reply_markup",
+                  "displayName": "Reply Markup",
+                  "kind": "json",
+                  "writable": true,
+                  "readable": false,
+                  "required": false,
+                  "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+                },
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The id of the chat the message belongs to — the value to send a reply back to."
+                },
+                {
+                  "fieldId": "chat_type",
+                  "displayName": "Chat Type",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "private / group / supergroup / channel."
+                },
+                {
+                  "fieldId": "sender_id",
+                  "displayName": "Sender Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The numeric id of the user who sent the message."
+                },
+                {
+                  "fieldId": "sender_username",
+                  "displayName": "Sender Username",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The @username of the sender, when set."
+                },
+                {
+                  "fieldId": "sender_first_name",
+                  "displayName": "Sender First Name",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The sender's first name."
+                },
+                {
+                  "fieldId": "date",
+                  "displayName": "Date",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the message was sent (ISO-8601)."
+                }
+              ]
+            },
+            "telegram:linked_user": {
+              "typeId": "telegram:linked_user",
+              "displayName": "Linked User",
+              "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+              "fields": [
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The private chat id a send targets (= the Telegram user id)."
+                },
+                {
+                  "fieldId": "email",
+                  "displayName": "Email",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Listen-Fire account email this Telegram user linked as."
+                },
+                {
+                  "fieldId": "linked_at",
+                  "displayName": "Linked At",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the link handshake completed (ISO-8601)."
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "step": "listEventTypes",
+        "answer": [
+          {
+            "tag": "message",
+            "positionType": "telegram:message"
+          }
+        ]
+      },
+      {
+        "step": "runtimeCapabilities",
+        "answer": {
+          "traversal": {
+            "incoming": false,
+            "edgeProperties": false
+          },
+          "resources": false
+        }
+      },
+      {
+        "step": "preprocessInbound text",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "42",
+                "text": "Closed the round!",
+                "chat_id": "777",
+                "chat_type": "private",
+                "sender_id": "777",
+                "sender_username": "adas",
+                "sender_first_name": "Ada",
+                "date": "2023-11-14T22:13:20.000Z",
+                "attachments": []
+              },
+              "externalId": "42",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound media",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "43",
+                "text": "the deck",
+                "chat_id": "-1001",
+                "chat_type": "supergroup",
+                "sender_id": "888",
+                "sender_first_name": "Bo",
+                "date": "2023-11-14T22:15:00.000Z",
+                "attachments": [
+                  {
+                    "file_id": "DOC1",
+                    "name": "deck.pdf",
+                    "contentType": "application/pdf",
+                    "size": 1234
+                  },
+                  {
+                    "file_id": "PH_L",
+                    "name": "photo_PHl.jpg",
+                    "contentType": "image/jpeg",
+                    "size": 9000
+                  },
+                  {
+                    "file_id": "VO1",
+                    "name": "voice_VO1u.ogg",
+                    "contentType": "audio/ogg",
+                    "size": 55
+                  },
+                  {
+                    "file_id": "AU1",
+                    "name": "song.mp3",
+                    "contentType": "audio/mpeg",
+                    "size": 77
+                  }
+                ]
+              },
+              "externalId": "43",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound callback_query",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound malformed",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound not an object",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "Message.Text",
+        "answer": "the deck"
+      },
+      {
+        "step": "Message.Chat Id",
+        "answer": "-1001"
+      },
+      {
+        "step": "Message.Chat Type",
+        "answer": "supergroup"
+      },
+      {
+        "step": "Message.Sender Id",
+        "answer": "888"
+      },
+      {
+        "step": "Message.Sender First Name",
+        "answer": "Bo"
+      },
+      {
+        "step": "Message.Date",
+        "answer": "2023-11-14T22:15:00.000Z"
+      },
+      {
+        "step": "Message.Message Id",
+        "answer": "43"
+      },
+      {
+        "step": "Message.Reply Markup",
+        "answer": null
+      },
+      {
+        "step": "Message.Nope",
+        "answer": {
+          "error": "'Nope' is not a known field of 'Message' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+        }
+      },
+      {
+        "step": "Message Attachments",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "DOC1",
+                  "name": "deck.pdf",
+                  "contentType": "application/pdf",
+                  "size": 1234
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "PH_L",
+                  "name": "photo_PHl.jpg",
+                  "contentType": "image/jpeg",
+                  "size": 9000
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "VO1",
+                  "name": "voice_VO1u.ogg",
+                  "contentType": "audio/ogg",
+                  "size": 55
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "AU1",
+                  "name": "song.mp3",
+                  "contentType": "audio/mpeg",
+                  "size": 77
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Attachments incoming",
+        "answer": []
+      },
+      {
+        "step": "Attachment 0.Name",
+        "answer": "deck.pdf"
+      },
+      {
+        "step": "Attachment 0.Content Type",
+        "answer": "application/pdf"
+      },
+      {
+        "step": "Attachment 0.Size",
+        "answer": 1234
+      },
+      {
+        "step": "Attachment 0.File Id",
+        "answer": "DOC1"
+      },
+      {
+        "step": "Attachment 0.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "deck.pdf",
+          "contentType": "application/pdf",
+          "size": 1234,
+          "source": {
+            "adapterType": "telegram",
+            "handle": "DOC1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 1.Name",
+        "answer": "photo_PHl.jpg"
+      },
+      {
+        "step": "Attachment 1.Content Type",
+        "answer": "image/jpeg"
+      },
+      {
+        "step": "Attachment 1.Size",
+        "answer": 9000
+      },
+      {
+        "step": "Attachment 1.File Id",
+        "answer": "PH_L"
+      },
+      {
+        "step": "Attachment 1.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "photo_PHl.jpg",
+          "contentType": "image/jpeg",
+          "size": 9000,
+          "source": {
+            "adapterType": "telegram",
+            "handle": "PH_L"
+          }
+        }
+      },
+      {
+        "step": "Attachment 2.Name",
+        "answer": "voice_VO1u.ogg"
+      },
+      {
+        "step": "Attachment 2.Content Type",
+        "answer": "audio/ogg"
+      },
+      {
+        "step": "Attachment 2.Size",
+        "answer": 55
+      },
+      {
+        "step": "Attachment 2.File Id",
+        "answer": "VO1"
+      },
+      {
+        "step": "Attachment 2.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "voice_VO1u.ogg",
+          "contentType": "audio/ogg",
+          "size": 55,
+          "source": {
+            "adapterType": "telegram",
+            "handle": "VO1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 3.Name",
+        "answer": "song.mp3"
+      },
+      {
+        "step": "Attachment 3.Content Type",
+        "answer": "audio/mpeg"
+      },
+      {
+        "step": "Attachment 3.Size",
+        "answer": 77
+      },
+      {
+        "step": "Attachment 3.File Id",
+        "answer": "AU1"
+      },
+      {
+        "step": "Attachment 3.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "song.mp3",
+          "contentType": "audio/mpeg",
+          "size": 77,
+          "source": {
+            "adapterType": "telegram",
+            "handle": "AU1"
+          }
+        }
+      },
+      {
+        "step": "Attachment without file_id .File",
+        "answer": null
+      },
+      {
+        "step": "foreign position",
+        "answer": {
+          "error": "TelegramAdapter.getFieldValue received a position from a different adapter ('slack')."
+        }
+      },
+      {
+        "step": "resolveFileRef document",
+        "answer": {
+          "contentType": "application/octet-stream",
+          "text": "fake-telegram-bytes:documents/DOC1.bin"
+        }
+      },
+      {
+        "step": "resolveFileRef without a handle",
+        "answer": {
+          "error": "telegram.resolveFileRef: FileRef has no source handle to resolve."
+        }
+      },
+      {
+        "step": "Linked Users",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Linked User",
+              "identity": {
+                "kind": "stable",
+                "recordId": "777",
+                "data": {
+                  "chat_id": "777",
+                  "email": "Ada@Example.com ",
+                  "linked_at": "2026-06-01T12:00:00.000Z"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Sender linked",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Linked User",
+              "identity": {
+                "kind": "stable",
+                "recordId": "777",
+                "data": {
+                  "chat_id": "777",
+                  "email": "Ada@Example.com ",
+                  "linked_at": "2026-06-01T12:00:00.000Z"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Sender unlinked",
+        "answer": []
+      },
+      {
+        "step": "extractActor linked",
+        "answer": {
+          "identifier": "777",
+          "scheme": "email",
+          "adapterType": "telegram",
+          "email": "ada@example.com",
+          "name": "Ada",
+          "label": "@adas"
+        }
+      },
+      {
+        "step": "extractActor unlinked",
+        "answer": null
+      },
+      {
+        "step": "getActorCandidates linked",
+        "answer": [
+          {
+            "identity": {
+              "identifier": "777",
+              "scheme": "email",
+              "adapterType": "telegram",
+              "email": "ada@example.com",
+              "name": "Ada",
+              "label": "@adas"
+            },
+            "source": "originator"
+          }
+        ]
+      },
+      {
+        "step": "getActorCandidates no sender",
+        "answer": []
+      },
+      {
+        "step": "meta other edge",
+        "answer": []
+      },
+      {
+        "step": "createRecord DM",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "7",
+          "data": {
+            "message_id": "7",
+            "chat_id": "777",
+            "text": "Hello Ada",
+            "name": "Hello Ada"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply with keyboard",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "8",
+          "data": {
+            "message_id": "8",
+            "chat_id": "777",
+            "text": "Approve?",
+            "name": "Approve?"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply, empty markup",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "9",
+          "data": {
+            "message_id": "9",
+            "chat_id": "777",
+            "text": "plain",
+            "name": "plain"
+          }
+        }
+      },
+      {
+        "step": "createRecord no parent",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message is created along an edge — DM a linked user (`u-[:Messages]->`) or reply to a message (`msg-[:Replies]->`). There is no top-level send."
+        }
+      },
+      {
+        "step": "createRecord empty text",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message needs a non-empty Text."
+        }
+      },
+      {
+        "step": "createRecord markup list",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: Reply Markup must be a single Telegram reply_markup object, got a list (the keyboard rows go inside `inline_keyboard`)."
+        }
+      },
+      {
+        "step": "createRecord reply without chat",
+        "answer": {
+          "error": "TelegramAdapter.createRecord(reply): the parent message carries no chat_id — its parent data must include `chat_id` (inbound payload / write handle)."
+        }
+      },
+      {
+        "step": "createRecord wrong edge",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message cannot be created along 'Linked User'-[:Replies]->."
+        }
+      },
+      {
+        "step": "updateRecord",
+        "answer": {
+          "error": "TelegramAdapter.updateRecord: Telegram messages are not updatable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "deleteRecord",
+        "answer": {
+          "error": "TelegramAdapter.deleteRecord: Telegram messages are not deletable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "answerCallbackQuery",
+        "answer": null
+      },
+      {
+        "step": "answerCallbackQuery bare",
+        "answer": null
+      },
+      {
+        "step": "clearReplyMarkup",
+        "answer": {
+          "error": "Telegram editMessageReplyMarkup failed (status 400, code 400): Bad Request: message to edit not found"
+        }
+      }
+    ],
+    "exchanges": [
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/getFile",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "file_id": "DOC1"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+      },
+      {
+        "method": "GET",
+        "path": "/file/botSHARED-BOT-TOKEN/documents/DOC1.bin",
+        "contentType": null,
+        "authorization": null,
+        "body": null,
+        "status": 200,
+        "responseContentType": "application/octet-stream",
+        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Hello Ada"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjcsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJIZWxsbyBBZGEifX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Approve?",
+          "reply_to_message_id": 42,
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "Yes",
+                  "callback_data": "cb_1"
+                }
+              ]
+            ]
+          }
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjgsImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJBcHByb3ZlPyIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyLCJyZXBseV9tYXJrdXAiOnsiaW5saW5lX2tleWJvYXJkIjpbW3sidGV4dCI6IlllcyIsImNhbGxiYWNrX2RhdGEiOiJjYl8xIn1dXX19fQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "plain",
+          "reply_to_message_id": 42
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjksImZyb20iOnsiaWQiOjQyNDI0MiwiaXNfYm90Ijp0cnVlLCJmaXJzdF9uYW1lIjoiTGlzdGVuLUZpcmUgRGV2IEJvdCIsInVzZXJuYW1lIjoibGlzdGVuX2ZpcmVfZGV2X2JvdCJ9LCJjaGF0Ijp7ImlkIjo3NzcsInR5cGUiOiJwcml2YXRlIn0sImRhdGUiOjE3OTIyNDE3NTksInRleHQiOiJwbGFpbiIsInJlcGx5X3RvX21lc3NhZ2VfaWQiOjQyfX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "callback_query_id": "cbq-1",
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/answerCallbackQuery",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "callback_query_id": "cbq-2"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp0cnVlfQ=="
+      },
+      {
+        "method": "POST",
+        "path": "/botSHARED-BOT-TOKEN/editMessageReplyMarkup",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "message_id": 50
+        },
+        "status": 400,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6ZmFsc2UsImVycm9yX2NvZGUiOjQwMCwiZGVzY3JpcHRpb24iOiJCYWQgUmVxdWVzdDogbWVzc2FnZSB0byBlZGl0IG5vdCBmb3VuZCJ9"
+      }
+    ]
+  },
+  "bare": {
+    "transcript": [
+      {
+        "step": "listEntryPoints",
+        "answer": [
+          {
+            "typeId": "telegram:message",
+            "displayName": "Message",
+            "writable": false,
+            "readable": false,
+            "fires": true
+          },
+          {
+            "typeId": "telegram:attachment",
+            "displayName": "Attachment",
+            "writable": false,
+            "readable": false
+          },
+          {
+            "typeId": "telegram:linked_user",
+            "displayName": "Linked User",
+            "collectionName": "Linked Users",
+            "description": "A person who has linked Telegram via the connect handshake.",
+            "writable": false,
+            "readable": true
+          }
+        ]
+      },
+      {
+        "step": "describe Message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Linked User",
+        "answer": {
+          "typeId": "telegram:linked_user",
+          "displayName": "Linked User",
+          "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+          "fields": [
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The private chat id a send targets (= the Telegram user id)."
+            },
+            {
+              "fieldId": "email",
+              "displayName": "Email",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Listen-Fire account email this Telegram user linked as."
+            },
+            {
+              "fieldId": "linked_at",
+              "displayName": "Linked At",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the link handshake completed (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "messages",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Messages",
+              "writable": true,
+              "readable": false,
+              "description": "Send a message into this person's private bot chat (write-only — the Bot API cannot list a chat's history). The chat id is the linked user's own id."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Attachment",
+        "answer": {
+          "typeId": "telegram:attachment",
+          "displayName": "Attachment",
+          "fields": [
+            {
+              "fieldId": "file_id",
+              "displayName": "File Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Bot API file id — resolves to the file bytes."
+            },
+            {
+              "fieldId": "name",
+              "displayName": "Name",
+              "kind": "string",
+              "writable": false,
+              "required": true
+            },
+            {
+              "fieldId": "contentType",
+              "displayName": "Content Type",
+              "kind": "string",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "size",
+              "displayName": "Size",
+              "kind": "number",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "data",
+              "displayName": "File",
+              "kind": "file",
+              "writable": false,
+              "required": false
+            }
+          ],
+          "references": []
+        }
+      },
+      {
+        "step": "describe telegram:message",
+        "answer": {
+          "typeId": "telegram:message",
+          "displayName": "Message",
+          "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+          "fields": [
+            {
+              "fieldId": "message_id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The Telegram message id."
+            },
+            {
+              "fieldId": "text",
+              "displayName": "Text",
+              "kind": "string",
+              "writable": true,
+              "required": true,
+              "uiHint": "textarea",
+              "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+            },
+            {
+              "fieldId": "reply_markup",
+              "displayName": "Reply Markup",
+              "kind": "json",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+            },
+            {
+              "fieldId": "chat_id",
+              "displayName": "Chat Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "The id of the chat the message belongs to — the value to send a reply back to."
+            },
+            {
+              "fieldId": "chat_type",
+              "displayName": "Chat Type",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "private / group / supergroup / channel."
+            },
+            {
+              "fieldId": "sender_id",
+              "displayName": "Sender Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The numeric id of the user who sent the message."
+            },
+            {
+              "fieldId": "sender_username",
+              "displayName": "Sender Username",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The @username of the sender, when set."
+            },
+            {
+              "fieldId": "sender_first_name",
+              "displayName": "Sender First Name",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The sender's first name."
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "When the message was sent (ISO-8601)."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "attachments",
+              "targetTypeId": "telegram:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "description": "Files attached to the message — documents, photos, voice notes, audio (zero or more)."
+            },
+            {
+              "fieldId": "replies",
+              "targetTypeId": "telegram:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "description": "Send a reply threaded under this message (write-only — the Bot API cannot list replies). The chat and the reply target come from this message."
+            },
+            {
+              "fieldId": "sender",
+              "targetTypeId": "telegram:linked_user",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Sender",
+              "description": "The linked user who sent this message — resolves only for a sender who completed the connect handshake (private chats); a group chat or an unlinked sender resolves to nothing."
+            }
+          ]
+        }
+      },
+      {
+        "step": "describe Nonexistent",
+        "answer": null
+      },
+      {
+        "step": "edgesFrom meta",
+        "answer": {
+          "descriptor": {
+            "typeId": "meta",
+            "displayName": "Telegram",
+            "description": "A Telegram connection. The people who have linked their account can be listed; conversations cannot — a message has to arrive.",
+            "fields": [],
+            "references": [
+              {
+                "fieldId": "telegram:message",
+                "targetTypeId": "telegram:message",
+                "cardinality": "one",
+                "direction": "outgoing",
+                "name": "Message",
+                "fires": true,
+                "readable": false,
+                "description": "Somebody messaging the bot — what a listen delivers."
+              },
+              {
+                "fieldId": "telegram:linked_user",
+                "targetTypeId": "telegram:linked_user",
+                "cardinality": "many",
+                "direction": "outgoing",
+                "name": "Linked Users",
+                "description": "People who have linked their Telegram account to Listen-Fire.",
+                "sequenced": "arrival"
+              }
+            ]
+          },
+          "targetPositions": {
+            "telegram:message": {
+              "adapterType": "telegram",
+              "recordType": "telegram:message",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            },
+            "telegram:linked_user": {
+              "adapterType": "telegram",
+              "recordType": "telegram:linked_user",
+              "identity": {
+                "kind": "unstable",
+                "data": {}
+              }
+            }
+          },
+          "targetNodes": {
+            "telegram:message": {
+              "typeId": "telegram:message",
+              "displayName": "Message",
+              "description": "A Telegram message — what a listen delivers, whole: read `e.`Text`` straight off the event, reply along its `Replies` edge. Created only along an edge: DM a linked user via their `Messages` edge, reply via a message's `Replies` edge — the chat and the reply target come from the parent, never from fields.",
+              "fields": [
+                {
+                  "fieldId": "message_id",
+                  "displayName": "Message Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Telegram message id."
+                },
+                {
+                  "fieldId": "text",
+                  "displayName": "Text",
+                  "kind": "string",
+                  "writable": true,
+                  "required": true,
+                  "uiHint": "textarea",
+                  "description": "The message text. On an inbound message: the received text (or the media caption; empty for caption-less media). On a send: the message body — required."
+                },
+                {
+                  "fieldId": "reply_markup",
+                  "displayName": "Reply Markup",
+                  "kind": "json",
+                  "writable": true,
+                  "readable": false,
+                  "required": false,
+                  "description": "Telegram's `reply_markup`, exactly as the Bot API spells it — passed through verbatim (no wrapping, no typed shape here; a malformed keyboard surfaces as a loud Telegram error at run time). Usually an inline keyboard: rows of buttons, each `{ text, url }` (opens a link) or `{ text, callback_data }` (a tap this bot handles, capped by Telegram at 64 BYTES). To make a tap DO something, mint a callback (`c = callback({ … })`) and put `\"${c.id}\"` in `callback_data` — it fits the 64-byte cap comfortably — one callback per button, since its body is what that button means. Telegram captures nothing at tap time, so a callback fired from a keyboard takes no values; anything a person has to fill in needs a `url` button instead. Buttons compose with everything else on the send. Build strings with \"${…}\" interpolation (never `+`, which is numeric addition). Example:\n{ inline_keyboard: [\n  [ { text: \"Approve\", callback_data: \"${approve.id}\" },\n    { text: \"Decline\", callback_data: \"${decline.id}\" } ],\n] }"
+                },
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The id of the chat the message belongs to — the value to send a reply back to."
+                },
+                {
+                  "fieldId": "chat_type",
+                  "displayName": "Chat Type",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "private / group / supergroup / channel."
+                },
+                {
+                  "fieldId": "sender_id",
+                  "displayName": "Sender Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The numeric id of the user who sent the message."
+                },
+                {
+                  "fieldId": "sender_username",
+                  "displayName": "Sender Username",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The @username of the sender, when set."
+                },
+                {
+                  "fieldId": "sender_first_name",
+                  "displayName": "Sender First Name",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "The sender's first name."
+                },
+                {
+                  "fieldId": "date",
+                  "displayName": "Date",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the message was sent (ISO-8601)."
+                }
+              ]
+            },
+            "telegram:linked_user": {
+              "typeId": "telegram:linked_user",
+              "displayName": "Linked User",
+              "description": "A person who linked Telegram via the connect handshake. Their `Chat Id` is the value a send targets (private chat id = user id).",
+              "fields": [
+                {
+                  "fieldId": "chat_id",
+                  "displayName": "Chat Id",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The private chat id a send targets (= the Telegram user id)."
+                },
+                {
+                  "fieldId": "email",
+                  "displayName": "Email",
+                  "kind": "string",
+                  "writable": false,
+                  "required": true,
+                  "description": "The Listen-Fire account email this Telegram user linked as."
+                },
+                {
+                  "fieldId": "linked_at",
+                  "displayName": "Linked At",
+                  "kind": "string",
+                  "writable": false,
+                  "required": false,
+                  "description": "When the link handshake completed (ISO-8601)."
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "step": "listEventTypes",
+        "answer": [
+          {
+            "tag": "message",
+            "positionType": "telegram:message"
+          }
+        ]
+      },
+      {
+        "step": "runtimeCapabilities",
+        "answer": {
+          "traversal": {
+            "incoming": false,
+            "edgeProperties": false
+          },
+          "resources": false
+        }
+      },
+      {
+        "step": "preprocessInbound text",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "42",
+                "text": "Closed the round!",
+                "chat_id": "777",
+                "chat_type": "private",
+                "sender_id": "777",
+                "sender_username": "adas",
+                "sender_first_name": "Ada",
+                "date": "2023-11-14T22:13:20.000Z",
+                "attachments": []
+              },
+              "externalId": "42",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound media",
+        "answer": {
+          "events": [
+            {
+              "payload": {
+                "message_id": "43",
+                "text": "the deck",
+                "chat_id": "-1001",
+                "chat_type": "supergroup",
+                "sender_id": "888",
+                "sender_first_name": "Bo",
+                "date": "2023-11-14T22:15:00.000Z",
+                "attachments": [
+                  {
+                    "file_id": "DOC1",
+                    "name": "deck.pdf",
+                    "contentType": "application/pdf",
+                    "size": 1234
+                  },
+                  {
+                    "file_id": "PH_L",
+                    "name": "photo_PHl.jpg",
+                    "contentType": "image/jpeg",
+                    "size": 9000
+                  },
+                  {
+                    "file_id": "VO1",
+                    "name": "voice_VO1u.ogg",
+                    "contentType": "audio/ogg",
+                    "size": 55
+                  },
+                  {
+                    "file_id": "AU1",
+                    "name": "song.mp3",
+                    "contentType": "audio/mpeg",
+                    "size": 77
+                  }
+                ]
+              },
+              "externalId": "43",
+              "recordType": "telegram:message",
+              "eventType": "message",
+              "tag": "message",
+              "changeType": "create"
+            }
+          ]
+        }
+      },
+      {
+        "step": "preprocessInbound callback_query",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound malformed",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "preprocessInbound not an object",
+        "answer": {
+          "events": []
+        }
+      },
+      {
+        "step": "Message.Text",
+        "answer": "the deck"
+      },
+      {
+        "step": "Message.Chat Id",
+        "answer": "-1001"
+      },
+      {
+        "step": "Message.Chat Type",
+        "answer": "supergroup"
+      },
+      {
+        "step": "Message.Sender Id",
+        "answer": "888"
+      },
+      {
+        "step": "Message.Sender First Name",
+        "answer": "Bo"
+      },
+      {
+        "step": "Message.Date",
+        "answer": "2023-11-14T22:15:00.000Z"
+      },
+      {
+        "step": "Message.Message Id",
+        "answer": "43"
+      },
+      {
+        "step": "Message.Reply Markup",
+        "answer": null
+      },
+      {
+        "step": "Message.Nope",
+        "answer": {
+          "error": "'Nope' is not a known field of 'Message' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+        }
+      },
+      {
+        "step": "Message Attachments",
+        "answer": [
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "DOC1",
+                  "name": "deck.pdf",
+                  "contentType": "application/pdf",
+                  "size": 1234
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "PH_L",
+                  "name": "photo_PHl.jpg",
+                  "contentType": "image/jpeg",
+                  "size": 9000
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "VO1",
+                  "name": "voice_VO1u.ogg",
+                  "contentType": "audio/ogg",
+                  "size": 55
+                }
+              }
+            }
+          },
+          {
+            "position": {
+              "adapterType": "telegram",
+              "recordType": "Attachment",
+              "identity": {
+                "kind": "unstable",
+                "data": {
+                  "file_id": "AU1",
+                  "name": "song.mp3",
+                  "contentType": "audio/mpeg",
+                  "size": 77
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "step": "Message Attachments incoming",
+        "answer": []
+      },
+      {
+        "step": "Attachment 0.Name",
+        "answer": "deck.pdf"
+      },
+      {
+        "step": "Attachment 0.Content Type",
+        "answer": "application/pdf"
+      },
+      {
+        "step": "Attachment 0.Size",
+        "answer": 1234
+      },
+      {
+        "step": "Attachment 0.File Id",
+        "answer": "DOC1"
+      },
+      {
+        "step": "Attachment 0.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "deck.pdf",
+          "contentType": "application/pdf",
+          "size": 1234,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-bare",
+            "handle": "DOC1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 1.Name",
+        "answer": "photo_PHl.jpg"
+      },
+      {
+        "step": "Attachment 1.Content Type",
+        "answer": "image/jpeg"
+      },
+      {
+        "step": "Attachment 1.Size",
+        "answer": 9000
+      },
+      {
+        "step": "Attachment 1.File Id",
+        "answer": "PH_L"
+      },
+      {
+        "step": "Attachment 1.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "photo_PHl.jpg",
+          "contentType": "image/jpeg",
+          "size": 9000,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-bare",
+            "handle": "PH_L"
+          }
+        }
+      },
+      {
+        "step": "Attachment 2.Name",
+        "answer": "voice_VO1u.ogg"
+      },
+      {
+        "step": "Attachment 2.Content Type",
+        "answer": "audio/ogg"
+      },
+      {
+        "step": "Attachment 2.Size",
+        "answer": 55
+      },
+      {
+        "step": "Attachment 2.File Id",
+        "answer": "VO1"
+      },
+      {
+        "step": "Attachment 2.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "voice_VO1u.ogg",
+          "contentType": "audio/ogg",
+          "size": 55,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-bare",
+            "handle": "VO1"
+          }
+        }
+      },
+      {
+        "step": "Attachment 3.Name",
+        "answer": "song.mp3"
+      },
+      {
+        "step": "Attachment 3.Content Type",
+        "answer": "audio/mpeg"
+      },
+      {
+        "step": "Attachment 3.Size",
+        "answer": 77
+      },
+      {
+        "step": "Attachment 3.File Id",
+        "answer": "AU1"
+      },
+      {
+        "step": "Attachment 3.File",
+        "answer": {
+          "__brand": "FileRef",
+          "name": "song.mp3",
+          "contentType": "audio/mpeg",
+          "size": 77,
+          "source": {
+            "adapterType": "telegram",
+            "credentialId": "cred-bare",
+            "handle": "AU1"
+          }
+        }
+      },
+      {
+        "step": "Attachment without file_id .File",
+        "answer": null
+      },
+      {
+        "step": "foreign position",
+        "answer": {
+          "error": "TelegramAdapter.getFieldValue received a position from a different adapter ('slack')."
+        }
+      },
+      {
+        "step": "resolveFileRef document",
+        "answer": {
+          "contentType": "application/octet-stream",
+          "text": "fake-telegram-bytes:documents/DOC1.bin"
+        }
+      },
+      {
+        "step": "resolveFileRef without a handle",
+        "answer": {
+          "error": "telegram.resolveFileRef: FileRef has no source handle to resolve."
+        }
+      },
+      {
+        "step": "meta other edge",
+        "answer": []
+      },
+      {
+        "step": "createRecord DM",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "10",
+          "data": {
+            "message_id": "10",
+            "chat_id": "777",
+            "text": "Hello Ada",
+            "name": "Hello Ada"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply with keyboard",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "11",
+          "data": {
+            "message_id": "11",
+            "chat_id": "777",
+            "text": "Approve?",
+            "name": "Approve?"
+          }
+        }
+      },
+      {
+        "step": "createRecord reply, empty markup",
+        "answer": {
+          "adapterType": "telegram",
+          "externalId": "12",
+          "data": {
+            "message_id": "12",
+            "chat_id": "777",
+            "text": "plain",
+            "name": "plain"
+          }
+        }
+      },
+      {
+        "step": "createRecord no parent",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message is created along an edge — DM a linked user (`u-[:Messages]->`) or reply to a message (`msg-[:Replies]->`). There is no top-level send."
+        }
+      },
+      {
+        "step": "createRecord empty text",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message needs a non-empty Text."
+        }
+      },
+      {
+        "step": "createRecord markup list",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: Reply Markup must be a single Telegram reply_markup object, got a list (the keyboard rows go inside `inline_keyboard`)."
+        }
+      },
+      {
+        "step": "createRecord reply without chat",
+        "answer": {
+          "error": "TelegramAdapter.createRecord(reply): the parent message carries no chat_id — its parent data must include `chat_id` (inbound payload / write handle)."
+        }
+      },
+      {
+        "step": "createRecord wrong edge",
+        "answer": {
+          "error": "TelegramAdapter.createRecord: a Telegram Message cannot be created along 'Linked User'-[:Replies]->."
+        }
+      },
+      {
+        "step": "updateRecord",
+        "answer": {
+          "error": "TelegramAdapter.updateRecord: Telegram messages are not updatable through this adapter (v1 only sends new messages)."
+        }
+      },
+      {
+        "step": "deleteRecord",
+        "answer": {
+          "error": "TelegramAdapter.deleteRecord: Telegram messages are not deletable through this adapter (v1 only sends new messages)."
+        }
+      }
+    ],
+    "exchanges": [
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/getFile",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "file_id": "DOC1"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7ImZpbGVfaWQiOiJET0MxIiwiZmlsZV91bmlxdWVfaWQiOiJET0MxX3UiLCJmaWxlX3NpemUiOjEyLCJmaWxlX3BhdGgiOiJkb2N1bWVudHMvRE9DMS5iaW4ifX0="
+      },
+      {
+        "method": "GET",
+        "path": "/file/botBYO-TOKEN/documents/DOC1.bin",
+        "contentType": null,
+        "authorization": null,
+        "body": null,
+        "status": 200,
+        "responseContentType": "application/octet-stream",
+        "response": "ZmFrZS10ZWxlZ3JhbS1ieXRlczpkb2N1bWVudHMvRE9DMS5iaW4="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Hello Ada"
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjEwLCJmcm9tIjp7ImlkIjo0MjQyNDIsImlzX2JvdCI6dHJ1ZSwiZmlyc3RfbmFtZSI6Ikxpc3Rlbi1GaXJlIERldiBCb3QiLCJ1c2VybmFtZSI6Imxpc3Rlbl9maXJlX2Rldl9ib3QifSwiY2hhdCI6eyJpZCI6Nzc3LCJ0eXBlIjoicHJpdmF0ZSJ9LCJkYXRlIjoxNzkyMjQxNzU5LCJ0ZXh0IjoiSGVsbG8gQWRhIn19"
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "Approve?",
+          "reply_to_message_id": 42,
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "Yes",
+                  "callback_data": "cb_1"
+                }
+              ]
+            ]
+          }
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjExLCJmcm9tIjp7ImlkIjo0MjQyNDIsImlzX2JvdCI6dHJ1ZSwiZmlyc3RfbmFtZSI6Ikxpc3Rlbi1GaXJlIERldiBCb3QiLCJ1c2VybmFtZSI6Imxpc3Rlbl9maXJlX2Rldl9ib3QifSwiY2hhdCI6eyJpZCI6Nzc3LCJ0eXBlIjoicHJpdmF0ZSJ9LCJkYXRlIjoxNzkyMjQxNzU5LCJ0ZXh0IjoiQXBwcm92ZT8iLCJyZXBseV90b19tZXNzYWdlX2lkIjo0MiwicmVwbHlfbWFya3VwIjp7ImlubGluZV9rZXlib2FyZCI6W1t7InRleHQiOiJZZXMiLCJjYWxsYmFja19kYXRhIjoiY2JfMSJ9XV19fX0="
+      },
+      {
+        "method": "POST",
+        "path": "/botBYO-TOKEN/sendMessage",
+        "contentType": "application/json",
+        "authorization": null,
+        "body": {
+          "chat_id": "777",
+          "text": "plain",
+          "reply_to_message_id": 42
+        },
+        "status": 200,
+        "responseContentType": "application/json; charset=utf-8",
+        "response": "eyJvayI6dHJ1ZSwicmVzdWx0Ijp7Im1lc3NhZ2VfaWQiOjEyLCJmcm9tIjp7ImlkIjo0MjQyNDIsImlzX2JvdCI6dHJ1ZSwiZmlyc3RfbmFtZSI6Ikxpc3Rlbi1GaXJlIERldiBCb3QiLCJ1c2VybmFtZSI6Imxpc3Rlbl9maXJlX2Rldl9ib3QifSwiY2hhdCI6eyJpZCI6Nzc3LCJ0eXBlIjoicHJpdmF0ZSJ9LCJkYXRlIjoxNzkyMjQxNzU5LCJ0ZXh0IjoicGxhaW4iLCJyZXBseV90b19tZXNzYWdlX2lkIjo0Mn19"
+      }
+    ]
+  }
+}

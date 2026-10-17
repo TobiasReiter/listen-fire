@@ -12,12 +12,10 @@
 // riding as the file's `initial_comment` — one visible Slack message either
 // way (verified against the Slack API docs, design resolution 6).
 
-import type { getSlackClient } from '../../../../adapters/slack/webApi/apiClient';
-import type { FileRef, WriteResult } from 'movement-engine/services/translation_graph/adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { ModuleLog } from 'module-kit';
+import type { getSlackClient } from './api_client';
+import type { FileRef, WriteResult } from 'movement-engine/public/adapter';
 
-import { logger } from 'movement-engine/services/logger';
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
 import { SLACK_ADAPTER_TYPE } from './types';
 import { finalizeMessageText } from './mentions';
 
@@ -123,14 +121,24 @@ const WRITE_UNION_CLASH =
  * here because the type system can't say either-of and runtime never
  * trusts that a payload came through the checker.
  */
+/** What a write reaches beyond Slack: where it logs, the fetch an upload
+ *  posts its bytes with, and the bytes of a `File` value it was handed (a file
+ *  another system owns, redeemed by the host). */
+export interface SlackWriteHost {
+  log: ModuleLog;
+  fetch: typeof globalThis.fetch;
+  /** The bytes of a file value with a source or a URL; it throws when the
+   *  host cannot redeem it. */
+  readFile(ref: FileRef): Promise<{ body: Buffer; contentType?: string }>;
+}
+
 export async function createUnifiedMessage(input: {
   client: SlackClient;
-  /** The team whose run is posting — a `File` value is redeemed for it. */
-  teamId: TeamId;
+  host: SlackWriteHost;
   anchor: SlackWriteAnchor;
   fields: Record<string, unknown>;
 }): Promise<WriteResult> {
-  const { client, teamId, anchor, fields } = input;
+  const { client, host, anchor, fields } = input;
   const text = str(fields.text);
   const fileValue = asFileValue(fields.file);
   const blocks = asBlocksValue(fields.blocks);
@@ -147,13 +155,13 @@ export async function createUnifiedMessage(input: {
   // Resolve @[Name] mention tokens against the channel roster + mrkdwn
   // safety net — the channel is known here. Blocks are NOT touched: verbatim
   // means verbatim, and mention/mrkdwn finalisation is a Message-text concern.
-  const finalText = text ? await finalizeMessageText({ client, channelId, text }) : undefined;
+  const finalText = text ? await finalizeMessageText({ client, channelId, text, log: host.log }) : undefined;
   const threadTs = anchor.kind === 'reply' ? anchor.threadTs : undefined;
 
   if (fileValue) {
     // A file share carries no interactive blocks (Slack's upload flow has no
     // blocks surface) — the writeUnion rules this combination out already.
-    return uploadFileMessage({ client, teamId, channelId, threadTs, fileValue, comment: finalText });
+    return uploadFileMessage({ client, host, channelId, threadTs, fileValue, comment: finalText });
   }
 
   // Blocks ride verbatim; `text` is the notification fallback Slack shows in
@@ -188,6 +196,7 @@ export async function createUnifiedMessage(input: {
  */
 export async function addReaction(input: {
   client: SlackClient;
+  log: ModuleLog;
   anchor: SlackReactionAnchor;
   fields: Record<string, unknown>;
 }): Promise<WriteResult> {
@@ -208,7 +217,7 @@ export async function addReaction(input: {
     });
   } catch (err) {
     if (slackErrorCode(err) !== 'already_reacted') throw err;
-    logger.info(
+    input.log.info(
       `[SlackAdapter.write] :${emoji}: was already on ${anchor.channelId}/${anchor.ts}`,
     );
   }
@@ -315,14 +324,14 @@ function enrichPostMessageError(err: unknown): Error {
  */
 async function uploadFileMessage(input: {
   client: SlackClient;
-  teamId: TeamId;
+  host: SlackWriteHost;
   channelId: string;
   threadTs: string | undefined;
   fileValue: FileValue;
   comment: string | undefined;
 }): Promise<WriteResult> {
-  const { client, teamId, channelId, threadTs, fileValue, comment } = input;
-  const bytes = await fetchFileBytes(fileValue, teamId);
+  const { client, host, channelId, threadTs, fileValue, comment } = input;
+  const bytes = await fetchFileBytes(fileValue, host);
   if (!bytes) {
     throw new Error('SlackAdapter.createRecord: could not retrieve file bytes for the File value.');
   }
@@ -336,10 +345,10 @@ async function uploadFileMessage(input: {
       `SlackAdapter.createRecord: failed to get an upload URL (${uploadUrl.error ?? 'unknown'}).`,
     );
   }
-  const uploadResponse = await client.fetch(uploadUrl.upload_url, {
+  const uploadResponse = await host.fetch(uploadUrl.upload_url, {
     method: 'POST',
     body: bytes.body,
-    headers: { 'Content-Type': bytes.contentType },
+    headers: { Authorization: `Bearer ${client.api.token}`, 'Content-Type': bytes.contentType },
   } as RequestInit);
   if (!uploadResponse.ok) {
     throw new Error(
@@ -352,7 +361,7 @@ async function uploadFileMessage(input: {
     ...(comment !== undefined ? { initial_comment: comment } : {}),
     files: [{ id: uploadUrl.file_id, title: fileName }],
   });
-  logger.info(`[SlackAdapter.write] uploaded "${fileName}" to ${channelId}`);
+  host.log.info(`[SlackAdapter.write] uploaded "${fileName}" to ${channelId}`);
   return {
     adapterType: SLACK_ADAPTER_TYPE,
     externalId: uploadUrl.file_id,
@@ -425,11 +434,11 @@ interface FileBytes {
   contentType: string;
 }
 
-async function fetchFileBytes(fileValue: FileValue, teamId: TeamId): Promise<FileBytes | null> {
-  if (hasFileSource(fileValue)) {
+async function fetchFileBytes(fileValue: FileValue, host: SlackWriteHost): Promise<FileBytes | null> {
+  if (fileValue.source !== undefined || typeof fileValue.url === 'string') {
     try {
-      const resolved = await streamFileRef(fileValue, { teamId });
-      const body = await streamToBuffer(resolved.stream);
+      const resolved = await host.readFile(fileValue);
+      const body = resolved.body;
       return {
         body,
         length: body.length,
@@ -437,7 +446,7 @@ async function fetchFileBytes(fileValue: FileValue, teamId: TeamId): Promise<Fil
           resolved.contentType ?? fileValue.contentType ?? 'application/octet-stream',
       };
     } catch (err) {
-      logger.warn('[SlackAdapter.write] file retrieval failed', {
+      host.log.warn('[SlackAdapter.write] file retrieval failed', {
         name: fileValue.name,
         error: err instanceof Error ? err.message : String(err),
       });

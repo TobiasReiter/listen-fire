@@ -157,6 +157,12 @@ importers:
       '@lf/granola':
         specifier: workspace:*
         version: link:../../modules/granola
+      '@lf/slack':
+        specifier: workspace:*
+        version: link:../../modules/slack
+      '@lf/telegram':
+        specifier: workspace:*
+        version: link:../../modules/telegram
       '@lf/web':
         specifier: workspace:*
         version: link:../../modules/web
@@ -1120,6 +1126,71 @@ importers:
         version: 5.5.4
 
   modules/granola:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  modules/slack:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      '@slack/web-api':
+        specifier: 7.11.0
+        version: 7.11.0
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  modules/telegram:
     dependencies:
       '#shared':
         specifier: workspace:@listen-fire/shared@*

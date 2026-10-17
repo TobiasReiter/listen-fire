@@ -6,6 +6,7 @@
  */
 
 import type { getSlackClient } from '../../../adapters/slack/webApi/apiClient';
+import type { SlackWriteHost } from '@lf/slack/write';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
 
@@ -15,13 +16,27 @@ import {
   SLACK_FILE_TYPE_ID,
   SLACK_REACTION_TYPE_ID,
 } from '../adapters/slack';
-import { SLACK_CHANNEL_TYPE_ID } from '../adapters/slack/read_graph';
+import { SLACK_CHANNEL_TYPE_ID } from '@lf/slack/read_graph';
 import {
   addReaction,
   createUnifiedMessage,
   reactionAnchorFromParent,
   replyAnchorFromParent,
-} from '../adapters/slack/write';
+} from '@lf/slack/write';
+
+
+/** What a write reaches beyond Slack, for these tests: the mock client's
+ *  `fetch` stands in for the host's, and no file is redeemed. */
+function hostOf(client: unknown): SlackWriteHost {
+  const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+  return {
+    log: quiet,
+    fetch: ((url: unknown, init: unknown) => (client as { fetch(u: unknown, i: unknown): Promise<Response> }).fetch(url, init)) as typeof fetch,
+    readFile: async () => {
+      throw new Error('no file is redeemed in this test');
+    },
+  };
+}
 
 const TEAM_ID = 'team-1' as TeamId;
 
@@ -224,7 +239,7 @@ describe('createUnifiedMessage — post', () => {
     const { client, calls } = makeMockClient({ postTs: '111.222' });
     const result = await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'hello world' },
     });
@@ -239,7 +254,7 @@ describe('createUnifiedMessage — post', () => {
     const { client, calls } = makeMockClient({ isMember: false });
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'hi' },
     });
@@ -251,7 +266,7 @@ describe('createUnifiedMessage — post', () => {
     const { client, calls } = makeMockClient({ isMember: true });
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'hi' },
     });
@@ -266,7 +281,7 @@ describe('createUnifiedMessage — reply', () => {
     const { client, calls } = makeMockClient({ postTs: '333.444' });
     const result = await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'reply', channelId: 'C123', threadTs: '111.222' },
       fields: { text: 'a reply' },
     });
@@ -286,7 +301,7 @@ describe('createUnifiedMessage — file', () => {
     const { client, calls } = makeMockClient();
     const result = await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: {
         text: 'caption',
@@ -308,7 +323,7 @@ describe('createUnifiedMessage — file', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'reply', channelId: 'C123', threadTs: '111.222' },
       fields: {
         text: 'caption',
@@ -322,7 +337,7 @@ describe('createUnifiedMessage — file', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { file: { name: 'note.txt', contentType: 'text/plain', content: 'body' } },
     });
@@ -336,7 +351,7 @@ describe('createUnifiedMessage — at-least-one', () => {
   it('rejects a write with none of Message / File / Blocks', async () => {
     const { client } = makeMockClient();
     await expect(
-      createUnifiedMessage({ client, teamId: TEAM_ID, anchor: { kind: 'post', channelId: 'C123' }, fields: {} }),
+      createUnifiedMessage({ client, host: hostOf(client), anchor: { kind: 'post', channelId: 'C123' }, fields: {} }),
     ).rejects.toThrow(/at least one of Message \/ File \/ Blocks/);
   });
 
@@ -345,7 +360,7 @@ describe('createUnifiedMessage — at-least-one', () => {
     await expect(
       createUnifiedMessage({
         client,
-        teamId: TEAM_ID,
+        host: hostOf(client),
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { blocks: [] },
       }),
@@ -453,7 +468,7 @@ describe('createUnifiedMessage — Blocks', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'New deal', blocks: EXAMPLE_BLOCKS },
     });
@@ -464,7 +479,7 @@ describe('createUnifiedMessage — Blocks', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { text: 'New deal', blocks: EXAMPLE_BLOCKS },
     });
@@ -475,7 +490,7 @@ describe('createUnifiedMessage — Blocks', () => {
     const { client, calls } = makeMockClient();
     await createUnifiedMessage({
       client,
-      teamId: TEAM_ID,
+      host: hostOf(client),
       anchor: { kind: 'post', channelId: 'C123' },
       fields: { blocks: EXAMPLE_BLOCKS },
     });
@@ -488,7 +503,7 @@ describe('createUnifiedMessage — Blocks', () => {
     await expect(
       createUnifiedMessage({
         client,
-        teamId: TEAM_ID,
+        host: hostOf(client),
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { text: 'x', blocks: 'not a list' },
       }),
@@ -502,7 +517,7 @@ describe('createUnifiedMessage — Blocks', () => {
     return expect(
       createUnifiedMessage({
         client,
-        teamId: TEAM_ID,
+        host: hostOf(client),
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { text: 'x', blocks: [{ type: 'section' }, 'not a block'] },
       }),
@@ -514,7 +529,7 @@ describe('createUnifiedMessage — Blocks', () => {
     await expect(
       createUnifiedMessage({
         client,
-        teamId: TEAM_ID,
+        host: hostOf(client),
         anchor: { kind: 'post', channelId: 'C123' },
         fields: {
           file: { name: 'note.txt', contentType: 'text/plain', content: 'body' },
@@ -539,7 +554,7 @@ describe('createUnifiedMessage — Blocks', () => {
     await expect(
       createUnifiedMessage({
         client,
-        teamId: TEAM_ID,
+        host: hostOf(client),
         anchor: { kind: 'post', channelId: 'C123' },
         fields: { blocks: EXAMPLE_BLOCKS },
       }),
@@ -641,6 +656,7 @@ describe('addReaction', () => {
     const { client, calls } = makeMockClient();
     const result = await addReaction({
       client,
+      log: hostOf(client).log,
       anchor: { channelId: 'C123', ts: '111.222' },
       fields: { emoji: 'thumbsup' },
     });
@@ -661,6 +677,7 @@ describe('addReaction', () => {
     const { client, calls } = makeMockClient({ isMember: false });
     await addReaction({
       client,
+      log: hostOf(client).log,
       anchor: { channelId: 'C123', ts: '111.222' },
       fields: { emoji: 'eyes' },
     });
@@ -671,6 +688,7 @@ describe('addReaction', () => {
     const { client, calls } = makeMockClient();
     await addReaction({
       client,
+      log: hostOf(client).log,
       anchor: { channelId: 'C123', ts: '111.222' },
       fields: { emoji: ':eyes:' },
     });
@@ -681,6 +699,7 @@ describe('addReaction', () => {
     const { client } = makeMockClient({ reactionsAdd: () => Promise.reject(alreadyReacted()) });
     const result = await addReaction({
       client,
+      log: hostOf(client).log,
       anchor: { channelId: 'C123', ts: '111.222' },
       fields: { emoji: 'thumbsup' },
     });
@@ -695,6 +714,7 @@ describe('addReaction', () => {
     await expect(
       addReaction({
         client,
+        log: hostOf(client).log,
         anchor: { channelId: 'C123', ts: '111.222' },
         fields: { emoji: 'thumbsup' },
       }),
@@ -704,7 +724,7 @@ describe('addReaction', () => {
   it('rejects a write with no Emoji', async () => {
     const { client } = makeMockClient();
     await expect(
-      addReaction({ client, anchor: { channelId: 'C123', ts: '111.222' }, fields: {} }),
+      addReaction({ client, log: hostOf(client).log, anchor: { channelId: 'C123', ts: '111.222' }, fields: {} }),
     ).rejects.toThrow(/the "Emoji" field must carry an emoji name/);
   });
 });

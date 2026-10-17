@@ -14,7 +14,7 @@ function host(over: Partial<ModuleHost> & { fields: () => Record<string, string>
     credential: { name: 'dropbox', fields: async () => over.fields(), update: async () => {} },
     fetch: over.fetch,
     log: quiet,
-    files: { put: async () => ({ __brand: 'FileRef' }), read: async () => new Uint8Array() },
+    files: { put: async () => ({ __brand: 'FileRef' }), read: async () => new Uint8Array(), expose: async () => Promise.reject(new Error('no')) },
     kv: { get: async () => undefined, set: async () => {}, delete: async () => {}, list: async () => [] },
     ...(over.baseUrlOverride !== undefined ? { baseUrlOverride: over.baseUrlOverride } : {}),
     validateResults: true,

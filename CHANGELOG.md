@@ -1588,6 +1588,28 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - Airtable and Attio declare an OAuth 2 credential in the protocol's token fields; the platform
   reads and writes its existing rows in their stored field names. Airtable's webhook refresh worker
   now reaches Airtable through the registry, so it follows the line.
+### ev4-chat
+
+- Telegram is a module: `@lf/telegram` (`modules/telegram`). Nothing changes for a team using it,
+  whether it brings its own bot or connected the platform's shared bot: the same Bot API requests
+  and the same answers, held by a recording of the old adapter replayed against the module in
+  process and as a process. Switching back is one line (`BUILTIN_MODULES`).
+- The module kit's context gains the host's record of who linked their account (`identities`: the
+  platform's `/start` handshake writes it; a host with none refuses a listing and resolves no
+  actor) and the host's name for the install's credential (`credentialRef`), which an owned file
+  carries so it is redeemed on the same install.
+- A team's own Telegram bot still has no signed inbound: it is registered without a secret token,
+  so the door's unguessable URL stays its secret. Declaring one would refuse every existing bot.
+- Slack is a module: `@lf/slack` (`modules/slack`). Nothing changes for a connected workspace: the
+  same Web API requests and the same answers, held by a recording of the old adapter replayed
+  against the module in process and as a process. The installer flow, the shared app's doors and
+  their URLs are unchanged. Switching back is one line (`BUILTIN_MODULES`).
+- Slack's webhook door now verifies under the module's declared signed inbound (`slack_v0`, the same
+  header): a subscription whose signing secret is missing, blank or a placeholder is refused, where
+  before an empty secret was a key like any other. Every subscription the platform created holds a
+  generated secret, so none is affected.
+- Outside the platform (lf, a module served as a process), Slack's `SLACK_MESSAGE` composition needs
+  a model the host does not give a module yet, so it refuses by name; write the text instead.
 
 ## [v0.11.0] - 2026-10-12
 

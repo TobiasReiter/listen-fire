@@ -1,7 +1,7 @@
 // The module's side of its credential: the declarations it answers with, and
 // how the fields a host hands it become a client.
 
-import { loadedModule, moduleManifest, refusingFiles, refusingKv } from 'module-kit';
+import { loadedModule, moduleManifest, refusingFiles, refusingIdentities, refusingKv, refusingModels } from 'module-kit';
 
 import { GMAIL_SCOPES, GMAIL_SEND_SCOPE } from '../api_client';
 import { gmailClientFromFields } from '../credential';
@@ -18,6 +18,8 @@ describe('the declarations', () => {
         log: silentLog,
         files: refusingFiles('none'),
         kv: refusingKv('none'),
+        models: refusingModels('none'),
+        identities: refusingIdentities('none'),
         config: { tenant: 't', constructionArgs: {} },
       }),
     );
