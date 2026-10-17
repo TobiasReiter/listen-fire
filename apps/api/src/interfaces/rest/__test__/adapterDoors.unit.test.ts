@@ -283,6 +283,7 @@ describe('bodies', () => {
     });
 
     expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'payload_too_large' });
     expect(listRemoteAdaptersOfType).not.toHaveBeenCalled();
     expect(enqueueAwaitWake).not.toHaveBeenCalled();
   });

@@ -368,6 +368,21 @@ export const INBOUND_CONTRACT_CASES: InboundContractCase[] = [
 
   // ── The push doors ──────────────────────────────────────────────────────
   {
+    name: "a push body over 1 MB is refused 413 in the doors' JSON shape, whichever door",
+    async run(backend) {
+      await arrangeAnd(backend);
+      for (const verb of ['emit', 'wake']) {
+        const big = json({ keys: [], events: [], pad: 'x'.repeat(1_100_000) });
+        const answer = await post(backend, `/api/public/adapter/${CONTRACT_PUSH_TYPE}/${verb}`, big, () => ({
+          authorization: 'Bearer push-credential',
+        }));
+        assert.equal(answer.status, 413);
+        assert.match(answer.contentType ?? '', /application\/json/);
+        assert.deepEqual(answer.body, { error: 'payload_too_large' });
+      }
+    },
+  },
+  {
     name: 'emit with the install credential receipts the events: 202 accepted',
     async run(backend) {
       await arrangeAnd(backend);
