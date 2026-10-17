@@ -66,6 +66,20 @@ module.exports = tseslint.config(
       'import/extensions': 'off',
       'local-rules/bottom-exports': 'off',
       'local-rules/require-node-prefix': 'error',
+      // The platform reaches the engine only through its public entries (the
+      // same rule scripts/check-engine-boundary.cjs gates on).
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'movement-engine', message: 'Import the engine through movement-engine/public/*.' }],
+          patterns: [
+            {
+              group: ['movement-engine/*', '!movement-engine/public'],
+              message: 'Import the engine through movement-engine/public/* (add the export to a public entry if it is missing).',
+            },
+          ],
+        },
+      ],
     },
   },
   {
@@ -89,6 +103,14 @@ module.exports = tseslint.config(
     files: ['**/__test__/**', '**/*.test.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  {
+    // Tests of engine internals still live here until they move into the
+    // package; they, their fixtures and the dev-loop scripts may reach in.
+    files: ['**/__test__/**', '**/__tests__/**', '**/__fixtures__/**', '**/*.test.ts', '**/*.spec.ts', 'src/test/**', 'src/scripts/dev/**'],
+    rules: {
+      'no-restricted-imports': 'off',
     },
   },
   {
