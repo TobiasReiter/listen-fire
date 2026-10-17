@@ -31,7 +31,7 @@ pub enum TraceEntry {
     Extraction(Members),
     /// One plugin invocation, a stage's or a plain call's.
     Plugin(Members),
-    /// One `AI()` call: its prompt (cut at 300 UTF-16 units) and whether
+    /// One `AI()` call: its prompt (cut at 300 characters) and whether
     /// the model answered.
     Ai { prompt: String, has_value: bool },
     /// One `READ(file)`: the file's name and type, and its text's length or

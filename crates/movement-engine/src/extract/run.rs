@@ -161,7 +161,7 @@ impl PluginResult {
     /// length, the data's fields, the plugin's own outcome.
     pub(crate) fn trace_into(&self, entry: &mut Members) {
         if let Some(text) = self.text() {
-            entry.set("chars", Js::Number(js::utf16_len(text) as f64));
+            entry.set("chars", Js::Number(js::len_chars(text) as f64));
         }
         let fields = self.data_keys();
         if !fields.is_empty() {

@@ -26,7 +26,7 @@ pub struct Conjunct {
 /// (strings, backticks and brackets blanked first), each part's leading
 /// `FUZZY` lifted. Positions are UTF-16 units, as the TypeScript's are.
 pub fn split_conjuncts(raw: &str) -> Vec<Conjunct> {
-    let units: Vec<u16> = crate::js_string::units_vec(raw);
+    let units: Vec<u16> = movement_parser::util::form::units_vec(raw);
     let blanked = blank_literals(&units);
     let mut depth: i64 = 0;
     let mut spans = Vec::new();
@@ -53,7 +53,7 @@ pub fn split_conjuncts(raw: &str) -> Vec<Conjunct> {
     spans
         .into_iter()
         .map(|(from, to)| {
-            let text = crate::js_string::text_of_units(&units[from..to]);
+            let text = movement_parser::util::form::text_of_units(&units[from..to]);
             match strip_fuzzy(&text) {
                 Some(rest) => Conjunct { raw: js::trim(rest).to_string(), fuzzy: true },
                 None => Conjunct { raw: js::trim(&text).to_string(), fuzzy: false },
@@ -263,7 +263,7 @@ pub fn branch(entries: Vec<(String, bool)>) -> Js {
 pub fn is_blank(value: &Js) -> bool {
     match value {
         Js::Undefined | Js::Null => true,
-        Js::String(text) => js::trim(text.as_form()).is_empty(),
+        Js::String(text) => js::trim(text.as_str()).is_empty(),
         _ => false,
     }
 }
@@ -414,7 +414,7 @@ fn cartesian(sets: &[Vec<String>]) -> Vec<Vec<String>> {
 fn fold_key_value(value: &Js) -> Option<String> {
     match value {
         Js::Number(_) | Js::Bool(_) => Some(value.to_js_string()),
-        Js::String(text) => Some(fold_text(text.as_form())),
+        Js::String(text) => Some(fold_text(text.as_str())),
         // A parent folded in under its edge's name: a record id, exactly.
         Js::Object(object) if object.entries().len() == 1 => match object.get("id") {
             Some(Js::String(id)) => Some(format!("@{id}")),

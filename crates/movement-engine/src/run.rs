@@ -218,10 +218,7 @@ fn default_file_chars() -> f64 {
 }
 
 /// The segment entry: the run, and its `done`.
-pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
-    // The source as the TypeScript engine's parser is handed it: its text
-    // encoded as UTF-8 (`TextEncoder`), so a lone half is U+FFFD there.
-    input.source = movement_parser::util::form::usv_text(&input.source).into_owned();
+pub async fn segment(host: Host, input: SegmentInput) -> Json {
     let ledger = crate::ledger::Ledger::new(&input.spend);
     let mut done = match run(&host, &input, &ledger).await {
         Ok(result) => json!({ "result": result }),
@@ -1907,7 +1904,7 @@ impl Run<'_> {
         }
         let text = event_get(&answer, "text");
         let mut entry = named.clone();
-        entry.set("chars", Js::Number(js::utf16_len(&text.to_js_string()) as f64));
+        entry.set("chars", Js::Number(js::len_chars(&text.to_js_string()) as f64));
         self.trace.push(TraceEntry::Read(entry));
         let mut origin = vec![("kind", Js::str("file"))];
         let raw_text_id = event_get(&answer, "rawTextId");
@@ -1941,9 +1938,7 @@ impl Run<'_> {
         };
         let answer = self.priced(host::llm::client_call(self.segment(), call, self.ledger.budget())).await?;
         let value = ai_answer(&event_get(&answer, "parsedJson"));
-        // The prompt's first 300 UTF-16 units: a cut through a pair keeps
-        // its high half, as `slice` does.
-        let traced = crate::extract::emission::cut(prompt, AI_TRACE_PROMPT_UNITS);
+        let traced = crate::extract::emission::cut(prompt, AI_TRACE_PROMPT_CHARS);
         self.trace.push(TraceEntry::Ai { prompt: traced, has_value: !value.is_nullish() });
         Ok(value)
     }
@@ -2531,8 +2526,8 @@ fn file_level_call() -> Failure {
     Failure::unsupported("file-level calls", "a call runs inside a movement body, where the event is in scope")
 }
 
-/// How much of an `AI()` prompt its trace entry keeps, in UTF-16 units.
-const AI_TRACE_PROMPT_UNITS: usize = 300;
+/// How much of an `AI()` prompt its trace entry keeps, in characters.
+const AI_TRACE_PROMPT_CHARS: usize = 300;
 
 /// `AI_EXPRESSION_SYSTEM`, the system prompt every `AI()` call carries.
 const AI_EXPRESSION_SYSTEM: &str = "You are evaluating an AI() expression inside a data-movement program.\n\
@@ -2636,7 +2631,7 @@ pub fn event_address_key(address: &EventAddress) -> String {
         return address.event.clone();
     }
     pins.sort_by(|(a, _), (b, _)| a.cmp(b));
-    crate::js_string::to_json_text(&json!([address.event, pins]))
+    json!([address.event, pins]).to_string()
 }
 
 /// `seedEventPosition`.
@@ -2765,7 +2760,7 @@ mod tests {
                 let read = env::decode(&request.args["args"]).unwrap();
                 let Js::Object(read) = read else { panic!("a read") };
                 let Some(Js::String(field)) = read.get("fieldId") else { panic!("a field") };
-                match payload.get(field.as_form()) {
+                match payload.get(field.as_str()) {
                     Some(value) => json!({ "value": { "result": value } }),
                     None => json!({ "value": {} }),
                 }

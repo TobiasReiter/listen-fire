@@ -964,7 +964,7 @@ pub(crate) fn at<'v>(value: &'v Js, key: &str) -> Option<&'v Js> {
 
 pub(crate) fn text(value: Option<&Js>) -> Option<&str> {
     match value {
-        Some(Js::String(s)) => Some(s.as_form()),
+        Some(Js::String(s)) => Some(s.as_str()),
         _ => None,
     }
 }

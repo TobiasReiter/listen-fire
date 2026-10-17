@@ -215,10 +215,10 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | `%` | Rust's `%` is fmod, the dividend's sign, as JavaScript's | `filter::tests::remainder_and_division_by_zero`, `tests::arithmetic_keeps_javascript_semantics` |
 | object key order | the order keys were first set, a number-like key included; a repeated key keeps its place | `js::tests::maps_keep_their_keys_in_the_order_first_set`, `tests::maps_keep_their_keys_in_the_order_first_set` |
 | a map's keys | own entries only: `__proto__` is a key like any other, and `constructor` or `toString` a map lacks reads absent | `js::tests::a_map_is_a_map` |
-| `trim`, `\s` | Rust's `char::is_whitespace` (U+0085 in, U+FEFF out) | `js::tests::strings_are_utf16_where_javascript_says_so` |
-| a string | any run of UTF-16 code units, a lone surrogate included (crate::js_string): held in-band in the engine's UTF-8 text (U+FDD0, then a plane-16 private-use character naming the unit; a U+FDD0 the text holds written twice), in a canonical form, so equality is `===` and two halves written side by side are the pair; it crosses the wire as U+FFFD, and the JSON text a park or a trace writes as the `\udXXX` escape | `js_string::tests::*`, tests/stdlib_oracle.rs `strings_hold_what_javascript_holds` (strings.json, 10,572 seeded cases, seed 20261016) |
-| `.length`, `<` on text | `.length` in UTF-16 code units; comparison by code point | `js::tests::strings_are_utf16_where_javascript_says_so`, `stdlib::tests::flat_builtins` |
-| `split("")`, `slice` | per UTF-16 unit: an astral character parts into its two halves, and a cut through a pair keeps the half on its side (every cut: 80, 200, 300 and 1,000 units, and a file bounded for the prompt) | `oracle::…` (`flat.split`), strings.json (`slice`, `bound`) |
+| `trim`, `\s` | Rust's `char::is_whitespace` (U+0085 in, U+FEFF out) | `js::tests::strings_are_characters` |
+| a string | a Rust `String` (crate::js_string): Unicode text, so equality, hashing and order are its own. A lone surrogate's `\udXXX` escape in the host's JSON is read as U+FFFD (serde_json alone refuses it); the engine makes none of its own | `js_string::tests::*`, `env::tests::a_lone_surrogate_crosses_as_the_replacement_character` |
+| `.length`, `<` on text | `.length` in characters (code points: an emoji is 1); comparison by code point | `js::tests::strings_are_characters`, `stdlib::tests::flat_builtins` |
+| `split("")`, a cut | by character: an emoji stays whole in a split, a spread of a text, CHUNKS and every cut (80, 200, 300 and 1,000 characters, and a file bounded for the prompt) | `stdlib::tests::flat_builtins`, `chunks::tests::*`, `extract::emission::tests::*`; tests/stdlib_oracle.rs and tests/chunks_oracle.rs compare with JavaScript only where a character is one UTF-16 unit |
 | `toLowerCase`/`toUpperCase` | Rust's own tables (`str::to_lowercase`/`to_uppercase`, the toolchain's Unicode, 17 today); Node's ICU wrote the oracle, and a text maps differently only where Unicode 17 changed a case | tests/tail_oracle.rs `case_maps_by_rusts_tables` (case_mapping.json), `stdlib::tests::case_mapping_follows_rusts_tables` |
 | a date-time text (`DATETIME`, `DATE`, a comparison) | ISO 8601 / RFC 3339 only (crate::js_date); no offset is UTC; a day the month lacks or the hour 24 is no date-time; a comparison reads only ISO texts as dates (`"item 3" < "item 12"` compares texts) | `js_date::tests::reads_the_iso_forms`, `js_date::tests::refuses_everything_else`, tests/dates_oracle.rs (6,000 seeded texts in UTC: only those V8 read as a legacy form may answer differently) |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
@@ -941,11 +941,10 @@ is `["F", id, {handle, name, contentType, size}]` from the host and
 descriptor]` to the host and `["x", id]` back. Any other tag, or a bare
 object, does not read.
 
-**The JSON text.** Every input, answer and output is JSON text read and
-written as `JSON.parse` and `JSON.stringify` do: a string anywhere in it may
-hold a lone surrogate as its `\udXXX` escape (a parked state's, a trace's,
-an error's), which the engine reads (serde_json alone refuses it) and
-writes back the same way.
+**The JSON text.** Every input, answer and output is JSON text. A string
+in what the engine reads may hold a lone surrogate as its `\udXXX` escape
+(`JSON.stringify` writes one); the engine reads it as U+FFFD (serde_json
+alone refuses it). What it writes is Unicode text, so it holds none.
 
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now,

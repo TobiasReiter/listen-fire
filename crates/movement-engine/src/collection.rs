@@ -288,7 +288,7 @@ pub(crate) fn reading(call: &CallStatement, binds: bool) -> Result<Option<Readin
         CallArg::Closure { closure, span, .. } => ArmExpression::Closure { closure: closure.clone(), span: *span },
         CallArg::Expr { expr, .. } => {
             let raw = crate::js::trim(&expr.raw);
-            let units: Vec<u16> = crate::js_string::units_vec(raw);
+            let units: Vec<u16> = movement_parser::util::form::units_vec(raw);
             match movement_parser::scan::scan_name(&units, 0) {
                 Some((name, end)) if end == units.len() => ArmExpression::Ref { name, span: expr.span },
                 _ => return Err(format!("The function for '{}' is a function's name, or a closure — not the expression '{raw}'", call.callee)),
@@ -729,7 +729,7 @@ impl Run<'_> {
                         )));
                     };
                     if op == CollectionOp::Keyby {
-                        if filed.get(key.as_form()).is_some() {
+                        if filed.get(key.as_str()).is_some() {
                             return Err(Stop::Thrown(Failure::engine(
                                 "MOVENG_RUNTIME",
                                 format!("KEYBY says each key names one member, and '{key}' names more than one. Use GROUPBY if a key can have several."),
@@ -738,7 +738,7 @@ impl Run<'_> {
                         filed.set(key.to_string(), member.clone());
                         continue;
                     }
-                    let group = match filed.get(key.as_form()) {
+                    let group = match filed.get(key.as_str()) {
                         Some(Js::Array(group)) => {
                             let mut items = group.items().clone();
                             items.push(member.clone());

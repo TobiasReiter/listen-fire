@@ -295,7 +295,6 @@ pub(crate) fn canonical_requests(requests: Vec<LockRequest>) -> Vec<LockRequest>
             }
         }
     }
-    // JavaScript's `<` on two texts: by UTF-16 code units.
     by_name.sort_by(|a, b| a.name.cmp(&b.name));
     by_name
 }

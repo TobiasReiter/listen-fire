@@ -19,9 +19,6 @@
 //   - the TypeScript's runtime accidents, one file each (./tail_oracle.ts);
 //   - dates.json: V8's date parser, and the members that read dates through
 //     it, under five local zones (./dates_oracle.ts);
-//   - strings.json: strings as JavaScript holds them — the built-ins, the
-//     comparator, cuts, JSON's quoting and the JSON text boundary over seeded
-//     texts holding lone, paired and astral code units (./strings_oracle.ts);
 //   - chunks.json: `CHUNKS`'s cut and the entities estimate of each piece,
 //     the size mode on any text, the entities mode on ASCII text
 //     (./chunks_oracle.ts);
@@ -73,7 +70,6 @@ import { writeOrderLimitOracle } from './order_limit_oracle';
 import { writeTailOracles } from './tail_oracle';
 import { writeDatesOracle } from './dates_oracle';
 import { writePatternsOracle } from './patterns_oracle';
-import { writeStringsOracle } from './strings_oracle';
 import { writeChunksOracle } from './chunks_oracle';
 import { outcome, wire } from './wire';
 import type { FilterOperator } from '../../../../packages/shared/expression/types';
@@ -367,7 +363,6 @@ console.log(`regex.json: ${regexCases.length} cases`);
   await writePricedOracle(mulberry32(20261009));
   await writeTailOracles(mulberry32, (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeDatesOracle(mulberry32(20261013), (name, text) => writeFileSync(path.join(__dirname, name), text));
-  writeStringsOracle(mulberry32(20261016), (name, text) => writeFileSync(path.join(__dirname, name), text));
   writeChunksOracle(mulberry32(20261017), (name, text) => writeFileSync(path.join(__dirname, name), text));
   // The Rust engine: the movement.wasm the shim loads is the one committed.
   await writePatternsOracle(mulberry32(20261015), (name, text) => writeFileSync(path.join(__dirname, name), text));
