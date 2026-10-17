@@ -152,14 +152,16 @@ test('with sops unavailable, an encrypted credential is refused before the refre
   const token = await tokenServer({ access_token: 'fresh-token' });
   const savedPath = process.env.PATH;
   try {
+    const path = join(mkdtempSync(join(tmpdir(), 'lf-secrets-')), 'lf.yaml');
+    writeFileSync(path, 'acme:\n  external: acme_crm\nsops:\n  version: 3.9.0\n');
     const credential: Credential = {
       name: 'acme',
       external: 'acme_crm',
       fields: { refresh_token: 'r1', token_url: token.url },
-      origin: { file: { path: '/secrets/lf.yaml', encrypted: true }, envFields: new Set() },
+      origin: { file: { path, encrypted: true }, envFields: new Set() },
     };
     process.env.PATH = mkdtempSync(join(tmpdir(), 'lf-nopath-'));
-    await assert.rejects(refreshCredential(credential), /credential "acme".*\/secrets\/lf\.yaml.*sops/);
+    await assert.rejects(refreshCredential(credential), /credential "acme".*lf\.yaml.*sops/);
     assert.equal(token.forms.length, 0);
   } finally {
     process.env.PATH = savedPath;

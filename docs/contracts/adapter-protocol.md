@@ -727,6 +727,10 @@ The host sends the install's resolved credential on every request, beside
 ```
 
 - Every field value is a string.
+- The fields sent are the ones the declaration names, plus `access_token`,
+  `refresh_token` and `expires_at` for an `oauth2` one. Anything else the host
+  keeps beside them (its client secret, say) is never sent.
+- A request carries one credential: the first one the manifest declares.
 - The host sends a credential only to an installed module that declares it,
   and only over loopback or HTTPS.
 - Never log it, echo it in an error, or store it beyond the call.
@@ -740,6 +744,9 @@ rotated the refresh token), say so beside the result:
 
 - Only the fields you name change; the host merges them over the stored ones
   and writes them back.
+- Name only fields your declaration names (and the three token fields of an
+  `oauth2` credential). An update naming any other field is refused, and the
+  call fails.
 - `credentialUpdate` may ride a failure (`ok: false`) too. Send it whenever a
   token changed, or a rotated refresh token is lost.
 

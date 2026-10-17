@@ -4,9 +4,8 @@ import { z } from 'zod';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 
 import { logger } from 'movement-engine/services/logger';
-import { encryptToken } from '../../lib/credentials';
-import { getAutomationsQb } from '../../lib/kysely';
-import { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
+import { createSecretsFamily } from 'movement-engine/public/secrets';
+import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
 const scopes = [
   'https://www.googleapis.com/auth/drive.file',
@@ -66,15 +65,13 @@ class GoogleAuthClient {
           expiry_date: tokens.expiry_date,
         });
 
-        const encrypted = await encryptToken(JSON.stringify(newSavedCreds), id);
-        await getAutomationsQb(['external_service_credentials'])
-          .updateTable('external_service_credentials')
-          .set({
-            credentials: encrypted,
-            updated_at: new Date(),
-          })
-          .where('id', '=', id as ExternalServiceCredentialsId)
-          .execute();
+        // The library refreshed by itself, so the write-back holds no
+        // version: it goes under the credential's lock over what is stored.
+        await createSecretsFamily({ backend: postgresSecrets({ shape: camelTokenPayloadShape }) }).update(id, {
+          access_token: newSavedCreds.accessToken,
+          refresh_token: newSavedCreds.refreshToken,
+          expires_at: new Date(newSavedCreds.expiresAt).toISOString(),
+        });
         logger.info('[GOOGLE] CREDENTIALS SAVED');
       });
     }
