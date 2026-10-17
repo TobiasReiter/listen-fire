@@ -17,10 +17,8 @@
 import { drainAwaits, wakeAwaits, type StepperFor } from 'movement-engine/services/run_host/drain';
 import { logger } from 'movement-engine/services/logger';
 
-import type { CorrelatedAwait } from 'movement-engine/services/run_host/store';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { WorkHandler } from '../work/kinds';
-import type { HeldRunLease } from './run_lease';
 
 import { registerWorkHandler, WorkDeferred } from '../work/drain';
 import { wakeAwaitPayloadSchema } from './await_wake';
@@ -44,7 +42,7 @@ import { parkedRunStep } from './resume_step';
  *  would await its own promise. */
 export const runResumeSlot = createSingleFlight<string>();
 
-const stepper: StepperFor = ({ runId, lease }) => parkedRunStep({ runId: triggerRunIdOf(runId), lease, log: 'AwaitResume' });
+export const awaitStepper: StepperFor = ({ runId, lease }) => parkedRunStep({ runId: triggerRunIdOf(runId), lease, log: 'AwaitResume' });
 
 /**
  * The wake: something has happened on an adapter identity (an ask settled, a
@@ -62,20 +60,12 @@ export async function resumeAwaitsForCorrelation(input: {
   const { busy } = await logged(input, () =>
     wakeAwaits(hostedRunHost(), {
       wake: input,
-      stepper,
+      stepper: awaitStepper,
       around: (runId, body) => runResumeSlot.coalesce(runId, body),
       lease: hostedLeaseOptions(),
     }),
   );
   if (busy.length > 0) throw new WorkDeferred(`run ${busy.join(', ')} is held by another process`);
-}
-
-/** The per-run drain body, under the run's lease the caller holds: every
- *  currently resolvable await leaf of the run (each keeper's, plus `extra`, the
- *  ones the caller already knows are resolvable — a just-fired callback's),
- *  stepped in one batch. */
-export async function drainRunAwaits(runId: string, extra: readonly CorrelatedAwait[], lease: HeldRunLease): Promise<void> {
-  await logged({ runId }, () => drainAwaits(hostedRunHost(), { runId, extra, lease, stepper }));
 }
 
 /** A failed drain is logged, then rethrown so the wake row that brought it is
