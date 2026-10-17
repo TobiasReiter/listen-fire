@@ -161,10 +161,9 @@ for byte; on text already in the version 5 spelling it changes nothing.
   field read off it then needs a fallback), an untyped field becomes `<text>`, and the model is
   asked through the call's prompt. A `through […]` stage has no fix, since no composition of
   plugin calls is provably the same: rewrite it as the enrichment example does.
-  **The Rust engine no longer runs the keyword on any version** (`legacy_extraction` at
-  admission; its code is deleted). A version 1–4 automation holding one still runs on the
-  TypeScript engine, by its version, exactly as before; `lf` runs and `MOVEMENT_ENGINE=rust`
-  with `MOVEMENT_ENGINE_FALLBACK=none` fail such a run with that reason.
+  **The Rust engine no longer runs the keyword on any version** (its code is deleted). A
+  version 1–4 automation holding one still runs on the TypeScript engine, by its version,
+  exactly as before.
 - **A block's walk off a record that may be absent is refused** (`MOV_ABSENT_REQUIRED`, from
   version 5): `found-[c:company]-> { … }` where `found` is an `extractOne(…)` answer, a `match`
   that may find nothing, an unguarded pick (`only(…)`, `first(…)`, `rows[0]`). Why: the run does
@@ -377,6 +376,23 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `engineReason`. `engine` stays.
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
+
+### close-robust
+
+- A paused version 5 run whose saved state names code the program does not hold (a place with no
+  such closure, walk or declaration, or a library the program does not link) now fails its resume
+  up front, before anything runs, saying `resume_state_code_does_not_read`. Before, it failed
+  partway through with an engine runtime error.
+- A host answer of the wrong shape now ends the run with a coded runtime error naming the host call
+  and what was wrong (for example "the host's lookup.resolveActingUser answered something
+  malformed: expected the principal's `id` as text, got nothing"). Before, the run ended with a raw
+  JavaScript error such as "Cannot read properties of undefined". Covered: the acting user, a
+  plugin's result (its text, data, records and outcome), a callback's calls, an awaitable adapter's
+  resolution, a refetched record, and a file reader's `unreadable` reason. A plugin that answers a
+  `records` list with something other than objects in it is now such an error, not a spread of it.
+- The `unreproduced: true` marker the Rust engine put beside its own refusals is gone: nothing read
+  it. Such a refusal still ends the run as `MOVENG_UNSUPPORTED` and is still never forgiven by a
+  collection op's `onError`.
 
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 

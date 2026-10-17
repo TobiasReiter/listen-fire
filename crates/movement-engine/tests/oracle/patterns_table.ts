@@ -1310,8 +1310,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     name: 'resume_state_code_does_not_read',
-    ends: 'whole',
-    note: "a parked state naming code (a closure, a kept walk's head) the pinned program does not hold: the resume fails at run time where the code is read (MOVENG_RUNTIME), not up front by this name",
+    ends: 'state_refused',
+    note: "a parked state naming code (a closure, a kept walk's head) the pinned program does not hold: the resume refuses it up front (resume_state_code_does_not_read), before anything runs",
     programs: [
       () => ({ body: '  inc = (v: <number>) => v + 1\n  await sleep(1h)\n  r = MAP([1, 2], inc)\n  write crm-[:notes]-> { body: "${COUNT(r)}" }', resume: (state) => withCodeCorrupted(state) }),
       () => ({ body: '  cos = lazy crm-[c:companies]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(cos)}" }', resume: (state) => withCodeCorrupted(state) }),

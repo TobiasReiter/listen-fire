@@ -28,14 +28,12 @@
 //! - `{failed: {error, result}}`: the body failed (`MovementRunFailed`,
 //!   which carries what the run did before it);
 //! - `{thrown: error}`: it failed before the body ran;
-//! - `{refused: reason}`: admission (crate::admit) found, on this engine's
-//!   own parse and before any host request, that the program or its parked
-//!   state needs what this engine does not run;
-//! - `{declined: reason}`: past admission, before anything the host can see
-//!   happened, the check's stamps or the run's input turned out to need what
-//!   this engine does not run.
+//! - `{refused: reason}`: the pin is below version 5 (those versions run on
+//!   the TypeScript engine), before any host request;
+//! - `{declined: reason}`: before anything the host can see happened, the
+//!   run's input or the check's answer did not read.
 //!
-//! For either the shim runs the program on the TypeScript engine instead.
+//! The shim fails the run on either; nothing runs it elsewhere.
 //!
 //! `error` is `{class: "MovementEngineError", code, message}`, `{class:
 //! "Error" | "RangeError", message}`, `{class: "RunCostCapExceeded",
@@ -124,7 +122,7 @@ pub struct SegmentInput {
     /// instead of asking the host: its diagnostics, stamps and import link
     /// (movement_checker::answer). The host turns it on for every segment
     /// it runs on this engine (rust_engine.ts); off, the host's checker
-    /// answers, as an admission dry run's start never asks.
+    /// answers.
     #[serde(default)]
     pub native_check: bool,
     /// With `native_check`: the `models` the run's snapshot itself lists
@@ -159,7 +157,7 @@ pub struct SegmentInput {
     pub limit_paused: bool,
     /// Where to suspend, by address, once each (`RunMovementInput.suspendAt`):
     /// a statement's address suspends the flow just before it. An address
-    /// before a call (`… .c k`) is refused at admission (`suspend_at_call`).
+    /// before a call (`… .c k`) suspends before its statement's k-th call.
     #[serde(default)]
     pub suspend_at: Vec<String>,
     /// Every host method the run's host serves, by path
@@ -227,8 +225,8 @@ pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
         Ok(result) => json!({ "result": result }),
         Err(Stop::Refused(reason)) => return json!({ "refused": reason }),
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
-        Err(Stop::Thrown(failure)) => failure.marked(json!({ "thrown": failure.to_json() })),
-        Err(Stop::Failed(failure, result)) => failure.marked(json!({ "failed": { "error": failure.to_json(), "result": result } })),
+        Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
+        Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
         Err(Stop::Cancelled | Stop::Parked(_) | Stop::EndedQuietly) => {
             unreachable!("a cancel, a park or a quiet end ends the body, and the run returns its result")
         }
@@ -311,12 +309,6 @@ impl Failure {
         Failure::Engine { class: ErrorClass::Unreproduced, message: unsupported_message(construct, detail) }
     }
 
-    /// This engine's own refusal of what the TypeScript engine runs on
-    /// through (`unreproduced`).
-    pub(crate) fn is_unreproduced(&self) -> bool {
-        matches!(self, Failure::Engine { class: ErrorClass::Unreproduced, .. })
-    }
-
     /// The failure as an evaluation carries it out of a read it awaited.
     pub(crate) fn into_eval(self) -> EvalError {
         match self {
@@ -329,7 +321,7 @@ impl Failure {
     }
 
     /// What an evaluation failed with; a reading this engine hands back
-    /// fails the run, `unreproduced` saying so.
+    /// fails the run as an engine refusal (`unreproduced` says what it was).
     pub(crate) fn of_eval(error: EvalError, unreproduced: &str) -> Failure {
         match error {
             EvalError::Thrown { class, message } => Failure::Engine { class, message },
@@ -337,19 +329,6 @@ impl Failure {
             EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
             EvalError::Fallback(reason) => Failure::unreproduced(&format!("this reading ({reason})"), unreproduced),
         }
-    }
-
-    /// A `done` that ended in this failure, marked `unreproduced` where it
-    /// is this engine's own refusal of what the TypeScript engine runs on
-    /// through (met after an effect, or it would have declined): the wire
-    /// codes it MOVENG_UNSUPPORTED, as it codes the TypeScript's own
-    /// failure this engine mirrors, so the marker is what tells a
-    /// divergence from a mirrored ending.
-    fn marked(&self, mut done: Json) -> Json {
-        if self.is_unreproduced() {
-            done["unreproduced"] = json!(true);
-        }
-        done
     }
 
     fn to_json(&self) -> Json {
@@ -1115,7 +1094,7 @@ impl Run<'_> {
     }
 
     /// `interpretFileStatement`, for what this engine runs at file scope
-    /// with no effect (admission refused the rest; `prepare` evaluates the
+    /// with no effect (the checker refused the rest; `prepare` evaluates the
     /// file-level values).
     fn file_statement(&self, statement: &Statement, file: &Scope, written: &DeclaringFile) {
         match statement {
@@ -1665,13 +1644,8 @@ impl Run<'_> {
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
-        // A file-level value holding a nested call: this engine binds the
-        // file's values before anything else, and stages none there.
-        if let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw)
-            && !crate::nested::staged_calls(&tree, &|call| self.runs_as_call(call, scope)).is_empty()
-        {
-            return Err(Stop::Thrown(Failure::unreproduced("a nested call in a file-level value", "the Rust engine stages nested calls in a body")));
-        }
+        // A file-level value holding a call never gets here: the checker
+        // refuses it (MOV_FILE_VALUE_RUNS), so nothing stages a nested call.
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         self.bind_evaluated(&expr, slot, scope).await
@@ -2282,8 +2256,9 @@ impl Run<'_> {
         self.host.request(request).await.map_err(Failure::Host)
     }
 
-    /// `value` for a host request. Admission keeps a record from every
-    /// request's values; one that got past fails the run before the request.
+    /// `value` for a host request. A record is never a host request's value:
+    /// one that reaches here (a known gap in the checker) fails the run
+    /// before the request.
     pub(crate) fn encode(&self, value: &Js) -> Result<Json, Failure> {
         self.wire.encode(value).map_err(|crate::env::HeldRecord(kind)| {
             Failure::unreproduced(
@@ -2818,30 +2793,14 @@ mod tests {
         }
     }
 
-    /// A run that ends in this engine's own refusal (met after an effect)
-    /// says so on its `done`, apart from the TypeScript's own
-    /// MOVENG_UNSUPPORTED, which this engine mirrors and the wire codes the
-    /// same.
-    #[test]
-    fn an_unreproduced_ending_is_marked_apart_from_a_mirrored_one() {
-        let own = Failure::unreproduced("a bound write", "the Rust engine runs identity writes");
-        let mirrored = Failure::unsupported("DOMAIN_OF", "");
-        assert_eq!(own.to_json()["code"], mirrored.to_json()["code"]);
-        assert_eq!(own.marked(json!({ "thrown": own.to_json() }))["unreproduced"], json!(true));
-        let failed = own.marked(json!({ "failed": { "error": own.to_json(), "result": {} } }));
-        assert_eq!(failed["unreproduced"], json!(true));
-        assert_eq!(mirrored.marked(json!({ "thrown": mirrored.to_json() })).get("unreproduced"), None);
-    }
-
     /// The pinned instant with no offset is UTC, whatever zone the host
-    /// names (a `localZone` is not read from version 5): 00:30 on 15 July is
+    /// names (the run reads no zone of its own from version 5): 00:30 on 15 July is
     /// the 15th.
     #[test]
     fn the_pinned_instant_with_no_offset_is_utc() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-15\" {\n    s = msg.`subject`\n  }\n}";
         let mut input = segment_input(source, json!(["o", [["subject", "Hi"]]]), &[]);
         input["now"] = json!("2026-07-15T00:30");
-        input["localZone"] = json!("America/Los_Angeles");
         let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
         assert!(done.get("result").is_some(), "{done}");
         assert!(seen.iter().any(|r| r.family == "adapters" && r.method == "call"));

@@ -42,7 +42,6 @@
     "dev:link": "cd apps/api && pnpm run dev:link",
     "dev:movement": "cd apps/api && pnpm run dev:movement",
     "deploy:check": "cd apps/api && pnpm run deploy:check",
-    "engine:refusals": "cd apps/api && pnpm run engine:refusals",
     "engine:patterns": "cd apps/api && pnpm run engine:patterns --",
     "dev:mvt-eval": "cd apps/api && pnpm run dev:mvt-eval",
     "dev:automation-eval": "cd apps/api && pnpm run dev:automation-eval",

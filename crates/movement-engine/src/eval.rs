@@ -44,10 +44,9 @@ pub enum ErrorClass {
     RangeError,
     /// What JavaScript throws reading a property off nothing.
     TypeError,
-    /// This engine's own refusal of a reading it does not reproduce, raised
-    /// where the TypeScript engine would read on: reported as
-    /// `MOVENG_UNSUPPORTED`, and never forgiven by a collection op's
-    /// `onError`, which forgives only what the TypeScript's member threw.
+    /// This engine's own refusal of a construct it has no case for: reported
+    /// as `MOVENG_UNSUPPORTED`, and never forgiven by a collection op's
+    /// `onError`, which forgives only what the member itself threw.
     Unreproduced,
 }
 
@@ -55,9 +54,9 @@ pub enum ErrorClass {
 pub enum EvalError {
     /// What the TypeScript evaluator throws, constructed as it constructs it.
     Thrown { class: ErrorClass, message: String },
-    /// A value or construct whose JavaScript reading this engine does not
-    /// reproduce (a text only V8's date parser reads, a regex feature): the
-    /// TypeScript evaluator answers it instead.
+    /// A reading that needs the run (an ambient, `AI()`, a record, a
+    /// resource field): the standalone evaluator hands it back, and inside a
+    /// run the reader answers it, so a run only meets it as a refusal.
     Fallback(String),
     /// A host request the evaluation awaited failed (`Reader`): the run
     /// fails with the host's own error.

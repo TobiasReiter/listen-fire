@@ -280,7 +280,7 @@ read fails before the host is asked anything, with MOVENG_UNSUPPORTED
 | `resume_state_does_not_read` | it does not read off the wire; its scopes, frames or journals (a frame's own) are not lists; or a descriptor has no kind this engine rebuilds | nothing: a malformed or foreign record |
 | `resume_state_version` | a version other than 2 (docs/contracts/park-state.md: version 2 names code by its place in the pinned program, and pins each library by `park.sources` hash) | nothing: a version 1 state is the TypeScript engine's, and a version 5 run it parked fails its resume by `parkedOnEngine` before reaching here |
 | `resume_state_suspended` | a `suspended` other than `true` | nothing: the park-state contract refuses it |
-| `resume_state_code_does_not_read` | code the state names (a closure, a run-time arm's body, a body-local declaration, a kept walk's head or mapping) that does not resolve in the pinned program | nothing: this engine writes only paths that resolve |
+| `resume_state_code_does_not_read` | code the state names (a closure, a run-time arm's body, a body-local declaration, a kept walk's head or mapping) that is not text, or whose place holds no code of that kind in the pinned program (checked once the program and its pinned libraries are read, before anything runs); a code reference declared in a library the program does not link | nothing: this engine writes only places that resolve |
 | `resume_state_kind:blockMeta` | a block's meta edges bound as a name | nothing: no run makes one (the TypeScript's builders of it are called nowhere, and version 5 retires every `#` hop) |
 
 A state that reads but is malformed for its kind (a `handle` without its
@@ -290,27 +290,36 @@ back ("the parked state's libraries do not read").
 
 **Mid-run: this engine's own.** A construct this engine has no case for
 fails the run where it is met, with MOVENG_UNSUPPORTED "<construct> is not
-supported by the movement engine yet (<detail>)" and `unreproduced: true`
-beside the error (`ErrorClass::Unreproduced`; never forgiven by a
-collection op's `onError`). The writes before it are kept, as for any
-failure.
+supported by the movement engine yet (<detail>)" (`ErrorClass::Unreproduced`;
+never forgiven by a collection op's `onError`). The writes before it are
+kept, as for any failure.
 
 | construct | when | what closes it |
 |---|---|---|
 | `this statement` | a statement kind the run has no case for | nothing known: the parser and the checker pass no other kind |
 | `the call '<callee>'`, `this right-hand side` | a bound call of a name that is no built-in, read where only an expression is run; a right-hand side of another kind there | nothing known: the run dispatches every call and right-hand side the checker passes before it reaches here |
-| `a nested call in a file-level value` | a call written inside a file-level value | nothing: the checker refuses it from version 5 (MOV_FILE_VALUE_RUNS) |
-| `a bound write` | `write … bind` | nothing: the checker refuses it from version 5 (MOV_WRITE_BIND_RETIRED) |
-| `a write from a member path` | a position write still rooted at an expression when it runs | nothing known: every member-path root (`write m.k { … }`) is bound to a name for the write first (crate::write `bound_target_roots`) |
 | `reading '<name>' in an expression` | a walk inside an expression rooted at a name bound to something no walk starts from (a node, a callback, a kept walk) | a walk off each such binding where the checker passes one |
 | `this reading (<reason>)` | an expression the evaluator could not finish without the run, read where no run is at hand (`EvalError::Fallback`): `an ambient is the run's`, `AI() is the run's`, `a record is the run's`, `<id> is not a built-in this engine runs`, `WITHIN reads the host's clock`, … | nothing known: every evaluation inside a run has the run as its reader |
 | `handing a record held as a value (<kind>) to the host` | a record other than the event, a callback, a shape position or a resource reaching a host request's values | nothing known: a backstop; the checker refuses each route found (MOV_WRITE_FIELD_TYPE, MOV_CALL_ARG_TYPE, MOV_CALL_ARG_MAYBE_RECORD, MOV_GRAPH_ENTRY_RECORD, MOV_GRAPH_SPREAD_RECORD) |
 | `<at>: parking a record (<kind>) as the data of its binding object` | a park reaching a record in a value no walk of held records finds | nothing known: a backstop |
-| `a file the host calls unreadable for <reason>` | a file reader answering `unreadable` with a reason outside `unsupported_type`, `bytes_unavailable`, `extraction_failed` and `no_text` (extract/resources.rs) | nothing: the host broke its typed contract |
+
+**Mid-run: a host answer that is not its contract's shape.** A host answer
+this engine reads a member of (`lookup.resolveActingUser`:
+`{principal: {id, display?}, email?}`; `llm.transforms.invoke`: `{text?,
+data?, records?, outcome?}` with every record an object;
+`park.callbacks.calls`: a list; an awaitable adapter's `resolveAwait`: an
+object with a status and, landed, a list of landings; a refetching adapter's
+`readRecord`: an object or null; `files.resolveFileText`'s `unreadable`: one
+of its four reasons) is held to that shape where it is read. One of another
+shape ends the run with MOVENG_RUNTIME "the host's <call> answered something
+malformed: expected <what>, got <what came>", never a JavaScript TypeError.
+The marker `unreproduced: true` that once rode beside an engine refusal on
+`done` is gone: nothing read it, and the error class already keeps such a
+refusal out of `onError`.
 
 **Mid-run: the language's own.** Every other MOVENG_UNSUPPORTED a run can
 meet is a failure the TypeScript engine had in its words, kept here with
-its message and no `unreproduced` marker: the checker refuses each program
+its message: the checker refuses each program
 that reaches one under version 5, or the construct depends on what a value
 or a host holds at run time. Each names its construct:
 
@@ -1056,12 +1065,7 @@ conjuncts' fields in order, a false one ending the reads.)
 
 The shim fails the run on either of the last two. Beside any of the first
 three, `cost: [{source, microdollars}]` is what the segment's priced calls
-spent, by source, for the run's account. Beside `failed` or `thrown`,
-`unreproduced: true` says the error is this engine's own refusal of a
-construct it has no case for ("Mid-run: this engine's own" above): its
-`error` is coded MOVENG_UNSUPPORTED, as the language's own failures are, so
-the marker is what tells the two apart (PLAN-08A Task 1). The shim does not
-read it yet.
+spent, by source, for the run's account.
 
 `error` is `{class: "MovementEngineError", code, message}` (`message` without
 the `CODE: ` the TypeScript constructor adds), `{class: "Error" |
