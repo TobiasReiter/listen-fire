@@ -108,8 +108,6 @@ function emailAdapter(): Adapter {
 }
 
 async function writesOf(source: string, languageVersion: 4 | 5): Promise<unknown[]> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = 'ts';
   const created: unknown[] = [];
   const crm: Adapter = {
     ...emailAdapter(),
@@ -119,26 +117,21 @@ async function writesOf(source: string, languageVersion: 4 | 5): Promise<unknown
       return { adapterType: 'attio', externalId: `co-${created.length}`, data: {} };
     },
   };
-  try {
-    await runMovement({
-      source,
-      languageVersion,
-      event: { pipelineInputId: 'pi-keyword-upgrade', adapterType: 'email', triggerType: 'webhook', payload: { text: 'Acme (Ada, Grace) and Initech.' } },
-      teamId: TEAM_ID,
-      catalog,
-      credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
-      host: makeTestHost({
-        adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : emailAdapter()) },
-        llm: {
-          client: { call: async () => ({ parsedJson: KEYWORD_REPLY }) },
-          extractCall: { call: async () => ({ parsedJson: CALL_REPLY, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } }) },
-        },
-      }),
-    });
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  }
+  await runMovement({
+    source,
+    languageVersion,
+    event: { pipelineInputId: 'pi-keyword-upgrade', adapterType: 'email', triggerType: 'webhook', payload: { text: 'Acme (Ada, Grace) and Initech.' } },
+    teamId: TEAM_ID,
+    catalog,
+    credentialIds: credentialIdsFor(catalog, (name) => `cred-${name}`),
+    host: makeTestHost({
+      adapters: { resolve: (r) => (r.adapterType === 'attio' ? crm : emailAdapter()) },
+      llm: {
+        client: { call: async () => ({ parsedJson: KEYWORD_REPLY }) },
+        extractCall: { call: async () => ({ parsedJson: CALL_REPLY, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 } }) },
+      },
+    }),
+  });
   return created;
 }
 

@@ -467,70 +467,28 @@ describe('an arrow body that is a combinator (language version 5)', () => {
   });
 });
 
-// ── Both engines ──────────────────────────────────────────────────────────────
+// ── Parked and resumed ───────────────────────────────────────────────────────
 //
-// The Rust engine runs every form above as the TypeScript engine does: the
-// same writes, and where a run parks, the same parked bytes whichever engine
-// wrote them, resuming on either engine to the same end. Under `rust` the
-// fallback is `none`, so a run the Rust engine refused fails here.
+// Every form above, on the engine its version runs on (5: the Rust engine),
+// where a run parks resumed to its end.
 
-type Engine = 'ts' | 'rust';
-const ENGINES: Engine[] = ['ts', 'rust'];
-
-async function onEngine<T>(engine: Engine, run: () => Promise<T>): Promise<T> {
-  const previous = { engine: process.env.MOVEMENT_ENGINE, fallback: process.env.MOVEMENT_ENGINE_FALLBACK };
-  process.env.MOVEMENT_ENGINE = engine;
-  if (engine === 'rust') process.env.MOVEMENT_ENGINE_FALLBACK = 'none';
-  else delete process.env.MOVEMENT_ENGINE_FALLBACK;
-  try {
-    return await run();
-  } finally {
-    if (previous.engine === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous.engine;
-    if (previous.fallback === undefined) delete process.env.MOVEMENT_ENGINE_FALLBACK;
-    else process.env.MOVEMENT_ENGINE_FALLBACK = previous.fallback;
+/** `source` started and, where it parks, every parked leaf resumed: every
+ *  write the run made, and whether it parked. */
+async function parkAndResume(source: string): Promise<{ creates: WriteInput[]; parked: boolean }> {
+  const parks = makeParkSink();
+  const first = await start(source, parks);
+  const parked = first.result.parked === true;
+  const creates: WriteInput[] = [...first.kg.creates];
+  for (let guard = 0; parked && parks.parks.size > 0 && guard < 10; guard++) {
+    const address = [...parks.parks.keys()].sort()[0]!;
+    const { kg } = await resumeAt(source, parks, address);
+    creates.push(...kg.creates);
   }
+  expect(parks.parks.size).toBe(0);
+  return { creates, parked };
 }
 
-/** Everything a run parked: each leaf's state and each branch's export. */
-function parkedBytes(parks: Sink): string {
-  return JSON.stringify({
-    parks: [...parks.parks.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
-    exports: [...parks.exports.entries()].map(([frame, rows]) => [frame, [...rows.entries()]]),
-  });
-}
-
-/** `source` started on each engine and, where it parks, resumed on each
- *  engine (each way round from a fresh start, so the sink's joins are the
- *  run's own): the first parks are the same bytes, and every way round ends
- *  with the same writes and leaves the same parks. The TypeScript engine's
- *  end. */
-async function acrossEngines(source: string): Promise<{ creates: WriteInput[]; parked: boolean }> {
-  const firstParks: Record<string, string> = {};
-  const ends: Record<string, { creates: WriteInput[]; left: string }> = {};
-  let parked = false;
-  for (const parkOn of ENGINES) {
-    for (const resumeOn of ENGINES) {
-      const parks = makeParkSink();
-      const first = await onEngine(parkOn, () => start(source, parks));
-      firstParks[parkOn] = parkedBytes(parks);
-      parked = first.result.parked === true;
-      const creates: WriteInput[] = [...first.kg.creates];
-      for (let guard = 0; parked && parks.parks.size > 0 && guard < 10; guard++) {
-        const address = [...parks.parks.keys()].sort()[0]!;
-        const { kg } = await onEngine(resumeOn, () => resumeAt(source, parks, address));
-        creates.push(...kg.creates);
-      }
-      ends[`${parkOn}→${resumeOn}`] = { creates, left: parkedBytes(parks) };
-    }
-  }
-  expect(firstParks.rust).toEqual(firstParks.ts);
-  const reference = ends['ts→ts']!;
-  for (const [way, end] of Object.entries(ends)) expect({ way, ...end }).toEqual({ way, ...reference });
-  return { creates: reference.creates, parked };
-}
-
-describe('both engines: closures as values (version 5)', () => {
+describe('closures as values, parked and resumed (version 5)', () => {
   const TOP = [
     'function one() {',
     '  return "one"',
@@ -600,25 +558,21 @@ describe('both engines: closures as values (version 5)', () => {
     },
   };
   for (const [name, { body, payload }] of Object.entries(CASES)) {
-    it(`${name}: the same writes, and the same parks, on both engines`, async () => {
-      const { creates } = await acrossEngines(withTop(body));
+    it(`${name}: the writes, parked and resumed`, async () => {
+      const { creates } = await parkAndResume(withTop(body));
       expect(payloadOf(creates)).toEqual(payload);
     }, 30_000);
   }
 
-  it('an arm onError: "warn" forgives leaves the same trace on both engines', async () => {
+  it('an arm onError: "warn" forgives leaves a trace naming it', async () => {
     const source = withTop(['  r = all(() => { fail("boom") }, () => { return 2 }, { onError: "warn" })', write('r: r')]);
-    const traces: unknown[] = [];
-    for (const engine of ENGINES) traces.push(await onEngine(engine, async () => (await start(source, makeParkSink())).result.trace));
-    expect(JSON.stringify(traces[1])).toEqual(JSON.stringify(traces[0]));
-    expect(JSON.stringify(traces[0])).toContain("'all' left the slot of arm 0 of 2 null, because the arm failed");
+    const { result } = await start(source, makeParkSink());
+    expect(JSON.stringify(result.trace)).toContain("'all' left the slot of arm 0 of 2 null, because the arm failed");
   });
 
-  it('an arm that fails fails the run on both engines, with the same error', async () => {
+  it('an arm that fails fails the run, with its error', async () => {
     const source = withTop(['  r = all(() => { fail("boom") }, () => { return 2 })', write('r: r')]);
-    const errors: string[] = [];
-    for (const engine of ENGINES) errors.push(await onEngine(engine, () => start(source, makeParkSink()).then(() => 'no error', (e: unknown) => String(e))));
-    expect(errors[1]).toEqual(errors[0]);
-    expect(errors[0]).toContain('boom');
+    const error = await start(source, makeParkSink()).then(() => 'no error', (e: unknown) => String(e));
+    expect(error).toContain('boom');
   });
 });

@@ -1556,19 +1556,12 @@ describe('every family crosses as JSON', () => {
       { park: { sink: parks.sink, sources } },
       { imports: ['import { noted } from "lib/notes"'] },
     );
-    // Only the Rust engine pins libraries (park state version 2).
-    const previous = process.env.MOVEMENT_ENGINE;
-    process.env.MOVEMENT_ENGINE = 'rust';
-    try {
-      expect((await h.run({ catalog })).parked).toBe(true);
-      expect([...texts.values()]).toEqual([catalog.files['lib/notes'].source]);
-      for (const [address, park] of [...parks.parks.entries()]) {
-        parks.parks.delete(address);
-        await h.resume(park.state, { catalog });
-      }
-    } finally {
-      if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-      else process.env.MOVEMENT_ENGINE = previous;
+    // Only the Rust engine (version 5 on) pins libraries (park state version 2).
+    expect((await h.run({ catalog })).parked).toBe(true);
+    expect([...texts.values()]).toEqual([catalog.files['lib/notes'].source]);
+    for (const [address, park] of [...parks.parks.entries()]) {
+      parks.parks.delete(address);
+      await h.resume(park.state, { catalog });
     }
     expect(h.crm.creates.map((c) => c.fields.title)).toEqual(['slept!']);
   });

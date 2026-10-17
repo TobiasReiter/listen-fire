@@ -61,30 +61,6 @@ function inputOf(source: string, languageVersion: LanguageVersion, runId: string
   };
 }
 
-const NAMES = ['MOVEMENT_ENGINE', 'MOVEMENT_ENGINE_FALLBACK', 'MOVEMENT_ENGINE_V5_ON_TS', 'MOVEMENT_ENGINE_DRY_RUN_EVERY'] as const;
-type Config = Partial<Record<(typeof NAMES)[number], string>>;
-
-/** Runs `body` under exactly `config` (every other engine variable unset). */
-async function under<T>(config: Config, body: () => Promise<T>): Promise<T> {
-  const previous = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));
-  for (const name of NAMES) {
-    const value = config[name];
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-  try {
-    return await body();
-  } finally {
-    for (const name of NAMES) {
-      const value = previous[name];
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-  }
-}
-
-const BY_VERSION: Config = { MOVEMENT_ENGINE: 'by-version' };
-
 const V5 = (...body: string[]) =>
   [
     'import { `@lf/email` as email } from adapters',
@@ -141,8 +117,8 @@ const bodies = (writes: unknown[]): unknown => JSON.parse(JSON.stringify(writes,
 
 describe('the v5 spine gaps run as their v4 spelling does', () => {
   it.each(PAIRS)('%s', async (_what, v5, v4) => {
-    const old = await under(BY_VERSION, () => runMovement(inputOf(V4(...v4), 4, 'run-v4')));
-    const next = await under(BY_VERSION, () => runMovement(inputOf(V5(...v5), 5, 'run-v5')));
+    const old = await runMovement(inputOf(V4(...v4), 4, 'run-v4'));
+    const next = await runMovement(inputOf(V5(...v5), 5, 'run-v5'));
     expect(recorded.map((r) => r.engine)).toEqual(['ts', 'rust']);
     expect(old.writes.length).toBeGreaterThan(0);
     expect(bodies(next.writes)).toEqual(bodies(old.writes));
@@ -151,16 +127,16 @@ describe('the v5 spine gaps run as their v4 spelling does', () => {
   // The event names no record kind, so `is` stops both runs alike: the v5
   // condition reached the `is` test, not a parse refusal.
   it('is inside the if parentheses reaches the type test', async () => {
-    const old = under(BY_VERSION, () => runMovement(inputOf(V4('  if msg IS <inbox-[:message]->> {', '    write inbox-[:note]-> { body: msg.`subject` }', '  }'), 4, 'run-v4')));
-    const next = under(BY_VERSION, () => runMovement(inputOf(V5('  if (msg is <inbox-[:message]->>) {', '    write inbox-[:note]-> { body: msg.`subject` }', '  }'), 5, 'run-v5')));
+    const old = runMovement(inputOf(V4('  if msg IS <inbox-[:message]->> {', '    write inbox-[:note]-> { body: msg.`subject` }', '  }'), 4, 'run-v4'));
+    const next = runMovement(inputOf(V5('  if (msg is <inbox-[:message]->>) {', '    write inbox-[:note]-> { body: msg.`subject` }', '  }'), 5, 'run-v5'));
     await expect(old).rejects.toThrow("can't tell what kind of record 'msg' is");
     await expect(next).rejects.toThrow("can't tell what kind of record 'msg' is");
     expect(recorded.map((r) => r.engine)).toEqual(['ts', 'rust']);
   });
 
   it('fail stops the run with its message, as ERROR does', async () => {
-    const old = under(BY_VERSION, () => runMovement(inputOf(V4('  if msg.`subject` != NULL {', '    ERROR("no ${msg.`subject`}")', '  }'), 4, 'run-v4')));
-    const next = under(BY_VERSION, () => runMovement(inputOf(V5('  if (msg.`subject` != null) {', '    fail("no ${msg.`subject`}")', '  }'), 5, 'run-v5')));
+    const old = runMovement(inputOf(V4('  if msg.`subject` != NULL {', '    ERROR("no ${msg.`subject`}")', '  }'), 4, 'run-v4'));
+    const next = runMovement(inputOf(V5('  if (msg.`subject` != null) {', '    fail("no ${msg.`subject`}")', '  }'), 5, 'run-v5'));
     await expect(old).rejects.toThrow('no Acme');
     await expect(next).rejects.toThrow('no Acme');
     expect(recorded.map((r) => r.engine)).toEqual(['ts', 'rust']);

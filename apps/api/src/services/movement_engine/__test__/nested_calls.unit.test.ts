@@ -382,39 +382,24 @@ listen to runs {} fire recap
   });
 });
 
-describe('a field read off a nested call that hands back a record (both engines)', () => {
+describe('a field read off a nested call that hands back a record', () => {
   // `pick` writes a note and hands back its handle; `pick("Beta").body` reads
   // a field off it in a write field, in a call's argument, and in a call
-  // whose value is bound. The Rust engine runs each whole (no fallback), and
-  // writes what the TypeScript does.
-  async function onEngine<T>(engine: 'ts' | 'rust', run: () => Promise<T>): Promise<T> {
-    const previous = { engine: process.env.MOVEMENT_ENGINE, fallback: process.env.MOVEMENT_ENGINE_FALLBACK };
-    process.env.MOVEMENT_ENGINE = engine;
-    process.env.MOVEMENT_ENGINE_FALLBACK = 'none';
-    try {
-      return await run();
-    } finally {
-      for (const [key, value] of [['MOVEMENT_ENGINE', previous.engine], ['MOVEMENT_ENGINE_FALLBACK', previous.fallback]] as const) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
-  }
+  // whose value is bound. Each version on its own engine (4: TypeScript, 5:
+  // Rust).
   for (const version of [4, 5] as LanguageVersion[]) {
     const v4 = version < 5;
     const fileLevel = `${v4 ? MARK_V4 : MARK}${v4 ? 'movement' : 'function'} pick(t: <text>) {\n  co = write graph-[:note]-> { body: t }\n  return co\n}\n`;
     const pick = v4 ? 'pick(t: "Beta")' : 'pick("Beta")';
     const mark = (arg: string): string => (v4 ? `mark(t: ${arg})` : `mark(${arg})`);
-    it(`v${version}: reads the field, and every write lands as on the TypeScript engine`, async () => {
+    it(`v${version}: reads the field, and every write lands`, async () => {
       for (const [body, expected] of [
         [`  write graph-[:note]-> { body: ${pick}.body }`, [{ body: 'Beta' }, { body: 'Beta' }]],
         [`  ${mark(`${pick}.body`)}`, [{ body: 'Beta' }, { body: 'Beta' }]],
         [`  x = ${mark(`${pick}.body`)}\n  write graph-[:note]-> { payload: { x: x } }`, [{ body: 'Beta' }, { body: 'Beta' }, { payload: { x: 'Beta' } }]],
       ] as const) {
-        const ts = await onEngine('ts', () => runBody(body, { languageVersion: version, fileLevel }));
-        const rust = await onEngine('rust', () => runBody(body, { languageVersion: version, fileLevel }));
-        expect(ts.map((c) => c.fields)).toEqual(expected);
-        expect(rust.map((c) => c.fields)).toEqual(expected);
+        const creates = await runBody(body, { languageVersion: version, fileLevel });
+        expect(creates.map((c) => c.fields)).toEqual(expected);
       }
     }, 60_000);
   }

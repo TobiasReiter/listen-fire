@@ -1,10 +1,9 @@
 // The record verbs in the Rust engine (chunk 5B task 5) — match, link,
-// unlink, delete, a target's WHERE, and writes off a traversed record — held
-// to the TypeScript engine: each program runs under MOVEMENT_ENGINE=ts and
-// =rust against fresh fakes, and the two must agree on everything a caller
-// can see — the result or the error, the trace, the resolver's requests, the
-// judge's questions, a rehearsal's captured writes, and every call the
-// adapters received, in order and key for key (compared as JSON text).
+// unlink, delete, a target's WHERE, and writes off a traversed record — each
+// program run against fresh fakes, and everything a caller can see — the
+// result or the error, the trace, the resolver's requests, the judge's
+// questions, a rehearsal's captured writes, and every call the adapters
+// received, in order and key for key — held to the recorded snapshot.
 
 import {
   CURRENT_LANGUAGE_VERSION,
