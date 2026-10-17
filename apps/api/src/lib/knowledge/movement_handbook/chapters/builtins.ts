@@ -11,7 +11,7 @@ Inside walk brackets \`-[…]->\` these functions are spelled in capitals: \`LOW
 
 ## Core words
 
-### ISNULL
+### x == null
 
 \`x == null\` → \`boolean\`, always present — the presence test inverted (\`x != null\` is true when there is a value). Takes a bound name or a field read off one (\`x.\`Field\` == null\`), and proving a field absent proves nothing about the record it came off — proving it *present* (\`!= null\`) is what narrows the record.
 
@@ -137,7 +137,7 @@ delta = -(after - before)
 leftover = amount % batch_size
 \`\`\`
 
-### AT
+### xs[i]
 
 Indexing, by what you index. \`xs[n]\` → \`T | absent\` — a number index into a list, needing an ordered sequence exactly as \`first\` does (refused otherwise). A list literal is a tuple, so \`[a, b][0]\` reads the first slot exactly and is always present. \`d.k\` → present when \`k\` is one of the dict's own written keys (a typo is refused with a did-you-mean). \`d[key]\` → \`T | absent\` when the key is computed at run time, or when the dict's per-key shape isn't known (a system value, a \`List.groupBy\`/\`List.keyBy\` result — its keys are data, not declarations).
 
@@ -297,17 +297,13 @@ pages = Number.floor(Text.length(text) / 3000)
 batches = Number.ceil(count(rows) / 50)
 \`\`\`
 
-### TONUMBER
-
-\`Number.parse(text)\` → a number parsed out of the text, or nothing when it doesn't parse — treat it like any other value that can come back empty (\`?:\`, \`coalesce\`, or a guard) before using it where a number is required.
-
-\`\`\`
-n = Number.parse(msg.Subject)
-\`\`\`
-
 ### Number.parse
 
-\`Number.parse(value)\` → \`number\` — coerces text to a number. \`NUMBER(value)\` is its spelling inside walk brackets.
+\`Number.parse(value)\` → \`number\` — coerces text to a number. Text that is not a number gives nothing, so guard it (\`?:\`, \`coalesce\`, or a check) where the text comes from outside. \`NUMBER(value)\` is its spelling inside walk brackets.
+
+\`\`\`
+n = Number.parse(msg.Subject) ?: 0
+\`\`\`
 
 \`\`\`
 crm-[t:Teams WHERE t.\`Team Size\` <= NUMBER(m.Body)]->
