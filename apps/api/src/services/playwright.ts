@@ -1,6 +1,6 @@
 import type { Page, Browser, BrowserContextOptions } from 'playwright';
 
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 import { MINUTE } from '../constants';
 import { logger } from 'movement-engine/public/log';
 

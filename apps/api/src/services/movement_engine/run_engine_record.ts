@@ -10,7 +10,7 @@
 import type { TriggerRunId } from '../../generated/kysely/automations/TriggerRun';
 import { getAutomationsQb } from '../../lib/kysely';
 import { logger } from 'movement-engine/public/log';
-import { setRunEngineRecorder, type RunEngineRecord } from 'movement-engine/public/run-support';
+import { setRunEngineRecorder, type RunEngineRecord } from 'movement-engine/public/movement-engine';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

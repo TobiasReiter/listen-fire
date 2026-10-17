@@ -34,7 +34,7 @@ import {
   gmailMailboxAllowlist,
   isGoogleServiceAccountConfigured,
 } from 'movement-engine/public/google-cloud';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import {
   GMAIL_REFRESH_TOKEN_REFUSED_MESSAGE,
   GmailRefreshTokenError,

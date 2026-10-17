@@ -10,7 +10,7 @@ import { backOff } from 'exponential-backoff';
 import { OcrAdapter } from './interface';
 import { MB, OCR_START_PAGE_TAG, SECOND } from '../../constants';
 import { streamToBuffer } from '../../lib/utils/stream';
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 import { logger } from 'movement-engine/public/log';
 
 // This queue is used to limit the number of concurrent requests to the Google Document AI API

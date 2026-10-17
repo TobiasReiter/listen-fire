@@ -6,7 +6,7 @@ import type { Resolved } from 'movement-engine/public/models';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
 import { geminiClient } from '../providers/gemini';
-import { GEMINI_EMBEDDING_MODELS } from 'movement-engine/public/model-calls';
+import { GEMINI_EMBEDDING_MODELS } from 'movement-engine/public/models';
 
 /**
  * `gemini-embedding-001` truncates a vector to `outputDimensionality` WITHOUT

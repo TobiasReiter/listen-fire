@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 
 import Redis from 'ioredis';
 
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 import { getRedisPool, redisConfigured } from '../redisPool';
 
 const requestQueue = new Queue<Readable | null>({ concurrency: 10 });

@@ -32,7 +32,7 @@ import { spelledFor } from '../../../../packages/movement-lang/checker/__test__/
 import { tenantIdOf } from '../../../../packages/engine-contracts';
 import type { HostRecording } from '../../../../packages/engine-contracts/conformance';
 import { recordEntry, recordedError } from '../../../../apps/api/src/services/movement_engine/conformance/recorder';
-import { KNOWN_GAPS, reasonOf } from '../../../../apps/api/src/services/movement_engine/__test__/reachability_gaps';
+import { KNOWN_GAPS, reasonOf } from '../../../../packages/movement-engine/services/movement_engine/__test__/reachability_gaps';
 import { resumeMovement, runMovement } from '../../../../packages/movement-engine/services/movement_engine/run';
 import { EVENT_DOES_NOT_CROSS } from '../../../../packages/movement-engine/services/movement_engine/rust_engine';
 import { resetRustRunStats, rustRunStats } from '../../../../packages/movement-engine/services/movement_engine/rust_stats';

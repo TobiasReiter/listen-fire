@@ -1,5 +1,6 @@
-// Inbound events: the trigger event a run starts from, the trigger scope
-// rules, discrimination, and the remote delivery signature.
+// Inbound events: the trigger event a run starts from, the listeners a
+// program declares, the trigger scope rules, discrimination, the remote
+// delivery signature, and the doors a module pushes through.
 
 export * from '../services/translation_graph/triggers/types';
 export * from '../services/translation_graph/triggers/trigger_event';
@@ -12,3 +13,4 @@ export * from '../services/inbound/push';
 export * from '../services/inbound/mail';
 export * from '../services/inbound/shared';
 export * from '../services/inbound/contract';
+export * from '../services/translation_graph/movement/file_listeners';

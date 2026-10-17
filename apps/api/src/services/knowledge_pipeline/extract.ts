@@ -26,7 +26,7 @@ import type {
 } from './types';
 
 import { execute } from '../../lib/prompts/execute';
-import { parseJson } from 'movement-engine/public/utils';
+import { parseJson } from 'movement-engine/public/json';
 import { promptDef } from '../../lib/prompts/definition';
 import { PromptFragment } from '../../lib/prompts/fragments';
 import { anthropicChat } from '../../lib/anthropic';

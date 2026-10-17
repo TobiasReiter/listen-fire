@@ -27,6 +27,12 @@ Gates everything accumulated on local main since the last gate.
      Add `--maxWorkers=4` on the command line: the unit config pins
      `maxWorkers: 1` for interactive runs, and a gate leg of ~240 suites at
      ~12s each takes ~50 min serially (seen 2026-10-05).
+   - The engine package's own suites (every gate that touched the engine, a
+     host family, the module kit or a module): in packages/movement-engine,
+     `pnpm test` (the suites moved out of apps/api, with the TypeScript host's
+     limits and the run host's in-memory store among them), and in
+     packages/module-kit, `pnpm test`. No CI workflow runs them (only the
+     Rust shim's five run in movement-wasm.yml), so this leg is their gate.
    - The checks corpus (every gate, whatever the chunk touched): in
      packages/movement-lang, `pnpm checks:corpus` (about 16 min). It runs the
      three corpus-wide checks that CI does not, because the checks pin holds

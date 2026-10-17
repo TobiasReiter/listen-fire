@@ -1,7 +1,7 @@
-import type { EventType } from 'movement-engine/services/translation_graph/adapter';
+import type { EventType } from '../../../adapter';
 
-import { discriminateEvent } from 'movement-engine/services/translation_graph/engine/inbound/discriminate';
-import { isStablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
+import { discriminateEvent } from '../discriminate';
+import { isStablePosition, positionData, positionRecordId } from '../../../types';
 
 const TYPES: EventType[] = [
   { tag: 'company.updated', positionType: 'attio:companies', match: { path: 'id.object_id', equals: 'obj-co' } },

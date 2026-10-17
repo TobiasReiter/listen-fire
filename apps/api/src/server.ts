@@ -39,8 +39,8 @@ import { assertModelMapConfigured, modelKeyWarning, providerCredentialsPresent, 
 import { assertKnowledgeLlmModelConfigured, isKnowledgeLlmConfigured, knowledgeLlmModel } from './lib/knowledge/llm';
 import { assertJevConfigured } from './lib/jev/client';
 import { assertRunCostCapConfigured } from 'movement-engine/public/models';
-import { assertExtractionTiersConfigured } from 'movement-engine/public/run-support';
-import { assertMaxCallDepthConfigured, assertSegmentLimitsConfigured } from 'movement-engine/public/run-support';
+import { assertExtractionTiersConfigured } from 'movement-engine/public/boot-checks';
+import { assertMaxCallDepthConfigured, assertSegmentLimitsConfigured } from 'movement-engine/public/boot-checks';
 import { assertWriteLockTimeoutConfigured } from 'movement-engine/public/write-locks';
 import { assertEngineConfigured } from 'movement-engine/public/movement-engine';
 import { assertBrightDataSerpRateConfigured } from './services/web_search';

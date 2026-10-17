@@ -12,7 +12,7 @@ import { performance } from 'node:perf_hooks';
 
 import type { WorkerRegistry } from './registry';
 
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { mounts } from '../products';
 import { claimLoopTick } from '../lib/worker';
 import {

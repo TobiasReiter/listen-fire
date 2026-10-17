@@ -26,7 +26,7 @@ import {
   getClassifiedTransactionFlows,
   getInventoryForInvestments,
 } from '../../../../lib/valuations/inventory';
-import { startCase } from 'movement-engine/public/utils';
+import { startCase } from 'movement-engine/public/text';
 import { prismaClient } from '../../../../prisma';
 import { CurrencyAsset } from '../../../../lib/datasources/currency';
 import { convertConvertible } from '../../../../lib/convertible';
@@ -37,7 +37,7 @@ import {
 import { LegalEntity } from '../../../../lib/datasources/legal_entity';
 import { MessageCollector, ProcessMessage } from '../../../../lib/valuations/messages';
 import { AssetKey, InvestingEntityKey } from '../../../../lib/valuations/inventory/types';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { LegalEntityId } from '../../../../generated/kysely/valuations/LegalEntity';
 import { logFundingChange, formatCurrency } from '../../../../lib/funding-changelog';
 import { applyMarkdown } from '../../../../lib/valuations/commands/markdown';

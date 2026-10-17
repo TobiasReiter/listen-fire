@@ -8,8 +8,8 @@ import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { TriggerRunId } from '../../../generated/kysely/automations/TriggerRun';
 import type { TenantId } from 'engine-contracts';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { MovementTraceEntry } from 'movement-engine/public/run-support';
-import type { ExtractCallLlmClient } from 'movement-engine/public/model-calls';
+import type { MovementTraceEntry } from 'movement-engine/public/trace';
+import type { ExtractCallLlmClient } from 'movement-engine/public/models';
 import type {
   EngineHost,
   HostExtractCallClient,
@@ -55,7 +55,7 @@ import { resolveAdapter } from '../adapters/resolve';
 import { meteredArbitration } from '../engine/entity_match';
 import { adapterTable, type CredentialOwnership, type LiveAdapterResolver } from 'movement-engine/public/host';
 import { teamCredentials } from '../../credentials/credential_ownership';
-import { hostSegments, segmentScopedCalls } from 'movement-engine/public/run-support';
+import { hostSegments, segmentScopedCalls } from 'movement-engine/public/host';
 import { metered, refusingPastBudget } from 'movement-engine/public/models';
 import { renderFileArtifactFor } from './file_render';
 import { withFileOwners } from '../engine/files/retrieve';

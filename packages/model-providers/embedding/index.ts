@@ -6,7 +6,7 @@ import type { Resolved } from 'movement-engine/public/models';
 import type { EmbeddingModelName } from 'movement-engine/public/models';
 
 import { assertRunBudget } from 'movement-engine/public/models';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { assertCallable, resolveModel } from 'movement-engine/public/models';
 import { geminiEmbed } from './gemini';
 import { openAiEmbed } from './openai';

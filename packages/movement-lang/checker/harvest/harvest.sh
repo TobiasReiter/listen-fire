@@ -33,16 +33,16 @@ harvest() {
   HARVEST_CORPUS="$1" HARVEST_OUT="$T/$1.jsonl" CHECKS_CORPUS="${2:-}" node "$JEST" --config checker/harvest/jest.harvest.cjs
 }
 
-FIRST=(v1 v2 v3 v4 current api-v4 api-current)
+FIRST=(v1 v2 v3 v4 current api-v4 api-current engine)
 for c in "${FIRST[@]}"; do harvest "$c"; done
 first=()
 for c in "${FIRST[@]}"; do first+=("$c=$T/$c.jsonl"); done
 "${FOLD[@]}" "${mode:---partial}" "${first[@]}"
 
-for c in readers api-readers; do
+for c in readers engine-readers; do
   harvest "$c" 1 || echo "($c: its assertions are checked over the complete corpus below)"
 done
-"${FOLD[@]}" ${mode:+"$mode"} "${first[@]}" "readers=$T/readers.jsonl" "api-readers=$T/api-readers.jsonl"
+"${FOLD[@]}" ${mode:+"$mode"} "${first[@]}" "readers=$T/readers.jsonl" "engine-readers=$T/engine-readers.jsonl"
 
 CHECKS_CORPUS=1 node "$JEST" --config jest.config.borrowed.cjs checker/__test__/checks_regression checker/__test__/upgrade_corpus
-(cd ../../apps/api && CHECKS_CORPUS=1 node node_modules/jest/bin/jest.js --config src/test/jest-unit.config.ts src/services/movement_engine/__test__/reachability)
+(cd ../movement-engine && CHECKS_CORPUS=1 node "$JEST" --config jest.config.borrowed.cjs services/movement_engine/__test__/reachability)

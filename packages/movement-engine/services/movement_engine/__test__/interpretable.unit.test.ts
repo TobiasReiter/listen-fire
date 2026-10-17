@@ -4,7 +4,7 @@
 // failing firings later. Pure AST scan; no DB, no adapter registry.
 
 import { parseProgram } from 'movement-lang';
-import { listUnsupportedConstructs } from 'movement-engine/services/movement_engine/interpretable';
+import { listUnsupportedConstructs } from '../interpretable';
 
 const PRELUDE = `
 import { email, attio, kg } from adapters

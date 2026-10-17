@@ -25,21 +25,21 @@ import {
 } from 'movement-lang';
 import { SUPPORTED_PARK_STATE_VERSIONS, tenantIdOf, type AnyParkedScopeState } from 'engine-contracts';
 
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { positionData } from 'movement-engine/services/translation_graph/types';
-import { credentialIdsFor, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import type { Adapter } from '../../translation_graph/adapter';
+import { containerAssociation } from '../../translation_graph/adapter';
+import { positionData } from '../../translation_graph/types';
+import { credentialIdsFor, makeTestHost } from '../test_host';
 import {
   resumeMovement,
   runFailureCause,
   runMovement,
   type ParkSink,
   type RunMovementInput,
-} from 'movement-engine/services/movement_engine/run';
+} from '../run';
 import {
   resetRustRunStats,
   rustRunStats,
-} from 'movement-engine/services/movement_engine/rust_stats';
+} from '../rust_stats';
 
 jest.setTimeout(60_000);
 

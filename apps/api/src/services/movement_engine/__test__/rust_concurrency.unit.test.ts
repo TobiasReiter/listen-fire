@@ -6,7 +6,7 @@
 // state is shown by its address only; rust_park_identity holds the states),
 // and the assertions beside each case say what it is for.
 
-import { spelledForVersion5 } from './combinator_spelling';
+import { spelledForVersion5 } from 'movement-engine/services/movement_engine/__test__/combinator_spelling';
 import { fromCatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf, type CallbackCall } from 'engine-contracts';

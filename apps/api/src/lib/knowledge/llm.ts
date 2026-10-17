@@ -24,7 +24,7 @@ import { chatCallFor } from '../models/chat';
 import { providerCredentialsPresent, resolveModel } from 'movement-engine/public/models';
 import { anthropicKeyedChatProvider } from 'movement-engine/public/anthropic';
 import { parseChatModelName } from 'movement-engine/public/models';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { logger } from 'movement-engine/public/log';
 
 /**

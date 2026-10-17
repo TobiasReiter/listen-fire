@@ -30,10 +30,10 @@ import { consultEchoSuppression } from './echo_suppression';
 import { consultActorGate } from './actor_gate';
 import { markTriggerEventSuppressed } from './event_store';
 import * as loopGuard from '../../loop_guard';
-import { isWriteEffect } from 'movement-engine/public/run-support';
+import { isWriteEffect } from 'movement-engine/public/trace';
 import { notifyBreach } from '../../loop_guard/notify';
 import { resolveThresholds } from '../../loop_guard/thresholds';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import {
   movementForTrigger,
   runMovementFiring,

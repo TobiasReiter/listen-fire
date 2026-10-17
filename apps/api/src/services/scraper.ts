@@ -6,7 +6,7 @@ import type { CostSource } from 'movement-engine/public/models';
 import { SECOND } from '../constants';
 import { logger } from 'movement-engine/public/log';
 import { sendSlackNotification } from '../lib/slack';
-import { Queue } from 'movement-engine/public/utils';
+import { Queue } from 'movement-engine/public/queue';
 import { getEnvVar } from '../lib/utils/environment';
 import { looksLikeNonHtmlAddress } from '../lib/utils/url';
 import { assertRunBudget, reportRunCost } from 'movement-engine/public/models';

@@ -18,7 +18,7 @@ import type { AgentConversationId } from '../generated/kysely/public/AgentConver
 import type { TeamId } from '../generated/kysely/core/Team';
 
 import { getQb, getAutomationsQb } from '../lib/kysely';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 
 // ── Types ────────────────────────────────────────────────────────────────
 

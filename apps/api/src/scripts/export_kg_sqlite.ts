@@ -37,7 +37,7 @@ import type { Property } from '../generated/kysely/knowledge/Property';
 
 import { KG_ADAPTER_TYPE } from '../services/translation_graph/adapters/knowledge_graph';
 import { logger } from 'movement-engine/public/log';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { getAutomationsQb, getCoreQb, getKnowledgeQb } from '../lib/kysely';
 import PropertyValueType from '../generated/kysely/knowledge/PropertyValueType';
 import PropertyCardinality from '../generated/kysely/knowledge/PropertyCardinality';

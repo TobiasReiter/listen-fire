@@ -20,7 +20,7 @@ import { hostname } from 'node:os';
 
 import { sql, type ExpressionBuilder } from 'kysely';
 import { z } from 'zod';
-import { RunLeaseLost } from 'movement-engine/public/run-support';
+import { RunLeaseLost } from 'movement-engine/public/errors';
 
 import type { ParkReason } from 'engine-contracts';
 import type { ClaimedWork, CorrelatedAwait, LeafRow, RunHostStore } from 'movement-engine/public/run-host';

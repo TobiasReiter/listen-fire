@@ -5,7 +5,7 @@
 
 import { CURRENT_LANGUAGE_VERSION } from 'movement-lang';
 
-import { candidateIsAllExact, isBlankIdentityValue, type UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
+import { candidateIsAllExact, isBlankIdentityValue, type UniquenessConstraints } from '../uniqueness';
 
 const byName: UniquenessConstraints = { any: [{ all: [{ field: 'name' }] }] };
 

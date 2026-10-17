@@ -6,11 +6,11 @@
 // off and the edge it hangs off by, and says which of those parents this same
 // rehearsal invented a moment ago.
 
-import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
+import type { CapturedWrite } from '../dry_run_adapter';
+import type { Adapter } from '../../adapter';
+import type { MutationContext } from '../../mutation_context';
 
-import { newDryRunRehearsal, wrapAdapterForDryRun } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import { newDryRunRehearsal, wrapAdapterForDryRun } from '../dry_run_adapter';
 
 const MUTATION = {} as MutationContext;
 

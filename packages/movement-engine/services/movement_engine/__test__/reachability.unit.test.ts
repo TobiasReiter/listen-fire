@@ -32,16 +32,16 @@ import { corpusFile, overCorpus, SNAPSHOT_TABLE_FILE } from 'movement-lang/confo
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf } from 'engine-contracts';
 
-import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
-import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { positionData } from 'movement-engine/services/translation_graph/types';
-import { runMovement } from 'movement-engine/services/movement_engine/run';
-import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
+import type { Adapter } from '../../translation_graph/adapter';
+import { containerAssociation } from '../../translation_graph/adapter';
+import { positionData } from '../../translation_graph/types';
+import { runMovement } from '../run';
+import { resetRustRunStats, rustRunStats } from '../rust_stats';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../test_host';
 
 import { KNOWN_GAPS, reasonOf } from './reachability_gaps';
 
-const ROOT = path.resolve(__dirname, '../../../../../..');
+const ROOT = path.resolve(__dirname, '../../../../..');
 const ORACLES = path.join(ROOT, 'crates/movement-engine/tests/oracle');
 const TEAM = tenantIdOf('00000000-0000-0000-0000-0000000000ab');
 

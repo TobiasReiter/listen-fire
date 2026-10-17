@@ -58,7 +58,7 @@ import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { AdapterManifest } from 'movement-engine/public/adapter';
 
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { availableChatModels } from 'movement-engine/public/models';
 import { getAutomationsQb } from '../../../lib/kysely';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';

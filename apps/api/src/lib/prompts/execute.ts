@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { parseJson, parseJsonReply } from 'movement-engine/public/utils';
+import { parseJson, parseJsonReply } from 'movement-engine/public/json';
 import { anthropicChat, anthropicChatStructured } from '../anthropic';
 import { logger } from 'movement-engine/public/log';
 import { DefinitionArgs, PromptDefinition } from './definition';

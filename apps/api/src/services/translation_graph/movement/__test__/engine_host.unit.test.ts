@@ -301,7 +301,7 @@ describe('productionEngineHost — what a module spends', () => {
     try {
       const remote = createRemoteAdapter({
         documents: hostedDocumentStore,
-        config: { teamId: teamOfTenant(TEAM_ID), adapterType: 'enrich', baseUrl: served.url, authStrategy: { kind: 'bearer' } },
+        config: { teamId: teamOfTenant(TEAM_ID), adapterType: 'enrich', baseUrl: served.url, authStrategy: { kind: 'bearer' }, credentialsId: 'cred-install' },
         secret: '',
         cacheScopeId: 'cost',
         manifest: {

@@ -10,7 +10,7 @@ import type { EdgeTypeId } from '../../generated/kysely/knowledge/EdgeType';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExtractedSubgraph, ExtractedNode, ExtractedProperty, ExtractedEdge } from './types';
 
-import { isBlankIdentityValue } from 'movement-engine/public/model-calls';
+import { isBlankIdentityValue } from 'movement-engine/public/models';
 import { expressionSchema } from 'movement-engine/public/output-v3';
 import { logger } from 'movement-engine/public/log';
 import { getKnowledgeQb } from '../../lib/kysely';

@@ -42,7 +42,7 @@ export class RunBusy extends Error {
 
 // The signal a segment that lost its lease stops with is the engine's own
 // control flow (errors.ts); re-exported for the host side.
-export { RunLeaseLost } from 'movement-engine/public/run-support';
+export { RunLeaseLost } from 'movement-engine/public/errors';
 
 /** Take the run's lease for this process, or null while it is held elsewhere.
  *  `ttlMs` shortens it for tests; production takes the stale-heartbeat rule. */

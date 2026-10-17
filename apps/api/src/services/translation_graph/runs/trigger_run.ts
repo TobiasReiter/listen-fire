@@ -19,7 +19,7 @@ import type { TriggerEventId } from '../../../generated/kysely/automations/Trigg
 import type { TriggerEvent } from 'movement-engine/public/inbound';
 import type { WorkHandler } from '../../work/kinds';
 
-import { isWriteEffect, type MovementTraceEntry } from 'movement-engine/public/run-support';
+import { isWriteEffect, type MovementTraceEntry } from 'movement-engine/public/trace';
 import { SECOND } from '../../../constants';
 import { getAutomationsQb, getQb } from '../../../lib/kysely';
 import { costMicrodollarsToUsd } from '../../../lib/llm_usage';

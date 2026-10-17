@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-const sharedDir = path.resolve(__dirname, '../../../../../../../packages/shared');
+const sharedDir = path.resolve(__dirname, '../../../../../../packages/shared');
 
 function effectiveCompilerOptions(): { target?: string; module?: string } {
   const tsc = require.resolve('typescript/bin/tsc', { paths: [sharedDir] });

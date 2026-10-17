@@ -38,7 +38,7 @@ import {
 } from './adapters/gmail/connect_method';
 import { SlackMonitoring } from './lib/slack';
 import { getEnvVar } from './lib/utils/environment';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { getFlowUserId } from './lib/oauthFlows';
 import { storePendingCredentials } from './lib/pendingCredentials';
 import { resolveOAuthCallbackRedirect } from './lib/oauthCallbackRedirect';

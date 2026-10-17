@@ -28,7 +28,7 @@ import {
   type Position,
   type SchemaRef,
   type TransformSignature,
-} from 'movement-engine/services/translation_graph/types';
+} from '../types';
 
 describe('schemaRefSchema', () => {
   it('accepts the legacy knowledge-graph kind', () => {
@@ -360,7 +360,7 @@ import {
   targetSchemaRefSchema,
   type SourceSchemaRef,
   type TargetSchemaRef,
-} from 'movement-engine/services/translation_graph/types';
+} from '../types';
 
 describe('sourceSchemaRefSchema (N3)', () => {
   it('accepts dynamic with a null credentialsId', () => {

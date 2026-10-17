@@ -35,7 +35,7 @@ import {
 import { platformTokenRegistry } from '../engine/platform_token_registry_db';
 import { runningSegment } from '../runs/trigger_run';
 import { ORPHAN_AFTER } from '../../movement_engine/run_lease';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { settleUnresumableRun } from '../../interaction/run_failure';
 
 

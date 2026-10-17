@@ -27,7 +27,7 @@ import type { PropertyTypeId } from '../../../generated/kysely/knowledge/Propert
 import type { EdgeTypeId } from '../../../generated/kysely/knowledge/EdgeType';
 
 import ChangeSource from '../../../generated/kysely/knowledge/ChangeSource';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 
 export type MutationChangeKind = 'create' | 'update' | 'delete';
 

@@ -96,7 +96,7 @@ import {
   upgradeMovement,
   type UpgradeMovementResult,
 } from '../../../services/translation_graph/movement/language_upgrade';
-import { neverAsAny } from 'movement-engine/public/utils';
+import { neverAsAny } from 'movement-engine/public/types';
 import { movementSourceHash } from '../../../services/translation_graph/movement/version_store';
 import { applyContentEdit } from '../../../services/translation_graph/movement/edit';
 import {
@@ -112,7 +112,7 @@ import {
 } from '../../../services/translation_graph/movement/run_now';
 import { abortRun, resumeRun } from '../../../services/interaction/operator';
 import { RunBusy } from '../../../services/movement_engine/run_lease';
-import { MovementEngineError } from 'movement-engine/public/run-support';
+import { MovementEngineError } from 'movement-engine/public/errors';
 import { UserService } from '../../../services/user';
 import { registerRoute } from '../../mcp/registry';
 import {

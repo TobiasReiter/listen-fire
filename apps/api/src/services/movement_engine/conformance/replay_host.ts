@@ -5,7 +5,7 @@
 
 import type { RecordedError, ServedAnswer } from 'engine-contracts/conformance';
 
-import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from 'movement-engine/public/run-support';
+import { MovementEngineError, RunCancelledSignal, RunLeaseLost, type MovementEngineErrorCode } from 'movement-engine/public/errors';
 import { missingHostMethods, type EngineHost } from 'movement-engine/public/host';
 
 /** The error a recorded thrown error was. The engine branches on three

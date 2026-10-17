@@ -9,12 +9,12 @@
 import { mockCatalogSnapshot, type CatalogSnapshot, type InstanceSchema } from 'movement-lang';
 import { PARK_STATE_VERSION, tenantIdOf, type CodeByPlace, type ParkedScopeState } from 'engine-contracts';
 
-import type { Adapter, ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
-import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from 'movement-engine/services/translation_graph/types';
-import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from 'movement-engine/services/movement_engine/test_host';
-import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from 'movement-engine/services/movement_engine/run';
-import { resetRustRunStats, rustRunStats } from 'movement-engine/services/movement_engine/rust_stats';
+import type { Adapter, ExternalRecordRef } from '../../translation_graph/adapter';
+import { containerAssociation } from '../../translation_graph/adapter';
+import { META_RECORD_TYPE, makeStablePosition, positionData, positionRecordId } from '../../translation_graph/types';
+import { credentialIdsFor, makeFakeParkSink, makeTestHost, type TestHostOverrides } from '../test_host';
+import { resumeMovement, runFailureCause, runMovement, type RunMovementInput } from '../run';
+import { resetRustRunStats, rustRunStats } from '../rust_stats';
 
 jest.setTimeout(60_000);
 

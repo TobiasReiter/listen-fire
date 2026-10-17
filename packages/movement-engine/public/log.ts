@@ -7,6 +7,8 @@ import winston from 'winston';
 import { logger } from '../services/logger';
 
 export { logger };
+// The request context id each line carries, read from the shell's own context.
+export * from '../services/context/current_id';
 
 export type EngineLogLevel = 'error' | 'warn' | 'info' | 'debug';
 

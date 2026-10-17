@@ -27,6 +27,7 @@ function crm(): Adapter {
     updateRecord: async () => {
       throw new Error('not used');
     },
+    deleteRecord: async () => ({}),
   };
 }
 

@@ -13,6 +13,15 @@ import * as plugins from '../../../public/plugins';
 import * as models from '../../../public/models';
 import * as files from '../../../public/files';
 import * as testing from '../../../public/testing';
+import * as types from '../../../public/types';
+import * as errors from '../../../public/errors';
+import * as json from '../../../public/json';
+import * as queue from '../../../public/queue';
+import * as text from '../../../public/text';
+import * as addresses from '../../../public/addresses';
+import * as bootChecks from '../../../public/boot-checks';
+import * as trace from '../../../public/trace';
+import * as embed from '../../../public/embed';
 import { logger, routeEngineLogsTo, type EngineLogSink } from '../../../public/log';
 
 describe('public entries', () => {
@@ -39,6 +48,25 @@ describe('public entries', () => {
     expect(typeof models.resolveModel).toBe('function');
     expect(typeof files.redeemFileRef).toBe('function');
     expect(typeof testing.makeTestHost).toBe('function');
+  });
+
+  it('each concept entry carries its concept', () => {
+    expect(typeof types.neverAsAny).toBe('function');
+    expect(new errors.MovementEngineError('MOVENG_RUNTIME', 'x').code).toBe('MOVENG_RUNTIME');
+    expect(errors.getErrorMessage(new Error('boom'))).toBe('boom');
+    expect(json.parseJson('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+    expect(typeof queue.Queue).toBe('function');
+    expect(text.slugify('Acme Corp')).toBe('acme-corp');
+    expect(addresses.encodeAddress(addresses.parseAddress('s1.b0'))).toBe('s1.b0');
+    expect(typeof bootChecks.assertSegmentLimitsConfigured).toBe('function');
+    expect(typeof trace.isWriteEffect).toBe('function');
+    expect(typeof host.segmentScopedCalls.around).toBe('function');
+    expect(typeof inbound.collectFileListeners).toBe('function');
+    expect(typeof inbound.answerModels).toBe('function');
+    expect(typeof engine.listUnsupportedConstructs).toBe('function');
+    expect(engine.RUST_ENGINE_FROM_VERSION).toBe(5);
+    expect(Object.keys(models.embeddingDestinations).length).toBeGreaterThan(0);
+    expect(typeof embed.memoryRunHostStore).toBe('function');
   });
 });
 

@@ -4,11 +4,11 @@ import { formatISO, sub } from 'date-fns';
 import { AttioAPIClient, AttioRecord } from './apiClient';
 import { AttioAttribute, attributeConfigValidator } from './interface';
 import { anthropicChat } from '../../lib/anthropic';
-import { parseJson } from 'movement-engine/public/utils';
+import { parseJson } from 'movement-engine/public/json';
 import { logger } from 'movement-engine/public/log';
 import { nullishBoolean } from '../../lib/utils/nullish_boolean';
 import { notNull } from '../../lib/utils/nullability';
-import { matchOption } from 'movement-engine/public/utils';
+import { matchOption } from 'movement-engine/public/text';
 import { Tracer } from '../../services/tracer';
 import { safeToUrl } from '../../lib/utils/url';
 

@@ -17,7 +17,7 @@ import type { ChatModelName } from 'movement-engine/public/models';
 import { calculateCostMicrodollars } from '../lib/llm_usage';
 import { chatCallFor } from '../lib/models/chat';
 import { parseChatModelName } from 'movement-engine/public/models';
-import { parseJson } from 'movement-engine/public/utils';
+import { parseJson } from 'movement-engine/public/json';
 
 // ---------------------------------------------------------------------------
 // Models
