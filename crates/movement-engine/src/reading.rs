@@ -117,7 +117,9 @@ impl Run<'_> {
                 .collect();
             return Ok(Evaluated { value: Js::array(values), prov });
         }
-        if record::is_one_record(&binding) {
+        // The event is the record that fired the run, read bare as itself
+        // (`coalesce(event, record)`), as any record a walk landed on is.
+        if record::is_one_record(&binding) || matches!(binding, Binding::Event) {
             let prov = origins(&binding)?;
             return Ok(Evaluated { value: record::held(binding), prov });
         }
@@ -328,6 +330,28 @@ impl Run<'_> {
                     let field = direct_field(expr, name, "a shape position")?;
                     Ok(self.shape_position_field(&position, field))
                 }
+                // `cb-[k:Called]->`: the calls so far, read off the ledger,
+                // as a block head over the callback reads them; hops past
+                // them walk on over the records in hand.
+                Binding::Callback(callback) if !steps.is_empty() => {
+                    let Some((TraversalStep::Edge(step), rest)) = steps.split_first() else {
+                        return Err(unsupported(&format!("'{}' hops from a callback ('{name}')", crate::traverse::step_type(&steps[0]))));
+                    };
+                    if step.edge_type_id != crate::awaits::CALLED {
+                        return Err(Failure::unsupported(
+                            &format!("'-[:{}]->' on a callback", step.edge_type_id),
+                            &format!("a callback has one edge, '{}'", crate::awaits::CALLED),
+                        ));
+                    }
+                    let filter = step.expression_filter.as_deref().map(|filter| (filter.clone(), step.alias.clone()));
+                    let called = self.called_landings(&Binding::Callback(callback), filter.as_ref(), scope).await.map_err(crate::write::failure_of)?;
+                    let reached = self.walk_meta(called, rest, name, scope, span).await?;
+                    if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
+                        let found = self.exists(hops, where_, reached, scope, span).await?;
+                        return Ok(Evaluated { value: Js::Bool(found), prov: none() });
+                    }
+                    self.read_landings(expr, reached, name, "a callback's calls").await
+                }
                 Binding::Callback(callback) => {
                     let field = direct_field(expr, name, "a callback")?;
                     Ok(Evaluated { value: callback_field(&callback, field), prov: none() })
@@ -457,6 +481,30 @@ impl Run<'_> {
         })
     }
 
+    /// A deferred walk read bare: the list of what it lands on now.
+    pub(crate) async fn deferred_records(&self, walk: &crate::bindings::DeferredWalk) -> Result<Evaluated, Failure> {
+        let landed = self.deferred_landings(walk, &[]).await?;
+        self.records_held(landed)
+    }
+
+    /// Records in hand as the list value holding them, citing each one.
+    fn records_held(&self, landed: Vec<Binding>) -> Result<Evaluated, Failure> {
+        let mut origins: Vec<u32> = Vec::new();
+        for binding in &landed {
+            origins.extend(self.entity_origins(binding)?);
+        }
+        let value = Js::array(
+            landed
+                .into_iter()
+                .map(|b| match b {
+                    Binding::Value(value) => value.value,
+                    other => record::held(other),
+                })
+                .collect(),
+        );
+        Ok(Evaluated { value, prov: Prov::Built(Trail { origins, direct: None }) })
+    }
+
     /// `runDeferredWalk(walk, extraSteps)`: the walk's landings, the hops
     /// past it walked inside it, in the scope it captured.
     async fn deferred_landings(&self, walk: &crate::bindings::DeferredWalk, steps: &[TraversalStep]) -> Result<Vec<Binding>, Failure> {
@@ -501,20 +549,7 @@ impl Run<'_> {
             return Err(unsupported(&format!("this read shape on {what} ('{name}')")));
         };
         if field == POSITION_SENTINEL {
-            let mut origins: Vec<u32> = Vec::new();
-            for binding in &landed {
-                origins.extend(self.entity_origins(binding)?);
-            }
-            let value = Js::array(
-                landed
-                    .into_iter()
-                    .map(|b| match b {
-                        Binding::Value(value) => value.value,
-                        other => record::held(other),
-                    })
-                    .collect(),
-            );
-            return Ok(Evaluated { value, prov: Prov::Built(Trail { origins, direct: None }) });
+            return self.records_held(landed);
         }
         let mut results = Vec::with_capacity(landed.len());
         for binding in &landed {

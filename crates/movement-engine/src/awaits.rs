@@ -45,6 +45,24 @@ const UNTIL_EVERY_MS: f64 = 3_600_000.0;
 /// The scalar types a fire-time parameter may declare.
 const CALLBACK_PARAM_TYPES: [&str; 7] = ["text", "number", "boolean", "date", "datetime", "json", "file"];
 
+/// An await over a list of records: it parks on one record's edge, under
+/// one key, and a list has as many as it holds records.
+fn over_a_list(root: &str, edge: &str) -> Stop {
+    Stop::Thrown(Failure::unsupported(
+        &format!("await '{root}-[:{edge}]->' over a list of records"),
+        "an await waits on one record's edge; await each record's edge in a flow of its own",
+    ))
+}
+
+/// The record an edge is awaited on: the adapter asked, the record's id,
+/// the graph it reads through, and its inline data.
+struct Awaited {
+    adapter_type: String,
+    record_id: Js,
+    read: Rc<crate::traverse::Read>,
+    head_data: Js,
+}
+
 /// What an await's check found (`check()`).
 enum Checked {
     Bind(Js),
@@ -143,8 +161,8 @@ impl Run<'_> {
 
     // ── An edge awaited ──
 
-    /// The await on an edge: a callback's, or a written record's through its
-    /// awaitable adapter.
+    /// The await on an edge: a callback's, or a record's (written or read)
+    /// through its system's awaitable adapter.
     async fn await_edge(&self, head: &PathHead, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address) -> Result<(), Stop> {
         let edge = await_edge_name(&head.hops_raw);
         let step = crate::traverse::head_step(head).ok();
@@ -160,6 +178,28 @@ impl Run<'_> {
         match bound {
             Some(callback @ Binding::Callback(_)) => self.await_callback(&callback, &edge, filter.as_ref(), binding_name, scope, at).await,
             Some(Binding::Handle(handle)) => self.await_landing(&handle, &edge, filter.as_ref(), binding_name, scope, at).await,
+            Some(record @ (Binding::Event | Binding::Landed(_))) => self.await_record(self.read_record_awaited(&root, &record, &edge).await?, &edge, filter.as_ref(), binding_name, scope, at).await,
+            // `c = only(e-[k:Checks]->)`: the one record a value holds is
+            // awaited on as that record.
+            Some(Binding::Value(value)) if let Some(record) = crate::record::binding_of(&value.value) => match record {
+                Binding::Handle(handle) => self.await_landing(&handle, &edge, filter.as_ref(), binding_name, scope, at).await,
+                Binding::Callback(_) => self.await_callback(&record, &edge, filter.as_ref(), binding_name, scope, at).await,
+                Binding::Positions(_) => Err(over_a_list(&root, &edge)),
+                record @ (Binding::Event | Binding::Landed(_)) => self.await_record(self.read_record_awaited(&root, &record, &edge).await?, &edge, filter.as_ref(), binding_name, scope, at).await,
+                other => Err(Stop::Thrown(Failure::unsupported(
+                    &format!("await '{root}-[:{edge}]->'"),
+                    &format!("'{root}' holds {}, which has no awaitable edges", crate::record::describe(&other)),
+                ))),
+            },
+            // `x = e-[a:Attachments]-> { return a }`, then an await on `x`.
+            Some(Binding::Positions(_)) => Err(over_a_list(&root, &edge)),
+            Some(Binding::Value(value)) if matches!(value.value, Js::Array(_)) => Err(over_a_list(&root, &edge)),
+            // A pick that found nothing (`c = first(…)`, null): what the
+            // graph answered, not a form the check could refuse.
+            Some(Binding::Value(value)) if value.value.is_nullish() => Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("await '{root}-[:{edge}]->': '{root}' holds no record (it is null), so there is no record to await an edge of"),
+            ))),
             _ => Err(Stop::Thrown(Failure::unsupported(
                 &format!("await '{root}-[:{edge}]->'"),
                 "await needs a written record handle as its head (e.g. an ask written with `write asks-[:Check]->`)",
@@ -292,10 +332,35 @@ impl Run<'_> {
         let mut instance = (*handle.graph).clone();
         instance.adapter_slug = adapter_type.clone();
         let read = self.instance_read(&instance).await.map_err(Stop::Thrown)?;
+        let awaited = Awaited { adapter_type, record_id, read, head_data: record.get("resultData") };
+        self.await_record(awaited, edge, filter, binding_name, scope, at).await
+    }
+
+    /// What an await on an edge of a record the run read (the event, a
+    /// walk's landing, or one a value holds) asks: the awaitable adapter of
+    /// the graph it was read in, by the record's own id, its inline data the
+    /// head's.
+    async fn read_record_awaited(&self, root: &str, record: &Binding, edge: &str) -> Result<Awaited, Stop> {
+        let (position, read, _) = self.walk_start(root, record).await.map_err(Stop::Thrown)?;
+        let record_id = crate::traverse::record_id(&position);
+        if matches!(record_id, Js::Undefined) {
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("await '{root}-[:{edge}]->': the '{}' adapter answered '{root}' with no record id, so there is no record to await an edge of", read.adapter_type),
+            )));
+        }
+        Ok(Awaited { adapter_type: read.adapter_type.clone(), record_id, head_data: crate::traverse::position_data(&position), read })
+    }
+
+    /// `check()`, then bind, settle empty, or park, for a record with an id.
+    async fn await_record(&self, awaited: Awaited, edge: &str, filter: Option<&(Expression, Option<String>)>, binding_name: Option<&str>, scope: &Rc<Scope>, at: &Address) -> Result<(), Stop> {
+        let Awaited { adapter_type, record_id, read, head_data } = awaited;
         if !read.instance.has("resolveAwait") {
-            return Err(Stop::Thrown(Failure::unsupported(
-                &format!("await '-[:{edge}]->' on '{adapter_type}'"),
-                &format!("the '{adapter_type}' adapter does not implement the awaitable capability"),
+            // Whether an adapter can be awaited is what the host's adapter
+            // offers, which no save check sees: the run fails on the answer.
+            return Err(Stop::Thrown(Failure::engine(
+                "MOVENG_RUNTIME",
+                format!("await '-[:{edge}]->' on '{adapter_type}': the '{adapter_type}' adapter cannot be awaited (it does not offer resolveAwait)"),
             )));
         }
         let raw = Rc::new(crate::traverse::Read { raw: true, ..(*read).clone() });
@@ -306,7 +371,6 @@ impl Run<'_> {
             return Ok(());
         }
         let mut point = vec![("recordId", record_id), ("edge", Js::str(edge))];
-        let head_data = record.get("resultData");
         if !head_data.is_nullish() {
             point.push(("headData", head_data));
         }

@@ -206,10 +206,10 @@ export const PATTERNS: Pattern[] = [
   {
     name: 'function:domain_of',
     ends: 'whole',
-    note: "a function a write field advertises runs through invokeFieldFunction; inside a `unique by` write it is refused as unsupported (a gap reachability lists)",
+    note: "a function a write field advertises runs through invokeFieldFunction; written to a field the system does not offer it on, the run fails on that answer (MOVENG_RUNTIME)",
     programs: [
       (pick) => ({ body: `  write crm-[:companies]-> { unique by (\`name\`), name: "${pick(NAMES)}", domain: DOMAIN_OF(msg.\`user\`) }` }),
-      (pick) => ({ body: `  write crm-[:companies]-> { unique by (\`name\`), name: DOMAIN_OF("${pick(NAMES)}") }`, ends: 'unsupported' }),
+      (pick) => ({ body: `  write crm-[:companies]-> { unique by (\`name\`), name: DOMAIN_OF("${pick(NAMES)}") }` }),
     ],
   },
   {
@@ -547,10 +547,10 @@ export const PATTERNS: Pattern[] = [
   {
     name: 'rvalue:lazy',
     ends: 'whole',
-    note: "a kept (lazy) walk returned from a function's body runs whole; counted as a bare value it is refused as unsupported (a gap reachability lists)",
+    note: "a kept (lazy) walk returned from a function's body runs whole; read as a bare value it is the records the walk lands on at that read",
     programs: [
-      () => ({ body: '  people = lazy crm-[p:people]->\n  x = COUNT(people)', ends: 'unsupported' }),
-      () => ({ body: '  cos = lazy crm-[c:companies]->\n  n = COUNT(cos)\n  write crm-[:notes]-> { body: "${n}" }', ends: 'unsupported' }),
+      () => ({ body: '  people = lazy crm-[p:people]->\n  x = COUNT(people)' }),
+      () => ({ body: '  cos = lazy crm-[c:companies]->\n  n = COUNT(cos)\n  write crm-[:notes]-> { body: "${n}" }' }),
       () => ({ body: '  return lazy crm-[c:companies]->' }),
       () => ({ file: `movement cos(e: <inbox-[:message]->>) {\n  return lazy crm-[c:companies ORDER BY \`name\`]->\n}\n${m('  x = cos(e: msg)\n  x-[d:deals]-> {\n    write crm-[:notes]-> { body: d.`title` }\n  }')}`, movementName: 'm' }),
     ],
@@ -1315,7 +1315,6 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ body: '  inc = (v: <number>) => v + 1\n  await sleep(1h)\n  r = MAP([1, 2], inc)\n  write crm-[:notes]-> { body: "${COUNT(r)}" }', resume: (state) => withCodeCorrupted(state) }),
       () => ({ body: '  cos = lazy crm-[c:companies]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(cos)}" }', resume: (state) => withCodeCorrupted(state) }),
-      () => ({ body: '  cos = lazy crm-[c:companies]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(cos)}" }', resume: (state) => state, ends: 'unsupported' }),
     ],
   },
   {
@@ -1473,8 +1472,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     name: 'lazy_park',
-    ends: 'unsupported',
-    note: "a kept walk held across a park, then counted: refused as unsupported (a gap reachability lists)",
+    ends: 'whole',
+    note: "a kept walk held across a park, then counted: the walk runs at that read, after the resume",
     programs: [
       () => ({ body: '  people = lazy crm-[p:people]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(people)}" }', resume: (state) => state }),
       () => ({ body: '  cos = lazy crm-[c:companies]->\n  await sleep(1h)\n  write crm-[:notes]-> { body: "${COUNT(cos)}" }', resume: (state) => state }),
@@ -1505,6 +1504,15 @@ export const PATTERNS: Pattern[] = [
     programs: [
       () => ({ file: `import { echo } from plugins\n${m('  said = echo(q: msg)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}`, ends: 'at_check' }),
       () => ({ file: `import { echo } from plugins\n${m('  co = write crm-[:companies]-> { name: "Acme" }\n  said = echo(q: co)\n  write crm-[:notes]-> { body: COALESCE(said, "none") }')}` }),
+    ],
+  },
+  {
+    name: 'rvalue:event',
+    ends: 'whole',
+    note: "the event read bare is the record that fired the run, as a walk's landing is (`COALESCE(msg, …)`)",
+    programs: [
+      () => ({ body: '  v = COALESCE(msg, msg)\n  write crm-[:notes]-> { body: v.`subject` }' }),
+      () => ({ body: '  l = [msg]\n  w = COALESCE(FIRST(l), msg)\n  write crm-[:notes]-> { body: w.`subject` }' }),
     ],
   },
 

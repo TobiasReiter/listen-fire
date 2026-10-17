@@ -1538,7 +1538,7 @@ describe('function calls — COALESCE and the built-in pure set', () => {
     expect(writes[0].fields).toEqual({ name: 'Acme', summary: 'X' });
   });
 
-  it('a non-built-in function the target field does NOT advertise raises MOVENG_UNSUPPORTED naming it', async () => {
+  it('a non-built-in function the target field does NOT advertise fails the run on that answer (MOVENG_RUNTIME), naming it', async () => {
     await expect(
       runMovement({
         source: FALLBACK.replace('COALESCE(msg.`channel`, msg.`user`)', 'DOMAIN_OF(msg.`user`)'),
@@ -1557,7 +1557,7 @@ describe('function calls — COALESCE and the built-in pure set', () => {
         }),
         dryRun: true,
       }),
-    ).rejects.toThrow(/MOVENG_UNSUPPORTED.*DOMAIN_OF/);
+    ).rejects.toThrow(/MOVENG_RUNTIME: DOMAIN_OF\(\) is not a built-in function, and the field this value is written to does not offer it/);
   });
 });
 
@@ -1657,7 +1657,7 @@ describe('adapter field functions — resolved against the WRITE TARGET adapter 
     ]);
   });
 
-  it('the binding is per FIELD — the same name on a field that does not advertise it stays unsupported', async () => {
+  it('the binding is per FIELD — the same name on a field that does not advertise it fails the run (MOVENG_RUNTIME)', async () => {
     const { fake } = makeComposerAdapter();
     await expect(
       runMovement({
@@ -1675,7 +1675,7 @@ describe('adapter field functions — resolved against the WRITE TARGET adapter 
           },
         }),
       }),
-    ).rejects.toThrow(/MOVENG_UNSUPPORTED.*DOMAIN_OF/);
+    ).rejects.toThrow(/MOVENG_RUNTIME: DOMAIN_OF\(\) is not a built-in function, and the field this value is written to does not offer it/);
   });
 });
 

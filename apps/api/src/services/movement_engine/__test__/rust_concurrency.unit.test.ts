@@ -15,7 +15,7 @@ import type { Adapter, RuntimeCapabilities, WriteInput } from 'movement-engine/s
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { createManualAdapter } from '../../translation_graph/adapters/manual';
 import { containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { makeStablePosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { staticCatalogSnapshot } from '../../translation_graph/movement/catalog';
 import { teamOfTenant } from '../../translation_graph/movement/tenant';
 import type { CallbackSink } from 'movement-engine/services/movement_engine/host';
@@ -30,7 +30,12 @@ const KG = 'kg';
 const manualAdapter = createManualAdapter({ teamId: teamOfTenant(TEAM_ID) });
 
 const kgSchema: InstanceSchema = {
-  positions: { note: { properties: { body: 'text', payload: 'json' }, edges: {} }, 'Check Response': { properties: { Answer: 'boolean' }, edges: {} } },
+  positions: {
+    note: { properties: { body: 'text', payload: 'json' }, edges: {} },
+    'Check Response': { properties: { Answer: 'boolean' }, edges: {} },
+    // A check already in the graph, walked to rather than written.
+    Check: { properties: { Prompt: 'text' }, edges: { Response: { target: 'Check Response', awaitable: true, watchable: true, resolvesEmpty: true } } },
+  },
   collections: { note: { target: 'note' }, Check: { target: 'Check' } },
   writableRoots: {
     note: { fields: { body: 'text', payload: 'json' }, resultShape: { externalId: 'text' } },
@@ -92,7 +97,11 @@ function makeKgFake(landing: Landing) {
     getFieldValue: async ({ position, fieldId }) => (positionData(position) as Record<string, unknown> | undefined)?.[fieldId] ?? null,
     // Two notes under the instance, for a block to walk.
     getRelated: async ({ fieldId }) =>
-      fieldId === 'note' ? ['a', 'b'].map((body) => ({ position: makeUnstablePosition({ adapterType: KG, recordType: 'note', data: { body } }) })) : [],
+      fieldId === 'note'
+        ? ['a', 'b'].map((body) => ({ position: makeUnstablePosition({ adapterType: KG, recordType: 'note', data: { body } }) }))
+        : fieldId === 'Check'
+          ? [{ position: makeStablePosition({ adapterType: KG, recordType: 'Check', recordId: 'check-7', data: { Prompt: 'q' } }) }]
+          : [],
     async createRecord(write) {
       creates.push(write);
       return { adapterType: KG, externalId: `note-${creates.length}`, data: {} };
@@ -640,6 +649,18 @@ describe('parks resumed', () => {
       expect(rust.events).toEqual([]);
       expect(bodies(rust)).toContain('after');
     }
+  });
+
+  it('awaits an edge of a record it walked to, asking by that record\'s own id and data', async () => {
+    const source = program(['  c = ONLY(graph-[k:Check]->)', '  r = await FIRST(c-[:Response]->)', '  write graph-[:note]-> { payload: { a: r.`Answer` } }'].join('\n'));
+    const pending = await run({ source });
+    expect(pending.events.map(([method]) => method)).toEqual(['commitAwaitPark']);
+    expect(pending.events[0]?.[1]).toContain('"correlationKey":"ck:check-7"');
+    expect(pending.awaited).toContainEqual({ recordId: 'check-7', edge: 'Response', headData: { Prompt: 'q' } });
+    const landed = await run({ source, landing: 'landed' });
+    expect(landed.error).toBeUndefined();
+    expect(bodies(landed)).toEqual([undefined]);
+    expect(landed.bodies).toEqual([{ payload: { a: true } }]);
   });
 
   it('re-enters a parked landing await: landed, it goes on; still pending, it parks again', async () => {

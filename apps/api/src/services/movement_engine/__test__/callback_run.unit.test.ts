@@ -358,6 +358,29 @@ listen to runs {} fire m
 
     expect(kg.creates[0].fields).toEqual({ text: '2026-07-31T10:00:00.000Z' });
   });
+
+  it('a walk from the callback in an expression reads the same calls, and their fields', async () => {
+    const kg = makeKgFake();
+    const callbacks = makeFakeCallbackSink({
+      cb_fake1: [
+        { at: '2026-07-31T10:00:00.000Z', values: { note: 'first' } },
+        { at: '2026-07-31T11:00:00.000Z', values: { note: 'second' } },
+      ],
+    });
+    const source = `${PRELUDE}
+function m(go: <runs-[:Invocation]->>) {
+  cb = callback((note: <text>) => { write graph-[:log]-> { text: note } })
+  notes = Text.join(cb-[k:Called]->.\`note\`, ", ")
+  n = count(cb-[k:Called]->)
+  write graph-[:log]-> { text: "\${n}: \${notes}" }
+}
+listen to runs {} fire m
+`;
+
+    await movementRun({ source, kg, callbacks });
+
+    expect(kg.creates.map((w) => w.fields)).toEqual([{ text: '2: first, second' }]);
+  });
 });
 
 describe('the Called edge — awaited', () => {
