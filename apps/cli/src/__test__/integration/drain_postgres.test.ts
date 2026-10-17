@@ -58,6 +58,16 @@ test('two drain workers resume every parked run exactly once', async () => {
     assert.deepEqual(psql(`select status, count(*) from automations.trigger_run where team_id = '${team}' group by status`), [['success', String(RUNS)]]);
     assert.deepEqual(psql(`select count(*) from automations.work where team_id = '${team}'`), [['0']]);
     assert.deepEqual(psql(`select count(*) from automations.parked_run p join automations.trigger_run r on r.id = p.run_id where r.team_id = '${team}'`), [['0']]);
+
+    // The trace is kept on the run's row, so a run another worker resumed
+    // reports the whole of it, as the same run over the SQLite file does.
+    const traced = drained.flatMap((worker) => [...worker.out.matchAll(/^run \S+ companies:welcome completed .* (\d+) trace entr/gm)].map((m) => m[1]));
+    const local = project();
+    assert.equal(spawnSync(lfHostBinary(), ['run', '--event', 'events/company_created.json'], { cwd: local, encoding: 'utf8' }).status, 0);
+    const resumedLocally = spawnSync(lfHostBinary(), ['resume'], { cwd: local, encoding: 'utf8', env: { ...process.env, LF_CLOCK_AHEAD_MS: TWO_HOURS_MS } });
+    const sqliteTrace = /^run \S+ companies:welcome completed .* (\d+) trace entr/m.exec(resumedLocally.stdout)?.[1];
+    assert.ok(sqliteTrace !== undefined && Number(sqliteTrace) > 0, resumedLocally.stdout);
+    assert.deepEqual(traced, Array(RUNS).fill(sqliteTrace), drained.map((w) => w.out).join('\n---\n'));
   } finally {
     clear();
   }

@@ -25,15 +25,13 @@
 //! the movement and the run's facts (their JSON text verbatim, so a resume
 //! reads exactly what the firing wrote), `nodes_written` its writes and
 //! `failure_reason` its error. A completed run is `success`, as the hosted
-//! product names it; lf reads it back as `completed`. The trace has no
-//! table here (the hosted product keeps it in telemetry): it is counted for
-//! this process's report only.
+//! product names it; lf reads it back as `completed`. The trace is kept
+//! where the hosted product keeps it: a movement step per segment on
+//! `steps`, its entries at `diagnostics.trace`.
 //!
 //! Blocking, as the SQLite store is: the connection lives on its own thread
 //! with its own runtime, and each call waits for its answer.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
@@ -169,8 +167,6 @@ pub struct PgStore {
     tenant: String,
     /// Who holds a lease this process took: informational (the token fences).
     owner: String,
-    /// Trace entries this process appended, per run (the trace has no table).
-    traced: RefCell<HashMap<String, i64>>,
 }
 
 impl PgStore {
@@ -207,7 +203,6 @@ impl PgStore {
             client,
             tenant: tenant.to_string(),
             owner: format!("lf-host:{}:{}", std::process::id(), &uuid::Uuid::new_v4().to_string()[..8]),
-            traced: RefCell::new(HashMap::new()),
         };
         store.require_schema()?;
         Ok(store)
@@ -382,13 +377,37 @@ impl RunHostStore for PgStore {
         .collect()
     }
 
-    fn append_trace(&self, run_id: &str, entries: &[Js]) -> Result<()> {
-        *self.traced.borrow_mut().entry(run_id.to_string()).or_default() += entries.len() as i64;
+    /// Where the hosted product keeps a run's trace: each segment's in its
+    /// own movement step on `trigger_run.steps`, at `diagnostics.trace`
+    /// (trigger_run.ts `movementStepDiagnostics`), so the hosted inspection
+    /// reads lf's runs as its own. A segment's later entries extend its step,
+    /// found by the `segmentId` lf keeps on it.
+    fn append_trace(&self, run_id: &str, segment_id: &str, entries: &[Js]) -> Result<()> {
+        let entries = Js::Arr(entries.to_vec()).to_json();
+        self.execute(
+            "update automations.trigger_run set steps = case
+               when steps -> -1 ->> 'segmentId' = $2::text
+                 then jsonb_set(steps, array[(jsonb_array_length(steps) - 1)::text, 'diagnostics', 'trace'],
+                                coalesce(steps -> -1 -> 'diagnostics' -> 'trace', '[]'::jsonb) || $3::text::jsonb)
+               else steps || jsonb_build_array(jsonb_build_object(
+                 'tgId', trigger_id, 'tgName', null, 'sourceAdapterType', null, 'targetAdapterType', null,
+                 'status', 'success', 'appliedActionPlans', '[]'::jsonb, 'errors', '[]'::jsonb, 'engine', 'interpreter',
+                 'diagnostics', jsonb_build_object('trace', $3::text::jsonb), 'segmentId', $2::text))
+             end
+             where id = $1::text::uuid and team_id = $4::text::uuid",
+            &[&run_id, &segment_id, &entries, &self.tenant],
+        )?;
         Ok(())
     }
 
     fn trace_len(&self, run_id: &str) -> Result<i64> {
-        Ok(self.traced.borrow().get(run_id).copied().unwrap_or(0))
+        let row = self.query_opt(
+            "select coalesce(sum(jsonb_array_length(step -> 'diagnostics' -> 'trace')), 0)::int8
+             from automations.trigger_run r, jsonb_array_elements(r.steps) as step
+             where r.id = $1::text::uuid and r.team_id = $2::text::uuid and jsonb_typeof(step -> 'diagnostics' -> 'trace') = 'array'",
+            &[&run_id, &self.tenant],
+        )?;
+        Ok(row.map_or(0, |r| r.get(0)))
     }
 
     // ── Parks ───────────────────────────────────────────────────────────────

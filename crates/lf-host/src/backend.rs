@@ -166,7 +166,9 @@ pub trait RunHostStore {
     fn run(&self, id: &str) -> Result<Option<RunRow>>;
     /// The most recent runs first.
     fn runs(&self, limit: i64) -> Result<Vec<RunRow>>;
-    fn append_trace(&self, run_id: &str, entries: &[Js]) -> Result<()>;
+    /// The entries a segment appended to its run's trace (`segment_id`: the
+    /// segment's, so a store that keeps one record per segment finds its own).
+    fn append_trace(&self, run_id: &str, segment_id: &str, entries: &[Js]) -> Result<()>;
     fn trace_len(&self, run_id: &str) -> Result<i64>;
 
     // ── Parks ───────────────────────────────────────────────────────────────
@@ -253,7 +255,7 @@ impl RunHostStore for Store {
     fn runs(&self, limit: i64) -> Result<Vec<RunRow>> {
         Store::runs(self, limit)
     }
-    fn append_trace(&self, run_id: &str, entries: &[Js]) -> Result<()> {
+    fn append_trace(&self, run_id: &str, _segment_id: &str, entries: &[Js]) -> Result<()> {
         Store::append_trace(self, run_id, entries)
     }
     fn trace_len(&self, run_id: &str) -> Result<i64> {

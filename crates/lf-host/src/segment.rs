@@ -740,7 +740,7 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
                     return Err(Fault(format!("the Rust engine appended a trace entry this host does not know: {kind}")));
                 }
             }
-            store.append_trace(run_id, &entries).map(|()| None).map_err(store_failure)
+            store.append_trace(run_id, &host.segment_id, &entries).map(|()| None).map_err(store_failure)
         }
         "log.write" => {
             for line in args.get("lines").and_then(Json::as_array).into_iter().flatten() {
