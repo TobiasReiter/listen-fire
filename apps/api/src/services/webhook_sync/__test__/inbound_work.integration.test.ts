@@ -391,7 +391,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(rows[0].key).toBe(`dispatch_event:${receipt.id}`);
     expect(await runsFor(triggerId)).toHaveLength(0);
 
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
 
     expect((await receipts(teamId))[0].status).toBe('dispatched');
     const runs = await runsFor(triggerId);
@@ -408,7 +408,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
 
     const result = await handleInboundWebhook(attioDelivery(subscriptionId));
     await result.enqueueDeferred!();
-    const drained = await drainUntilIdle({ owner: 'test' });
+    const drained = await drainUntilIdle({ owner: 'test', teamId });
 
     expect(drained.failed).toBe(0);
     expect((await receipts(teamId))[0].status).toBe('dispatched');
@@ -433,7 +433,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     });
     expect(mockedRefresh).not.toHaveBeenCalled();
 
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
 
     expect(mockedRefresh).toHaveBeenCalledWith(refreshes[0].payload);
     expect(await workRows(teamId, 'linked_object_refresh')).toHaveLength(0);
@@ -460,7 +460,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       .set({ lease_owner: 'elsewhere', lease_until: new Date(Date.now() + 60_000), lease_token: randomUUID() })
       .where('id', '=', refreshRow.id)
       .execute();
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
 
     expect(mockedRefresh).not.toHaveBeenCalled();
     for (const triggerId of triggerIds) expect(await runsFor(triggerId)).toHaveLength(1);
@@ -474,7 +474,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
 
     await (await handleInboundWebhook(attioDelivery(subscriptionId))).enqueueDeferred!();
 
-    const first = await drainUntilIdle({ owner: 'test' });
+    const first = await drainUntilIdle({ owner: 'test', teamId });
     expect(first.failed).toBe(1);
     expect((await receipts(teamId))[0].status).toBe('dispatched');
     expect(await runsFor(triggerId)).toHaveLength(1);
@@ -486,7 +486,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       .set({ due_at: new Date(Date.now() - 1_000) })
       .where('team_id', '=', teamId)
       .execute();
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
 
     expect(mockedRefresh).toHaveBeenCalledTimes(2);
     expect(await workRows(teamId, 'linked_object_refresh')).toHaveLength(0);
@@ -555,7 +555,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(await receipts(teamId)).toHaveLength(1);
     const rows = await workRows(teamId, 'dispatch_event');
     expect(rows.map((r) => r.key)).toEqual([`dispatch_event:${receipt.id}`]);
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
     expect((await receipts(teamId))[0].status).toBe('dispatched');
     expect(await runsFor(triggerId)).toHaveLength(1);
 
@@ -606,7 +606,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     expect(wakes[0].payload).toEqual({ adapterType: 'slack', teamId, correlationKey });
     expect(mockedResume).not.toHaveBeenCalled();
 
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
 
     expect(mockedResume).toHaveBeenCalledWith(expect.objectContaining({ runId, reenter: true }));
     expect(await postgresRunHostStore.correlations.correlated({ adapterType: 'slack', teamId, correlationKey })).toEqual([]);
@@ -659,7 +659,7 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
     const result = await handleInboundWebhook(attioDelivery(subscriptionId));
     await result.enqueueDeferred!();
     const [row] = await workRows(teamId, 'dispatch_event');
-    await drainUntilIdle({ owner: 'test' });
+    await drainUntilIdle({ owner: 'test', teamId });
     expect((await receipts(teamId))[0].status).toBe('dispatched');
     mockedDispatch.mockClear();
 
