@@ -35,6 +35,7 @@
     "dev:evertrace": "cd apps/api && pnpm run dev:evertrace",
     "dev:dealroom": "cd apps/api && pnpm run dev:dealroom",
     "dev:gmail": "cd apps/api && pnpm run dev:gmail",
+    "dev:oauth": "cd apps/api && pnpm run dev:oauth",
     "health": "cd apps/api && pnpm run health",
     "dev:describe": "cd apps/api && pnpm run dev:describe",
     "dev:graph": "cd apps/api && pnpm run dev:graph",

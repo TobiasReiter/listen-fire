@@ -356,12 +356,22 @@ if (GMAIL_OAUTH_CLIENT) {
   });
 }
 
-if (DROPBOX_CLIENT_ID && DROPBOX_CLIENT_SECRET) {
+// The dev loop signs in and refreshes against the fake OAuth provider in
+// fake-channels (and supplies a client of its own when none is configured), so
+// a token refresh writing back through the secrets store runs end to end.
+const dropboxFakeBaseUrl =
+  process.env.MOCK_OUTPUT_ADAPTERS === 'true'
+    ? (process.env.FAKE_CHANNELS_URL ?? 'http://localhost:5556')
+    : undefined;
+const dropboxClientId = DROPBOX_CLIENT_ID || (dropboxFakeBaseUrl ? 'dev-loop-dropbox-client' : undefined);
+const dropboxClientSecret = DROPBOX_CLIENT_SECRET || (dropboxFakeBaseUrl ? 'dev-loop-dropbox-secret' : undefined);
+if (dropboxClientId && dropboxClientSecret) {
   services.dropbox = new DropboxAppAdapter({
     authClient: new DropboxAuthClient({
-      clientId: DROPBOX_CLIENT_ID,
-      clientSecret: DROPBOX_CLIENT_SECRET,
+      clientId: dropboxClientId,
+      clientSecret: dropboxClientSecret,
       redirectBaseUrl: oauthRedirectBaseUrl(),
+      ...(dropboxFakeBaseUrl ? { fakeBaseUrl: dropboxFakeBaseUrl } : {}),
     }),
   });
 }
