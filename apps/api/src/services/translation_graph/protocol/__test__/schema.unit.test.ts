@@ -230,6 +230,9 @@ describe('METHODS registry', () => {
       'resolveAwait',
       'wakeKeys',
       'iterateRelatedPage',
+      'poll',
+      'refreshCredential',
+      'runPeriodic',
     ];
     expect(Object.keys(METHODS).sort()).toEqual([...expected].sort());
   });

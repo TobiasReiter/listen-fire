@@ -1166,6 +1166,16 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
 
+### ev1-protocol
+
+- Adapter protocol 2 gains module declarations, without a version bump: a manifest may declare
+  `credentials` (`static` or `oauth2`, with its authorize and token URLs), `inbound` (the door's
+  provider key, a signature scheme and the headers carrying it), `poll` and `periodic`. A request
+  may carry the install's resolved `credential`, and a response (success or failure) a
+  `credentialUpdate`. Three optional methods: `poll`, `refreshCredential` and `runPeriodic`. A
+  declaration without its method, or a method without its declaration, refuses the manifest. An
+  older server declares none of it and is unchanged; nothing in the host acts on it yet.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
