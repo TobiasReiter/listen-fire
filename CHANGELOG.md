@@ -386,6 +386,10 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   then `COUNT(rows-[:deals]->)` counts 0 when `rows` found nothing, `EXISTS(rows-[:deals]->)` is
   false, and with `both = [acme, "x"]`, `EXISTS(both-[:deals]->)` asks only `acme`. Before, each of
   these failed the run as a construct the engine did not run.
+- **A field the record lacks reads nothing on version 5, as it does on 1–4.** Before, it read null,
+  a value, so `node { body: msg.missing }` held a `body`, an `IS` test counted it present, and a
+  write sent `body: null`. A field the record holds as null still reads null. For embedders: an
+  `adapters.call` answer of nothing is `{}`, no `result`.
 
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 

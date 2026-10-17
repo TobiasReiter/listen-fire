@@ -1665,34 +1665,19 @@ describe('IS against a declared node — a synthesised subject', () => {
   // literal produced — and the language already rules that an entry evaluating
   // to nothing is ABSENT rather than present-and-empty, so the same one story
   // the read plane tells is the one the predicate tells.
-  //
-  // Version 4 (the TypeScript engine): an event field the payload lacks reads
-  // as nothing there. On version 5 (the Rust engine) it reads null, a value,
-  // so the entry is present and the test takes the arm — left for a ruling.
-  it('an entry that evaluated to nothing is absent here too — one story about a missing value (version 4)', async () => {
-    const v4 = async (payload: Record<string, unknown>): Promise<unknown[]> => {
-      const email = makeFakeAdapter('email');
-      const attio = makeFakeAdapter('attio');
-      await run(
-        DECLS
-          + [
-            'movement intake(msg: <inbox-[:message]->>) {',
-            '  crm = attio(credentials: acme_main)',
-            '  d = node { title: "t", body: msg.`text` }',
-            '  if d IS <Note> {',
-            '    write crm-[:companies]-> { name: "arm" }',
-            '  } else {',
-            '    write crm-[:companies]-> { name: "else" }',
-            '  }',
-            '}',
-          ].join('\n'),
-        payload,
-        { email: email.adapter, attio: attio.adapter, languageVersion: 4 },
-      );
-      return attio.creates.map((w) => w.fields.name);
-    };
-    expect(await v4({ subject: 'x', text: 'a deck' })).toEqual(['arm']);
-    expect(await v4({ subject: 'x' })).toEqual(['else']);
+  it('an entry that evaluated to nothing is absent here too — one story about a missing value', async () => {
+    expect(
+      await names(
+        ['  d = node { title: "t", body: msg.`text` }', ...branch('(d is <Note>)')],
+        { subject: 'x', text: 'a deck' },
+      ),
+    ).toEqual(['arm']);
+    expect(
+      await names(
+        ['  d = node { title: "t", body: msg.`text` }', ...branch('(d is <Note>)')],
+        { subject: 'x' },
+      ),
+    ).toEqual(['else']);
   });
 
   it("a CALL's value is a node like any other, so it answers the same test", async () => {
