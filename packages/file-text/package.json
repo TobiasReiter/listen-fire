@@ -1,0 +1,34 @@
+{
+  "name": "file-text",
+  "private": true,
+  "license": "Apache-2.0",
+  "version": "0.0.1",
+  "description": "A file's text: PDF (text layer, then an injected OCR), PowerPoint decks, spreadsheets and CSV, and audio (an injected transcriber). Bytes, OCR, transcription, the spreadsheet model call and the logger are all injected, so any shell can read files without the hosted product",
+  "engines": {
+    "node": "22.20.0"
+  },
+  "scripts": {
+    "code:type-check": "tsc --pretty --noEmit",
+    "test": "node ../../apps/api/node_modules/jest/bin/jest.js --config jest.config.borrowed.cjs"
+  },
+  "main": "index.ts",
+  "types": "index.ts",
+  "type": "commonjs",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "hot-formula-parser": "^4.0.0",
+    "sax": "1.4.1",
+    "tmp": "0.2.3",
+    "unpdf": "1.8.1",
+    "yauzl-promise": "4.0.0"
+  },
+  "devDependencies": {
+    "@types/hot-formula-parser": "4.0.4",
+    "@types/jest": "29.5.14",
+    "@types/node": "20.16.5",
+    "@types/sax": "1.2.7",
+    "@types/tmp": "0.2.6",
+    "@types/yauzl-promise": "4.0.1",
+    "typescript": "5.5.4"
+  }
+}

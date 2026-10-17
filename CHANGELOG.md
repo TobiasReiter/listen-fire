@@ -1166,6 +1166,13 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
 
+### ev1-filetext
+
+- Reading a file's text (PDF text layer then OCR, decks, spreadsheets, CSV, audio) moved into its own
+  package, `packages/file-text`. OCR, transcription, the spreadsheet model call, the byte source and
+  the logger are passed in, so a shell without the hosted product can read files. The text read from
+  the same files is unchanged.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

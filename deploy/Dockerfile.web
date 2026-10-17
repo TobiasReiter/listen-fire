@@ -31,6 +31,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/movement-lang/package.json packages/movement-lang/
 COPY packages/story-view/package.json packages/story-view/
 COPY packages/principal/package.json packages/principal/
+COPY packages/file-text/package.json packages/file-text/
 RUN pnpm install --frozen-lockfile --filter web... --filter admin...
 
 COPY . .

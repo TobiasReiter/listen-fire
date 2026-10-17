@@ -2,10 +2,12 @@ import { DocumentService } from '../../../services/document';
 import { logger } from 'movement-engine/services/logger';
 import { RawTextService } from '../../../services/raw_text';
 import { DocumentWithContentOutput, EmptyOutput, Tool } from './types';
-import { getPptxText } from '../../utils/powerpoint';
-import { getXlsxContent } from '../../utils/excel';
+import { getPptxText, getXlsxContent } from 'file-text';
 import { services } from '../../../adapters/registry';
-import { extractPdfText } from '../../../services/translation_graph/movement/file_text';
+import {
+  analyzeSheet,
+  extractPdfText,
+} from '../../../services/translation_graph/movement/file_text';
 
 type ExtractDocumentTextParams = {
   documentId: string;
@@ -75,7 +77,7 @@ async function getDocumentContent({
   } else if (filename.endsWith('.pptx')) {
     return getPptxText(docStream);
   } else if (filename.endsWith('.xlsx')) {
-    return getXlsxContent(docStream);
+    return getXlsxContent(docStream, filename, analyzeSheet);
   } else {
     throw new Error(`Unsupported file type: ${filename}`);
   }

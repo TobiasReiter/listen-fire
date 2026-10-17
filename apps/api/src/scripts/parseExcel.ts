@@ -1,7 +1,9 @@
 import { createReadStream } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
-import { getXlsxContent } from '../lib/utils/excel';
+import { getXlsxContent } from 'file-text';
+
+import { analyzeSheet } from '../services/translation_graph/movement/file_text';
 
 async function main() {
   const filePath = process.argv[2];
@@ -16,7 +18,7 @@ async function main() {
   console.error(`Parsing: ${absolutePath}\n`);
 
   const stream = createReadStream(absolutePath);
-  const content = await getXlsxContent(stream, filename);
+  const content = await getXlsxContent(stream, filename, analyzeSheet);
 
   console.log(content);
 }
