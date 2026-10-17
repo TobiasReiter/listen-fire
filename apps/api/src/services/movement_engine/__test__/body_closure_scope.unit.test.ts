@@ -206,9 +206,9 @@ const spelledFor = (version: number, line: string): string =>
     ? line.replace(/await (parallel|race)\(\[(.*)\]\)/, (_, kind: string, arms: string) => `${kind === 'parallel' ? 'all' : 'race'}(${arms})`)
     : line;
 
-async function start(source: string, parks: Sink) {
+async function start(source: string, parks: Sink, pinned?: number) {
   const kg = makeKgFake();
-  const result = await runMovement(runInput(source, parks, kg));
+  const result = await runMovement(runInput(source, parks, kg, pinned));
   return { result, kg };
 }
 
@@ -216,21 +216,22 @@ async function resumeAt(
   source: string,
   parks: Sink,
   address: string,
+  pinned?: number,
 ): Promise<{ result: MovementRunResult; kg: ReturnType<typeof makeKgFake> }> {
   const park = parks.parks.get(address);
   if (park === undefined) throw new Error(`test: nothing parked at '${address}'`);
   parks.parks.delete(address);
   const kg = makeKgFake();
-  const result = await resumeMovement({ ...runInput(source, parks, kg), state: park.state, reenter: park.kind !== 'timer' });
+  const result = await resumeMovement({ ...runInput(source, parks, kg, pinned), state: park.state, reenter: park.kind !== 'timer' });
   return { result, kg };
 }
 
 /** Resume parked leaves, first address first, until none is left (a MAP
  *  member parks after the one before it resumes); the last resume's writes. */
-async function resumeAll(source: string, parks: Sink) {
+async function resumeAll(source: string, parks: Sink, pinned?: number) {
   let last: Awaited<ReturnType<typeof resumeAt>> | undefined;
   for (let guard = 0; parks.parks.size > 0 && guard < 10; guard++) {
-    last = await resumeAt(source, parks, [...parks.parks.keys()].sort()[0]!);
+    last = await resumeAt(source, parks, [...parks.parks.keys()].sort()[0]!, pinned);
   }
   if (last === undefined) throw new Error('test: nothing parked');
   return last;
@@ -473,7 +474,11 @@ describe('a parked run sees what an unparked run sees', () => {
   }
 });
 
+// A park state of version 1, which only the TypeScript engine (versions 1–4)
+// reads: the scenarios run under 4, the arm joined with `parallel`.
 describe('a park written before body closures held their scope (each with its full snapshot)', () => {
+  const inV4 = (body: string[]): string[] =>
+    body.map((line) => (line === '  r = all(' ? '  r = await parallel([' : line === '  )' ? '  ])' : line));
   const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<
     string,
     Record<string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }>
@@ -484,44 +489,24 @@ describe('a park written before body closures held their scope (each with its fu
       // The run up to the park, for the join records a MAP or `parallel`
       // keeps beside it (which hold no closure); the park itself is the old.
       const parks = makeParkSink();
-      const source = program(scenario.body);
-      await start(source, parks);
+      const source = program(inV4(scenario.body));
+      await start(source, parks, 4);
       expect([...parks.parks.keys()]).toEqual(Object.keys(fixture[name]!));
       for (const [address, park] of Object.entries(fixture[name]!)) {
         expect(JSON.stringify(park.state)).not.toContain('"scope":');
         parks.parks.set(address, park);
       }
-      const { result, kg } = await resumeAll(source, parks);
+      const { result, kg } = await resumeAll(source, parks, 4);
       expect(result.parked).toBeUndefined();
       expect(payloadOf(kg.creates)).toEqual(scenario.payload);
     });
   }
 });
 
-// ── Both engines ──────────────────────────────────────────────────────────────
+// ── Each version on its own engine ───────────────────────────────────────────
 //
-// The Rust engine mirrors all of it: a park written on either engine is the
-// same bytes, and resumes on either with the same answer. Under `rust` the
-// fallback is `none`, so a run the Rust engine refused fails here rather
-// than passing on the TypeScript engine.
-
-type Engine = 'ts' | 'rust';
-const ENGINES: Engine[] = ['ts', 'rust'];
-
-async function onEngine<T>(engine: Engine, run: () => Promise<T>): Promise<T> {
-  const previous = { engine: process.env.MOVEMENT_ENGINE, fallback: process.env.MOVEMENT_ENGINE_FALLBACK };
-  process.env.MOVEMENT_ENGINE = engine;
-  if (engine === 'rust') process.env.MOVEMENT_ENGINE_FALLBACK = 'none';
-  else delete process.env.MOVEMENT_ENGINE_FALLBACK;
-  try {
-    return await run();
-  } finally {
-    if (previous.engine === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous.engine;
-    if (previous.fallback === undefined) delete process.env.MOVEMENT_ENGINE_FALLBACK;
-    else process.env.MOVEMENT_ENGINE_FALLBACK = previous.fallback;
-  }
-}
+// A version's engine is its pin: 1–4 run on the TypeScript engine, 5 on the
+// Rust engine, and a park resumes on the engine that wrote it.
 
 interface Pinned {
   version?: number;
@@ -542,15 +527,15 @@ function inputOn(source: string, parks: Sink, kg: ReturnType<typeof makeKgFake>,
   };
 }
 
-async function startOn(engine: Engine, source: string, parks: Sink, pin: Pinned = {}) {
+async function startOn(source: string, parks: Sink, pin: Pinned = {}) {
   const kg = makeKgFake();
-  const result = await onEngine(engine, () => runMovement(inputOn(source, parks, kg, pin)));
+  const result = await runMovement(inputOn(source, parks, kg, pin));
   return { result, kg };
 }
 
-/** Resume every parked leaf, first address first, on `engine`; the last
- *  resume's run and writes, and every write made across the resumes. */
-async function resumeAllOn(engine: Engine, source: string, parks: Sink, pin: Pinned = {}) {
+/** Resume every parked leaf, first address first; the last resume's run and
+ *  writes, and every write made across the resumes. */
+async function resumeAllOn(source: string, parks: Sink, pin: Pinned = {}) {
   let last: { result: MovementRunResult; kg: ReturnType<typeof makeKgFake> } | undefined;
   const updates: Array<{ externalId: string; fields: Record<string, unknown> }> = [];
   const creates: unknown[] = [];
@@ -561,9 +546,7 @@ async function resumeAllOn(engine: Engine, source: string, parks: Sink, pin: Pin
     parks.parks.delete(address);
     resumed.push(JSON.stringify({ address, park }));
     const kg = makeKgFake();
-    const result = await onEngine(engine, () =>
-      resumeMovement({ ...inputOn(source, parks, kg, pin), state: park.state, reenter: park.kind !== 'timer' }),
-    );
+    const result = await resumeMovement({ ...inputOn(source, parks, kg, pin), state: park.state, reenter: park.kind !== 'timer' });
     updates.push(...kg.updates);
     creates.push(...kg.creates);
     last = { result, kg };
@@ -581,34 +564,20 @@ function parkedBytes(parks: Sink): string {
 }
 
 
-/** Each engine parks `source`; then each parked run resumes on each engine.
- *  What was parked is the same bytes whichever engine wrote it — the first
- *  park, every park a resume wrote again, every branch's export — and every
- *  way round ends with the same writes. */
-async function acrossEngines(source: string, pin: Pinned = {}) {
-  const firstParks: Record<string, string> = {};
-  const ends: Record<string, { payload: unknown; updates: unknown; creates: unknown; resumed: string[]; left: string }> = {};
-  for (const parkOn of ENGINES) {
-    for (const resumeOn of ENGINES) {
-      const parks = makeParkSink();
-      const first = await startOn(parkOn, source, parks, pin);
-      expect(first.result.parked).toBe(true);
-      firstParks[parkOn] = parkedBytes(parks);
-      const end = await resumeAllOn(resumeOn, source, parks, pin);
-      expect(end.result.parked).toBeUndefined();
-      ends[`${parkOn}→${resumeOn}`] = { payload: payloadOf(end.kg.creates), updates: end.updates, creates: end.creates, resumed: end.resumed, left: parkedBytes(parks) };
-    }
-  }
-  expect(firstParks.rust).toEqual(firstParks.ts);
-  const reference = ends['ts→ts']!;
-  for (const [way, end] of Object.entries(ends)) {
-    expect({ way, ...end }).toEqual({ way, ...reference });
-  }
-  return { parked: firstParks.ts!, ...reference };
+/** `source` parks, then every parked leaf resumes: what was parked (each
+ *  leaf's state, each branch's export), and how the resumes ended. */
+async function parkAndResume(source: string, pin: Pinned = {}) {
+  const parks = makeParkSink();
+  const first = await startOn(source, parks, pin);
+  expect(first.result.parked).toBe(true);
+  const parked = parkedBytes(parks);
+  const end = await resumeAllOn(source, parks, pin);
+  expect(end.result.parked).toBeUndefined();
+  return { parked, payload: payloadOf(end.kg.creates), updates: end.updates, creates: end.creates };
 }
 
 /** The review's probes (plans/…/body-closures-review.md), and what each ends
- *  with on the TypeScript engine. */
+ *  with. */
 const PROBES: Record<string, { body: string[]; payload: unknown; version?: number }> = {
   deepNestTwoParks: {
     body: [
@@ -692,12 +661,12 @@ const PROBES: Record<string, { body: string[]; payload: unknown; version?: numbe
   },
 };
 
-describe('both engines: a body closure holds its scope by reference', () => {
-  it('a park of 2 / 6 / 10 / 14 body closures is the same bytes on both engines', async () => {
+describe('a body closure holds its scope by reference, parked and resumed', () => {
+  it('a park of 2 / 6 / 10 / 14 body closures names the scope once', async () => {
     for (const n of [2, 6, 10, 14]) {
       const decls = Array.from({ length: n }, (_, i) => `  c${i} = (v: <number>) => v + ${i}`);
       const source = program([...decls, '  await sleep(1h)', '  write graph-[:note]-> { payload: { x: 1 } }']);
-      const { parked, payload } = await acrossEngines(source);
+      const { parked, payload } = await parkAndResume(source);
       expect(payload).toEqual({ x: 1 });
       expect(parked).toContain('"scope":{"kind":"scopeRef","id":0}');
       expect(parked).not.toContain('"kind":"scope",');
@@ -705,15 +674,15 @@ describe('both engines: a body closure holds its scope by reference', () => {
   });
 
   for (const [name, scenario] of Object.entries(SCENARIOS)) {
-    it(`${name}: parked on either engine, resumed on either, the same bytes and answer`, async () => {
-      const { parked, payload } = await acrossEngines(program(scenario.body));
+    it(`${name}: parked and resumed, with the answer`, async () => {
+      const { parked, payload } = await parkAndResume(program(scenario.body));
       expect(parked).toMatch(/"scope":\{"kind":"scopeRef"/);
       expect(payload).toEqual(scenario.payload);
     });
   }
 
-  it('a handle the closure and its scope both hold is one handle, on both engines', async () => {
-    const { parked, updates, payload } = await acrossEngines(program(SCENARIOS.handle!.body));
+  it('a handle the closure and its scope both hold is one handle', async () => {
+    const { parked, updates, payload } = await parkAndResume(program(SCENARIOS.handle!.body));
     expect(JSON.parse(parked).parks.map(([, p]: [string, unknown]) => JSON.stringify(p)).join('').match(/"kind":"handle"/g)).toHaveLength(1);
     expect(updates).toEqual([{ externalId: 'note-1', fields: { body: 'two' } }]);
     expect(payload).toEqual({ seen: 'two/two' });
@@ -732,13 +701,13 @@ describe('both engines: a body closure holds its scope by reference', () => {
       '  r = await parallel(arms)',
       '  write graph-[:note]-> { payload: { r: r } }',
     ]);
-    const { parked, payload } = await acrossEngines(source);
+    const { parked, payload } = await parkAndResume(source);
     expect(parked).toContain('"kind":"scope",');
     expect(payload).toEqual({ r: [4, 7] });
   });
 
   for (const version of [4, 5]) {
-    it(`v${version}: closures a parked MAP member returned write the outer handle, and every way round ends as the unparked run (M-1)`, async () => {
+    it(`v${version}: closures a parked MAP member returned write the outer handle, and the parked run ends as the unparked run (M-1)`, async () => {
       // From 5 a closure is not data: a maker hands each closure to a
       // variable, and `all` runs them.
       const body = (park: boolean): string[] => version < 5
@@ -768,23 +737,21 @@ describe('both engines: a body closure holds its scope by reference', () => {
             '  r = all(f1, f2)',
             '  write graph-[:note]-> { payload: { r: r, after: a.body } }',
           ];
-      for (const engine of ENGINES) {
-        const { kg } = await startOn(engine, program(body(false)), makeParkSink(), { version });
-        expect(payloadOf(kg.creates)).toEqual({ r: ['v1', 'v2'], after: 'v2' });
-      }
-      const { payload } = await acrossEngines(program(body(true)), { version });
+      const { kg } = await startOn(program(body(false)), makeParkSink(), { version });
+      expect(payloadOf(kg.creates)).toEqual({ r: ['v1', 'v2'], after: 'v2' });
+      const { payload } = await parkAndResume(program(body(true)), { version });
       expect(payload).toEqual({ r: ['v1', 'v2'], after: 'v2' });
     });
   }
 
   for (const [name, probe] of Object.entries(PROBES)) {
-    it(`review probe ${name}: the same bytes and answer every way round`, async () => {
-      const { payload } = await acrossEngines(program(probe.body), probe.version !== undefined ? { version: probe.version } : {});
+    it(`review probe ${name}: parked and resumed, with the answer`, async () => {
+      const { payload } = await parkAndResume(program(probe.body), probe.version !== undefined ? { version: probe.version } : {});
       expect(payload).toEqual(probe.payload);
     });
   }
 
-  it('a park read back with its keys in another order resumes the same on both engines', async () => {
+  it('a park read back with its keys in another order resumes the same', async () => {
     const reversed = (value: unknown): unknown =>
       Array.isArray(value)
         ? value.map(reversed)
@@ -792,58 +759,16 @@ describe('both engines: a body closure holds its scope by reference', () => {
           ? Object.fromEntries(Object.entries(value).reverse().map(([k, v]) => [k, reversed(v)]))
           : value;
     const source = program(SCENARIOS.outerAndBlock!.body);
-    for (const engine of ENGINES) {
-      const parks = makeParkSink();
-      await startOn('ts', source, parks);
-      for (const [address, park] of parks.parks) parks.parks.set(address, { ...park, state: reversed(park.state) as ParkedScopeState });
-      const { kg } = await resumeAllOn(engine, source, parks);
-      expect(payloadOf(kg.creates)).toEqual(SCENARIOS.outerAndBlock!.payload);
-    }
+    const parks = makeParkSink();
+    await startOn(source, parks);
+    for (const [address, park] of parks.parks) parks.parks.set(address, { ...park, state: reversed(park.state) as ParkedScopeState });
+    const { kg } = await resumeAllOn(source, parks);
+    expect(payloadOf(kg.creates)).toEqual(SCENARIOS.outerAndBlock!.payload);
   });
 });
 
-/** `value` with every object's keys sorted, as JSON text. */
-function canonical(value: unknown): string {
-  const sorted = (v: unknown): unknown =>
-    Array.isArray(v)
-      ? v.map(sorted)
-      : v !== null && typeof v === 'object'
-        ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, x]) => [k, sorted(x)]))
-        : v;
-  return JSON.stringify(sorted(value));
-}
-
-describe('both engines: a park written before body closures held their scope', () => {
-  const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<
-    string,
-    Record<string, { kind: 'timer' | 'await' | 'suspension'; state: ParkedScopeState }>
-  >;
-
-  for (const [name, scenario] of Object.entries(SCENARIOS)) {
-    it(`${name}: the old full-snapshot park resumes on either engine as it did`, async () => {
-      const ends: unknown[] = [];
-      for (const engine of ENGINES) {
-        const parks = makeParkSink();
-        const source = program(scenario.body);
-        await startOn(engine, source, parks);
-        for (const [address, park] of Object.entries(fixture[name]!)) parks.parks.set(address, park);
-        const end = await resumeAllOn(engine, source, parks);
-        expect(payloadOf(end.kg.creates)).toEqual(scenario.payload);
-        // The fixture's code trees carry the key order the file was saved
-        // in, which a parked closure's code keeps on one engine and not the
-        // other — as a jsonb column reorders any object's keys. Everything
-        // else is the same, key for key.
-        ends.push(canonical({ payload: payloadOf(end.kg.creates), updates: end.updates, resumed: end.resumed.map((r) => JSON.parse(r) as unknown), left: JSON.parse(parkedBytes(parks)) as unknown }));
-      }
-      expect(ends[1]).toEqual(ends[0]);
-    });
-  }
-});
-
-describe('both engines: a parallel / race arm that names a body closure, and a scope cycle', () => {
-  // The Rust engine does not admit a join's receipt written into a field when
-  // an arm is a NAME (admit.rs receipt_holder), so the arms write their own
-  // answers and the program ends with a marker; every create is compared.
+describe('a parallel / race arm that names a body closure, and a scope cycle', () => {
+  // The arms write their own answers and the program ends with a marker.
   const done = '  write graph-[:note]-> { payload: { done: 1 } }';
   const cases: Record<string, string[]> = {
     closureBesideInline: [
@@ -934,8 +859,8 @@ describe('both engines: a parallel / race arm that names a body closure, and a s
   for (const version of [4, 5]) {
     const bodies = { ...cases, ...Object.fromEntries(Object.entries(cycles).map(([name, inner]) => [name, cycle(version, inner)])) };
     for (const [name, body] of Object.entries(bodies)) {
-      it(`v${version} ${name}: the same bytes and answer every way round`, async () => {
-        const end = await acrossEngines(program(body.map((line) => spelledFor(version, line))), { version });
+      it(`v${version} ${name}: parked and resumed, with the answer`, async () => {
+        const end = await parkAndResume(program(body.map((line) => spelledFor(version, line))), { version });
         expect(end.payload).toEqual(name.startsWith('scopeCycle') ? { v: 8 } : { done: 1 });
         const written = (end.creates as Array<{ fields?: Record<string, unknown> }>).flatMap((c) => (c.fields?.body !== undefined ? [c.fields.body as string] : []));
         if (expectedBodies[name] !== undefined) expect(written).toEqual(expectedBodies[name]);
@@ -1001,7 +926,7 @@ describe('a closure whose scope reaches back to itself resumes', () => {
   }
 });
 
-describe('both engines: a receipt of text-returning NAMED arms is a plain value (admit.rs receipt_holder)', () => {
+describe('a receipt of text-returning NAMED arms is a plain value', () => {
   const join = (combinator: string, arms: string, version: number): string => spelledFor(version, `await ${combinator}(${arms})`);
   const movementProgram = (combinator: string, sink: string, version: number): string =>
     program([`  r = ${join(combinator, '[one, two]', version)}`, `  write graph-[:note]-> ${sink}`]).replace(
@@ -1030,17 +955,12 @@ describe('both engines: a receipt of text-returning NAMED arms is a plain value 
     for (const [kind, make] of [['closure', closureProgram], ['movement', movementProgram]] as const) {
       for (const combinator of ['parallel', 'race'] as const) {
         for (const [name, { sink, ...read }] of Object.entries(sinks)) {
-          it(`v${version} ${combinator} of named ${kind} arms, ${name}: Rust runs whole and equals the TypeScript`, async () => {
-            const wrote: Record<string, unknown> = {};
-            for (const engine of ENGINES) {
-              const kg = makeKgFake();
-              const result = await onEngine(engine, () => runMovement(inputOn(make(combinator, sink, version), makeParkSink(), kg, { version })));
-              expect(result.parked).toBeUndefined();
-              expect(kg.creates.length).toBe(1);
-              wrote[engine] = read[combinator](kg.creates[0]!);
-            }
-            expect(wrote.rust).toEqual(wrote.ts);
-            expect(wrote.ts).not.toBeUndefined();
+          it(`v${version} ${combinator} of named ${kind} arms, ${name}: runs whole and writes the receipt`, async () => {
+            const kg = makeKgFake();
+            const result = await runMovement(inputOn(make(combinator, sink, version), makeParkSink(), kg, { version }));
+            expect(result.parked).toBeUndefined();
+            expect(kg.creates.length).toBe(1);
+            expect(read[combinator](kg.creates[0]!)).not.toBeUndefined();
           }, 30_000);
         }
       }
@@ -1048,14 +968,13 @@ describe('both engines: a receipt of text-returning NAMED arms is a plain value 
   }
 });
 
-describe('both engines: a closure bound from a call, then called by name (admit.rs Callees::closures_returned)', () => {
+describe('a closure bound from a call, then called by name', () => {
   // `h = mk(2)` binds the closure `mk`'s call hands back; `h(1)` calls it in
   // the scope it was written in (mk's call scope, by reference). `mk` is a
   // body closure, a file-level closure, a `function`, a `movement` or a
   // library's function; the closure is called with arguments, twice, in a
   // MAP, from a further call's value; each parks inside the returned
-  // closure's call and resumes on either engine. The review found Rust
-  // refusing it (`function_call`) where TypeScript ran it (merge 11, item 4).
+  // closure's call and resumes.
   const atTop = (top: string[], body: string[]): string => program(body).replace('movement recap', `${top.join('\n')}\nmovement recap`);
   const write = (fields: string): string => `  write graph-[:note]-> { payload: { ${fields} } }`;
   const inner = (park: boolean): string[] =>
@@ -1178,34 +1097,28 @@ describe('both engines: a closure bound from a call, then called by name (admit.
   };
   for (const version of [3, 4, 5]) {
     for (const [name, shape] of Object.entries(shapes)) {
-      it(`v${version} ${name}: Rust runs whole and equals the TypeScript`, async () => {
-        const wrote: Record<string, WriteInput[]> = {};
-        for (const engine of ENGINES) {
-          const kg = makeKgFake();
-          const result = await onEngine(engine, () => runMovement(inputOn(shape.source(false, version), makeParkSink(), kg, { version, files: shape.files?.(false) })));
-          expect({ engine, parked: result.parked, error: (result as { error?: unknown }).error }).toEqual({ engine, parked: undefined, error: undefined });
-          wrote[engine] = kg.creates;
-        }
-        expect(payloadOf(wrote.ts!)).toEqual(shape.payload);
-        if (shape.body !== undefined) expect(wrote.ts![0]!.fields.body).toEqual(shape.body);
-        expect(wrote.rust).toEqual(wrote.ts);
+      it(`v${version} ${name}: runs whole`, async () => {
+        const kg = makeKgFake();
+        const result = await runMovement(inputOn(shape.source(false, version), makeParkSink(), kg, { version, files: shape.files?.(false) }));
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual(shape.payload);
+        if (shape.body !== undefined) expect(kg.creates[0]!.fields.body).toEqual(shape.body);
       }, 30_000);
       if (shape.parks === false) continue;
-      it(`v${version} ${name}, parked inside the returned closure's call: the same bytes and answer every way round`, async () => {
-        const end = await acrossEngines(shape.source(true, version), { version, files: shape.files?.(true) });
+      it(`v${version} ${name}, parked inside the returned closure's call: resumed, with the answer`, async () => {
+        const end = await parkAndResume(shape.source(true, version), { version, files: shape.files?.(true) });
         expect(end.payload).toEqual(shape.payload);
       }, 60_000);
     }
   }
 });
 
-describe('both engines: a library closure two levels deep is read in the library, as one level deep (admit.rs foreign_holders)', () => {
+describe('a library closure two levels deep is read in the library, as one level deep', () => {
   // `go` is a record. A library `mk` hands back `(b: <record>) => (c) => b`;
   // the main file calls it twice over (`k = h(go)`, `r = k(1)`) and writes `r`
   // into a json field. The innermost closure's `b` is the library's name, so
-  // its holder is read there: a record, which the Rust engine refuses by name
-  // exactly as it refuses the one-level `(b) => b`. Handing back plain data it
-  // is admitted and writes what the TypeScript does.
+  // its holder is read there: a record, refused exactly as the one-level
+  // `(b) => b` is. Handing back plain data it runs and writes it.
   const lib = (inner: string[]): Record<string, { source: string }> => ({
     'lib/mk': { source: ['import { manual } from adapters', 'runs = manual()', 'export function mk(a: <number>) {', ...inner, '}'].join('\n') },
   });
@@ -1216,11 +1129,9 @@ describe('both engines: a library closure two levels deep is read in the library
   const oneLevel = (innermost: string): Record<string, { source: string }> => lib([`  return (b: <runs-[:Invocation]->>) => ${innermost}`]);
   const twoCalls = main(['  h = mk(2)', '  k = h(go)', '  r = k(1)']);
   const oneCall = main(['  h = mk(2)', '  r = h(go)']);
-  // The test catalog leaves the manual event undescribed, so the checker cannot
-  // name what `go` is and stays silent: the run reaches admission, which
-  // refuses the unchecked record. Where the event is described, as a team's
-  // catalog describes it, the same programs end at the check on both engines:
-  // a record is a place, not a value a json field holds.
+  // Where the event is described, as a team's catalog describes it, the
+  // programs end at the check: a record is a place, not a value a json field
+  // holds.
   const described = staticCatalogSnapshot({
     credentials: { kg_cred: { adapters: ['kg'] } },
     instanceSchemas: {
@@ -1235,17 +1146,15 @@ describe('both engines: a library closure two levels deep is read in the library
     },
   });
   for (const version of [3, 5]) {
-    it(`v${version}: with the event described, the chain and its one-level twin end at the check on both engines (MOV_WRITE_FIELD_TYPE)`, async () => {
+    it(`v${version}: with the event described, the chain and its one-level twin end at the check (MOV_WRITE_FIELD_TYPE)`, async () => {
       for (const [source, files] of [
         [twoCalls, chain('b')],
         [oneCall, oneLevel('b')],
       ] as const) {
-        for (const engine of ENGINES) {
-          const input = inputOn(source, makeParkSink(), makeKgFake(), { version, files });
-          await expect(onEngine(engine, () => runMovement({ ...input, catalog: { ...described, files: input.catalog?.files } }))).rejects.toThrow(
-            /MOVENG_CHECK[\s\S]*MOV_WRITE_FIELD_TYPE[\s\S]*'payload\.r' is runs\.Invocation/,
-          );
-        }
+        const input = inputOn(source, makeParkSink(), makeKgFake(), { version, files });
+        await expect(runMovement({ ...input, catalog: { ...described, files: input.catalog?.files } })).rejects.toThrow(
+          /MOVENG_CHECK[\s\S]*MOV_WRITE_FIELD_TYPE[\s\S]*'payload\.r' is runs\.Invocation/,
+        );
       }
     }, 60_000);
   }
@@ -1260,7 +1169,7 @@ describe('both engines: a library closure two levels deep is read in the library
   }, 60_000);
   // With the event undescribed it is still a record, only not which one: from
   // version 5 the checker refuses it in the json field at save time, as it
-  // does where the event is described (the Rust engine has no admission).
+  // does where the event is described.
   it('v5: the chain and its one-level twin end at the check even with the event undescribed', async () => {
     for (const [source, files] of [
       [twoCalls, chain('b')],
@@ -1270,20 +1179,15 @@ describe('both engines: a library closure two levels deep is read in the library
     }
   }, 60_000);
   for (const version of [3, 5]) {
-    it(`v${version}: the chain and its one-level twin are both admitted, and write what the TypeScript does, when the closure returns plain data`, async () => {
+    it(`v${version}: the chain and its one-level twin both run, and write it, when the closure returns plain data`, async () => {
       for (const [source, files, payload] of [
         [twoCalls, chain('c + a'), { r: 3 }],
         [oneCall, oneLevel('a'), { r: 2 }],
       ] as const) {
-        const wrote: Record<string, WriteInput[]> = {};
-        for (const engine of ENGINES) {
-          const kg = makeKgFake();
-          const result = await onEngine(engine, () => runMovement(inputOn(source, makeParkSink(), kg, { version, files })));
-          expect({ engine, parked: result.parked, error: (result as { error?: unknown }).error }).toEqual({ engine, parked: undefined, error: undefined });
-          wrote[engine] = kg.creates;
-        }
-        expect(payloadOf(wrote.ts!)).toEqual(payload);
-        expect(wrote.rust).toEqual(wrote.ts);
+        const kg = makeKgFake();
+        const result = await runMovement(inputOn(source, makeParkSink(), kg, { version, files }));
+        expect(result.parked).toBeUndefined();
+        expect(payloadOf(kg.creates)).toEqual(payload);
       }
     }, 60_000);
   }
