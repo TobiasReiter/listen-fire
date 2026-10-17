@@ -13,9 +13,11 @@
 // to go) is the host's answer, not a reachability gap.
 //
 // The programs:
-//   - the checks corpus's version-5 records (packages/movement-lang/checker/
-//     __test__/__fixtures__/checks.json): every program the language's and
-//     the engine's tests hand the checker, harvested;
+//   - the checks corpus's version-5 records: every program the language's and
+//     the engine's tests hand the checker, harvested. The pin holds no program
+//     text, so this runs over the corpus the harvest assembles
+//     (`pnpm checks:corpus` in packages/movement-lang runs it, with
+//     CHECKS_CORPUS=1);
 //   - the engine oracles' programs (crates/movement-engine/tests/oracle:
 //     records, handles, parallel and patterns), each respelled to version 5
 //     by the upgrade tool's own rewrites.
@@ -26,6 +28,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { fromCatalogSnapshot, parseProgram, resolveFileFromSnapshot, typeNameOf, type CatalogSnapshot } from 'movement-lang';
 import { loadChecks, loadSnapshots } from 'movement-lang/conformance/checks_corpus';
+import { corpusFile, overCorpus, SNAPSHOT_TABLE_FILE } from 'movement-lang/conformance/checks_pin';
 import { spelledFor } from 'movement-lang/checker/__test__/surface_spelling';
 import { tenantIdOf } from 'engine-contracts';
 
@@ -39,7 +42,6 @@ import { credentialIdsFor, makeFakeParkSink, makeTestHost } from 'movement-engin
 import { KNOWN_GAPS, reasonOf } from './reachability_gaps';
 
 const ROOT = path.resolve(__dirname, '../../../../../..');
-const FIXTURES = path.join(ROOT, 'packages/movement-lang/checker/__test__/__fixtures__');
 const ORACLES = path.join(ROOT, 'crates/movement-engine/tests/oracle');
 const TEAM = tenantIdOf('00000000-0000-0000-0000-0000000000ab');
 
@@ -112,10 +114,10 @@ function entriesOf(source: string): string[] {
 const isError = (d: { severity?: string }) => d.severity === undefined || d.severity === 'error';
 
 function checksCorpus(): Candidate[] {
-  const table = loadSnapshots(path.join(FIXTURES, 'checks.snapshots.json'));
+  const table = loadSnapshots(SNAPSHOT_TABLE_FILE);
   const seen = new Set<string>();
   const out: Candidate[] = [];
-  for (const record of loadChecks(path.join(FIXTURES, 'checks.json'))) {
+  for (const record of loadChecks(corpusFile())) {
     if (record.version < 5 || record.note !== undefined || record.upgradingFrom !== undefined) continue;
     if ((record.diagnostics as Array<{ severity?: string }>).some(isError)) continue;
     const key = `${record.snapshot}\u0000${record.source}`;
@@ -208,7 +210,7 @@ async function gapOf(candidate: Candidate, movementName: string): Promise<string
   return undefined;
 }
 
-describe('reachability: no checked-clean version-5 program reaches an engine refusal', () => {
+(overCorpus() ? describe : describe.skip)('reachability: no checked-clean version-5 program reaches an engine refusal', () => {
   it('runs every version-5 program in the repository', async () => {
     const candidates = [...checksCorpus(), ...oracleCorpus()];
     const gaps: string[] = [];

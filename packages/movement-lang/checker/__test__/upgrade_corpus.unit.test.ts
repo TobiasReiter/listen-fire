@@ -1,6 +1,8 @@
 // The upgrade loop over every version 4 program the repository pins: the
 // checks corpus's version 4 records (the v4 conformance suites, this package's
-// tests and the engine's) and the engine oracle's handles (version 4). Each
+// tests and the engine's) and the engine oracle's handles (version 4). The
+// pin holds no program text, so this runs over the corpus the harvest
+// assembles (`pnpm checks:corpus` runs it, with CHECKS_CORPUS=1). Each
 // that checks clean under 4 either upgrades to clean under 5, or is reported
 // with why, by cause:
 //
@@ -17,13 +19,13 @@ import { checkProgram, diagnosticSeverity, type Diagnostic } from '../check';
 import { parseProgram } from '../../parser/parse';
 import { fromCatalogSnapshot, resolveFileFromSnapshot, type CatalogSnapshot } from '../../service/snapshot';
 import { loadChecks, loadSnapshots, snapshotOf } from '../../conformance/checks_corpus';
+import { corpusFile, overCorpus, SNAPSHOT_TABLE_FILE } from '../../conformance/checks_pin';
 import { rustCheck, upgradeSource } from '../upgrade';
 
 declare function require(id: string): unknown;
 const path = require('path') as { join(...parts: string[]): string };
 const fs = require('fs') as { readFileSync(path: string, encoding: 'utf8'): string };
 
-const FIXTURES = path.join(__dirname, '__fixtures__');
 const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/oracle/handles.json');
 
 /** 2026-10-16, at the v5 surface spine: 3,127 of 3,468 checks records.
@@ -60,10 +62,10 @@ interface Program {
 }
 
 function programs(): Program[] {
-  const table = loadSnapshots(path.join(FIXTURES, 'checks.snapshots.json'));
+  const table = loadSnapshots(SNAPSHOT_TABLE_FILE);
   const seen = new Set<string>();
   const out: Program[] = [];
-  for (const record of loadChecks(path.join(FIXTURES, 'checks.json'))) {
+  for (const record of loadChecks(corpusFile())) {
     if (record.version !== 4 || record.note !== undefined || record.parseVersion !== undefined || record.upgradingFrom !== undefined) continue;
     const key = `${record.snapshot}\u0000${record.source}`;
     if (seen.has(key)) continue;
@@ -110,7 +112,7 @@ const shapeOf = (message: string): string =>
 /** A whole-line `#` comment, as written. */
 const commentLines = (source: string): string[] => source.split('\n').filter((line) => /^\s*#/.test(line));
 
-describe('upgrading the version 4 corpus to version 5', () => {
+(overCorpus() ? describe : describe.skip)('upgrading the version 4 corpus to version 5', () => {
   it('every program clean under 4 upgrades clean under 5, or says why', () => {
     let clean = 0;
     let upgraded = 0;

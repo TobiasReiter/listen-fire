@@ -1,38 +1,37 @@
-// The checker conformance corpus (__fixtures__/checks.json and the snapshot
-// table it names, checks.snapshots.json — see checks_regression) read back,
-// and the replay of one record through the TypeScript checker: the language
-// kit's (../../conformance/checks_corpus.ts), defaulted to our corpus. Shared
-// by the regression pin and the catalog differential, which replays the same
-// records with the catalog it hands the checker wrapped.
+// The checker conformance corpus read back, and the replay of one record
+// through the TypeScript checker: the language kit's
+// (../../conformance/checks_corpus.ts), defaulted to our corpus. Ours is
+// pinned without its program texts (__fixtures__/checks/, see
+// ../../conformance/checks_pin.ts) and assembled with them by the harvest
+// (`pnpm checks:corpus`), so a reader of whole records needs that run first.
+// Shared by the regression pin and the catalog differential, which replays the
+// same records with the catalog it hands the checker wrapped.
 import {
   checkNow as checkAgainst,
   loadChecks as loadChecksAt,
   loadSnapshots as loadSnapshotsAt,
   snapshotOf as snapshotIn,
-  textFiles,
   type CheckRecord,
 } from '../../conformance/checks_corpus';
+import { corpusFile, SNAPSHOT_TABLE_FILE, writePin } from '../../conformance/checks_pin';
 import type { CatalogSnapshot } from '../../service/snapshot';
 import type { Catalog } from '../catalog';
 
-declare const __dirname: string;
-
 export { linesOf, type CheckRecord } from '../../conformance/checks_corpus';
 
-const FIXTURE = `${__dirname}/__fixtures__/checks.json`;
-const SNAPSHOTS = `${__dirname}/__fixtures__/checks.snapshots.json`;
-
-/** A checks corpus's records: ours by default, or any file in its format. */
-export function loadChecks(path: string = FIXTURE): CheckRecord[] {
+/** A checks corpus's records: ours (assembled by the harvest) by default, or
+ *  any file in its format. */
+export function loadChecks(path: string = corpusFile()): CheckRecord[] {
   return loadChecksAt(path);
 }
 
+/** Re-pins our corpus's records, in their order. */
 export function writeChecks(rows: CheckRecord[]): void {
-  textFiles().write(FIXTURE, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+  writePin(rows);
 }
 
 /** A checks corpus's snapshot table, by key: ours by default. */
-export function loadSnapshots(path: string = SNAPSHOTS): Map<string, CatalogSnapshot> {
+export function loadSnapshots(path: string = SNAPSHOT_TABLE_FILE): Map<string, CatalogSnapshot> {
   return loadSnapshotsAt(path);
 }
 

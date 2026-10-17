@@ -2,8 +2,9 @@
 // pins a check or a run for, checked by the TypeScript checker as it is now,
 // written as JSON lines for the Rust side (examples/parity.rs) to replay.
 //
-//   - the checks corpus (packages/movement-lang/checker/__test__/__fixtures__/checks.json):
-//     every program the v1 to v4 conformance suites, this package's own tests
+//   - the checks corpus, as the harvest assembles it from the pin (which holds
+//     no program text) and the programs it finds in their tests (target/checks/,
+//     packages/movement-lang/conformance/checks_pin.ts): every program the v1 to v4 conformance suites, this package's own tests
 //     and the engine's tests (its v4 corpus and its own) check, each under
 //     its own version; and again under the current version, for the programs
 //     pinned at version 3 or later, where they still parse;
@@ -14,6 +15,7 @@
 //
 // Usage (run.sh does this): node -r <ts-node>/register/transpile-only reference.ts <out-dir>
 import { checkNow, loadChecks, loadSnapshots, type CheckRecord } from '../../../packages/movement-lang/conformance/checks_corpus';
+import { corpusFile, SNAPSHOT_TABLE_FILE } from '../../../packages/movement-lang/conformance/checks_pin';
 import { CURRENT_LANGUAGE_VERSION } from '../../../packages/movement-lang/language_version';
 import type { CatalogSnapshot } from '../../../packages/movement-lang/service/snapshot';
 
@@ -24,11 +26,10 @@ const path = require('path');
 
 const out = process.argv[2];
 const ROOT = path.resolve(__dirname, '../../..');
-const FIXTURES = path.join(ROOT, 'packages/movement-lang/checker/__test__/__fixtures__');
 const ORACLES = path.join(ROOT, 'crates/movement-engine/tests/oracle');
 
-const table = loadSnapshots(path.join(FIXTURES, 'checks.snapshots.json'));
-const records = loadChecks(path.join(FIXTURES, 'checks.json')).filter(r => r.note === undefined);
+const table = loadSnapshots(SNAPSHOT_TABLE_FILE);
+const records = loadChecks(corpusFile()).filter(r => r.note === undefined);
 
 const lines: string[] = [];
 let failed = 0;

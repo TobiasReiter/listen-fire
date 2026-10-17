@@ -1,6 +1,6 @@
 // The Rust catalog (crates/movement-parser/src/catalog) against the
-// TypeScript one, over the checker conformance corpus. Every record of
-// checks.json is replayed through the TypeScript checker (as checks_regression
+// TypeScript one, over the checker conformance corpus. Every record of the
+// assembled corpus (`pnpm checks:corpus`; the pin holds no program text) is replayed through the TypeScript checker (as checks_regression
 // replays it) with its catalog wrapped to record each lookup and its answer,
 // and the catalog helpers wrapped (below) to record each call; every distinct
 // lookup is then asked of the Rust `catalog_query` against the same snapshot,
@@ -27,7 +27,7 @@ type Exclusion = 'a record carrying a position' | 'a Set' | 'a Map' | 'a functio
 /** The one exclusion expected: a record type's position is the typing
  *  layer's `PositionTypeRef` (sets, instance tokens), and describing one is
  *  the typing port's. Those calls are not covered here: they are covered by
- *  the conformance corpus (checks.json) once the typing layer is in Rust.
+ *  the conformance corpus once the typing layer is in Rust.
  *  Any other reason fails the test. */
 const EXPECTED_EXCLUSION: Exclusion = 'a record carrying a position';
 
