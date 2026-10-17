@@ -32,7 +32,7 @@ import type { Expression } from '#shared/expression/types';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { SchemaTypeDescriptor, SourcePosition } from 'movement-engine/services/translation_graph/types';
 import type { Adapter, EdgesFromResult } from 'movement-engine/services/translation_graph/adapter';
-import type { AdapterIntrospection } from '../adapters/name_resolution';
+import type { AdapterIntrospection } from 'module-kit/adapter/name_resolution';
 
 import { selectMember } from './narrowing';
 import { ADAPTER_META_TYPE_ID, makeMetaPosition, positionLabel } from 'movement-engine/services/translation_graph/types';

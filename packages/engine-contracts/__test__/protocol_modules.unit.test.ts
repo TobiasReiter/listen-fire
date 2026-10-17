@@ -178,3 +178,57 @@ describe('the module methods', () => {
     expect(METHODS.runPeriodic.result.parse(null)).toBeNull();
   });
 });
+
+// A plugin module: its plugins declared as one package, called by
+// `invokePlugin` (ev3-kit; within version 2, no bump).
+const PLUGIN_MANIFEST = {
+  ...OLD_MANIFEST,
+  adapterType: 'web',
+  supportedTriggers: [],
+  methods: ['manifest', 'invokePlugin'],
+  plugins: {
+    package: '@lf/web',
+    plugins: [
+      {
+        name: 'fetch-url',
+        spec: {
+          args: ['url', 'email'],
+          priced: false,
+          argTypes: { url: 'text', email: 'text' },
+          requiredArgs: ['url'],
+          effects: { reads: ['the web'] },
+          output: { kind: 'value', type: 'text' },
+        },
+      },
+    ],
+  },
+};
+
+describe('a plugin module', () => {
+  it('round-trips its package of plugins', () => {
+    expect(WireManifestResult.parse(PLUGIN_MANIFEST)).toEqual(PLUGIN_MANIFEST);
+  });
+
+  it('refuses plugins without `invokePlugin`, `invokePlugin` without plugins, and a plugin declared twice', () => {
+    expect(WireManifestResult.safeParse({ ...PLUGIN_MANIFEST, methods: ['manifest'] }).success).toBe(false);
+    const { plugins: _plugins, ...bare } = PLUGIN_MANIFEST;
+    expect(WireManifestResult.safeParse(bare).success).toBe(false);
+    const twice = { ...PLUGIN_MANIFEST.plugins, plugins: [...PLUGIN_MANIFEST.plugins.plugins, { ...PLUGIN_MANIFEST.plugins.plugins[0], name: 'fetch_url' }] };
+    expect(WireManifestResult.safeParse({ ...PLUGIN_MANIFEST, plugins: twice }).success).toBe(false);
+  });
+
+  it('refuses an empty package and a plugin name a program could not spell', () => {
+    expect(WireManifestResult.safeParse({ ...PLUGIN_MANIFEST, plugins: { package: '@lf/web', plugins: [] } }).success).toBe(false);
+    const badName = { package: '@lf/web', plugins: [{ ...PLUGIN_MANIFEST.plugins.plugins[0], name: 'Fetch URL' }] };
+    expect(WireManifestResult.safeParse({ ...PLUGIN_MANIFEST, plugins: badName }).success).toBe(false);
+  });
+
+  it('invokePlugin: a plugin by name with its arguments in, what it added out', () => {
+    const params = { name: 'fetch-url', config: { url: 'https://acme.test' }, extractedContext: {} };
+    expect(METHODS.invokePlugin.params.parse(params)).toEqual(params);
+    const result = { text: 'page', data: { title: 'Acme' }, records: [{ url: 'https://acme.test' }], outcome: 'fetched 1', costMicrodollars: 1200 };
+    expect(METHODS.invokePlugin.result.parse(result)).toEqual(result);
+    expect(METHODS.invokePlugin.result.parse({})).toEqual({});
+    expect(METHODS.invokePlugin.result.safeParse({ costMicrodollars: -1 }).success).toBe(false);
+  });
+});

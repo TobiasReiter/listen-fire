@@ -17,7 +17,7 @@ import {
 
 import { runMovement, type MovementRunResult } from '../../../packages/movement-engine/services/movement_engine/run';
 import { makeFakeParkSink, makeTestHost } from '../../../packages/movement-engine/services/movement_engine/test_host';
-import { createAdapterProtocolHandler } from '../../../apps/api/src/services/translation_graph/protocol/server';
+import { createAdapterProtocolHandler } from '../../module-kit/server';
 import type { Adapter } from '../../../packages/movement-engine/services/translation_graph/adapter';
 
 const tenant: TenantId = tenantIdOf('an-embedders-own-tenant');

@@ -1303,6 +1303,68 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - Not in `lf-host` yet: `serve` and the inbound doors, callbacks, `cancel`, model calls, credential
   refresh, and `run --webhook`. The TypeScript `lf` is unchanged and still has them all.
 
+### ev3-oauthfake
+
+- The dev loop has a fake OAuth2 provider in fake-channels (`/oauth`): authorize, token for the authorization_code and refresh_token grants with rotating refresh tokens, a protected endpoint, and injectable expiry and failures.
+- With `MOCK_OUTPUT_ADAPTERS=true` the Dropbox auth client signs in and refreshes against it, and the fake Dropbox refuses access tokens the provider has expired.
+- `pnpm dev:oauth setup`, `pnpm dev:inject oauth-expire|oauth-config` and `pnpm dev:inspect oauth` drive and read it; documented in `docs/dev-loop.md`.
+
+### ev3-otherdoors
+
+- The mail doors (Resend, Mailgun inbound, Mailgun events) and the shared Slack app and Telegram bot doors now run on the inbound core. Every path, header and signature is unchanged; the golden corpus gained 21 Mailgun cases and passes unchanged except the fixes below.
+- Fixed: emit and wake bodies over 1 MB answer `{"error":"payload_too_large"}` with 413, like the webhook door (they answered express's HTML page).
+- Fixed: a Mailgun event whose signature is the wrong length, or missing, answers 406 (it answered a 500 that Mailgun would retry).
+
+### ev3-connect
+
+- `lf connect <credential>` connects an OAuth credential the way its external's manifest declares
+  it. lf prints the provider's sign-in URL and opens it, takes the redirect on a loopback port
+  (`--redirect-port N` for a provider that wants an exact redirect URI, `--no-browser` to only
+  print the URL), exchanges the code, and writes the tokens into the secrets file. The secrets
+  entry must already name its external and your app's `client_id` (and `client_secret`); those
+  and every other field are kept.
+- One connect flow in the engine package, driven by the declaration (authorize and token URLs,
+  scopes, where the client authenticates, PKCE, extra authorize parameters). The platform's
+  Attio, Airtable, Dropbox, Google and Gmail sign-ins now run on it. Their callback URLs, the
+  parameters of each authorize URL and code exchange, the 15 minute single-use state, and the
+  stored credential shapes are unchanged, so existing connections and registered redirect URIs
+  keep working. Slack keeps its own installer flow.
+
+### ev3-lfdoors
+
+- `lf serve` takes deliveries at `/api/public/webhook-sync/<provider>/<install>`, the same door the hosted
+  product serves, on the shared inbound core. `/hooks/<external>/<install>` keeps working as lf's older
+  name for it and still answers `202 { runs }` with the runs it started. The webhook-sync door queues
+  events and answers `{ ok, eventsProcessed }`.
+- An external that declares `inbound` in its manifest has its deliveries verified by the declared scheme.
+  The secret is the install's `webhook_secret` field, or the field `webhook.secretField` in
+  `lf-external.yaml` names. An external with only the `webhook:` block verifies as before.
+- A signed delivery with a missing, empty or placeholder secret is refused, whatever the scheme.
+- The push doors (`emit`, `wake`) and `lf run --webhook` run on the same core. A pull cursor an external
+  returns from `preprocessInbound` is now kept in lf's state and handed back on the next delivery.
+- A delivery with an unreadable body now answers 500 (it was 400), and a refusal now carries a code
+  (`signature_invalid`, `unknown_provider`, `subscription_not_found`) in place of a sentence.
+
+### ev3-kit
+
+- A built-in integration can now be a module: written once with the module kit
+  (`packages/module-kit`, `defineModule`), loaded in process by the platform and served as a
+  protocol-2 process by `serve-module` everywhere else. A module reaches no part of the hosted
+  product, no database and no recording layer; a check in each module's type-check holds that.
+- Dealroom is the first: `@lf/dealroom` (`modules/dealroom`). Nothing changes for a team using it:
+  the same requests, the same answers and the same polled events, held by a recording of the old
+  adapter replayed against the module both ways. Switching back is one line (`BUILTIN_MODULES`).
+- Plugins are modules too. A plugin module declares its plugins as one package, imported by tag
+  (``import { `@lf/web` as web } from plugins``) and called through the protocol's new
+  `invokePlugin`. The six bundled plugins are still the platform's own for now.
+- `lf`: an `lf-external.yaml` may name a `module` instead of a command or a URL, and a plugin
+  external is now served (its plugins checked and called). `lf-host` does the same, except a module
+  that needs a declared credential, which it checks but cannot run yet.
+- Adapter protocol 2 (no version bump): a manifest may declare `plugins`, paired with
+  `invokePlugin`; the install manifest file keeps a module's declarations. When a module declares a
+  signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
+  signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

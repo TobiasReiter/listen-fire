@@ -28,7 +28,7 @@ import type {
   RelatedResult,
 } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import { AdapterNameDriftError } from '../../translation_graph/adapters/name_resolution';
+import { AdapterNameDriftError } from 'module-kit/adapter/name_resolution';
 import {
   META_RECORD_TYPE,
   makeStablePosition,

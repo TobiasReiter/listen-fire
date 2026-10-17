@@ -6,8 +6,8 @@
 // disagree about what an edge promises — and, worse, sixteen places to edit
 // when the lookahead is scaled back to a stub.
 
-import { uniformWalk, hydrateTargets } from '../hop';
-import { stubTargetOf, type DescribedTargetNode, type EdgeTargetNode } from 'movement-engine/services/translation_graph/adapter';
+import { uniformWalk, hydrateTargets } from '../adapter/hop';
+import { stubTargetOf, type DescribedTargetNode, type EdgeTargetNode } from 'movement-engine/public/adapter';
 
 /** Narrow to a described target, failing loudly if it turned out to be a stub.
  *  The union forces this at every call site, which is the point: a consumer
@@ -16,9 +16,9 @@ const described = (target: EdgeTargetNode | undefined): DescribedTargetNode => {
   if (!target || target.stub === true) throw new Error('expected a described target, got a stub');
   return target;
 };
-import { META_RECORD_TYPE, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE, makeUnstablePosition } from 'movement-engine/public/catalog';
 
-import type { SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { SchemaTypeDescriptor } from 'movement-engine/public/catalog';
 
 const ROOT: SchemaTypeDescriptor = {
   typeId: META_RECORD_TYPE,

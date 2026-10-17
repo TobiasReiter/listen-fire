@@ -673,7 +673,8 @@ a server that declares nothing is unchanged.
 
 A declaration and its method go together. The manifest is refused when one
 is present without the other (`poll` with the `poll` method, `periodic` with
-`runPeriodic`), or when a name is declared twice. `refreshCredential` needs
+`runPeriodic`, `plugins` with `invokePlugin`), or when a name is declared
+twice. `refreshCredential` needs
 `credentials`, but `credentials` does not need `refreshCredential`.
 
 ### Credentials
@@ -794,6 +795,11 @@ host verifies each delivery before `preprocessInbound` sees it:
   `x-slack-request-timestamp`, which the scheme fixes.
 - `intercepts` (optional) names requests the host answers itself, unsigned,
   before verifying: `slack_url_verification` echoes Slack's `challenge`.
+- One host rule for every scheme: a delivery is refused when the key it
+  should be signed with is missing, blank or still the placeholder a
+  subscription holds before its registration returns a secret, and when its
+  signature is wrong. No scheme is lenient for a module (a built-in keeps its
+  door's behaviour only until it moves onto a module manifest).
 - A scheme or intercept the host does not know refuses the manifest; it is
   never silently left unverified. A provider no scheme fits keeps verifying
   in its own code.
@@ -823,6 +829,64 @@ expires, say):
 
 - The host calls `runPeriodic({ name })` every `intervalSeconds` for each
   install, with that install's credential. It answers `null`.
+
+### Plugins
+
+A module may serve plugins instead of (or as well as) an adapter: functions a
+movement calls. It declares them as one package, which a program imports by
+its tag:
+
+```json
+"plugins": {
+  "package": "@lf/web",
+  "plugins": [
+    {
+      "name": "fetch-url",
+      "spec": {
+        "args": ["url", "email"],
+        "priced": false,
+        "argTypes": { "url": "text", "email": "text" },
+        "requiredArgs": ["url"],
+        "effects": { "reads": ["the web"] },
+        "output": { "kind": "value", "type": "text" }
+      }
+    }
+  ]
+}
+```
+
+```
+import { `@lf/web` as web } from plugins
+page = web.fetchUrl(u)
+```
+
+- `package` is the tag, matched exactly and never parsed.
+- Each plugin's `name` is its registered name; a program calls it by the
+  camel case of it (`fetch-url` → `fetchUrl`). Two names that spell the same
+  (`fetch-url`, `fetch_url`) are one plugin declared twice, and refused.
+- `spec` is what the checker reads: the arguments a call may write, their
+  types, the required ones, its effects, whether it may cost money
+  (`priced`), what it hands back (`output`), the arguments a
+  `through [ … ]` stage feeds it (`fedArgs`), and `fedByExtraction` for a
+  plugin that only reads what the stage extracted.
+- `plugins` pairs with the method `invokePlugin`:
+  `{ name, config, extractedContext }` → `{ text?, data?, records?, outcome?, costMicrodollars? }`.
+  `config` is the author's arguments by name; `extractedContext` the fields
+  extracted so far inside a stage (empty otherwise). The answer is what the
+  plugin added: fetched `text` to extract from, `data` fields, `records` (one
+  per thing it fetched, for a records output), an `outcome` for the trace,
+  and what its own work cost that nothing else priced.
+- A plugin module answers `manifest` with `supportedTriggers: []` and lists
+  only `manifest` and `invokePlugin` (and `refreshCredential` if it needs
+  one) in `methods`.
+
+### Serving a module
+
+A module written with the module kit (`packages/module-kit`,
+`defineModule`) is served as a process by `serve-module <module>`: it binds
+loopback on `PORT` (0 picks one), prints `listening <port>`, and requires
+`Authorization: Bearer <MODULE_TOKEN>` when that is set. The platform loads
+the same module in process; both declare the same manifest.
 
 ## Paging
 
@@ -1077,4 +1141,8 @@ from the root, so no automation can walk the collection.
   declares none of them and is unchanged, and an older host ignores them. The
   ruling: no protocol version bump. See
   [Modules](#modules-credentials-signatures-and-schedules).
+- **Plugin modules** (within version 2, no bump). The manifest may declare
+  `plugins` (a package of them), paired with the optional method
+  `invokePlugin`. Additive: a server that declares none is unchanged, and an
+  older host ignores the declaration. See [Plugins](#plugins).
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.

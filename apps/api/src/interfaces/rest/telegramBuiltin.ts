@@ -32,7 +32,7 @@ import { logger } from 'movement-engine/services/logger';
 import { notifyWork } from '../../services/work/drain';
 import { runHarnessDelivery } from '../../services/work/harness';
 import { authorizeUnsignedWebhook } from '../../lib/unsigned_webhooks';
-import { authenticateInbound, type InboundAuth } from 'movement-engine/public/inbound';
+import { admitShared, type InboundAuth, type SharedAdmission, type SharedDoor } from 'movement-engine/public/inbound';
 
 const telegramBuiltinRouter: ReturnType<typeof Router> = Router();
 
@@ -52,6 +52,12 @@ function telegramWebhookSecret(): string | null {
   return secret.length > 0 ? secret : null;
 }
 
+/** No signature: Telegram echoes the `secret_token` it was registered with. */
+export const TELEGRAM_SHARED_DOOR: SharedDoor = {
+  verifier: { scheme: 'telegram_secret_token', signatureHeaders: [TELEGRAM_SECRET_HEADER] },
+  intercepts: [],
+};
+
 export type WebhookAuthResult = InboundAuth;
 
 /**
@@ -65,13 +71,13 @@ export type WebhookAuthResult = InboundAuth;
  *                  production. That is how the dev loop keeps injecting updates.
  */
 export function verifyTelegramWebhookSecret(headerValue: string | undefined): WebhookAuthResult {
-  return authenticateInbound({
-    verifier: { scheme: 'telegram_secret_token', signatureHeaders: [TELEGRAM_SECRET_HEADER] },
+  const admission: SharedAdmission = admitShared(TELEGRAM_SHARED_DOOR, {
     rawBody: Buffer.alloc(0),
     headers: { [TELEGRAM_SECRET_HEADER]: headerValue },
     secret: telegramWebhookSecret(),
     allowUnsigned: () => authorizeUnsignedWebhook('telegram/builtin').authorized,
   });
+  return admission.kind === 'refused' ? { authorized: false, reason: admission.reason } : { authorized: true };
 }
 
 /**

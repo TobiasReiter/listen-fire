@@ -1,15 +1,14 @@
-// Dealroom PollSource — the solicited event seam. Dealroom has no webhooks
-// anywhere in its API, so the poll-source worker drives event production: it
-// pulls the rounds recorded since the persisted checkpoint, emits one event per
+// Dealroom's poll — the solicited event seam. Dealroom has no webhooks
+// anywhere in its API, so the host's poll drives event production: it pulls
+// the rounds recorded since the persisted checkpoint, emits one event per
 // round, and returns the new high-water mark.
 //
 // Creation is the ONE "changed since" Dealroom offers on a round, so a listener
 // fires on NEW rounds only — a round whose amount is corrected afterwards does
 // not fire again.
 
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
-import type { PollSource } from '../../poll_source';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { DiscriminableEvent } from 'movement-engine/public/adapter';
+import type { PollAnswer, PollInput } from 'module-kit';
 
 import {
   DEALROOM_MAX_LIMIT,
@@ -18,9 +17,9 @@ import {
   parseDealroomInstant,
   type DealroomFundingRound,
   type DealroomMustFilters,
-} from '../../../../adapters/dealroom/apiClient';
-import { eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
-import { resolveDealroomClient, type DealroomApiClient } from './client';
+  type DealroomApiClient,
+} from './api_client';
+import { eventConfigList } from 'movement-engine/public/inbound';
 import { DEALROOM_SEARCH_FIELDS } from './schema';
 import {
   DEALROOM_FUNDING_ROUND_EVENT_TAG,
@@ -31,7 +30,7 @@ import {
 /** Dealroom's default cadence — overridable per automation via the `listen`
  *  option `pollIntervalSeconds`. Rounds land in batches through the day, so a
  *  ten-minute look is plenty and keeps well inside the request budget. */
-const DEFAULT_POLL_INTERVAL_SECONDS = 600;
+export const DEALROOM_POLL_INTERVAL_SECONDS = 600;
 
 /**
  * How far one tick will page. `created_utc_min` bounds the query, so a tick only
@@ -62,65 +61,41 @@ export function listenFilters(config: unknown): DealroomMustFilters {
   return must;
 }
 
-export class DealroomPollSource implements PollSource {
-  readonly pollIntervalSeconds = DEFAULT_POLL_INTERVAL_SECONDS;
+/** One poll: the rounds recorded since the checkpoint, oldest first. */
+export async function pollDealroom(client: DealroomApiClient, input: PollInput, now: number = Date.now()): Promise<PollAnswer> {
+  const since = mark(input.checkpoint);
 
-  constructor(
-    private readonly teamId: TeamId,
-    private readonly credentialsId: string | undefined,
-    /** Injectable for tests; production resolves a credentialed client. */
-    private readonly clientOverride?: DealroomApiClient,
-  ) {}
+  // First poll: set the mark to now and emit nothing. A live listener watches
+  // from go-live onward — it never backfills the database (which would flood
+  // the run on connect). Past rounds stay reachable through the root's
+  // `Funding Rounds` collection.
+  if (since === undefined) return { events: [], checkpoint: { createdAfter: now } };
 
-  async getEvents(input: {
-    config: unknown;
-    checkpoint?: unknown;
-  }): Promise<{ events: DiscriminableEvent[]; checkpoint?: unknown }> {
-    const client =
-      this.clientOverride ??
-      (await resolveDealroomClient({ teamId: this.teamId, credentialsId: this.credentialsId }));
-    if (!client) {
-      throw new Error(
-        `DealroomPollSource: no usable Dealroom credential for team ${this.teamId} ` +
-          `(credentialsId=${this.credentialsId ?? 'unset'}). Connect Dealroom.`,
-      );
-    }
+  const rounds = await roundsSinceCreation({
+    client,
+    createdAfter: since,
+    must: listenFilters(input.config),
+  });
 
-    const now = Date.now();
-    const since = mark(input.checkpoint);
+  const checkpoint: DealroomCheckpoint = {
+    createdAfter: rounds.reduce(
+      (high, round) => Math.max(high, parseDealroomInstant(round.created_utc) ?? high),
+      since,
+    ),
+  };
 
-    // First poll: set the mark to now and emit nothing. A live listener watches
-    // from go-live onward — it never backfills the database (which would flood
-    // the run on connect). Past rounds stay reachable through the root's
-    // `Funding Rounds` collection.
-    if (since === undefined) return { events: [], checkpoint: { createdAfter: now } };
+  const events: DiscriminableEvent[] = rounds.map((round) => ({
+    payload: round,
+    externalId: String(round.id),
+    tag: DEALROOM_FUNDING_ROUND_EVENT_TAG,
+    occurredAt: new Date(parseDealroomInstant(round.created_utc) ?? now).toISOString(),
+  }));
 
-    const rounds = await roundsSinceCreation({
-      client,
-      createdAfter: since,
-      must: listenFilters(input.config),
-    });
+  // Oldest first — a run processes the rounds in the order Dealroom recorded
+  // them.
+  events.sort((a, b) => (a.occurredAt ?? '').localeCompare(b.occurredAt ?? ''));
 
-    const checkpoint: DealroomCheckpoint = {
-      createdAfter: rounds.reduce(
-        (high, round) => Math.max(high, parseDealroomInstant(round.created_utc) ?? high),
-        since,
-      ),
-    };
-
-    const events: DiscriminableEvent[] = rounds.map((round) => ({
-      payload: round,
-      externalId: String(round.id),
-      tag: DEALROOM_FUNDING_ROUND_EVENT_TAG,
-      occurredAt: new Date(parseDealroomInstant(round.created_utc) ?? now).toISOString(),
-    }));
-
-    // Oldest first — a run processes the rounds in the order Dealroom recorded
-    // them.
-    events.sort((a, b) => (a.occurredAt ?? '').localeCompare(b.occurredAt ?? ''));
-
-    return { events, checkpoint };
-  }
+  return { events, checkpoint };
 }
 
 /**
@@ -153,12 +128,4 @@ async function roundsSinceCreation(input: {
     if (items.length < DEALROOM_MAX_LIMIT) break;
   }
   return fresh;
-}
-
-/** Factory matching the PollSource registry signature. */
-export function createDealroomPollSource(input: {
-  teamId: TeamId;
-  credentialsId?: string;
-}): DealroomPollSource {
-  return new DealroomPollSource(input.teamId, input.credentialsId);
 }

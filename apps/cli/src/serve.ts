@@ -1,7 +1,9 @@
-// `lf serve`: the inbound doors and the work queue. A request at
-// `/hooks/<external>/<install>` is verified and parsed by its external and
-// routed like any event; an external's pushes arrive at
-// `/api/public/adapter/<external>/{emit,wake}` (doors.ts) and are queued; a
+// `lf serve`: the inbound doors and the work queue. The inbound doors are the
+// engine's inbound core (doors.ts): a provider's delivery at
+// `/api/public/webhook-sync/<provider>/<install>` is verified and parsed by its
+// external and its events queued, `/hooks/<external>/<install>` being lf's
+// older name for the same door; an external's pushes arrive at
+// `/api/public/adapter/<external>/{emit,wake}` and are queued; a
 // callback's call arrives at `/api/cb/<id>` (its url) and runs its body;
 // due work — an emitted event, a parked run's timer, a queued await wake — is
 // drained on a tick, and at once when a push queues some.
@@ -10,11 +12,16 @@
 // starts are told where to push (LF_HOST_URL).
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { receiveAdapterPush } from './doors';
-import { callCallback, drainWork, receiveWebhook, WebhookRefused, type CallOutcome, type RunOutcome, type Session } from './runs';
+import { answerDelivery, answerEmit, answerWake, PAYLOAD_TOO_LARGE, type InboundAnswer } from 'movement-engine/public/inbound';
+import { createLfInboundStores, deliverInline, hookTarget, type LfInboundOptions, type LfInboundStores } from './doors';
+import { callCallback, drainWork, type CallOutcome, type RunOutcome, type Session } from './runs';
 
 /** The largest body a door reads; a larger batch is split by its sender. */
 const MAX_BODY_BYTES = 1024 * 1024;
+
+/** The webhook door's own limit, the hosted door's: a delivery is a
+ *  notification, and a provider's bigger one carries ids to pull. */
+const MAX_DELIVERY_BYTES = 100 * 1024;
 
 export interface Serving {
   server: Server;
@@ -25,7 +32,18 @@ export interface Serving {
 
 export async function serve(
   open: (hostUrl: string) => Promise<Session>,
-  options: { port: number; tickMs?: number; log?: (line: string) => void },
+  options: {
+    port: number;
+    tickMs?: number;
+    log?: (line: string) => void;
+    /** How the inbound doors read deliveries and wrap their stores (the
+     *  inbound contract suite instruments them). */
+    inbound?: Pick<LfInboundOptions, 'adapterOf'> & {
+      decorate?(stores: LfInboundStores): LfInboundStores;
+      /** Called whenever an inbound door pokes the drain. */
+      onNotify?(): void;
+    };
+  },
 ): Promise<Serving> {
   const log = options.log ?? ((line: string) => process.stdout.write(`${line}\n`));
   const logRuns = (outcomes: RunOutcome[]) => {
@@ -57,6 +75,11 @@ export async function serve(
     } finally {
       draining = false;
     }
+  };
+
+  const pokeDrain = () => {
+    options.inbound?.onNotify?.();
+    void tick();
   };
 
   const server = createServer((req, res) => {
@@ -96,39 +119,56 @@ export async function serve(
       return;
     }
 
-    const door = /^\/api\/public\/adapter\/([^/]+)\/(emit|wake)\/?$/.exec(path);
-    if (door?.[1] !== undefined && (door[2] === 'emit' || door[2] === 'wake')) {
+    const push = /^\/api\/public\/adapter\/([^/]+)\/(emit|wake)\/?$/.exec(path);
+    if (push?.[1] !== undefined && (push[2] === 'emit' || push[2] === 'wake')) {
       let body: unknown;
       try {
         body = JSON.parse(rawBody.toString('utf8'));
       } catch {
         body = undefined;
       }
-      const answer = await receiveAdapterPush(
-        session,
-        { external: decodeURIComponent(door[1]), door: door[2], headers, body },
-        { onQueued: () => void tick() },
-      );
-      return json(res, answer.status, answer.body);
+      const request = { adapterType: decodeURIComponent(push[1]), headers, body };
+      const stores = inboundStores(session);
+      return send(res, await (push[2] === 'emit' ? answerEmit(stores.push, request) : answerWake(stores.push, request)));
     }
 
+    const delivery = /^\/api\/public\/webhook-sync\/([^/]+)\/([^/]+)\/?$/.exec(path);
+    if (delivery?.[1] !== undefined && delivery[2] !== undefined) {
+      if (rawBody.length > MAX_DELIVERY_BYTES) return send(res, PAYLOAD_TOO_LARGE);
+      return send(
+        res,
+        await answerDelivery(
+          inboundStores(session).store,
+          { notify: pokeDrain },
+          { provider: decodeURIComponent(delivery[1]), subscriptionId: decodeURIComponent(delivery[2]), rawBody, headers },
+        ),
+      );
+    }
+
+    // lf's older name for the delivery door. Its events run inside the
+    // request and the answer lists the runs, as it always has.
     const hook = /^\/hooks\/([^/]+)(?:\/([^/]+))?\/?$/.exec(path);
     if (hook?.[1] === undefined) return json(res, 404, { error: 'not found' });
-    try {
-      const outcomes = await receiveWebhook(session, {
-        external: decodeURIComponent(hook[1]),
-        ...(hook[2] !== undefined ? { install: decodeURIComponent(hook[2]) } : {}),
-        rawBody,
-        headers,
-      });
-      logRuns(outcomes);
-      json(res, 202, { runs: outcomes });
-      // A delivery may have queued wakes.
-      void tick();
-    } catch (error) {
-      const status = error instanceof WebhookRefused ? error.status : 500;
-      json(res, status, { error: String(error instanceof Error ? error.message : error) });
-    }
+    const target = hookTarget(session, {
+      external: decodeURIComponent(hook[1]),
+      ...(hook[2] !== undefined ? { install: decodeURIComponent(hook[2]) } : {}),
+    });
+    if (target === null) return json(res, 404, { error: 'unknown_provider' });
+    const { answer, outcomes } = await deliverInline(session, { ...target, rawBody, headers }, inboundOptions);
+    logRuns(outcomes);
+    if (answer.status !== 200) return send(res, answer);
+    json(res, 202, { runs: outcomes });
+    // A delivery may have queued wakes.
+    void tick();
+  };
+
+  const inboundOptions: Pick<LfInboundOptions, 'notify' | 'adapterOf'> = {
+    notify: pokeDrain,
+    ...(options.inbound?.adapterOf !== undefined ? { adapterOf: options.inbound.adapterOf } : {}),
+  };
+  const inboundStores = (session: Session): LfInboundStores => {
+    const stores = createLfInboundStores(session, inboundOptions);
+    return options.inbound?.decorate?.(stores) ?? stores;
   };
 
   await new Promise<void>((resolve) => server.listen(options.port, '127.0.0.1', resolve));
@@ -184,6 +224,11 @@ function callAnswer({ call, queued }: CallOutcome): { status: number; message: s
     case 'mismatch':
       return { status: 400, message: call.message };
   }
+}
+
+function send(res: ServerResponse, answer: InboundAnswer): void {
+  json(res, answer.status, answer.body);
+  answer.afterAnswer?.();
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {

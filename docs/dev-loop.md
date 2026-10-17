@@ -621,6 +621,31 @@ After setup, fire with `pnpm dev:inject dealroom --round …` and inspect with
 Dealroom declares no `sequenced` edge, so the checker asks any fold over one of
 its walks for an explicit `ORDER BY`.
 
+### Fake OAuth provider
+
+`apps/fake-channels` serves a generic OAuth2 provider under `/oauth`, so a
+token refresh that writes back through the secrets store can be exercised end
+to end. It implements `GET /oauth/authorize` (redirects back with a code),
+`POST /oauth/token` (`authorization_code` and `refresh_token` grants; refresh
+tokens **rotate**, so a refresh whose answer is not stored fails on the next
+refresh) and `GET /oauth/protected` (bearer check). The dev-loop Dropbox
+auth client points at it whenever `MOCK_OUTPUT_ADAPTERS=true`, and the fake
+Dropbox refuses access tokens the provider has expired.
+
+```bash
+pnpm dev:oauth setup                  # sign a "Dev Loop Dropbox" credential in; save movement oauth_refresh_proof
+pnpm dev:inject oauth-expire          # stored expiry into the past + provider refuses the stored access token
+pnpm dev:movement run oauth_refresh_proof
+pnpm dev:inspect oauth                # token calls (one refresh_token call), rotated tokens, stored credential
+pnpm dev:inject oauth-config [--expires-in s] [--rotate true|false] [--fail-next n] [--fail-with invalid_grant|server_error]
+```
+
+After the run, `dev:inspect oauth` shows one `refresh_token` call and the
+stored credential's token suffixes changed to the newly issued ones (token
+values are shown by their last characters only). `--fail-next` makes the next
+n token calls fail without spending the refresh token. Control routes:
+`POST /oauth/control/{config,mint,expire}`, `GET /oauth/control/state`.
+
 ### `pnpm dev:link <subcommand>`
 
 **`dev:link`** manages `knowledge.linked_object` rows — the **legacy

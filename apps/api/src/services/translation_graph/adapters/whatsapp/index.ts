@@ -41,15 +41,15 @@ import type { TriggerEvent } from 'movement-engine/services/translation_graph/tr
 import { parseWhatsappEvents } from '../../../webhook_sync/providers/whatsapp';
 import { webhookEventToDiscriminable } from '../../../webhook_sync/event_conversion';
 import { fileHandle, isFileValue, ownedFileSource, singleParentLink } from 'movement-engine/services/translation_graph/adapter';
-import { naturalName } from '../name_resolution';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import { getMetaWhatsappApi } from '../../../whatsapp/metaApi';
 import { fetchUrlToStream } from '../../engine/files/fetch-stream';
 import { isExposedFileUrl } from '../../engine/files/expose';
 import { FileOutsideTeamError } from 'movement-engine/services/translation_graph/engine/files/file_outside_team';
 import { streamFileRef } from '../../engine/files/retrieve';
 import { META_RECORD_TYPE, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { uniformWalk } from '../hop';
-import { BaseAdapter } from '../base';
+import { uniformWalk } from 'module-kit/adapter/hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
 import { normalizeWhatsappPhone } from '../acting_user/phone';
 import { WHATSAPP_HANDBOOK_SECTION } from './handbook_section';
 import {

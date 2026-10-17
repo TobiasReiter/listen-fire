@@ -94,6 +94,10 @@ jest.mock('../../translation_graph/adapters/email/resend', () => {
   const actual = jest.requireActual('../../translation_graph/adapters/email/resend');
   return require('./fakes').resendApiFake(actual);
 });
+jest.mock('../../principal', () => {
+  const actual = jest.requireActual('../../principal');
+  return require('./fakes').directoryFake(actual);
+});
 jest.mock('../../translation_graph/adapters/acting_user/resolve', () => require('./fakes').actingUserFake());
 jest.mock('principal', () => ({ ...jest.requireActual('principal'), ...require('./fakes').principalFake() }));
 jest.mock('../../context', () => ({ ...jest.requireActual('../../context'), ...require('./fakes').contextFake() }));

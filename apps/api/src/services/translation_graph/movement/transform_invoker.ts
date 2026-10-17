@@ -1,6 +1,7 @@
 // The production `through` / plugin-call invoker a movement run's host hands
-// the engine: the TG transform registry, and the document store a plugin's
-// fetched files land in.
+// the engine: a plugin on a module line (BUILTIN_MODULES) is its module, run
+// in process; any other is the TG transform registry, with the document store
+// a plugin's fetched files land in.
 
 import type { TransformInvocationResult, TransformInvokeInput } from 'movement-engine/services/movement_engine/extraction';
 import type { Costed, Priced } from 'movement-engine/services/movement_engine/host';
@@ -14,6 +15,10 @@ import { documentStoreFileRef } from 'movement-engine/services/translation_graph
 import { registerBundledTransforms } from '../engine/transforms/register-bundled';
 import { getTransform, type TransformImpl, type TransformInput, type TransformOutput } from '../engine/transforms/registry';
 import { makeEphemeralPosition } from 'movement-engine/services/translation_graph/types';
+import { BUILTIN_MODULES, builtinPluginModule, type BuiltinModuleTable } from '../adapters/builtin_modules';
+
+import type { TeamId } from '../../../generated/kysely/core/Team';
+import type { InProcessPluginModule } from 'module-kit';
 
 /** A plugin by either spelling: movement identifiers can't carry dashes, so a
  *  program writes `vc_url_retrieval` for a transform registered as
@@ -191,4 +196,44 @@ async function storedDocumentFiles(ids: string[], plugin: string): Promise<Map<s
     }
   });
   return files;
+}
+
+/**
+ * The invoker a run of `teamId` hands the engine: a plugin a module line
+ * serves goes to that module, in process; every other to the registry.
+ */
+export function transformInvokerFor(teamId: TeamId, table: BuiltinModuleTable = BUILTIN_MODULES): TransformInvoker {
+  return {
+    async invoke(input) {
+      const module = builtinPluginModule(input.plugin, { teamId }, table);
+      return module === undefined ? registryTransformInvoker.invoke(input) : invokePluginModule(module, input);
+    },
+  };
+}
+
+/** One call of a plugin module, answered as the registry's plugins are: what
+ *  it added, its own cost under its name, and a throw read as no enrichment
+ *  unless the run is out of money. */
+async function invokePluginModule(
+  module: InProcessPluginModule,
+  { plugin, config, extractedContext }: Priced<TransformInvokeInput>,
+): Promise<Costed<TransformInvocationResult>> {
+  let answer;
+  try {
+    answer = await module.invoke({ name: plugin, config, extractedContext });
+  } catch (error) {
+    if (isBudgetExhausted(error)) throw error;
+    logger.warn('[movement:transform] plugin module threw — no enrichment', { plugin, error, ...runFields() });
+    return {};
+  }
+  const out: Costed<TransformInvocationResult> = {};
+  if (answer.text !== undefined && answer.text !== '') out.text = answer.text;
+  if (answer.data !== undefined && Object.keys(answer.data).length > 0) out.data = answer.data;
+  if (answer.records !== undefined && answer.records.length > 0) out.records = answer.records;
+  if (answer.outcome !== undefined) out.outcome = answer.outcome;
+  if (answer.costMicrodollars !== undefined) {
+    out.cost = [{ source: costSourceKey({ kind: 'plugin', name: plugin }), microdollars: answer.costMicrodollars }];
+  }
+  logger.info('[movement:transform] ran', { plugin, module: true, addedFields: Object.keys(out.data ?? {}), ...runFields() });
+  return out;
 }

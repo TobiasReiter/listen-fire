@@ -9,4 +9,6 @@ export * from '../services/webhook_sync/remote_inbound';
 export * from '../services/inbound/verify';
 export * from '../services/inbound/deliver';
 export * from '../services/inbound/push';
+export * from '../services/inbound/mail';
+export * from '../services/inbound/shared';
 export * from '../services/inbound/contract';

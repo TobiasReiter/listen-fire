@@ -17,22 +17,31 @@
 // wherever a mailbox is read or written, with the rotation listener that keeps
 // the stored token current.
 
-import { createHash, randomBytes } from 'node:crypto';
-
-import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
+import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
+import { logger } from 'movement-engine/services/logger';
+import {
+  beginOAuth2Connect,
+  createPendingStates,
+  createSecretsFamily,
+  exchangeOAuth2Code,
+  SecretMissing,
+  UnknownConnectAttempt,
+  type OAuth2Attempt,
+  type OAuth2Declaration,
+} from 'movement-engine/public/secrets';
+import { GMAIL_READONLY_SCOPE } from 'movement-engine/lib/google_cloud';
 
 import type { Credentials } from 'google-auth-library';
 
-import { logger } from 'movement-engine/services/logger';
-import { createSecretsFamily, SecretMissing } from 'movement-engine/public/secrets';
+
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 import {
   GMAIL_OAUTH_CLIENT_LABEL,
   gmailOAuthClientCredentials,
   gmailOAuthScopes,
 } from './connect_method';
-import { GMAIL_READONLY_SCOPE } from 'movement-engine/lib/google_cloud';
+import { GOOGLE_OAUTH2_ENDPOINTS, GOOGLE_OFFLINE_CONSENT, googleIssuedTokens } from '../google/authClient';
 
 /** The token half of a signed-in mailbox's credential, as the rotation listener
  *  rewrites it. The mailbox address and the granted scopes sit beside it on the
@@ -286,9 +295,28 @@ interface GmailAuthClientOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/**
+ * How a signed-in mailbox is connected: what Gmail's module manifest will
+ * declare, on this installation's scopes. Google's own endpoints, or the dev
+ * loop's fake Google's when one is configured; the client goes in the form
+ * body, with PKCE.
+ */
+export function gmailOAuth2(input: { scopes: string[]; fakeBaseUrl?: string }): OAuth2Declaration {
+  const fake = input.fakeBaseUrl?.replace(/\/$/, '');
+  return {
+    ...(fake === undefined
+      ? GOOGLE_OAUTH2_ENDPOINTS
+      : { authorizeUrl: `${fake}/fake-google-oauth/auth`, tokenUrl: `${fake}/fake-google-oauth/token` }),
+    scopes: input.scopes,
+    clientAuth: 'body',
+    pkce: true,
+    authorizeParams: { ...GOOGLE_OFFLINE_CONSENT },
+  };
+}
+
 class GmailAuthClient {
-  private readonly authCache: Record<string, string> = {};
-  private readonly oauth2Client: OAuth2Client;
+  private readonly attempts = createPendingStates<OAuth2Attempt>();
+  private readonly client: { clientId: string; clientSecret: string };
   private readonly env: NodeJS.ProcessEnv;
   readonly callbackUrl: string;
   readonly fakeBaseUrl: string | undefined;
@@ -297,12 +325,7 @@ class GmailAuthClient {
     this.env = options.env ?? process.env;
     this.fakeBaseUrl = options.fakeBaseUrl;
     this.callbackUrl = `${options.redirectBaseUrl.replace(/\/$/, '')}/gmail/callback`;
-    this.oauth2Client = new OAuth2Client({
-      clientId: options.clientId,
-      clientSecret: options.clientSecret,
-      redirectUri: this.callbackUrl,
-      ...endpointOverrides(options.fakeBaseUrl),
-    });
+    this.client = { clientId: options.clientId, clientSecret: options.clientSecret };
   }
 
   /** The scopes this installation's consent asks for — read always, send only
@@ -311,30 +334,34 @@ class GmailAuthClient {
     return gmailOAuthScopes(this.env);
   }
 
+  /** Read when each attempt begins and ends, so it follows the installation's
+   *  scopes as they stand. */
+  private oauth2(): OAuth2Declaration {
+    return gmailOAuth2({ scopes: this.scopes(), ...(this.fakeBaseUrl !== undefined ? { fakeBaseUrl: this.fakeBaseUrl } : {}) });
+  }
+
   /** Exchange the consent's code for tokens, reporting what Google actually
    *  granted alongside them. */
   async codeToToken(input: {
     state: string;
     code: string;
   }): Promise<GmailTokens & { grantedScopes: string[] }> {
-    const codeVerifier = this.authCache[input.state];
-    if (!codeVerifier) {
-      throw new Error('Invalid state parameter value');
-    }
-    delete this.authCache[input.state];
+    const attempt = this.attempts.take(input.state);
+    if (attempt === undefined) throw new UnknownConnectAttempt();
 
-    const { tokens } = await this.oauth2Client.getToken({ code: input.code, codeVerifier });
-    if (!tokens.access_token || !tokens.refresh_token || !tokens.expiry_date) {
+    const { response } = await exchangeOAuth2Code({ oauth2: this.oauth2(), client: this.client, attempt, code: input.code });
+    const issued = googleIssuedTokens.safeParse(response);
+    if (!issued.success) {
       throw new Error(
         'Google returned no refresh token for this sign-in. Remove Listen-Fire from ' +
           'the account’s third-party access and sign in again.',
       );
     }
     return {
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      expiresAt: tokens.expiry_date,
-      grantedScopes: parseGrantedScopes(tokens.scope, this.scopes()),
+      accessToken: issued.data.access_token,
+      refreshToken: issued.data.refresh_token,
+      expiresAt: Date.now() + issued.data.expires_in * 1000,
+      grantedScopes: parseGrantedScopes(response.scope, this.scopes()),
     };
   }
 
@@ -345,28 +372,9 @@ class GmailAuthClient {
    * that dies in an hour and nothing to renew it with.
    */
   async generateInstallUrl(): Promise<string> {
-    const state = randomBytes(100).toString('base64url');
-    const codeVerifier = randomBytes(96).toString('base64url');
-    const codeChallenge = createHash('sha256')
-      .update(codeVerifier)
-      .digest('base64')
-      .replace(/=/g, '')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_');
-
-    this.authCache[state] = codeVerifier;
-    setTimeout(() => {
-      delete this.authCache[state];
-    }, 15 * 60 * 1000);
-
-    return this.oauth2Client.generateAuthUrl({
-      state,
-      access_type: 'offline',
-      prompt: 'consent',
-      code_challenge: codeChallenge,
-      code_challenge_method: CodeChallengeMethod.S256,
-      scope: this.scopes(),
-    });
+    const { url, attempt } = beginOAuth2Connect({ oauth2: this.oauth2(), clientId: this.client.clientId, redirectUri: this.callbackUrl });
+    this.attempts.put(attempt.state, attempt);
+    return url;
   }
 }
 

@@ -7,14 +7,14 @@
 // telemetry payload. Core keeps the tail — the acting-team membership gate and
 // the access level still apply to whatever identity these resolve.
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
-
 import type { Request, Response } from 'express';
 import type { InboundDoor } from '../../../../lib/middleware/authentication/doors';
 import type { ResolvedIdentity } from '../../../principal/core_provider';
 
 import { handleError } from '../../../../lib/errors';
+import { logger } from 'movement-engine/services/logger';
 import { getEnvVar } from '../../../../lib/utils/environment';
+import { judgeMailgunEvent } from 'movement-engine/public/inbound';
 import { verifyInboundEmailRequest } from './inbound_door';
 import { verifyResendInboundRequest } from './resend_inbound';
 
@@ -30,7 +30,7 @@ const inboundEmailDoor: InboundDoor = {
   matches: (req) => /^\/api\/mailgun(\/.+)?\/callback$/.test(req.originalUrl),
 
   async authenticate(req: Request, res: Response): Promise<ResolvedIdentity | null> {
-    const decision = await verifyInboundEmailRequest(req);
+    const decision = await verifyInboundEmailRequest(req.body);
     if (decision.outcome === 'refused') {
       res.status(decision.status).send();
       return null;
@@ -64,30 +64,15 @@ const resendInboundDoor: InboundDoor = {
   },
 };
 
-function eventSignatureVerifies({
-  token,
-  timestamp,
-  signature,
-}: {
-  token: string;
-  timestamp: string;
-  signature: string;
-}): 'VERIFIED' | 'NOT_VERIFIED' | 'MISCONFIGURED' {
-  let apiKey;
+/** The key the event signature is checked with: null when this deployment is
+ *  misconfigured and has none. */
+function eventSigningKey(): string | null {
   try {
-    apiKey = getEnvVar('MAILGUN_API_KEY', { devDefault: 'fake_mailgun_key' });
+    return getEnvVar('MAILGUN_API_KEY', { devDefault: 'fake_mailgun_key' });
   } catch (e) {
     handleError(e);
-    return 'MISCONFIGURED';
+    return null;
   }
-
-  const hmacSignature = createHmac('sha256', apiKey)
-    .update(timestamp + token)
-    .digest('hex');
-
-  return timingSafeEqual(Buffer.from(signature), Buffer.from(hmacSignature))
-    ? 'VERIFIED'
-    : 'NOT_VERIFIED';
 }
 
 /**
@@ -101,17 +86,17 @@ const mailgunEventDoor: InboundDoor = {
   matches: (req) => req.originalUrl.startsWith('/api/webhook/mailgun/'),
 
   async authenticate(req: Request, res: Response): Promise<ResolvedIdentity | null> {
-    const status = eventSignatureVerifies(req.body.signature);
-
-    if (status === 'MISCONFIGURED') {
+    const verdict = judgeMailgunEvent({ signature: req.body?.signature, apiKey: eventSigningKey() });
+    if (verdict === 'misconfigured') {
+      logger.error('Mailgun API key not configured.');
       res.status(500).send();
-      throw new Error('Mailgun API key not configured.');
+      return null;
     }
-    if (status === 'NOT_VERIFIED') {
+    if (verdict === 'refused') {
       // Terminate early with a 406 (Not acceptable) or Mailgun will retry many
       // times. https://documentation.mailgun.com/en/latest/user_manual.html#webhooks
       res.status(406).send();
-      throw new Error('Could not authenticate inbound email.');
+      return null;
     }
 
     return { userId: getEnvVar('PUBLIC_USER_ID') };

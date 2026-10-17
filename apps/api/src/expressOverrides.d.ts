@@ -3,7 +3,7 @@
 // it — and while it was a `.ts` that two modules imported for its side effect,
 // the compiled server required a file the build had never produced.
 
-import type { InboundEmailRoute } from './services/translation_graph/adapters/email/inbound_door';
+import type { InboundEmailRoute } from 'movement-engine/public/inbound';
 
 interface RequestOverrides {
   xRequestId: string;

@@ -61,8 +61,8 @@ import type {
 import { singleParentLink, unsupportedAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { UPDATE_NOT_FOUND } from '../not_found';
 import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { BaseAdapter } from '../base';
-import { uniformWalk } from '../hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import {
   ASK_FAMILIES,
   ASK_ANSWER_TYPES,

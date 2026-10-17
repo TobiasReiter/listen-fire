@@ -1,8 +1,11 @@
+import * as movement_engine_public_adapter from 'movement-engine/public/adapter';
+import { CapturedWrite } from 'movement-engine/public/adapter';
 import * as story_view_view from 'story-view/view';
 import { FieldType, CatalogSnapshot, InstanceSchema, LanguageVersion, Diagnostic } from 'movement-lang';
 import * as _shared_expression_types from '@listen-fire/shared/expression/types';
 import * as _prisma_client_runtime_library from '@prisma/client/runtime/library';
 import * as _trpc_server_observable from '@trpc/server/observable';
+import * as movement_engine_public_catalog from 'movement-engine/public/catalog';
 import * as _prisma_client from '@prisma/client';
 import * as _trpc_server from '@trpc/server';
 import * as _trpc_server_dist_error_formatter from '@trpc/server/dist/error/formatter';
@@ -130,218 +133,6 @@ export type UserEmailId = string & {
 export type TeamInviteId = string & {
     __brand: 'core.team_invite';
 };
-
-/**
- * Free-text / slug value collection. `input` and `slug` share a field set and
- * differ only in validation — `slug` enforces {@link TRIGGER_SLUG_PATTERN}.
- * They stay one arm (distinguished by the legacy `'text' | 'slug'` kind) so
- * the non-breaking alias is exact; the validator branches on `kind`.
- *
- *   - `text` — free text
- *   - `slug` — text constrained to {@link TRIGGER_SLUG_PATTERN}; may carry
- *              `prefix`/`suffix` the UI shows around the input (the local
- *              part and the domain of the deployment's own inbound address) so
- *              the user reads the whole address while editing
- *              only the variable part
- */
-export interface TextBlock {
-    kind: 'text' | 'slug';
-    /** Key under `trigger.config` this block reads/writes. */
-    key: string;
-    /** User-facing label. No substrate jargon. */
-    label: string;
-    help?: string;
-    placeholder?: string;
-    /** Static text shown immediately before the input (display only). */
-    prefix?: string;
-    /** Static text shown immediately after the input (display only). */
-    suffix?: string;
-    required?: boolean;
-    min?: number;
-    max?: number;
-    /**
-     * Marks this value as a routing key that must be unique across sibling
-     * triggers of the same adapter on the team. The engine enforces it on write
-     * (an adapter can't see other triggers); the adapter only declares intent.
-     */
-    unique?: boolean;
-    /**
-     * Marks this block as the adapter's INBOUND ROUTING KEY — the config value an
-     * inbound event is matched against to find the trigger that owns it. The
-     * de-named successor to the former `inboundChannel: 'forwarding-address'`
-     * flag: an adapter that declares a routing-key block is one whose events
-     * arrive addressed by that key (email's plus-suffix `key`), and the framework
-     * routes generically off the declaration — no named "forwarding address"
-     * concept in the engine.
-     *
-     * Drives, all off this one declaration:
-     *   - the listen-config vocabulary (`triggerConfigVocabulary` projects the
-     *     key into the `listen to <instance> { … }` accepted keys);
-     *   - inbound dispatch (`findTriggerByInboundKey` matches an inbound event's
-     *     key against `config->><key>`);
-     *   - the surfaced inbound ADDRESS, when the block carries `prefix`/`suffix`
-     *     (`prefix + value + suffix`, e.g. `<local>+<value>@<domain>`).
-     *
-     * At most one block per adapter should carry this.
-     */
-    routingKey?: boolean;
-}
-/** One-of-a-fixed-set value collection. */
-export interface SelectBlock {
-    kind: 'select';
-    key: string;
-    label: string;
-    help?: string;
-    required?: boolean;
-    options: ReadonlyArray<{
-        value: string;
-        label: string;
-    }>;
-}
-/**
- * Presentational — a `title` and/or `text` body, optional `tone`. Carries no
- * `key` and collects nothing. This is what lets a rich config (the
- * forwarding-address UI) read as framing prose plus a field, rather than text
- * subordinated to a single input's `help`. The minimum presentational
- * primitive — no divider/image/link until a real need appears.
- */
-export interface SectionBlock {
-    kind: 'section';
-    title?: string;
-    text?: string;
-    /** Styling hint — `'info'` (framing prose) or `'note'` (a quieter aside). */
-    tone?: 'info' | 'note';
-}
-/**
- * Dispatches to an APP-SHIPPED handler by `kind`, rendering `label` (and an
- * optional `help` line). Carries no value. This IS the former `ConnectAction`
- * (`{ kind, label }`) promoted into the block union: when the host renders an
- * action block it wires the affordance to `runConnectAction(kind, ctx)` — the
- * exact same registry dispatch the editor and chat use today. Declaration is
- * portable (any adapter, local or remote); behaviour is app-shipped (Principle
- * 5), so a remote adapter may only reference a `kind` the app already ships.
- */
-export interface ActionBlock {
-    kind: 'action';
-    /** App-shipped client handler id, e.g. `'google-drive-picker'`. The
-     *  framework never interprets this — the host routes it to its handler
-     *  registry. */
-    actionKind: string;
-    /** Button / affordance text shown to the author. No internal jargon. */
-    label: string;
-    help?: string;
-}
-/**
- * The closed config-block union. Three families:
- *   - VALUE blocks ({@link TextBlock} `text`/`slug`, {@link SelectBlock}) —
- *     collect a value, carry a `key`;
- *   - PRESENTATION blocks ({@link SectionBlock}) — render text, no `key`;
- *   - ACTION blocks ({@link ActionBlock}) — dispatch to an app handler, no `key`.
- *
- * Discriminated on `kind`; the host's only branching is on `block.kind`. An
- * adapter cannot invent a rendered widget — it composes from this vocabulary.
- */
-export type ConfigBlock = TextBlock | SelectBlock | SectionBlock | ActionBlock;
-
-export type ExpressionType = {
-    kind: 'string';
-} | {
-    kind: 'number';
-} | {
-    kind: 'boolean';
-} | {
-    kind: 'date';
-} | {
-    kind: 'timestamp';
-} | {
-    kind: 'json';
-} | {
-    kind: 'enum';
-    values: string[];
-} | {
-    kind: 'file';
-} | {
-    kind: 'list';
-    element: ExpressionType;
-} | {
-    kind: 'record';
-    fields: Record<string, ExpressionType>;
-};
-
-/**
- * The small, honest whole-adapter capability set — facts that hold for the
- * adapter as a whole (not per-edge / per-field). These are read by the engine
- * at evaluation time: a `traverse direction=incoming` step, an `edge_property`
- * read, or a `resource` / `resource_traverse` step against an adapter that
- * doesn't support them raises `UnsupportedSourceCapabilityError`.
- *
- * Answered statically by `Adapter.runtimeCapabilities()` — no credential
- * needed, so it can be a plain method returning a constant. Per-edge filter /
- * order / limit live on the `describe()` output, NOT here (principle 1 —
- * capability at grain).
- *
- */
-export interface RuntimeCapabilities {
-    /** Traversal direction + edge-property support. `outgoing` is universal
-     *  (every adapter must implement it) and therefore implicit. `incoming`
-     *  lets `traverse`/`exists` walk inverse edges (KG yes; most external
-     *  systems no). `edgeProperties` lets `edge_property` expressions read
-     *  fields off walked edges. */
-    traversal: {
-        incoming: boolean;
-        edgeProperties: boolean;
-    };
-    /** Resources (files, URLs, content) attached to source positions, plus
-     *  `resource_traverse` step support. Typically only the KG adapter. */
-    resources: boolean;
-}
-
-/**
- * A write the engine *would* have performed, captured during a dry run.
- * `kind: 'update'` carries the live `externalId` it would have written to
- * (matching reads still hit the real target — see file header), so the
- * caller can render "would update the existing record" vs "would create".
- */
-export interface CapturedWrite {
-    kind: 'create' | 'update' | 'delete' | 'link' | 'unlink';
-    /**
-     * Adapter that would have received the write — the wrapped target's
-     * `adapterType`. With per-action target overrides (M4b) one dry run can
-     * capture writes bound for several systems; this is what distinguishes
-     * them in the sink output.
-     */
-    adapterType: string;
-    recordType: string;
-    fields?: Record<string, unknown>;
-    externalId?: string;
-    /**
-     * What this record hangs off, with the edge it hangs off by — 1 for a
-     * linked write, N for a tuple path, absent for a root write.
-     *
-     * Records connect through edges, so a rehearsal that showed only the fields
-     * showed half the write: an entry added to a list is not the same claim as
-     * an entry, and the organization it was added to is the other half of it.
-     *
-     * `rehearsed` marks a parent that does not exist — its id was minted by this
-     * rehearsal a moment ago rather than read off the target — so a reader can
-     * tell "added to the organization you have" from "added to the organization
-     * this run would have created".
-     */
-    parents?: Array<{
-        edgeName: string;
-        recordType: string;
-        externalId: string;
-        rehearsed?: true;
-    }>;
-    /** `kind: 'link' | 'unlink'` only — the asserted (or severed) edge.
-     *  `recordType` / `externalId` above are the from side; the to side
-     *  rides here. */
-    link?: {
-        edgeName: string;
-        toRecordType: string;
-        toExternalId: string;
-    };
-}
 
 /** One would-be write the movement produced under dry-run — the
  *  `CapturedWrite` currency, surfaced verbatim to the UI. */
@@ -1051,9 +842,11 @@ export interface AuthoringDiagnostic {
      *  checked, on an upgrade check (the checker's `Diagnostic.upgrade`). */
     upgrade?: true;
     /** The exact rewrite that resolves it (also spelled out in `message`):
-     *  replace each 1-based range with `text`; an empty range inserts. */
+     *  replace each 1-based range with `text`; an empty range inserts. `safe`:
+     *  it provably keeps the meaning, so an upgrade may apply it unasked. */
     fix?: {
         edits: AuthoringEdit[];
+        safe?: true;
     };
 }
 export interface AuthoringEdit {
@@ -1359,15 +1152,6 @@ export const enum LinkedObjectSource {
     input = "input"
 }
 
-/** Represents the enum knowledge.change_source */
-export const enum ChangeSource {
-    pipeline = "pipeline",
-    user_edit = "user_edit",
-    agent = "agent",
-    api = "api",
-    mcp = "mcp"
-}
-
 /** Represents the enum knowledge.change_kind */
 export const enum ChangeKind {
     property_set = "property_set",
@@ -1377,6 +1161,15 @@ export const enum ChangeKind {
     edge_retargeted = "edge_retargeted",
     node_created = "node_created",
     node_removed = "node_removed"
+}
+
+/** Represents the enum knowledge.change_source */
+export const enum ChangeSource {
+    pipeline = "pipeline",
+    user_edit = "user_edit",
+    agent = "agent",
+    api = "api",
+    mcp = "mcp"
 }
 
 /** Represents the enum knowledge.node_type_category */
@@ -4604,9 +4397,9 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     } | {
                         kind: "generic";
                         shape: {
-                            properties: Record<string, ExpressionType>;
+                            properties: Record<string, movement_engine_public_catalog.ExpressionType>;
                             edges: Record<string, {
-                                target: ExpressionType;
+                                target: movement_engine_public_catalog.ExpressionType;
                             }>;
                         };
                     } | {
@@ -4647,7 +4440,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     fires?: boolean | undefined;
                     firesOn?: string[] | undefined;
                 }[];
-                runtimeCapabilities: RuntimeCapabilities;
+                runtimeCapabilities: movement_engine_public_adapter.RuntimeCapabilities;
                 supportedTriggers: readonly ("mutation" | "extraction" | "snapshot" | "poll" | "changes-feed" | "webhook")[];
             }>;
             describeTypes: _trpc_server.BuildProcedure<"query", {
@@ -4709,9 +4502,9 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     } | {
                         kind: "generic";
                         shape: {
-                            properties: Record<string, ExpressionType>;
+                            properties: Record<string, movement_engine_public_catalog.ExpressionType>;
                             edges: Record<string, {
-                                target: ExpressionType;
+                                target: movement_engine_public_catalog.ExpressionType;
                             }>;
                         };
                     } | {
@@ -4883,6 +4676,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 } | undefined;
                 supportsFuzzyResolution?: boolean | string[] | undefined;
                 uniquenessAuthorable?: boolean | undefined;
+                deletable?: boolean | undefined;
                 discriminatedWrite?: {
                     discriminant: string;
                     variantTypes: Record<string, string>;
@@ -4936,6 +4730,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 trigger_id: string;
                 trigger_type: string;
                 diagnostics: unknown;
+                engine: string | null;
                 record_id: string | null;
                 movement_version_id: MovementVersionId | null;
                 trigger_payload: unknown;
@@ -13238,6 +13033,14 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
             }, {
+                runtimeCapabilities: {
+                    traversal: {
+                        incoming: boolean;
+                        edgeProperties: boolean;
+                    };
+                    resources: boolean;
+                };
+                methods: string[];
                 protocolVersion: 2;
                 adapterType: string;
                 baseUrl: string;
@@ -13248,14 +13051,77 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     header?: string | undefined;
                 };
                 supportedTriggers: string[];
-                runtimeCapabilities: {
-                    traversal: {
-                        incoming: boolean;
-                        edgeProperties: boolean;
+                webhookEventTypeId?: string | undefined;
+                credentials?: ({
+                    name: string;
+                    kind: "static";
+                    fields: {
+                        name: string;
+                        label?: string | undefined;
+                        secret?: boolean | undefined;
+                        optional?: boolean | undefined;
+                    }[];
+                } | {
+                    name: string;
+                    kind: "oauth2";
+                    fields: {
+                        name: string;
+                        label?: string | undefined;
+                        secret?: boolean | undefined;
+                        optional?: boolean | undefined;
+                    }[];
+                    oauth2: {
+                        authorizeUrl: string;
+                        tokenUrl: string;
+                        scopes?: string[] | undefined;
+                        clientAuth?: "body" | "basic" | undefined;
+                        pkce?: boolean | undefined;
+                        authorizeParams?: Record<string, string> | undefined;
                     };
-                    resources: boolean;
-                };
-                methods: string[];
+                })[] | undefined;
+                inbound?: {
+                    providerKey: string;
+                    scheme: "hmac_sha256_hex" | "airtable_mac" | "attio" | "affinity_hex_or_b64" | "slack_v0" | "telegram_secret_token" | "remote";
+                    signatureHeaders: string[];
+                    intercepts?: "slack_url_verification"[] | undefined;
+                } | undefined;
+                poll?: {
+                    intervalSeconds: number;
+                } | undefined;
+                periodic?: {
+                    name: string;
+                    intervalSeconds: number;
+                }[] | undefined;
+                plugins?: {
+                    package: string;
+                    plugins: {
+                        name: string;
+                        spec: {
+                            args: string[];
+                            priced: boolean;
+                            argTypes: Record<string, unknown>;
+                            requiredArgs?: string[] | undefined;
+                            effects?: Record<string, unknown> | undefined;
+                            fedArgs?: {
+                                name: string;
+                                required?: true | undefined;
+                            }[] | undefined;
+                            fedByExtraction?: true | undefined;
+                            output?: Record<string, unknown> | undefined;
+                            earlierOutputs?: {
+                                before: number;
+                                output: Record<string, unknown>;
+                            }[] | undefined;
+                        };
+                    }[];
+                } | undefined;
+                subscribableEvents?: string[] | undefined;
+                defaultSubscribedEvents?: string[] | undefined;
+                listenConfig?: {
+                    key: string;
+                    required?: boolean | undefined;
+                    format?: "fields" | "cron" | "timezone" | "strings" | undefined;
+                }[] | undefined;
                 displayName?: string | undefined;
                 description?: string | undefined;
                 handbookSection?: {
@@ -13283,7 +13149,6 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     }[]> | undefined;
                 } | undefined;
                 credentialsId?: string | undefined;
-                webhookEventTypeId?: string | undefined;
             } | null>;
             upsertFromManifest: _trpc_server.BuildProcedure<"mutation", {
                 _config: _trpc_server.RootConfig<{
@@ -13303,6 +13168,14 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                     authorise: () => Promise<void>;
                 };
                 _input_in: {
+                    runtimeCapabilities: {
+                        traversal: {
+                            incoming: boolean;
+                            edgeProperties: boolean;
+                        };
+                        resources: boolean;
+                    };
+                    methods: string[];
                     adapterType: string;
                     baseUrl: string;
                     authStrategy: {
@@ -13312,14 +13185,77 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                         header?: string | undefined;
                     };
                     supportedTriggers: string[];
-                    runtimeCapabilities: {
-                        traversal: {
-                            incoming: boolean;
-                            edgeProperties: boolean;
+                    webhookEventTypeId?: string | undefined;
+                    credentials?: ({
+                        name: string;
+                        kind: "static";
+                        fields: {
+                            name: string;
+                            label?: string | undefined;
+                            secret?: boolean | undefined;
+                            optional?: boolean | undefined;
+                        }[];
+                    } | {
+                        name: string;
+                        kind: "oauth2";
+                        fields: {
+                            name: string;
+                            label?: string | undefined;
+                            secret?: boolean | undefined;
+                            optional?: boolean | undefined;
+                        }[];
+                        oauth2: {
+                            authorizeUrl: string;
+                            tokenUrl: string;
+                            scopes?: string[] | undefined;
+                            clientAuth?: "body" | "basic" | undefined;
+                            pkce?: boolean | undefined;
+                            authorizeParams?: Record<string, string> | undefined;
                         };
-                        resources: boolean;
-                    };
-                    methods: string[];
+                    })[] | undefined;
+                    inbound?: {
+                        providerKey: string;
+                        scheme: "hmac_sha256_hex" | "airtable_mac" | "attio" | "affinity_hex_or_b64" | "slack_v0" | "telegram_secret_token" | "remote";
+                        signatureHeaders: string[];
+                        intercepts?: "slack_url_verification"[] | undefined;
+                    } | undefined;
+                    poll?: {
+                        intervalSeconds: number;
+                    } | undefined;
+                    periodic?: {
+                        name: string;
+                        intervalSeconds: number;
+                    }[] | undefined;
+                    plugins?: {
+                        package: string;
+                        plugins: {
+                            name: string;
+                            spec: {
+                                args: string[];
+                                priced: boolean;
+                                argTypes: Record<string, unknown>;
+                                requiredArgs?: string[] | undefined;
+                                effects?: Record<string, unknown> | undefined;
+                                fedArgs?: {
+                                    name: string;
+                                    required?: true | undefined;
+                                }[] | undefined;
+                                fedByExtraction?: true | undefined;
+                                output?: Record<string, unknown> | undefined;
+                                earlierOutputs?: {
+                                    before: number;
+                                    output: Record<string, unknown>;
+                                }[] | undefined;
+                            };
+                        }[];
+                    } | undefined;
+                    subscribableEvents?: string[] | undefined;
+                    defaultSubscribedEvents?: string[] | undefined;
+                    listenConfig?: {
+                        key: string;
+                        required?: boolean | undefined;
+                        format?: "fields" | "cron" | "timezone" | "strings" | undefined;
+                    }[] | undefined;
                     displayName?: string | undefined;
                     description?: string | undefined;
                     handbookSection?: {
@@ -13347,11 +13283,18 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                         }[]> | undefined;
                     } | undefined;
                     credentialsId?: string | undefined;
-                    webhookEventTypeId?: string | undefined;
                     protocolVersion?: 2 | undefined;
                     secret?: string | undefined;
                 };
                 _input_out: {
+                    runtimeCapabilities: {
+                        traversal: {
+                            incoming: boolean;
+                            edgeProperties: boolean;
+                        };
+                        resources: boolean;
+                    };
+                    methods: string[];
                     adapterType: string;
                     baseUrl: string;
                     authStrategy: {
@@ -13361,14 +13304,77 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                         header?: string | undefined;
                     };
                     supportedTriggers: string[];
-                    runtimeCapabilities: {
-                        traversal: {
-                            incoming: boolean;
-                            edgeProperties: boolean;
+                    webhookEventTypeId?: string | undefined;
+                    credentials?: ({
+                        name: string;
+                        kind: "static";
+                        fields: {
+                            name: string;
+                            label?: string | undefined;
+                            secret?: boolean | undefined;
+                            optional?: boolean | undefined;
+                        }[];
+                    } | {
+                        name: string;
+                        kind: "oauth2";
+                        fields: {
+                            name: string;
+                            label?: string | undefined;
+                            secret?: boolean | undefined;
+                            optional?: boolean | undefined;
+                        }[];
+                        oauth2: {
+                            authorizeUrl: string;
+                            tokenUrl: string;
+                            scopes?: string[] | undefined;
+                            clientAuth?: "body" | "basic" | undefined;
+                            pkce?: boolean | undefined;
+                            authorizeParams?: Record<string, string> | undefined;
                         };
-                        resources: boolean;
-                    };
-                    methods: string[];
+                    })[] | undefined;
+                    inbound?: {
+                        providerKey: string;
+                        scheme: "hmac_sha256_hex" | "airtable_mac" | "attio" | "affinity_hex_or_b64" | "slack_v0" | "telegram_secret_token" | "remote";
+                        signatureHeaders: string[];
+                        intercepts?: "slack_url_verification"[] | undefined;
+                    } | undefined;
+                    poll?: {
+                        intervalSeconds: number;
+                    } | undefined;
+                    periodic?: {
+                        name: string;
+                        intervalSeconds: number;
+                    }[] | undefined;
+                    plugins?: {
+                        package: string;
+                        plugins: {
+                            name: string;
+                            spec: {
+                                args: string[];
+                                priced: boolean;
+                                argTypes: Record<string, unknown>;
+                                requiredArgs?: string[] | undefined;
+                                effects?: Record<string, unknown> | undefined;
+                                fedArgs?: {
+                                    name: string;
+                                    required?: true | undefined;
+                                }[] | undefined;
+                                fedByExtraction?: true | undefined;
+                                output?: Record<string, unknown> | undefined;
+                                earlierOutputs?: {
+                                    before: number;
+                                    output: Record<string, unknown>;
+                                }[] | undefined;
+                            };
+                        }[];
+                    } | undefined;
+                    subscribableEvents?: string[] | undefined;
+                    defaultSubscribedEvents?: string[] | undefined;
+                    listenConfig?: {
+                        key: string;
+                        required?: boolean | undefined;
+                        format?: "fields" | "cron" | "timezone" | "strings" | undefined;
+                    }[] | undefined;
                     displayName?: string | undefined;
                     description?: string | undefined;
                     handbookSection?: {
@@ -13396,7 +13402,6 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                         }[]> | undefined;
                     } | undefined;
                     credentialsId?: string | undefined;
-                    webhookEventTypeId?: string | undefined;
                     protocolVersion?: 2 | undefined;
                     secret?: string | undefined;
                 };
@@ -13690,7 +13695,7 @@ declare const trpcRouter: _trpc_server.CreateRouterInner<_trpc_server.RootConfig
                 _output_in: typeof _trpc_server.unsetMarker;
                 _output_out: typeof _trpc_server.unsetMarker;
             }, {
-                blocks: ConfigBlock[];
+                blocks: movement_engine_public_adapter.ConfigBlock[];
                 values: Record<string, string>;
             }>;
             updateTriggerConfig: _trpc_server.BuildProcedure<"mutation", {

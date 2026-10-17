@@ -10,6 +10,7 @@
 //   lf runs
 //   lf call <callback-id> [--body <values.json>]
 //   lf cancel <run-id> [--reason <text>]
+//   lf connect <credential> [--redirect-port N] [--no-browser]
 //
 // Every command takes --ephemeral (state in a temporary file) and --dir <project>.
 
@@ -24,19 +25,20 @@ import {
   EventFile,
   fireEvent,
   openSession,
-  receiveWebhook,
   resumeAll,
   resumeRun,
   type RunOutcome,
   type Session,
 } from './runs';
+import { connectCredential } from './connect';
+import { receiveWebhook } from './doors';
 import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';
 import { upgradeProject } from './upgrade';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 
-const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel> [options]
+const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel|connect> [options]
   lf init [dir]
   lf check
   lf upgrade [--check] [--all]   rewrite the movement files into the current language version by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
@@ -47,6 +49,7 @@ const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel> 
   lf runs
   lf call <callback-id> [--body <values.json>]   call a callback, as its url's POST does (the values: a JSON object)
   lf cancel <run-id> [--reason <text>]           cancel a run: settled failed now, or at its next statement if another lf is stepping it
+  lf connect <credential> [--redirect-port N] [--no-browser]   connect an OAuth credential its external declares: sign in at the provider, tokens written to the secrets file
 options: --dir <project folder>  --ephemeral (state in a temporary file)`;
 
 async function main(argv: string[]): Promise<number> {
@@ -66,6 +69,8 @@ async function main(argv: string[]): Promise<number> {
       header: { type: 'string', multiple: true, default: [] },
       port: { type: 'string', default: String(DEFAULT_PORT) },
       reason: { type: 'string' },
+      'redirect-port': { type: 'string', default: '0' },
+      'no-browser': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -238,6 +243,18 @@ async function main(argv: string[]): Promise<number> {
       } finally {
         session.close();
       }
+    }
+    case 'connect': {
+      const name = rest[0];
+      if (name === undefined) {
+        process.stderr.write('lf connect needs a credential name\n');
+        return 2;
+      }
+      await connectCredential(loadProject(values.dir), name, {
+        redirectPort: Number(values['redirect-port']),
+        openBrowser: !values['no-browser'],
+      });
+      return 0;
     }
     default:
       process.stderr.write(`unknown command "${command}"\n${USAGE}\n`);

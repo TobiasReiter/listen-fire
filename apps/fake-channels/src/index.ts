@@ -17,6 +17,7 @@ import { webhookRoutes } from './routes/webhook';
 import { gdriveRoutes } from './routes/gdrive';
 import { gmailRoutes } from './routes/gmail';
 import { dropboxRoutes } from './routes/dropbox';
+import { oauthRoutes } from './routes/oauth';
 import { adminRoutes } from './routes/admin';
 import { openAiRoutes } from './routes/openai';
 import { geminiRoutes } from './routes/gemini';
@@ -53,11 +54,12 @@ app.use('/', gdriveRoutes(store));
 // own /fake-gmail/* control surface.
 app.use('/', gmailRoutes(store));
 app.use('/dropbox', dropboxRoutes(store));
+app.use('/oauth', oauthRoutes(store));
 app.use('/admin', adminRoutes(store));
 app.use('/openai/v1', openAiRoutes());
 app.use('/gemini', geminiRoutes());
 
 app.listen(PORT, () => {
   console.log(`Fake channel server running on http://localhost:${PORT}`);
-  console.log('Routes: /affinity, /attio, /slack, /sheets, /airtable, /granola, /evertrace, /dealroom, /email, /resend, /whatsapp, /telegram, /webhook, /gdrive, /gmail, /dropbox, /admin, /openai/v1, /gemini');
+  console.log('Routes: /affinity, /attio, /slack, /sheets, /airtable, /granola, /evertrace, /dealroom, /email, /resend, /whatsapp, /telegram, /webhook, /gdrive, /gmail, /dropbox, /oauth, /admin, /openai/v1, /gemini');
 });

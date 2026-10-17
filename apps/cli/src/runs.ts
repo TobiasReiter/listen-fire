@@ -33,7 +33,6 @@ import { eventMatchesTriggerScope } from 'movement-engine/services/translation_g
 import { triggerEventOf } from 'movement-engine/services/translation_graph/triggers/trigger_event';
 import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import { verifyRemoteSignature } from 'movement-engine/services/webhook_sync/remote_inbound';
 import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
 import { localDocumentStore, type LocalDocumentStore } from './documents';
 import {
@@ -109,6 +108,8 @@ export async function openSession(
   try {
     const schemas = new Map<string, InstanceSchema>();
     for (const [name, r] of running) {
+      // A plugin external has no graph to describe; its plugins are its manifest's.
+      if (r.external.manifest.kind === 'plugin') continue;
       schemas.set(name, await describeExternal(remoteAdapterOf({ running: r, credential: credentialFor(credentials, name), documents, tenant: LOCAL_TENANT })));
     }
     const files = scanMovements(project);
@@ -558,62 +559,6 @@ function sessionParts(session: Session) {
 /** A credential's id is its name: the secrets file is keyed by it. */
 function credentialIdsOf(catalog: CatalogSnapshot): Record<string, string> {
   return Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, name]));
-}
-
-/**
- * A webhook delivery, exactly as production takes one: the external's
- * signature scheme verifies the raw body with the install's secret, the
- * external parses it into events (`preprocessInbound`), and each event is
- * routed. The install is the credential named in the URL (or the external's
- * only credential).
- */
-export async function receiveWebhook(
-  session: Session,
-  input: { external: string; install?: string; rawBody: Buffer; headers: Record<string, string | undefined> },
-): Promise<RunOutcome[]> {
-  const running = session.running.get(input.external);
-  if (running === undefined) throw new WebhookRefused(404, `no external "${input.external}"`);
-  const credential =
-    input.install !== undefined ? session.credentials.get(input.install) : credentialFor(session.credentials, input.external);
-  if (credential === undefined || credential.external !== input.external) {
-    throw new WebhookRefused(404, `no install "${input.install ?? ''}" of external "${input.external}" in the secrets file`);
-  }
-  const webhook = running.external.manifest.webhook;
-  if (webhook === undefined) throw new WebhookRefused(404, `external "${input.external}" takes no webhooks`);
-  const signature = input.headers[webhook.header.toLowerCase()] ?? '';
-  if (!verifyRemoteSignature(input.rawBody, signature, credential.fields[webhook.secretField] ?? null)) {
-    throw new WebhookRefused(401, `signature did not verify for external "${input.external}"`);
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(input.rawBody.toString('utf8'));
-  } catch {
-    throw new WebhookRefused(400, 'body is not JSON');
-  }
-  const adapter = remoteAdapterOf({ running, credential, documents: session.documents, tenant: LOCAL_TENANT });
-  if (adapter.preprocessInbound === undefined) throw new WebhookRefused(404, `external "${input.external}" parses no inbound events`);
-  const parsed = await adapter.preprocessInbound({ raw });
-  // The keys this delivery resolves, independent of any listen: a comment on
-  // a thread wakes the awaits parked on it whether or not a movement listens
-  // for comments.
-  if (adapter.wakeKeys !== undefined) {
-    for (const correlationKey of await adapter.wakeKeys({ raw })) {
-      await queueAwaitWake(session.runHost.store, { adapterType: input.external, teamId: LOCAL_TENANT, correlationKey });
-    }
-  }
-  const outcomes: RunOutcome[] = [];
-  for (const event of parsed.events) outcomes.push(...(await fireEvent(session, { external: input.external, event })));
-  return outcomes;
-}
-
-export class WebhookRefused extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'WebhookRefused';
-  }
 }
 
 // ── Callbacks ───────────────────────────────────────────────────────────────

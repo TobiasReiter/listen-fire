@@ -20,7 +20,7 @@ import ExternalServiceType from '../../generated/kysely/automations/ExternalServ
 import { affinityCredsParser } from '../../adapters/affinity/apiClient';
 import { attioCredsParser } from '../../adapters/attio/apiClient';
 import { evertraceCredsParser } from '../../adapters/evertrace/apiClient';
-import { dealroomCredsParser } from '../../adapters/dealroom/apiClient';
+import { dealroomCredsParser } from '@lf/dealroom/api_client';
 import {
   connectGmailByRefreshToken,
   gmailDelegatedCredsParser,

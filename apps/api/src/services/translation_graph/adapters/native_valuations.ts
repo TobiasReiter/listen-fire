@@ -45,15 +45,15 @@ import type { ExternalServiceCredentialsId } from '../../../generated/kysely/aut
 import { parseValuationsEvents } from '../../webhook_sync/providers/native_valuations';
 import { webhookEventToDiscriminable } from '../../webhook_sync/event_conversion';
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
-import { BaseAdapter } from './base';
-import { uniformWalk } from './hop';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import {
   NATIVE_VALUATIONS_SUBSCRIBABLE_EVENTS,
   registerValuationsWebhook,
   deregisterValuationsWebhook,
 } from './native_valuations_webhook';
 import { UPDATE_NOT_FOUND, isHttp404 } from './not_found';
-import { naturalName } from './name_resolution';
+import { naturalName } from 'module-kit/adapter/name_resolution';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,

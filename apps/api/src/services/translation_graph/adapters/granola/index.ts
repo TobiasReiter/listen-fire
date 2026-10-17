@@ -20,7 +20,7 @@ import type { SchemaEntryPoint, SchemaTypeDescriptor, SourcePosition } from 'mov
 import type { Expression } from '#shared/expression/types';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
-import { uniformWalk } from '../hop';
+import { uniformWalk } from 'module-kit/adapter/hop';
 import {
   ADAPTER_META_TYPE_ID,
   META_RECORD_TYPE,
@@ -28,7 +28,7 @@ import {
   positionData,
 } from 'movement-engine/services/translation_graph/types';
 import ExternalServiceType from '../../../../generated/kysely/automations/ExternalServiceType';
-import { BaseAdapter } from '../base';
+import { BaseAdapter } from 'module-kit/adapter/base';
 import {
   GRANOLA_ADAPTER_TYPE,
   GRANOLA_ATTENDEES_FIELD,

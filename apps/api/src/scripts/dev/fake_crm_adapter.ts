@@ -63,7 +63,7 @@ import type { RemoteAdapterManifestFile } from '../../services/translation_graph
 
 import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from 'movement-engine/services/translation_graph/adapter';
 import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
-import { AdapterBadRequestError, createAdapterProtocolHandler } from '../../services/translation_graph/protocol/server';
+import { AdapterBadRequestError, createAdapterProtocolHandler } from 'module-kit';
 
 
 /** Slug the engine routes on — the `acme_crm` in `import { acme_crm } from adapters`. */

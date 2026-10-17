@@ -738,8 +738,9 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
             let answer = local_file_text(host, &file);
             Ok(Some(host.wire.borrow().write(&Hv::of_js(&answer))))
         }
+        "llm.transforms.invoke" => invoke_plugin(host, args).await?,
         // Families lf-host does not serve yet: the run fails naming them.
-        "llm.client.call" | "llm.extractCall.call" | "llm.transforms.invoke" | "llm.arbitrateEntities" => {
+        "llm.client.call" | "llm.extractCall.call" | "llm.arbitrateEntities" => {
             Err(failure(format!("{label}: lf-host does not call models yet; use the TypeScript lf for a movement that does")))
         }
         "park.bindings.record" | "park.bindings.findBoundCounterpart" | "park.bindings.delete" => {
@@ -747,6 +748,39 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
         }
         _ => return Err(Fault(format!("the host has no route for {label}"))),
     })
+}
+
+/// `llm.transforms.invoke`: the plugin external that serves the plugin is
+/// called (`invokePlugin`), and its answer is the engine's: what it added,
+/// and its own cost under `plugin:<name>` (`costSourceKey`).
+async fn invoke_plugin(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fault> {
+    const LABEL: &str = "llm.transforms.invoke";
+    let plugin = text(args, "plugin", LABEL)?.to_string();
+    let config = read_wire(host, args.get("config"))?.js();
+    let extracted = read_wire(host, args.get("extractedContext"))?.js();
+    let externals = host.adapters.externals();
+    let Some(running) = crate::externals::plugin_external_for(externals.running, &plugin) else {
+        return Ok(Err(failure(format!("plugin \"{plugin}\" cannot run: no plugin external in this project serves it"))));
+    };
+    let params = json!({ "name": plugin, "config": crate::wire::json_of_js(&config), "extractedContext": crate::wire::json_of_js(&extracted) });
+    let answer = match crate::externals::rpc(running, externals.credentials, externals.tenant, "invokePlugin", params).await {
+        Ok(answer) => answer,
+        Err(message) => return Ok(Err(failure(message))),
+    };
+    let Js::Obj(answered) = &answer else {
+        return Ok(Err(failure(format!("plugin \"{plugin}\": invokePlugin answered something other than an object"))));
+    };
+    let mut out = Obj::new();
+    for key in ["text", "data", "records", "outcome"] {
+        if let Some(value) = answered.get(key) {
+            out.insert(key.into(), value.clone());
+        }
+    }
+    if let Some(Js::Num(microdollars)) = answered.get("costMicrodollars") {
+        let line = obj! { "source" => Js::Str(format!("plugin:{plugin}")), "microdollars" => Js::Num(microdollars.clone()) };
+        out.insert("cost".into(), Js::Arr(vec![Js::Obj(line)]));
+    }
+    Ok(Ok(Some(host.wire.borrow().write(&Hv::of_js(&Js::Obj(out))))))
 }
 
 /// A park's write, then what follows every park: the run is observably

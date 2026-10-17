@@ -40,9 +40,9 @@ import type { Expression } from '#shared/expression/types';
 import type { RemoteAdapter, RemoteAdapterConfig } from 'movement-engine/services/translation_graph/adapters/remote';
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
-import { BaseAdapter } from '../../base';
-import { naturalName } from '../../name_resolution';
-import { createAdapterProtocolHandler } from '../../../protocol/server';
+import { BaseAdapter } from 'module-kit/adapter/base';
+import { naturalName } from 'module-kit/adapter/name_resolution';
+import { createAdapterProtocolHandler } from 'module-kit';
 import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/services/translation_graph/adapters/remote';
 import { unsupportedAssociation, writeParentLinks } from 'movement-engine/services/translation_graph/adapter';
 

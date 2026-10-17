@@ -55,4 +55,27 @@ describe('RemoteAdapterManifestFile', () => {
     const projected = remoteAdapterManifest(RemoteAdapterManifestFile.parse(base));
     expect(projected.requiredCredentialType).toBeUndefined();
   });
+
+  it('carries a module\'s declarations, and still parses a manifest stored before they existed', () => {
+    const declared = {
+      ...base,
+      methods: [...base.methods, 'poll'],
+      credentials: [{ name: 'acme', kind: 'static' as const, fields: [{ name: 'api_key' }] }],
+      inbound: { providerKey: 'acme_crm', scheme: 'remote' as const, signatureHeaders: ['x-listen-fire-signature'] },
+      poll: { intervalSeconds: 300 },
+      periodic: [{ name: 'renew', intervalSeconds: 3600 }],
+    };
+    const parsed = RemoteAdapterManifestFile.parse(declared);
+    expect(parsed.credentials).toEqual(declared.credentials);
+    expect(parsed.inbound).toEqual(declared.inbound);
+    expect(parsed.poll).toEqual({ intervalSeconds: 300 });
+    expect(parsed.periodic).toEqual(declared.periodic);
+    // A row stored with `poll` in methods and the declaration dropped.
+    expect(RemoteAdapterManifestFile.safeParse({ ...base, methods: [...base.methods, 'poll'] }).success).toBe(true);
+  });
+
+  it('refuses a malformed declaration, as the protocol does', () => {
+    expect(RemoteAdapterManifestFile.safeParse({ ...base, inbound: { providerKey: 'acme', scheme: 'unknown', signatureHeaders: ['x'] } }).success).toBe(false);
+    expect(RemoteAdapterManifestFile.safeParse({ ...base, poll: { intervalSeconds: 0 } }).success).toBe(false);
+  });
 });

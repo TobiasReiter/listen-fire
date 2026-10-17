@@ -60,7 +60,7 @@ async function attachmentsVia(adapter: Adapter, position: SourcePosition): Promi
   return related.map((r) => (positionData(r.position) ?? {}) as Record<string, unknown>);
 }
 
-import { createAdapterProtocolHandler } from '../../../protocol/server';
+import { createAdapterProtocolHandler } from 'module-kit';
 import {
   createRemoteAdapter,
   fetchRemoteManifest,

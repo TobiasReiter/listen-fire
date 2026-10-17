@@ -34,7 +34,7 @@ import { dropboxCredsParser } from '../../../adapters/dropbox/authClient';
 import { nativeValuationsCredsParser } from '../../../services/translation_graph/adapters/native_valuations';
 import { granolaCredsParser } from '../../../services/credentials/connect_form_spec';
 import { evertraceCredsParser } from '../../../adapters/evertrace/apiClient';
-import { dealroomCredsParser } from '../../../adapters/dealroom/apiClient';
+import { dealroomCredsParser } from '@lf/dealroom/api_client';
 import { credentialLifecycle } from '../../../services/credentials/credential_lifecycle';
 import { persistCredential } from '../../../services/credentials/persist_credential';
 import { intrinsicProvisionerForType } from '../../../services/credentials/intrinsic_provision';

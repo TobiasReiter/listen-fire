@@ -105,7 +105,7 @@ pub async fn open_session(project: Project, ephemeral: bool) -> Result<Session, 
     let store = Store::open(&state_path).map_err(|e| format!("{}: {e}", state_path.display()))?;
     let documents = Documents::new(&project.lf_dir);
     let mut schemas = IndexMap::new();
-    for r in &running {
+    for r in running.iter().filter(|r| !r.is_plugin()) {
         schemas.insert(r.external.manifest.name.clone(), describe_external(r, &credentials).await?);
     }
     // Scanned again after the externals start, as the TypeScript session does.

@@ -86,7 +86,7 @@ import type {
 import type { TriggerEvent, TriggerType } from '../../triggers/types';
 import type { Expression } from '#shared/expression/types';
 import type { AuthStrategy } from '../../protocol/client';
-import type { MethodName, WireCredentialDeclarationShape, WireCredentialShape, WireCredentialUpdateShape } from 'engine-contracts';
+import type { MethodName, WireCredentialDeclarationShape, WireCredentialShape, WireCredentialUpdateShape, WirePluginResultShape } from 'engine-contracts';
 
 import { authHeader, postRpc, parseWireResult, RemoteProtocolError } from '../../protocol/client';
 import { SecretVersionConflict, withSecret, type Refresher, type SecretsFamily } from '../../../secrets/family';
@@ -429,6 +429,39 @@ export class RemoteAdapter implements Adapter {
       method,
       adapter: this.config.adapterType,
     }) as ReturnType<(typeof METHODS)[M]['result']['parse']>;
+  }
+
+  // ── Module methods (not `Adapter` members) ───────────────────────────────
+  // A module's declarations pair with these; the host calls them only when
+  // the manifest lists them, so each refuses by name when it does not.
+
+  private advertisedOrRefused(method: 'poll' | 'runPeriodic' | 'invokePlugin'): void {
+    if (!this.advertised.has(method)) {
+      throw new Error(`Remote adapter "${this.config.adapterType}" does not implement "${method}"`);
+    }
+  }
+
+  /** One pull of a polled source. */
+  async poll(input: { config: unknown; checkpoint?: unknown }): Promise<{ events: DiscriminableEvent[]; checkpoint?: unknown }> {
+    this.advertisedOrRefused('poll');
+    const answer = await this.call('poll', { config: input.config ?? {}, ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}) });
+    return {
+      // Sole sanctioned boundary `as`: validated wire events → the domain's.
+      events: answer.events as DiscriminableEvent[],
+      ...(answer.checkpoint !== undefined ? { checkpoint: answer.checkpoint } : {}),
+    };
+  }
+
+  /** One run of a declared periodic task. */
+  async runPeriodic(name: string): Promise<void> {
+    this.advertisedOrRefused('runPeriodic');
+    await this.call('runPeriodic', { name });
+  }
+
+  /** One call of a plugin the module declares. */
+  async invokePlugin(input: { name: string; config: Record<string, unknown>; extractedContext: Record<string, unknown> }): Promise<WirePluginResultShape> {
+    this.advertisedOrRefused('invokePlugin');
+    return this.call('invokePlugin', input);
   }
 
   // ── Required forwarders ────────────────────────────────────────────────

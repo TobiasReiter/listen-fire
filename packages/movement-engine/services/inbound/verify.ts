@@ -11,7 +11,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import type { WireInboundSignatureSchemeShape } from 'engine-contracts';
 
-import { REMOTE_SIGNATURE_HEADER, verifyRemoteSignature } from '../webhook_sync/remote_inbound';
+import { REMOTE_SIGNATURE_HEADER, UNREGISTERED_SECRET, verifyRemoteSignature } from '../webhook_sync/remote_inbound';
 
 export type InboundSignatureScheme = WireInboundSignatureSchemeShape;
 
@@ -178,4 +178,31 @@ export function authenticateInbound(input: {
   return verifyInbound(input.verifier, { rawBody: input.rawBody, headers: input.headers, secret: input.secret })
     ? { authorized: true }
     : { authorized: false, reason: 'signature_invalid' };
+}
+
+/**
+ * Whether a key is one a delivery may be verified against: present, not
+ * blank, and not the placeholder a subscription row holds until its
+ * registration returns a secret.
+ */
+export function isUsableInboundSecret(secret: string | null | undefined): secret is string {
+  return typeof secret === 'string' && secret.trim() !== '' && secret !== UNREGISTERED_SECRET;
+}
+
+/**
+ * The verifier for an inbound a module's manifest declares signed. One host
+ * rule for every scheme: a delivery is refused when its key is missing, blank
+ * or a placeholder, and when its signature is wrong. The leniencies some
+ * schemes keep for the doors that predate the core (`attio` and
+ * `airtable_mac` verifying with an empty key, `affinity_hex_or_b64` letting
+ * anything in without one) never apply to a module: a built-in keeps its
+ * door's behaviour until it moves onto a module manifest, and then this rule
+ * is its rule.
+ */
+export function declaredInboundVerifier(declaration: { scheme: InboundSignatureScheme; signatureHeaders: readonly string[] }): InboundVerifier {
+  return {
+    verifyInbound: ({ rawBody, headers, secret }) =>
+      isUsableInboundSecret(secret) &&
+      verifyWithScheme(declaration.scheme, { rawBody, headers, secret, signatureHeaders: declaration.signatureHeaders }),
+  };
 }

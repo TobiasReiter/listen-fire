@@ -42,16 +42,8 @@ export function oauth2Refresher(input: {
     if (refreshToken === undefined || refreshToken === '') throw new Error('the credential holds no refresh_token');
     const client = input.client ?? clientFromFields(current.fields);
     const form = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken });
-    const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
-    if (client !== undefined) {
-      if ((input.clientAuth ?? 'basic') === 'basic') {
-        const pair = `${encodeURIComponent(client.clientId)}:${encodeURIComponent(client.clientSecret ?? '')}`;
-        headers.authorization = `Basic ${Buffer.from(pair).toString('base64')}`;
-      } else {
-        form.set('client_id', client.clientId);
-        if (client.clientSecret !== undefined) form.set('client_secret', client.clientSecret);
-      }
-    }
+    const headers = tokenRequestHeaders();
+    if (client !== undefined) authenticateClient({ client, clientAuth: input.clientAuth, form, headers });
     const response = await doFetch(input.tokenUrl, { method: 'POST', headers, body: form });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} from ${input.tokenUrl}: ${(await response.text()).slice(0, ERROR_BODY_CHARS)}`);
@@ -67,7 +59,30 @@ export function oauth2Refresher(input: {
   };
 }
 
-function clientFromFields(fields: SecretFields): OAuth2ClientApp | undefined {
+/** The headers of a call to a token endpoint. */
+export function tokenRequestHeaders(): Record<string, string> {
+  return { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' };
+}
+
+/** Put the host's app on a token call, where the declaration says: an HTTP
+ *  Basic header (the protocol's default) or the form body. */
+export function authenticateClient(input: {
+  client: OAuth2ClientApp;
+  clientAuth: 'basic' | 'body' | undefined;
+  form: URLSearchParams;
+  headers: Record<string, string>;
+}): void {
+  const { client, form, headers } = input;
+  if ((input.clientAuth ?? 'basic') === 'basic') {
+    const pair = `${encodeURIComponent(client.clientId)}:${encodeURIComponent(client.clientSecret ?? '')}`;
+    headers.authorization = `Basic ${Buffer.from(pair).toString('base64')}`;
+    return;
+  }
+  form.set('client_id', client.clientId);
+  if (client.clientSecret !== undefined) form.set('client_secret', client.clientSecret);
+}
+
+export function clientFromFields(fields: SecretFields): OAuth2ClientApp | undefined {
   const clientId = fields.client_id;
   if (clientId === undefined) return undefined;
   return { clientId, ...(fields.client_secret !== undefined ? { clientSecret: fields.client_secret } : {}) };
