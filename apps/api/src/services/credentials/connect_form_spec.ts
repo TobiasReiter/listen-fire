@@ -19,7 +19,7 @@ import { z } from 'zod';
 import ExternalServiceType from '../../generated/kysely/automations/ExternalServiceType';
 import { affinityCredsParser } from '../../adapters/affinity/apiClient';
 import { attioCredsParser } from '../../adapters/attio/apiClient';
-import { evertraceCredsParser } from '../../adapters/evertrace/apiClient';
+import { evertraceCredsParser } from '@lf/evertrace/api_client';
 import { dealroomCredsParser } from '@lf/dealroom/api_client';
 import {
   connectGmailByRefreshToken,

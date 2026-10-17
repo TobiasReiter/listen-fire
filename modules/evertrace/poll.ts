@@ -1,7 +1,7 @@
-// Evertrace PollSource — the solicited event seam. Evertrace has no webhooks,
-// so the poll-source worker drives event production: it pulls what has been
-// created since the persisted checkpoint, emits one event per row, and returns
-// the new high-water marks.
+// Evertrace's poll — the solicited event seam. Evertrace has no webhooks, so
+// the host's poll drives event production: it pulls what has been created
+// since the persisted checkpoint, emits one event per row, and returns the new
+// high-water marks.
 //
 // Creation is the ONE "changed since" Evertrace offers, so a listener fires on
 // new things only — a signal that changes afterwards does not fire again, and
@@ -14,20 +14,18 @@
 // parameter as is exactly what gets fetched. No selection is the signal alone,
 // which is what every listen written before lists still means.
 
-import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
-import type { PollSource } from '../../poll_source';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+import type { DiscriminableEvent } from 'movement-engine/public/adapter';
+import type { ModuleLog, PollAnswer, PollInput } from 'module-kit';
 import type {
+  EvertraceApiClient,
   EvertraceList,
   EvertraceListEntry,
   EvertraceSearch,
   EvertraceSignal,
-} from '../../../../adapters/evertrace/apiClient';
+} from './api_client';
 
-import { logger } from 'movement-engine/services/logger';
-import { eventConfigList } from 'movement-engine/services/translation_graph/triggers/listen_config';
+import { eventConfigList } from 'movement-engine/public/inbound';
 import { narrowsAnything, signalFilterFromSearchRows } from './saved_search';
-import { resolveEvertraceClient, type EvertraceApiClient } from './client';
 import {
   EVERTRACE_LIST_ENTRY_EVENT,
   EVERTRACE_LIST_ENTRY_EVENT_TAG,
@@ -39,7 +37,7 @@ import {
 
 /** Evertrace's default cadence — overridable per automation via the `listen`
  *  option `pollIntervalSeconds`. */
-const DEFAULT_POLL_INTERVAL_SECONDS = 300;
+export const EVERTRACE_POLL_INTERVAL_SECONDS = 300;
 
 /** Rows per request. Evertrace's envelope carries no total, so a SHORT page is
  *  the end of the collection. */
@@ -81,91 +79,67 @@ function mark(checkpoint: unknown, key: keyof EvertraceCheckpoint): number | und
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-export class EvertracePollSource implements PollSource {
-  readonly pollIntervalSeconds = DEFAULT_POLL_INTERVAL_SECONDS;
+export async function pollEvertrace(client: EvertraceApiClient, input: PollInput, options: { log: ModuleLog }): Promise<PollAnswer> {
+  const wanted = selectedEvents(input.config);
+  const now = Date.now();
+  const next: EvertraceCheckpoint = {};
+  const events: DiscriminableEvent[] = [];
 
-  constructor(
-    private readonly teamId: TeamId,
-    private readonly credentialsId: string | undefined,
-    /** Injectable for tests; production resolves a credentialed client. */
-    private readonly clientOverride?: EvertraceApiClient,
-  ) {}
-
-  async getEvents(input: {
-    config: unknown;
-    checkpoint?: unknown;
-  }): Promise<{ events: DiscriminableEvent[]; checkpoint?: unknown }> {
-    const client =
-      this.clientOverride ??
-      (await resolveEvertraceClient({ teamId: this.teamId, credentialsId: this.credentialsId }));
-    if (!client) {
-      throw new Error(
-        `EvertracePollSource: no usable Evertrace credential for team ${this.teamId} ` +
-          `(credentialsId=${this.credentialsId ?? 'unset'}). Connect Evertrace.`,
-      );
-    }
-
-    const wanted = selectedEvents(input.config);
-    const now = Date.now();
-    const next: EvertraceCheckpoint = {};
-    const events: DiscriminableEvent[] = [];
-
-    if (wanted.signals) {
-      // First poll: set the mark to now and emit nothing. A live listener
-      // watches from go-live onward — it never backfills the corpus (which
-      // would flood the run on connect). Past signals stay reachable through
-      // the root's `Signals` collection.
-      const since = mark(input.checkpoint, 'createdAfter');
-      if (since === undefined) {
-        next.createdAfter = now;
-      } else {
-        const search = stringOption(input.config, 'search');
-        const signals =
-          search !== undefined
-            ? await signalsFromSearch({ client, search, createdAfter: since })
-            : await signalsSinceCreation({ client, createdAfter: since });
-        next.createdAfter = signals.reduce((high, s) => Math.max(high, s.createdAt), since);
-        for (const signal of signals) {
-          events.push({
-            payload: signal,
-            externalId: signal.id,
-            tag: EVERTRACE_SIGNAL_EVENT_TAG,
-            occurredAt: new Date(signal.createdAt).toISOString(),
-          });
-        }
-      }
-    }
-
-    if (wanted.entries) {
-      // Same first-poll rule: the mark starts at now, so the entries already on
-      // the workspace's lists are history, not a delivery.
-      const since = mark(input.checkpoint, 'entriesCreatedAfter');
-      if (since === undefined) {
-        next.entriesCreatedAfter = now;
-      } else {
-        const entries = await entriesSinceCreation({
-          client,
-          createdAfter: since,
-          list: stringOption(input.config, 'list'),
+  if (wanted.signals) {
+    // First poll: set the mark to now and emit nothing. A live listener
+    // watches from go-live onward — it never backfills the corpus (which
+    // would flood the run on connect). Past signals stay reachable through
+    // the root's `Signals` collection.
+    const since = mark(input.checkpoint, 'createdAfter');
+    if (since === undefined) {
+      next.createdAfter = now;
+    } else {
+      const search = stringOption(input.config, 'search');
+      const signals =
+        search !== undefined
+          ? await signalsFromSearch({ client, log: options.log, search, createdAfter: since })
+          : await signalsSinceCreation({ client, createdAfter: since });
+      next.createdAfter = signals.reduce((high, s) => Math.max(high, s.createdAt), since);
+      for (const signal of signals) {
+        events.push({
+          payload: signal,
+          externalId: signal.id,
+          tag: EVERTRACE_SIGNAL_EVENT_TAG,
+          occurredAt: new Date(signal.createdAt).toISOString(),
         });
-        next.entriesCreatedAfter = entries.reduce((high, e) => Math.max(high, e.createdAt), since);
-        for (const entry of entries) {
-          events.push({
-            payload: entry,
-            externalId: encodeListEntryId({ listId: entry.listId, entryId: entry.id }),
-            tag: EVERTRACE_LIST_ENTRY_EVENT_TAG,
-            occurredAt: new Date(entry.createdAt).toISOString(),
-          });
-        }
       }
     }
-
-    // Oldest first — a run processes what Evertrace found in the order it
-    // found it.
-    events.sort((a, b) => (a.occurredAt ?? '').localeCompare(b.occurredAt ?? ''));
-
-    return { events, checkpoint: next };
   }
+
+  if (wanted.entries) {
+    // Same first-poll rule: the mark starts at now, so the entries already on
+    // the workspace's lists are history, not a delivery.
+    const since = mark(input.checkpoint, 'entriesCreatedAfter');
+    if (since === undefined) {
+      next.entriesCreatedAfter = now;
+    } else {
+      const entries = await entriesSinceCreation({
+        client,
+        createdAfter: since,
+        list: stringOption(input.config, 'list'),
+      });
+      next.entriesCreatedAfter = entries.reduce((high, e) => Math.max(high, e.createdAt), since);
+      for (const entry of entries) {
+        events.push({
+          payload: entry,
+          externalId: encodeListEntryId({ listId: entry.listId, entryId: entry.id }),
+          tag: EVERTRACE_LIST_ENTRY_EVENT_TAG,
+          occurredAt: new Date(entry.createdAt).toISOString(),
+        });
+      }
+    }
+  }
+
+  // Oldest first — a run processes what Evertrace found in the order it
+  // found it.
+  events.sort((a, b) => (a.occurredAt ?? '').localeCompare(b.occurredAt ?? ''));
+
+  return { events, checkpoint: next };
 }
 
 /** The unfiltered poll: Evertrace's own `created_after` does the bounding, so
@@ -195,6 +169,7 @@ async function signalsSinceCreation(input: {
  */
 async function signalsFromSearch(input: {
   client: EvertraceApiClient;
+  log: ModuleLog;
   search: string;
   createdAfter: number;
 }): Promise<EvertraceSignal[]> {
@@ -206,11 +181,11 @@ async function signalsFromSearch(input: {
 
   if (!loggedSearches.has(found.id)) {
     loggedSearches.add(found.id);
-    logger.info(
+    input.log.info(
       `[evertrace] saved search "${found.title}" (${found.id}) rows: ${JSON.stringify(rows)}`,
     );
     if (skipped.length > 0) {
-      logger.info(
+      input.log.info(
         `[evertrace] saved search "${found.title}" (${found.id}) skipped: ${JSON.stringify(skipped)}`,
       );
     }
@@ -218,7 +193,7 @@ async function signalsFromSearch(input: {
   if (!narrowsAnything(filter)) {
     // Every row unreadable would otherwise read as "this search matches
     // everything" — say so, rather than delivering the whole feed in silence.
-    logger.warn(
+    input.log.warn(
       `[evertrace] saved search "${found.title}" (${found.id}) contributed no filter; ` +
         `polling on the checkpoint alone`,
     );
@@ -294,12 +269,4 @@ function resolveList(lists: EvertraceList[], list: string): EvertraceList {
     );
   }
   return match;
-}
-
-/** Factory matching the PollSource registry signature. */
-export function createEvertracePollSource(input: {
-  teamId: TeamId;
-  credentialsId?: string;
-}): EvertracePollSource {
-  return new EvertracePollSource(input.teamId, input.credentialsId);
 }

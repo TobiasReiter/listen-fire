@@ -35,6 +35,7 @@ COPY packages/model-providers/package.json packages/model-providers/
 COPY packages/module-kit/package.json packages/module-kit/
 COPY modules/dealroom/package.json modules/dealroom/
 COPY modules/granola/package.json modules/granola/
+COPY modules/evertrace/package.json modules/evertrace/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/

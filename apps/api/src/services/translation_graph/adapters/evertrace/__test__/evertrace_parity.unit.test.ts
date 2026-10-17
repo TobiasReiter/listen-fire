@@ -2,7 +2,9 @@
 // before Evertrace became a module, driven through `parity/script.ts` against
 // the fake-channels Evertrace: every answer, and every request it made with
 // what came back. Each implementation is replayed against the recording and
-// must make the same requests (its writes included) and give the same answers.
+// must make the same requests (its writes included) and give the same answers:
+// the legacy line, the module in process as the platform loads it, and the
+// module served as a process (serve-module) and called over adapter protocol 2.
 // The clock is fixed: a new saved search is stamped from it, and a first poll
 // takes its mark from it.
 //
@@ -14,14 +16,30 @@ jest.mock('../../../../../lib/credentials', () => ({
   encryptToken: async () => '',
 }));
 
+// The platform's encrypted store, as a vault the test seeds: the module line
+// reads its credential through the secrets family exactly as in production.
+const vault: { current?: ReturnType<typeof import('movement-engine/public/secrets').createMemoryVault> } = {};
+jest.mock('../../../../credentials/secrets_postgres', () => ({
+  postgresSecrets: () => {
+    if (vault.current === undefined) throw new Error('no vault seeded');
+    return vault.current;
+  },
+}));
+
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
-import { EvertraceApiClient } from '../../../../../adapters/evertrace/apiClient';
-import { EvertraceAdapter } from '../index';
-import { EvertracePollSource } from '../poll';
+import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
+import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
+import { logger } from 'movement-engine/public/log';
+import { EvertraceAdapter, EvertraceApiClient, pollEvertrace } from '@lf/evertrace';
+import { getAdapter, getPollSource } from '../../registry';
+import { BUILTIN_MODULES } from '../../builtin_modules';
 import { recordingServer, replayingServer, type Exchange } from '../../dealroom/__test__/parity/exchange';
 import { bootFakeEvertrace } from './parity/fake_evertrace';
 import { FIXED_NOW } from './parity/fixed_clock.cjs';
@@ -41,10 +59,10 @@ interface Recording {
 /** The legacy line's adapter and poll, on a client pointed at `baseUrl` (its
  *  credential path, the decrypted row, is the one thing replaced). */
 function legacySubject(baseUrl: string): ParitySubject {
-  const client = new EvertraceApiClient({ apiKey: API_KEY, baseUrl });
+  const client = new EvertraceApiClient({ apiKey: API_KEY, baseUrl, fetch, log: logger });
   return {
-    adapter: new EvertraceAdapter(TEAM, undefined, client),
-    poll: (input) => new EvertracePollSource(TEAM, undefined, client).getEvents(input),
+    adapter: new EvertraceAdapter(async () => client),
+    poll: (input) => pollEvertrace(client, input, { log: logger }),
   };
 }
 
@@ -76,13 +94,31 @@ function loadRecording(): Recording {
   return JSON.parse(readFileSync(FIXTURE, 'utf8')) as Recording;
 }
 
+/** What the protocol client puts in front of an adapter's own error message. */
+const REMOTE_ERROR_PREFIX = /^Remote adapter error for method "[^"]+": adapter_error — /;
+
+/** A refusal over the wire is the adapter's message behind the transport's
+ *  prefix; the parity held is of the message itself. */
+function withoutTransportPrefix(transcript: TranscriptEntry[]): TranscriptEntry[] {
+  return transcript.map((entry) => {
+    const answer = entry.answer;
+    if (answer !== null && typeof answer === 'object' && 'error' in answer && typeof answer.error === 'string') {
+      return { ...entry, answer: { ...answer, error: answer.error.replace(REMOTE_ERROR_PREFIX, '') } };
+    }
+    return entry;
+  });
+}
+
 /** Replay `subjectAt` against the recording: same answers, same requests. */
-async function expectParity(subjectAt: (baseUrl: string) => Promise<ParitySubject> | ParitySubject): Promise<void> {
+async function expectParity(
+  subjectAt: (baseUrl: string) => Promise<ParitySubject> | ParitySubject,
+  options: { overProtocol?: boolean } = {},
+): Promise<void> {
   const recorded = loadRecording();
   const server = await replayingServer(recorded.exchanges, TRACKED);
   try {
     const transcript = await runParityScript(await subjectAt(server.baseUrl));
-    expect(transcript).toEqual(recorded.transcript);
+    expect(options.overProtocol === true ? withoutTransportPrefix(transcript) : transcript).toEqual(recorded.transcript);
     expect(server.requests()).toEqual(recorded.exchanges.map(({ status: _s, response: _r, ...request }) => request));
   } finally {
     await server.close();
@@ -104,4 +140,62 @@ async function expectParity(subjectAt: (baseUrl: string) => Promise<ParitySubjec
   it('the legacy line replays identically', async () => {
     await expectParity(legacySubject);
   });
+
+  it('the module in process, through the platform registry, replays identically', async () => {
+    expect(BUILTIN_MODULES.evertrace?.line).toBe('module');
+    await expectParity((baseUrl) => {
+      vault.current = createMemoryVault({ 'cred-parity': { apiKey: API_KEY, baseUrl } });
+      const install = { adapterType: 'evertrace', teamId: TEAM, credentialsId: 'cred-parity' };
+      const source = getPollSource(install);
+      if (source === null) throw new Error('evertrace has no poll source');
+      return { adapter: getAdapter(install), poll: (input) => source.getEvents(input) };
+    });
+  });
+
+  it('the module served as a process, over protocol 2, replays identically', async () => {
+    const served = await serveEvertrace();
+    try {
+      await expectParity(
+        async (baseUrl) => {
+          const credentials = createMemoryVault({ 'cred-parity': { apiKey: API_KEY, baseUrl } });
+          const config = { adapterType: 'evertrace', teamId: TEAM, baseUrl: served.url, authStrategy: { kind: 'bearer' as const }, credentialsId: 'cred-parity' };
+          const remote = createRemoteAdapter({
+            config,
+            secret: '',
+            cacheScopeId: 'parity',
+            manifest: await fetchRemoteManifest(config, ''),
+            documents: { put: async () => ({}) } as never,
+            credential: { name: 'evertrace', secrets: createSecretsFamily({ backend: credentials }), ref: 'cred-parity' },
+          });
+          return { adapter: remote, poll: (input) => remote.poll(input) };
+        },
+        { overProtocol: true },
+      );
+    } finally {
+      served.stop();
+    }
+  });
 });
+
+/** `serve-module @lf/evertrace` as a child process, on the recording's clock. */
+async function serveEvertrace(): Promise<{ url: string; stop(): void }> {
+  const repo = join(__dirname, '../../../../../../../..');
+  const child = spawn(process.execPath, ['--require', join(__dirname, 'parity/fixed_clock.cjs'), join(repo, 'packages/module-kit/bin/serve-module.cjs'), '.'], {
+    cwd: join(repo, 'modules/evertrace'),
+    env: { ...process.env, PORT: '0' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('serve-module printed no port within 30s')), 30_000);
+    child.once('exit', (code) => reject(new Error(`serve-module exited (${code})`)));
+    if (child.stdout === null) return;
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const match = /^listening (\d+)$/.exec(line);
+      if (match?.[1] !== undefined) {
+        clearTimeout(timer);
+        resolve(Number(match[1]));
+      }
+    });
+  });
+  return { url: `http://127.0.0.1:${port}/`, stop: () => child.kill() };
+}

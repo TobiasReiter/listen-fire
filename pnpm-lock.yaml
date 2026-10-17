@@ -130,6 +130,9 @@ importers:
       '@lf/dealroom':
         specifier: workspace:*
         version: link:../../modules/dealroom
+      '@lf/evertrace':
+        specifier: workspace:*
+        version: link:../../modules/evertrace
       '@lf/granola':
         specifier: workspace:*
         version: link:../../modules/granola
@@ -775,6 +778,37 @@ importers:
         version: 5.5.4
 
   modules/dealroom:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  modules/evertrace:
     dependencies:
       '#shared':
         specifier: workspace:@listen-fire/shared@*

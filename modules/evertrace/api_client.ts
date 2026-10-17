@@ -1,5 +1,6 @@
-// Evertrace HTTP transport — the one owner of the wire shape for the movements
-// adapter (services/translation_graph/adapters/evertrace) and its poll source.
+// Evertrace HTTP transport — the one owner of the wire shape for the adapter
+// (adapter.ts) and its poll (poll.ts). It reaches Evertrace through the fetch
+// and the log its host hands the module, never the process's own.
 //
 // Evertrace detects founders before they appear in startup databases: a SIGNAL
 // is a person whose profile just triggered a trackable event. The API is
@@ -9,7 +10,7 @@
 
 import { z } from 'zod';
 
-import { logger } from 'movement-engine/services/logger';
+import type { ModuleLog } from 'module-kit';
 
 export const EVERTRACE_DEFAULT_BASE_URL = 'https://api.evertrace.ai';
 
@@ -323,15 +324,24 @@ function pageParams(input: { page?: number; limit?: number }): { page?: string; 
   };
 }
 
+export interface EvertraceClientOptions extends EvertraceCredentials {
+  /** The host's fetch. */
+  fetch: typeof fetch;
+  log: ModuleLog;
+}
+
 export class EvertraceApiClient {
   private readonly base: string;
-
-  constructor(creds: EvertraceCredentials) {
-    this.base = (creds.baseUrl ?? EVERTRACE_DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.apiKey = creds.apiKey;
-  }
-
   private readonly apiKey: string;
+  private readonly fetchImpl: typeof fetch;
+  private readonly log: ModuleLog;
+
+  constructor(options: EvertraceClientOptions) {
+    this.base = (options.baseUrl ?? EVERTRACE_DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.apiKey = options.apiKey;
+    this.fetchImpl = options.fetch;
+    this.log = options.log;
+  }
 
   private async request<T>(input: {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -354,7 +364,7 @@ export class EvertraceApiClient {
     if (input.body !== undefined) headers['Content-Type'] = 'application/json';
 
     for (let attempt = 0; ; attempt++) {
-      const response = await fetch(url, {
+      const response = await this.fetchImpl(url, {
         method: input.method,
         headers,
         ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
@@ -363,7 +373,7 @@ export class EvertraceApiClient {
       if (response.status === 429 && attempt < RATE_LIMIT_RETRIES) {
         const body = await response.text().catch(() => '');
         const waitMs = retryAfterMs(response, body);
-        logger.warn(`[evertrace] rate limited on ${input.method} ${input.path}; waiting ${waitMs}ms`);
+        this.log.warn(`[evertrace] rate limited on ${input.method} ${input.path}; waiting ${waitMs}ms`);
         await sleep(waitMs);
         continue;
       }
@@ -591,19 +601,4 @@ export class EvertraceApiClient {
   markSignalAsViewed(signalId: string): Promise<EvertraceSignalEvent> {
     return this.request({ method: 'POST', path: `/views/${encodeURIComponent(signalId)}` });
   }
-}
-
-const clientsByKey: Record<string, EvertraceApiClient> = {};
-
-/** A memoized client per (key, base URL) — the same sharing the other API-key
- *  adapters do, so repeated construction inside one run costs nothing. */
-export function getEvertraceClient(apiKey: string, baseUrl?: string): EvertraceApiClient {
-  const cacheKey = baseUrl ? `${apiKey}:${baseUrl}` : apiKey;
-  if (!clientsByKey[cacheKey]) {
-    clientsByKey[cacheKey] = new EvertraceApiClient({
-      apiKey,
-      ...(baseUrl !== undefined ? { baseUrl } : {}),
-    });
-  }
-  return clientsByKey[cacheKey];
 }

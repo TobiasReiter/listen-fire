@@ -10,9 +10,9 @@
 // Everything here is STATIC — no credential, no network — so `describe` is free
 // and the walk hydrates every target rather than stubbing.
 
-import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/services/translation_graph/types';
+import type { SchemaEntryPoint, SchemaTypeDescriptor } from 'movement-engine/public/catalog';
 
-import { META_RECORD_TYPE } from 'movement-engine/services/translation_graph/types';
+import { META_RECORD_TYPE } from 'movement-engine/public/catalog';
 import {
   EVERTRACE_COMPANIES_COLLECTION,
   EVERTRACE_COMPANY_DISPLAY_NAME,

@@ -1,6 +1,7 @@
-// Credentialed Evertrace client resolution — shared by the read/write Adapter
-// (index.ts) and the PollSource (poll.ts). The wire shape itself lives in
-// `adapters/evertrace/apiClient.ts`; this is only the credential half.
+// The legacy line's credentialed Evertrace client: the row read and decrypted
+// here, the dev-loop redirect applied here, as before Evertrace became a module
+// (@lf/evertrace). Shared by the legacy adapter and poll (index.ts). The wire
+// shape is the module's client.
 
 import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/automations/ExternalServiceCredentials';
@@ -8,13 +9,8 @@ import type { ExternalServiceCredentialsId } from '../../../../generated/kysely/
 import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
-import {
-  EvertraceApiClient,
-  evertraceCredsParser,
-  getEvertraceClient,
-} from '../../../../adapters/evertrace/apiClient';
-
-export type { EvertraceApiClient };
+import { EvertraceApiClient, evertraceCredsParser } from '@lf/evertrace';
+import { logger } from 'movement-engine/public/log';
 
 /**
  * Construct a credentialed client for a team. Returns null when no credential
@@ -49,5 +45,5 @@ export async function resolveEvertraceClient(input: {
 
   const parsed = evertraceCredsParser.safeParse(rawPayload);
   if (!parsed.success) return null;
-  return getEvertraceClient(parsed.data.apiKey, parsed.data.baseUrl);
+  return new EvertraceApiClient({ ...parsed.data, fetch, log: logger });
 }

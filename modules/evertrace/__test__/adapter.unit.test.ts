@@ -3,27 +3,17 @@
 // contract) and the poll's checkpoint behaviour. No network: the API client is
 // faked.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-jest.mock('movement-engine/services/logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { MutationContext } from 'movement-engine/services/translation_graph/mutation_context';
+import type { MutationContext } from 'movement-engine/public/adapter';
 import type { Expression } from '#shared/expression/types';
 
-import { logger } from 'movement-engine/services/logger';
-import { updateRecordSucceeded } from 'movement-engine/services/translation_graph/adapter';
+import { updateRecordSucceeded } from 'movement-engine/public/adapter';
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,
   makeStablePosition,
   makeUnstablePosition,
   positionData,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import {
   EvertraceApiError,
   type EvertraceApiClient,
@@ -33,11 +23,11 @@ import {
   type EvertraceSearchFilterRow,
   type EvertraceSignal,
   type EvertraceSignalFilter,
-} from '../../../../../adapters/evertrace/apiClient';
-import { EvertraceAdapter, EVERTRACE_MANIFEST, createEvertraceAdapter } from '../index';
-import { EvertracePollSource } from '../poll';
+} from '../api_client';
+import { EvertraceAdapter, EVERTRACE_MANIFEST } from '../index';
+import { pollEvertrace } from '../poll';
 import { signalFilterFromWhere, lookupSearchTerm } from '../filter';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 import {
   EVERTRACE_COMPANY_TYPE_ID,
   EVERTRACE_EDUCATION_TYPE_ID,
@@ -52,7 +42,16 @@ import {
   encodeListEntryId,
 } from '../types';
 
-const TEAM = 'team-1' as TeamId;
+/** What the module's host gives it to log with. */
+const log = { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+
+/** An adapter that is never asked for a client (the reads here are off inline
+ *  position data), and one over a fake client. */
+const withoutClient = () =>
+  new EvertraceAdapter(async () => {
+    throw new Error('no client in this test');
+  });
+
 const MUTATION: MutationContext = {} as MutationContext;
 
 const DISCOVERED_AT = Date.UTC(2026, 7, 15, 9, 0, 0);
@@ -185,7 +184,7 @@ function fakeClient(over: Partial<Record<keyof EvertraceApiClient, unknown>> = {
   } as unknown as EvertraceApiClient;
 }
 
-const adapterWith = (client: EvertraceApiClient) => new EvertraceAdapter(TEAM, 'cred-1', client);
+const adapterWith = (client: EvertraceApiClient) => new EvertraceAdapter(async () => client);
 
 // The engine's source-read wrapper restamps a position's recordType to the
 // NATURAL type name before a field/edge read. Mirror that here.
@@ -195,7 +194,7 @@ const at = (recordType: string, recordId: string, data: unknown) =>
 // ── entry surface ───────────────────────────────────────────────────────────
 
 describe('EvertraceAdapter entry surface', () => {
-  const adapter = createEvertraceAdapter({ teamId: TEAM });
+  const adapter = withoutClient();
 
   it('publishes one entry per type, with a root collection only where the root can enumerate', async () => {
     const entries = await adapter.listEntryPoints();
@@ -248,7 +247,7 @@ describe('EvertraceAdapter entry surface', () => {
 // ── describe ────────────────────────────────────────────────────────────────
 
 describe('EvertraceAdapter.describe', () => {
-  const adapter = createEvertraceAdapter({ teamId: TEAM });
+  const adapter = withoutClient();
 
   it('describes the workspace meta node with the five root collections plus the two event edges', async () => {
     for (const ref of [ADAPTER_META_TYPE_ID, EVERTRACE_WORKSPACE_TYPE_ID]) {
@@ -346,7 +345,7 @@ describe('EvertraceAdapter.describe', () => {
 // ── field reads ─────────────────────────────────────────────────────────────
 
 describe('EvertraceAdapter.getFieldValue', () => {
-  const adapter = createEvertraceAdapter({ teamId: TEAM });
+  const adapter = withoutClient();
   const position = () => at('Signal', 'sig-1', signal());
 
   it('reads a literal scalar by its natural name', async () => {
@@ -672,7 +671,7 @@ describe('EvertraceAdapter.getRelated — edges below the root', () => {
 // ── order and filter capability ─────────────────────────────────────────────
 
 describe('EvertraceAdapter — what an author may filter and order', () => {
-  const adapter = createEvertraceAdapter({ teamId: TEAM });
+  const adapter = withoutClient();
 
   const edgeOn = async (typeRef: string, edgeName: string) =>
     (await adapter.describe(typeRef))?.references.find((r) => r.name === edgeName);
@@ -1317,7 +1316,7 @@ describe('EvertraceAdapter.readRecord', () => {
 
 describe('EvertraceAdapter.listEventTypes', () => {
   it('types a polled event by its tag — a signal or a list addition', async () => {
-    const adapter = createEvertraceAdapter({ teamId: TEAM });
+    const adapter = withoutClient();
     expect(await adapter.listEventTypes()).toEqual([
       { tag: 'evertrace:signal', positionType: EVERTRACE_SIGNAL_TYPE_ID, match: { path: 'id', equals: [] } },
       { tag: 'evertrace:list_entry', positionType: EVERTRACE_LIST_ENTRY_TYPE_ID, match: { path: 'id', equals: [] } },
@@ -1325,10 +1324,12 @@ describe('EvertraceAdapter.listEventTypes', () => {
   });
 });
 
-// ── poll source ─────────────────────────────────────────────────────────────
+// ── poll ─────────────────────────────────────────────────────────────
 
-describe('EvertracePollSource.getEvents', () => {
-  const source = (client: EvertraceApiClient) => new EvertracePollSource(TEAM, 'cred-1', client);
+describe('pollEvertrace', () => {
+  const source = (client: EvertraceApiClient) => ({
+    getEvents: (input: { config: unknown; checkpoint?: unknown }) => pollEvertrace(client, input, { log }),
+  });
 
   it('first poll sets the mark and emits nothing (no backfill)', async () => {
     const listSignals = jest.fn(async () => ({ data: [signal()], meta: { page: 1, limit: 100 } }));
@@ -1439,15 +1440,15 @@ describe('EvertracePollSource.getEvents', () => {
         checkpoint: { createdAfter: CREATED_AT },
       });
     await poll();
-    const said = (logger.info as jest.Mock).mock.calls.map((c) => String(c[0]));
+    const said = log.info.mock.calls.map((c) => String(c[0]));
     expect(said.some((line) => line.includes('"key":"status"'))).toBe(true);
     // The row it could not express is named too — that is how the real
     // operator vocabulary is discovered.
     expect(said.some((line) => line.includes('this key has no exclude form'))).toBe(true);
 
-    (logger.info as jest.Mock).mockClear();
+    log.info.mockClear();
     await poll();
-    expect(logger.info).not.toHaveBeenCalled();
+    expect(log.info).not.toHaveBeenCalled();
   });
 
   it('polls on the mark alone, and warns, when nothing in the search can be expressed', async () => {
@@ -1471,7 +1472,7 @@ describe('EvertracePollSource.getEvents', () => {
       page: 1,
       limit: 100,
     });
-    expect((logger.warn as jest.Mock).mock.calls.map((c) => String(c[0]))).toEqual([
+    expect(log.warn.mock.calls.map((c) => String(c[0]))).toEqual([
       expect.stringContaining('sea-unreadable'),
     ]);
   });
@@ -1485,21 +1486,18 @@ describe('EvertracePollSource.getEvents', () => {
     ).rejects.toThrow(/no saved search called "Nope"/);
   });
 
-  it('throws a clear error when no credential resolves', async () => {
-    await expect(new EvertracePollSource(TEAM, undefined).getEvents({ config: {} })).rejects.toThrow(
-      /Connect Evertrace/,
-    );
-  });
 });
 
-// ── poll source: list additions ─────────────────────────────────────────────
+// ── poll: list additions ─────────────────────────────────────────────
 //
 // The SAME source, told which kind to fetch by the listen's own `events`
 // selection. What each of these really asserts is that a trigger listening on
 // one edge never sees the other edge's events.
 
-describe('EvertracePollSource.getEvents — list additions', () => {
-  const source = (client: EvertraceApiClient) => new EvertracePollSource(TEAM, 'cred-1', client);
+describe('pollEvertrace — list additions', () => {
+  const source = (client: EvertraceApiClient) => ({
+    getEvents: (input: { config: unknown; checkpoint?: unknown }) => pollEvertrace(client, input, { log }),
+  });
   const ENTRIES = { events: ['list_entry'] };
 
   it('first poll sets the entries mark and emits nothing (no backfill)', async () => {

@@ -53,7 +53,7 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { findTriggersByKind } from '../../services/translation_graph/storage/tg_table';
 import { pollTriggerNow } from '../../services/poll_source/worker';
-import { EVERTRACE_API_VERSION } from '../../adapters/evertrace/apiClient';
+import { EVERTRACE_API_VERSION } from '@lf/evertrace/api_client';
 import { dispatchTriggerByIdEvent } from '../../services/translation_graph/triggers/router';
 import { dispatchMutationEvent } from '../../services/translation_graph/triggers/mutation_dispatch';
 import { userEditContext } from 'movement-engine/services/translation_graph/mutation_context';

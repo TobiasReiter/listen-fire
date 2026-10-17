@@ -41,12 +41,8 @@ import { CRON_ADAPTER_TYPE, CRON_MANIFEST, createCronAdapter } from './cron';
 import { MANUAL_ADAPTER_TYPE, MANUAL_MANIFEST, createManualAdapter } from './manual';
 import { GRANOLA_ADAPTER_TYPE } from '@lf/granola/types';
 import { GRANOLA_MANIFEST } from '@lf/granola/manifest';
-import {
-  EVERTRACE_ADAPTER_TYPE,
-  EVERTRACE_MANIFEST,
-  createEvertraceAdapter,
-} from './evertrace';
-import { createEvertracePollSource } from './evertrace/poll';
+import { EVERTRACE_ADAPTER_TYPE } from '@lf/evertrace/types';
+import { EVERTRACE_MANIFEST } from '@lf/evertrace/manifest';
 import { DEALROOM_ADAPTER_TYPE } from '@lf/dealroom/types';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { builtinAdapterFactory, builtinPollSourceFactory } from './builtin_modules';
@@ -148,10 +144,14 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     return createGranolaAdapter({ teamId, credentialsId });
   }),
   // Evertrace — polled source (signals) AND write target (saved searches,
-  // lists, list memberships, and the screened/viewed facts on a signal). Event
-  // production lives on its PollSource (POLL_SOURCE_FACTORIES below).
-  [EVERTRACE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createEvertraceAdapter({ teamId, credentialsId }),
+  // lists, list memberships, and the screened/viewed facts on a signal). A
+  // module (@lf/evertrace); its poll is the module's declared one
+  // (POLL_SOURCE_FACTORIES below). Its line in BUILTIN_MODULES says module or
+  // legacy; either is loaded on first use.
+  [EVERTRACE_ADAPTER_TYPE]: builtinAdapterFactory(EVERTRACE_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createEvertraceAdapter }: typeof import('./evertrace') = require('./evertrace');
+    return createEvertraceAdapter({ teamId, credentialsId });
+  }),
   // Dealroom — polled source (new funding rounds) and read-only otherwise: the
   // API has no record-writing endpoint at all. A module (@lf/dealroom); its
   // poll is the module's declared one (POLL_SOURCE_FACTORIES below).
@@ -190,8 +190,10 @@ const POLL_SOURCE_FACTORIES: Record<string, PollSourceFactory> = {
     const { createGranolaPollSource }: typeof import('./granola') = require('./granola');
     return createGranolaPollSource({ teamId, credentialsId });
   }),
-  [EVERTRACE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createEvertracePollSource({ teamId, credentialsId }),
+  [EVERTRACE_ADAPTER_TYPE]: builtinPollSourceFactory(EVERTRACE_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createEvertracePollSource }: typeof import('./evertrace') = require('./evertrace');
+    return createEvertracePollSource({ teamId, credentialsId });
+  }),
   [DEALROOM_ADAPTER_TYPE]: builtinPollSourceFactory(DEALROOM_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
     const { createDealroomPollSource }: typeof import('./dealroom') = require('./dealroom');
     return createDealroomPollSource({ teamId, credentialsId });

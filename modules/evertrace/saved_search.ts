@@ -16,7 +16,7 @@
 import type {
   EvertraceSearchFilterRow,
   EvertraceSignalFilter,
-} from '../../../../adapters/evertrace/apiClient';
+} from './api_client';
 
 /** The body keys a stored row can land on, all of them lists of values. */
 type ListKey =

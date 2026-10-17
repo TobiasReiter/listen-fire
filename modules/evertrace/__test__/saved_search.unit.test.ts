@@ -3,7 +3,7 @@
 // is REPORTED rather than dropped — the poll logs what it skipped, which is how
 // Evertrace's undocumented operator vocabulary gets discovered.
 
-import type { EvertraceSearchFilterRow } from '../../../../../adapters/evertrace/apiClient';
+import type { EvertraceSearchFilterRow } from '../api_client';
 
 import { narrowsAnything, signalFilterFromSearchRows } from '../saved_search';
 
