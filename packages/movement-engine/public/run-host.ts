@@ -3,6 +3,7 @@
 // family (ids, value rules, the sink, the keeper, recording a call, running a body).
 
 export * from '../services/run_host/store';
+export * from '../services/run_host/memory_store';
 export * from '../services/run_host/rules';
 export * from '../services/run_host/lease';
 export * from '../services/run_host/drain';

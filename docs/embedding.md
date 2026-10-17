@@ -133,7 +133,7 @@ The host has the same slots as `lf.yaml`'s `core:` section. You fill each with y
 |---|---|---|
 | models | `ai(…)` and `extract(…)` calls | `llm: pricedModels({ client, extractCall })`. A client answers `{ parsedJson }` and may report what it cost. The Anthropic clients are `makeAnthropicLlmClient` and `makeAnthropicExtractCallClient` (`public/models`), over `anthropicClient` (`public/anthropic`). |
 | judge | whether a written record is one already there, when the rules alone cannot tell | `llm.arbitrateEntities`. Absent: such a write fails, naming it. |
-| store | parks: `await`, `sleep`, callbacks | `park.sink`, `park.wake`, `park.bindings`, `park.callbacks`, with the run-host store (`public/run-host`) behind them. Absent: a movement that parks fails. Your store must pass the contract suite in `public/testing`. |
+| store | parks: `await`, `sleep`, callbacks | `park.sink`, `park.wake`, `park.bindings`, `park.callbacks`, with the run-host store (`public/run-host`) behind them. Absent: a movement that parks fails. `memoryRunHostStore` (`public/embed`) holds parked runs for one process; a store that must outlive a restart implements `RunHostStore` over your database and must pass the contract suite in `public/testing`. |
 | files | reading a file's text, rendering a file | `files.resolveFileText` (`@lf/file-text` reads PDFs, decks and sheets), `files.render`. |
 
 Two more pieces are yours and have safe defaults:
@@ -161,6 +161,6 @@ The full table is [docs/contracts/run-limits.md](contracts/run-limits.md).
 
 ## What the example leaves out
 
-- Parks. The example's movements do not `await` or `sleep`; a durable host supplies the store slot (section 5).
+- Parks that outlive the process. The example parks a sleeping run in `memoryRunHostStore` and steps it on with `tick()` (each run gets its own park sink, `runParkSink`, and its due timers are drained under the run's lease, `drainDueTimers`); a restart forgets them.
 - A real vault and a database for write locks.
 - The live Anthropic path is wired (`ANTHROPIC_API_KEY`) but the test uses the fake model.
