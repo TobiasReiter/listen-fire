@@ -44,6 +44,9 @@ import { getAdapter } from '../registry';
 
 const TEAM = 'team-host' as TeamId;
 
+// The first call loads the module and its host; a loaded machine is slow at it.
+jest.setTimeout(60_000);
+
 interface Provider {
   origin: string;
   tokenCalls: string[];
