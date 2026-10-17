@@ -378,6 +378,14 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
 
+### close-forms
+
+- The Rust engine runs a walk from a callback inside an expression (`Text.join(cb-[k:Called]->.\`note\`, ", ")`, `count(cb-[k:Called]->)`): the calls recorded so far, as a block over the callback reads them.
+- An `await` on an edge of a record the run read, not wrote, runs: the event, a record a walk landed on, or one a value holds (`c = only(e-[k:Checks]->)`, then `await first(c-[:Answer]->)`). It asks that record's system by the record's own id. A value holding nothing fails the run (`MOVENG_RUNTIME`).
+- A kept (`lazy`) walk read as a bare value is the records it lands on at that read (`count(people)`), across a pause too.
+- The event read as a bare value is the record that fired the run (`coalesce(msg, r)`), as a record a walk landed on is.
+- Three endings that depend on what the system answers are now ordinary run failures (`MOVENG_RUNTIME`), not refusals by construct (`MOVENG_UNSUPPORTED`): an `await` on a system that cannot be awaited; an integration function such as `DOMAIN_OF()` written to a field whose system does not offer it; a collection op over a value that read as empty (`List.groupBy(v.\`items\`, …)`).
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)
