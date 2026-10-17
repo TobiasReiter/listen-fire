@@ -83,7 +83,7 @@ This records both corpora (`UPDATE_ENGINE_RUNS=1 pnpm test:conformance:v<n>`) wi
 
 ### The language kit: checked programs
 
-Every program the test suites check, with its catalog snapshot, language version and full diagnostics. `pnpm language:conformance <checks.json>` replays a corpus against the checker, ours or your own. See [`packages/movement-lang/conformance/README.md`](../../packages/movement-lang/conformance/README.md).
+Every program the test suites check, with its catalog snapshot, language version and full diagnostics. `pnpm language:conformance <checks.json>` replays a corpus against the checker, ours or your own. Ours is assembled by `pnpm checks:corpus` (in `packages/movement-lang`) into `target/checks/checks.json`, because the repository pins each program by a hash of its text and the text lives in its test. See [`packages/movement-lang/conformance/README.md`](../../packages/movement-lang/conformance/README.md).
 
 ### The adapter kit
 

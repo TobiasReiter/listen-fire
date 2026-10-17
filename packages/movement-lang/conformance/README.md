@@ -7,8 +7,9 @@ kit is the corpus that says what "the same" is, and a runner that replays it.
 ## Run it
 
 ```bash
-# our corpus: every program the v1, v2 and current test suites check
-pnpm language:conformance packages/movement-lang/checker/__test__/__fixtures__/checks.json
+# our corpus: every program the test suites check (assemble it first, below)
+pnpm checks:corpus
+pnpm language:conformance target/checks/checks.json
 
 # your own corpus, in the same format
 pnpm language:conformance path/to/checks.json --snapshots path/to/checks.snapshots.json
@@ -23,7 +24,8 @@ pnpm language:conformance path/to/checks.json --snapshots path/to/checks.snapsho
 
 The loader, the replay and the comparison are `checks_corpus.ts` here; the
 checker regression test (`checker/__test__/checks_regression.unit.test.ts`)
-runs the same replay over ours.
+runs the same replay over ours, when run with `CHECKS_CORPUS=1` after
+`pnpm checks:corpus`.
 
 ## The corpus format
 
@@ -62,10 +64,19 @@ dropped).
 
 ## Making a corpus
 
-- Ours is harvested from the test suites: `pnpm harvest:checks` in
-  `packages/movement-lang` (see `checker/harvest/`).
-- To pin a ruling or a fix, re-harvest, or set `UPDATE_CHECKS_FIXTURE=1` on
-  the checker regression test, and read the diff.
+- Ours is harvested from the test suites (see `checker/harvest/`).
+- Its pin (`checker/__test__/__fixtures__/checks/`, see `checks_pin.ts`)
+  holds no program text: each check names its program by a hash of the text,
+  and its diagnostics by key in its version's table. The text lives in the
+  test that checks it. (The few pinned programs no test writes any more keep
+  their text in `v<n>.programs.json`, until the next re-harvest drops them.)
+- `pnpm checks:corpus` in `packages/movement-lang` harvests the texts and
+  writes the corpus, in the format above, to `target/checks/checks.json`
+  (with `checks.snapshots.json` beside it). It then holds every pinned check
+  with its text, or the command fails naming the checks it could not find.
+- To pin a ruling or a fix, re-harvest (`pnpm harvest:checks`), or set
+  `UPDATE_CHECKS_FIXTURE=1 CHECKS_CORPUS=1` on the checker regression test
+  after `pnpm checks:corpus`, and read the diff.
 
 ## The other files here
 

@@ -715,6 +715,10 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   over an HTTP host double. The language kit replays a checks corpus against the checker: `pnpm
   language:conformance <checks.json>`. See "Conformance kits" in
   [`docs/contracts/README.md`](docs/contracts/README.md).
+- For embedders: our checks corpus is no longer a file in the repository. The pin holds each
+  program's hash, not its text, so `pnpm checks:corpus` in `packages/movement-lang` harvests the
+  texts from the tests and writes the corpus to `target/checks/checks.json`; replay that file. The
+  corpus format, and replaying your own, are unchanged.
 - For embedders: an engine host must serve `clock.now` and `ids.mint`. They are required families of
   host families version 1: the engine reads no wall clock and mints no random id of its own, and a
   host that lacks either is refused before `segment.open`, naming the missing methods. See
