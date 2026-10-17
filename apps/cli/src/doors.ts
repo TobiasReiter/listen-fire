@@ -251,11 +251,11 @@ export function hookTarget(session: DoorSession, input: { external: string; inst
 export async function deliverInline(
   session: Session,
   delivery: InboundDelivery,
-  options: { notify(): void },
+  options: Pick<LfInboundOptions, 'notify' | 'adapterOf'>,
 ): Promise<{ answer: InboundAnswer; outcomes: RunOutcome[] }> {
   const outcomes: RunOutcome[] = [];
   const { store } = createLfInboundStores(session, {
-    notify: options.notify,
+    ...options,
     enqueueEvent: async ({ external, event }) => {
       outcomes.push(...(await fireEvent(session, { external, event })));
     },

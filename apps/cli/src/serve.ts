@@ -38,7 +38,11 @@ export async function serve(
     log?: (line: string) => void;
     /** How the inbound doors read deliveries and wrap their stores (the
      *  inbound contract suite instruments them). */
-    inbound?: Pick<LfInboundOptions, 'adapterOf'> & { decorate?(stores: LfInboundStores): LfInboundStores };
+    inbound?: Pick<LfInboundOptions, 'adapterOf'> & {
+      decorate?(stores: LfInboundStores): LfInboundStores;
+      /** Called whenever an inbound door pokes the drain. */
+      onNotify?(): void;
+    };
   },
 ): Promise<Serving> {
   const log = options.log ?? ((line: string) => process.stdout.write(`${line}\n`));
@@ -71,6 +75,11 @@ export async function serve(
     } finally {
       draining = false;
     }
+  };
+
+  const pokeDrain = () => {
+    options.inbound?.onNotify?.();
+    void tick();
   };
 
   const server = createServer((req, res) => {
@@ -130,7 +139,7 @@ export async function serve(
         res,
         await answerDelivery(
           inboundStores(session).store,
-          { notify: () => void tick() },
+          { notify: pokeDrain },
           { provider: decodeURIComponent(delivery[1]), subscriptionId: decodeURIComponent(delivery[2]), rawBody, headers },
         ),
       );
@@ -145,7 +154,7 @@ export async function serve(
       ...(hook[2] !== undefined ? { install: decodeURIComponent(hook[2]) } : {}),
     });
     if (target === null) return json(res, 404, { error: 'unknown_provider' });
-    const { answer, outcomes } = await deliverInline(session, { ...target, rawBody, headers }, { notify: () => void tick() });
+    const { answer, outcomes } = await deliverInline(session, { ...target, rawBody, headers }, inboundOptions);
     logRuns(outcomes);
     if (answer.status !== 200) return send(res, answer);
     json(res, 202, { runs: outcomes });
@@ -153,11 +162,12 @@ export async function serve(
     void tick();
   };
 
+  const inboundOptions: Pick<LfInboundOptions, 'notify' | 'adapterOf'> = {
+    notify: pokeDrain,
+    ...(options.inbound?.adapterOf !== undefined ? { adapterOf: options.inbound.adapterOf } : {}),
+  };
   const inboundStores = (session: Session): LfInboundStores => {
-    const stores = createLfInboundStores(session, {
-      notify: () => void tick(),
-      ...(options.inbound?.adapterOf !== undefined ? { adapterOf: options.inbound.adapterOf } : {}),
-    });
+    const stores = createLfInboundStores(session, inboundOptions);
     return options.inbound?.decorate?.(stores) ?? stores;
   };
 
