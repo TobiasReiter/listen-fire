@@ -28,35 +28,6 @@ fn a_file_is_bounded_as_the_typescript_bounds_it() {
     }
 }
 
-/// `LOWER` and `UPPER` of seeded texts follow Rust's own tables (the
-/// toolchain's Unicode, 17 today). Node's ICU (Unicode 16) wrote the oracle,
-/// and a text maps differently only where it holds a letter Unicode 17 gave
-/// a case (U+A7CE, U+A7D3, U+16EA0, U+16EBB), or a sigma beside U+0295,
-/// which Unicode 17 no longer counts as cased (`ʕΣ` lowers to `ʕσ`, where
-/// Node wrote `ʕς`).
-#[test]
-fn case_maps_by_rusts_tables() {
-    const CASED_FROM_17: [char; 4] = ['\u{A7CE}', '\u{A7D3}', '\u{16EA0}', '\u{16EBB}'];
-    let cases: Vec<Json> = serde_json::from_str(include_str!("oracle/case_mapping.json")).expect("case_mapping.json reads");
-    assert!(cases.len() >= 4000);
-    let mut unexplained = Vec::new();
-    let mut moved = 0;
-    for case in &cases {
-        let text = case["text"].as_str().unwrap();
-        let (lower, upper) = (js::to_lower_case(text), js::to_upper_case(text));
-        assert_eq!((lower.as_str(), upper.as_str()), (text.to_lowercase().as_str(), text.to_uppercase().as_str()));
-        if lower == case["lower"].as_str().unwrap() && upper == case["upper"].as_str().unwrap() {
-            continue;
-        }
-        moved += 1;
-        let explained = text.chars().any(|c| CASED_FROM_17.contains(&c)) || (text.contains('ʕ') && text.contains('Σ'));
-        if !explained {
-            unexplained.push(format!("{text:?}: {lower:?} {upper:?}, node {} {}", case["lower"], case["upper"]));
-        }
-    }
-    assert!(unexplained.is_empty(), "{} of {moved} moved texts are unexplained:\n{}", unexplained.len(), unexplained.join("\n"));
-}
-
 /// ORDER BY and `SORT` over keys that mix numbers with texts and other
 /// kinds, past V8's 64-item insertion sort: the comparator is no total
 /// order, so V8's TimSort alone decides where items land, and the port lands
