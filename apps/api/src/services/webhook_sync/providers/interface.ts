@@ -99,11 +99,6 @@ export interface WebhookProvider {
    */
   readonly defaultEventTypes: readonly string[];
 
-  /** Verify an inbound signature against the registered subscription
-   *  secret. Always required — both auto- and manual-mode providers send
-   *  signed events. */
-  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean;
-
   /**
    * Register a subscription with the source system. Auto providers call
    * the source's "create webhook" API and return the issued externalId +

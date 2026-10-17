@@ -19,7 +19,6 @@
 // (`providerKeyForSlug`), so the door it provisions and the door registered
 // here are one door.
 
-import crypto from "node:crypto";
 
 import { z } from 'zod';
 
@@ -109,19 +108,6 @@ const nativeKnowledgeProvider: WebhookProvider = {
   canRegisterViaApi: true,
 
   defaultEventTypes: [...NATIVE_KNOWLEDGE_SUBSCRIBABLE_EVENTS],
-
-  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean {
-    if (!signatureHeader) return false;
-    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    try {
-      return crypto.timingSafeEqual(
-        Buffer.from(expected, 'hex'),
-        Buffer.from(signatureHeader, 'hex'),
-      );
-    } catch {
-      return false;
-    }
-  },
 
   async registerSubscription(input): Promise<WebhookRegistration> {
     return registerKnowledgeWebhook({

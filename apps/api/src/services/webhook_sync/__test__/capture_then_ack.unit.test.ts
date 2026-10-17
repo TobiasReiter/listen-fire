@@ -9,9 +9,9 @@
 //                      rows → wake_await rows
 //
 // with the properties that make it safe: the cursor only advances over
-// RECEIPTED events; a per-event phase-2 failure is per-event data, never a
-// rejected delivery; and a wake that cannot be read or queued rejects the
-// delivery (a 500, so the sender retries) only after its events are queued.
+// RECEIPTED events; a per-event phase-2 failure never stops the next event; and
+// a receipt or wake that cannot be read or queued rejects the delivery (a 500,
+// so the sender retries) only after everything else is queued.
 // Fully mocked — no DB, no adapters, no engine.
 
 import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
@@ -136,7 +136,12 @@ async function loadHandler(options: {
     getAutomationsQb: jest.fn(() => qb),
   }));
   jest.doMock('../providers', () => ({
-    getWebhookProvider: jest.fn(() => ({ verifySignature: jest.fn(() => true) })),
+    getWebhookProvider: jest.fn(() => ({})),
+  }));
+  // Every provider verifies: the signature is not what these pin.
+  jest.doMock('../../inbound/legacy_signature_headers', () => ({
+    LEGACY_SIGNATURE_HEADERS: new Proxy({}, { get: () => ({ verifyInbound: () => true }) }),
+    LEGACY_INTERCEPTS: {},
   }));
   jest.doMock('../../../lib/credentials', () => ({ decryptToken: jest.fn() }));
   jest.doMock('../../../adapters/attio/apiClient', () => ({
@@ -272,7 +277,7 @@ function deliver(h: Harness, provider = 'ATTIO') {
     provider,
     subscriptionId: 'sub-1',
     rawBody: Buffer.from('{}'),
-    signatureHeader: 'sig',
+    headers: {},
   });
 }
 
@@ -338,7 +343,7 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     expect(h.notifyWork).not.toHaveBeenCalled();
   });
 
-  it('one event failing to queue does not stop the next — the failure is per-event data', async () => {
+  it('one event failing to queue does not stop the next, and refuses the delivery so the sender retries', async () => {
     let call = 0;
     const onEnqueue = jest.fn(async () => {
       call += 1;
@@ -347,11 +352,10 @@ describe('handleInboundWebhook — phase 2 queues the work', () => {
     const h = await loadHandler({ events: [EVENT_A, EVENT_B], onEnqueue });
 
     const result = await deliver(h);
-    const outcome = await (await result.enqueueDeferred!()).readOutcome(SETTLED);
 
+    await expect(result.enqueueDeferred!()).rejects.toThrow('enqueue exploded');
     expect(onEnqueue).toHaveBeenCalledTimes(2);
-    expect(outcome.eventsProcessed).toBe(1);
-    expect(outcome.perEventErrors).toEqual([{ event: EVENT_A, error: 'enqueue exploded' }]);
+    expect(h.enqueueAwaitWakes).toHaveBeenCalledTimes(1);
   });
 
   it('queues a linked-object refresh for a bridged record even when NO trigger matched', async () => {
@@ -506,7 +510,7 @@ describe('handleInboundWebhook — the Telegram button-tap branch', () => {
       provider: 'TELEGRAM',
       subscriptionId: 'sub-1',
       rawBody: Buffer.from('{}'),
-      signatureHeader: 'sig',
+      headers: {},
     });
 
   it('a tap is answered against the subscription’s own bot and never reaches the events seam', async () => {
@@ -560,7 +564,7 @@ describe('handleInboundWebhook — the BYO WhatsApp interactive-reply branch', (
       provider: 'INBOUND_WHATSAPP',
       subscriptionId: 'sub-1',
       rawBody: Buffer.from('{}'),
-      signatureHeader: 'sig',
+      headers: {},
     });
 
   it('a callback-id tap is fired + acked through the door AND still reaches the events seam', async () => {

@@ -1,4 +1,6 @@
-// The two push doors a REMOTE adapter calls when it owns its own inbound URL
+// The platform's store under the two push doors a REMOTE adapter calls when it
+// owns its own inbound URL (the doors themselves are the shared inbound core's
+// `answerEmit` / `answerWake`)
 // (plans/cloud-native-2026-10-06/02_await_correlation_example.md, "Topology"):
 //
 //   emit(events) — new data: each event is matched against the team's triggers
@@ -17,9 +19,8 @@
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-import type { IncomingHttpHeaders } from 'node:http';
 import type { TeamId } from '../../generated/kysely/core/Team';
-import type { DiscriminableEvent, EventType } from 'movement-engine/services/translation_graph/adapter';
+import type { InboundHeaders, PushAuth, PushCaller, PushStore } from 'movement-engine/public/inbound';
 
 import { teamIdSchema } from '../../lib/team_id';
 import { loadRemoteAdapterSecret, resolveAdapter } from '../translation_graph/adapters/resolve';
@@ -34,23 +35,11 @@ import { logger } from 'movement-engine/services/logger';
 import { captureProviderTriggerEvents } from './handler';
 import { webhookProviderKey } from './urls';
 
-/** The install a door call authenticated as. */
-export interface AdapterDoorCaller {
-  teamId: TeamId;
-  adapterType: string;
-  credentialsId: string;
-}
-
-export type AdapterDoorAuth =
-  | { kind: 'authenticated'; caller: AdapterDoorCaller }
-  /** The credential matches no install of the type (or there is none, or the
-   *  named team has none, or the slug is one a built-in answers to) — one
-   *  answer for all four, so an anonymous caller cannot probe who installed
-   *  what. */
-  | { kind: 'unauthorized' }
-  /** The credential matches installs on more than one team; the caller must
-   *  name its team. */
-  | { kind: 'ambiguous' };
+/** The credential matches no install of the type (or there is none, or the
+ *  named team has none, or the slug is one a built-in answers to) — one answer
+ *  for all four (`unauthorized`), so an anonymous caller cannot probe who
+ *  installed what. */
+export type AdapterDoorAuth = PushAuth;
 
 const AuthStrategySchema = RemoteAdapterManifestFile.shape.authStrategy;
 
@@ -60,15 +49,15 @@ function sameSecret(presented: string, expected: string): boolean {
   return timingSafeEqual(digest(presented), digest(expected));
 }
 
-function headerValue(headers: IncomingHttpHeaders, name: string): string | undefined {
+function headerValue(headers: InboundHeaders, name: string): string | undefined {
   const value = headers[name.toLowerCase()];
-  return Array.isArray(value) ? value[0] : value;
+  return typeof value === 'string' ? value : value?.[0];
 }
 
 /** Whether the presented headers carry this install's secret, the way its
  *  strategy sends it (the header the install sends to the remote is the one
  *  the remote sends back). An unreadable install never matches. */
-async function presentsSecretOf(install: RemoteAdapterRow, headers: IncomingHttpHeaders): Promise<boolean> {
+async function presentsSecretOf(install: RemoteAdapterRow, headers: InboundHeaders): Promise<boolean> {
   if (install.credentials_id === null) return false;
   const strategy = AuthStrategySchema.safeParse(install.auth_strategy);
   if (!strategy.success) return false;
@@ -99,7 +88,7 @@ async function presentsSecretOf(install: RemoteAdapterRow, headers: IncomingHttp
  */
 export async function authenticateAdapterDoor(input: {
   adapterType: string;
-  headers: IncomingHttpHeaders;
+  headers: InboundHeaders;
 }): Promise<AdapterDoorAuth> {
   // A slug a built-in answers to is never a remote install's, whatever row
   // the table holds — the same answer as no install, so it says nothing.
@@ -116,7 +105,7 @@ export async function authenticateAdapterDoor(input: {
     ...(teamId !== undefined ? { teamId } : {}),
   });
 
-  const matches: AdapterDoorCaller[] = [];
+  const matches: PushCaller[] = [];
   for (const install of installs) {
     if (install.credentials_id !== null && (await presentsSecretOf(install, input.headers))) {
       matches.push({
@@ -132,75 +121,43 @@ export async function authenticateAdapterDoor(input: {
   return { kind: 'authenticated', caller };
 }
 
-/** The adapter's event-type union, for discrimination. Best effort: an event
- *  that can't be discriminated still dispatches, seeded from its payload. */
-async function remoteEventTypes(caller: AdapterDoorCaller): Promise<readonly EventType[]> {
-  try {
-    const adapter = await resolveAdapter({ adapterType: caller.adapterType, teamId: caller.teamId });
-    return adapter.listEventTypes ? await adapter.listEventTypes() : [];
-  } catch (err) {
-    logger.warn('[AdapterDoors] listEventTypes failed; events dispatch undiscriminated', {
-      adapterType: caller.adapterType,
-      teamId: caller.teamId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
-}
+/** The platform's store under the push doors (the core's `answerEmit` /
+ *  `answerWake`): installs and their secrets, the trigger table, the work table. */
+export const platformPushStore: PushStore<CapturedTriggerEvent> = {
+  authenticate: (input) => authenticateAdapterDoor(input),
 
-/**
- * Receipt each event against the caller's triggers and queue a run per
- * receipt. Returns the receipts made. A capture that throws fails the call
- * AFTER the receipts already made are queued, since a receipt without its
- * work row would never run.
- */
-export async function emitAdapterEvents(input: {
-  caller: AdapterDoorCaller;
-  events: readonly DiscriminableEvent[];
-}): Promise<{ accepted: number; failed: number }> {
-  const { caller } = input;
-  const subscription = {
-    team_id: caller.teamId,
-    credentials_id: caller.credentialsId,
-    provider: webhookProviderKey({ adapterType: caller.adapterType }),
-  };
-  const eventTypes = input.events.length > 0 ? await remoteEventTypes(caller) : [];
-
-  const captured: CapturedTriggerEvent[] = [];
-  let failed = 0;
-  for (const event of input.events) {
+  // Best effort: an event that can't be discriminated still dispatches, seeded
+  // from its payload.
+  async eventTypes(caller) {
     try {
-      const receipts = await captureProviderTriggerEvents({
-        event,
-        subscription,
-        adapterType: caller.adapterType,
-        eventTypes,
-      });
-      captured.push(...receipts);
+      const adapter = await resolveAdapter({ adapterType: caller.adapterType, teamId: caller.teamId as TeamId });
+      return adapter.listEventTypes ? await adapter.listEventTypes() : [];
     } catch (err) {
-      failed += 1;
-      logger.error('[AdapterDoors] emit capture failed', {
+      logger.warn('[AdapterDoors] listEventTypes failed; events dispatch undiscriminated', {
         adapterType: caller.adapterType,
         teamId: caller.teamId,
         error: err instanceof Error ? err.message : String(err),
       });
+      return [];
     }
-  }
-  await enqueueCapturedEvents(captured);
-  if (captured.length > 0) notifyWork();
-  return { accepted: captured.length, failed };
-}
+  },
 
-/** Queue a wake per key. A key nothing is parked on drains as a no-op. */
-export async function wakeAdapterKeys(input: {
-  caller: AdapterDoorCaller;
-  keys: readonly string[];
-}): Promise<{ accepted: number }> {
-  await enqueueAwaitWakes({
-    adapterType: input.caller.adapterType,
-    teamId: input.caller.teamId,
-    correlationKeys: input.keys,
-  });
-  notifyWork();
-  return { accepted: input.keys.length };
-}
+  capture: ({ caller, event, eventTypes }) =>
+    captureProviderTriggerEvents({
+      event,
+      subscription: {
+        team_id: caller.teamId,
+        credentials_id: caller.credentialsId,
+        provider: webhookProviderKey({ adapterType: caller.adapterType }),
+      },
+      adapterType: caller.adapterType,
+      eventTypes,
+    }),
+
+  enqueue: (captured) => enqueueCapturedEvents([...captured]),
+
+  enqueueWakes: ({ adapterType, teamId, keys }) =>
+    enqueueAwaitWakes({ adapterType, teamId: teamId as TeamId, correlationKeys: keys }),
+
+  notify: () => notifyWork(),
+};

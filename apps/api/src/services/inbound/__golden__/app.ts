@@ -42,7 +42,7 @@ export function buildGoldenApp(): express.Express {
   // fallback error page free of stack traces.
   app.set('env', 'production');
 
-  app.use('/api/public/webhook-sync', express.raw({ type: 'application/json' }), webhookSyncRouter);
+  app.use('/api/public/webhook-sync', webhookSyncRouter);
   app.use('/api/public/adapter', adapterDoorsRouter);
   app.use('/api/public/telegram', express.raw({ type: 'application/json' }), telegramBuiltinRouter);
   app.use('/api/public/slack', express.raw({ type: 'application/json' }), slackEventsRouter);

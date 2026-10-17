@@ -6,16 +6,12 @@
 //
 // Parsing lives with the ADAPTER (`parseTelegramEvents` in
 // adapters/telegram/index.ts, consumed by its `preprocessInbound` and the
-// shared-bot classifier) — this provider carries only registration metadata
-// and the (trust-the-URL) signature stance.
+// shared-bot classifier) — this provider carries only registration metadata.
 //
-// Verification: Telegram doesn't HMAC-sign webhooks. The optional protection is
-// a fixed secret token echoed in the `X-Telegram-Bot-Api-Secret-Token` header,
-// which the webhook_sync router doesn't forward as a signature header. The
-// test-harness team bypasses verification entirely (synthetic inbound); for a
-// real registration we accept the delivery (the bot-token-in-URL is itself the
-// shared secret in Telegram's model). Returning `true` keeps the handler happy
-// while the framework's bypass governs the dev loop.
+// Verification (services/inbound/legacy_signature_headers.ts): Telegram doesn't
+// HMAC-sign webhooks, and a bring-your-own bot is registered without a secret
+// token, so its deliveries are accepted on the unguessable URL (the
+// bot-token-in-URL is itself the shared secret in Telegram's model).
 
 import type { WebhookProvider, WebhookRegistration } from './interface';
 
@@ -36,12 +32,6 @@ const telegramProvider: WebhookProvider = {
     '3. Telegram will POST an Update JSON to the URL for each message your bot receives.',
   ].join('\n'),
 
-  // Telegram doesn't HMAC-sign webhook bodies (the bot token in the URL is the
-  // shared secret). Accept — the test-harness bypass governs the dev loop, and
-  // production deliveries are trusted via the unguessable URL.
-  verifySignature(): boolean {
-    return true;
-  },
 
 
   async registerSubscription(): Promise<WebhookRegistration> {

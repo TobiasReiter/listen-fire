@@ -118,7 +118,7 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
   },
   {
     id: 'attio-remote-header-ignored-for-builtin',
-    note: 'x-listen-fire-signature heads the chain for every non-Slack, non-Affinity provider, so a bad one shadows a good attio-signature.',
+    note: 'x-listen-fire-signature verifies remote installs only, so a bad one beside a good attio-signature is ignored: 200. (Before the shared inbound core it headed every chain and shadowed the good one: 401.)',
     arrange: attioArrange,
     request: post(PATH('attio'), json(ATTIO_BODY), (body) => ({
       [REMOTE_SIGNATURE_HEADER_FOR_CASES]: 'c'.repeat(64),
@@ -163,7 +163,7 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
   },
   {
     id: 'body-over-100kb',
-    note: "The raw parser's default 100 KB limit answers 413 from express itself, before the route runs.",
+    note: "The raw parser's default 100 KB limit answers 413 before the route runs, in the door's JSON error shape. (Before the shared inbound core express answered its own HTML page.)",
     arrange: attioArrange,
     request: post(PATH('attio'), { kind: 'padded', value: ATTIO_BODY, paddedToBytes: 120_000 }, (body) => ({
       'attio-signature': hmacHex(SECRETS.attio, body),
@@ -220,7 +220,7 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
   },
   {
     id: 'receipt-enqueue-failure-is-isolated',
-    note: 'A receipt whose work row cannot be queued is logged and left for replay; the delivery is still acked 200 (only a wake that cannot be queued fails the request).',
+    note: 'A receipt whose work row cannot be queued is logged and the delivery answered 500, so the sender retries and the stored receipt is re-queued. The wakes are still queued. (Before the shared inbound core it was acked 200 and the receipt never ran.)',
     arrange: () => {
       attioArrange();
       world.enqueueFails = true;

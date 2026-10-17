@@ -5,7 +5,6 @@
 // shape is defined by services/valuations_outbox/worker.ts:buildPayload —
 // `{event, timestamp, actor: {type, id}, data: {id, before, after}}`.
 
-import crypto from "node:crypto";
 
 import { z } from 'zod';
 
@@ -61,23 +60,6 @@ const nativeValuationsProvider: WebhookProvider = {
   canRegisterViaApi: true,
 
   defaultEventTypes: [...NATIVE_VALUATIONS_SUBSCRIBABLE_EVENTS],
-
-  verifySignature(rawBody: Buffer, signatureHeader: string, secret: string): boolean {
-    // The outbox worker (services/webhook/worker.ts) signs deliveries with
-    // HMAC-SHA256(secret, rawBody) and sends the hex digest as the
-    // X-Webhook-Signature header. The receiving REST router forwards that
-    // value to us as `signatureHeader`. Reject anything that doesn't match.
-    if (!signatureHeader) return false;
-    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    try {
-      return crypto.timingSafeEqual(
-        Buffer.from(expected, 'hex'),
-        Buffer.from(signatureHeader, 'hex'),
-      );
-    } catch {
-      return false;
-    }
-  },
 
   async registerSubscription(input): Promise<WebhookRegistration> {
     // The manual Settings path; the adapter's ensureEventSubscription shares

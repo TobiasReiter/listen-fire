@@ -240,7 +240,7 @@ function attioDelivery(subscriptionId: string) {
     provider: 'ATTIO',
     subscriptionId,
     rawBody,
-    signatureHeader: createHmac('sha256', SECRET).update(rawBody).digest('hex'),
+    headers: { 'attio-signature': createHmac('sha256', SECRET).update(rawBody).digest('hex') },
   };
 }
 
@@ -248,7 +248,12 @@ function slackDelivery(subscriptionId: string, event: Record<string, unknown> = 
   const rawBody = Buffer.from(JSON.stringify({ type: 'event_callback', event_id: 'Ev1', event }));
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = createHmac('sha256', SECRET).update(`v0:${timestamp}:${rawBody.toString('utf-8')}`).digest('hex');
-  return { provider: 'SLACK', subscriptionId, rawBody, signatureHeader: `${timestamp}:v0=${signature}` };
+  return {
+    provider: 'SLACK',
+    subscriptionId,
+    rawBody,
+    headers: { 'x-slack-request-timestamp': timestamp, 'x-slack-signature': `v0=${signature}` },
+  };
 }
 
 const ATTIO_EVENT: DiscriminableEvent = {

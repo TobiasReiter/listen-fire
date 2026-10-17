@@ -1,5 +1,5 @@
 {
-  "total": 806,
+  "total": 799,
   "byModule": {
     "adapters/webhook/configSchema": 2,
     "lib/anthropic": 3,
@@ -17,11 +17,11 @@
     "lib/utils/parse_json": 12,
     "lib/utils/queue": 11,
     "lib/utils/string": 4,
-    "lib/utils/types": 38,
+    "lib/utils/types": 37,
     "services/context/current_id": 1,
     "services/knowledge_pipeline/output_v3/expression": 7,
     "services/knowledge_pipeline/output_v3/schemas": 18,
-    "services/logger": 231,
+    "services/logger": 229,
     "services/movement_engine/address": 1,
     "services/movement_engine/ai_tiers": 1,
     "services/movement_engine/call_depth": 1,
@@ -39,7 +39,7 @@
     "services/run_host/lease": 3,
     "services/run_host/rules": 6,
     "services/run_host/store": 4,
-    "services/translation_graph/adapter": 135,
+    "services/translation_graph/adapter": 134,
     "services/translation_graph/adapter_type": 1,
     "services/translation_graph/adapters/remote": 3,
     "services/translation_graph/awaitable": 2,
@@ -59,7 +59,7 @@
     "services/translation_graph/movement/metered": 1,
     "services/translation_graph/movement/schema_projection": 16,
     "services/translation_graph/mutation_context": 10,
-    "services/translation_graph/protocol/client": 4,
+    "services/translation_graph/protocol/client": 3,
     "services/translation_graph/segment_scope": 5,
     "services/translation_graph/triggerConfig": 2,
     "services/translation_graph/triggers/listen_config": 5,
@@ -67,7 +67,7 @@
     "services/translation_graph/triggers/types": 35,
     "services/translation_graph/types": 95,
     "services/translation_graph/uniqueness": 5,
-    "services/webhook_sync/remote_inbound": 3,
+    "services/webhook_sync/remote_inbound": 1,
     "services/write_locks/write_locks": 4
   }
 }

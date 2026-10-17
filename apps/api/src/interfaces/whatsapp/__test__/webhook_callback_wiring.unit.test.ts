@@ -15,8 +15,9 @@ jest.mock('../../../lib/slack', () => ({ sendSlackNotification: jest.fn(async ()
 jest.mock('../../../services/whatsapp/utils', () => ({
   resolveWhatsappSender: jest.fn(async () => ({ teamId: 'team-1', displayName: 'Ada' })),
 }));
-jest.mock('../../../services/webhook_sync/providers/whatsapp', () => ({
-  whatsappProvider: { verifySignature: jest.fn(() => true) },
+jest.mock('movement-engine/public/inbound', () => ({
+  ...jest.requireActual('movement-engine/public/inbound'),
+  verifyWithScheme: jest.fn(() => true),
 }));
 
 const dispatchWhatsappMessage = jest.fn(async (..._args: unknown[]) => undefined);
@@ -50,7 +51,7 @@ function fakeRes() {
 }
 
 // A configured app secret and a signature header, because the door is now
-// fail-closed without one (`lib/unsigned_webhooks`). `verifySignature` is
+// fail-closed without one (`lib/unsigned_webhooks`). The signature check is
 // mocked true above — the HMAC is Meta's business, not this wiring pin's.
 function deliver(body: unknown) {
   const req = { get: () => 'sha256=stub', body } as any;
@@ -217,15 +218,13 @@ describe('a signature that does not verify', () => {
     return { req, res, promise: handler(req, res as any) };
   }
 
-  const { whatsappProvider } = jest.requireMock('../../../services/webhook_sync/providers/whatsapp') as {
-    whatsappProvider: { verifySignature: jest.Mock };
-  };
+  const { verifyWithScheme } = jest.requireMock('movement-engine/public/inbound') as { verifyWithScheme: jest.Mock };
   const { logger } = jest.requireMock('movement-engine/services/logger') as {
     logger: { warn: jest.Mock };
   };
 
   it('logs a warn naming the second-app/rotated-secret cause and 401s on a mismatch', async () => {
-    whatsappProvider.verifySignature.mockReturnValueOnce(false);
+    verifyWithScheme.mockReturnValueOnce(false);
     const body = {
       object: 'whatsapp_business_account',
       entry: [
@@ -260,7 +259,7 @@ describe('a signature that does not verify', () => {
       { hasSignature: false, businessAccountId: 'waba-456', phoneNumberId: null },
     );
     // verifySignature is never reached without a header — nothing to verify.
-    expect(whatsappProvider.verifySignature).not.toHaveBeenCalled();
+    expect(verifyWithScheme).not.toHaveBeenCalled();
   });
 
   it('never warns on a valid signature — 200 and dispatch proceeds', async () => {

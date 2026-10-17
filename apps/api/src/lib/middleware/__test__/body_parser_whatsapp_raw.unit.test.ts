@@ -12,7 +12,7 @@ import type { AddressInfo } from 'node:net';
 
 
 import { jsonBodyParser } from '../body_parser';
-import { whatsappProvider } from '../../../services/webhook_sync/providers/whatsapp';
+import { verifyAsProvider } from '../../../services/inbound/__test__/verify_as_provider';
 
 const SECRET = 'test-app-secret';
 
@@ -60,11 +60,11 @@ describe('jsonBodyParser keeps the raw body for the WhatsApp webhook', () => {
 
     const { raw, body } = seen[0]!;
     expect(raw?.toString('utf-8')).toBe(META_BYTES);
-    expect(whatsappProvider.verifySignature(raw!, sign(META_BYTES), SECRET)).toBe(true);
+    expect(verifyAsProvider('INBOUND_WHATSAPP', raw!, sign(META_BYTES), SECRET)).toBe(true);
 
     // The failure this replaces: the re-serialised body no longer matches.
     const reserialised = Buffer.from(JSON.stringify(body));
-    expect(whatsappProvider.verifySignature(reserialised, sign(META_BYTES), SECRET)).toBe(false);
+    expect(verifyAsProvider('INBOUND_WHATSAPP', reserialised, sign(META_BYTES), SECRET)).toBe(false);
   });
 
   it('does not keep the raw body on other routes', async () => {

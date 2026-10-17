@@ -111,9 +111,9 @@ describe('verifySlackEventsRequest — signature auth (fail-closed)', () => {
     process.env = { ...OLD_ENV };
   });
 
-  function signed(body: Buffer, secret: string, ts = '1700000000'): string {
+  function signed(body: Buffer, secret: string, ts = '1700000000'): Record<string, string> {
     const sig = 'v0=' + crypto.createHmac('sha256', secret).update(`v0:${ts}:${body}`).digest('hex');
-    return `${ts}:${sig}`;
+    return { 'x-slack-request-timestamp': ts, 'x-slack-signature': sig };
   }
 
   it('authorizes a correctly-signed request', () => {
@@ -134,7 +134,7 @@ describe('verifySlackEventsRequest — signature auth (fail-closed)', () => {
   it('rejects everything when no secret is set in production', () => {
     delete process.env.SLACK_MOVEMENTS_SIGNING_SECRET;
     process.env.NODE_ENV = 'production';
-    expect(verifySlackEventsRequest(Buffer.from('{}'), '')).toEqual({
+    expect(verifySlackEventsRequest(Buffer.from('{}'), {})).toEqual({
       authorized: false,
       reason: 'no_secret',
     });
@@ -144,12 +144,12 @@ describe('verifySlackEventsRequest — signature auth (fail-closed)', () => {
     delete process.env.SLACK_MOVEMENTS_SIGNING_SECRET;
     delete process.env.ALLOW_UNSIGNED_WEBHOOKS;
     process.env.NODE_ENV = 'development';
-    expect(verifySlackEventsRequest(Buffer.from('{}'), '')).toEqual({
+    expect(verifySlackEventsRequest(Buffer.from('{}'), {})).toEqual({
       authorized: false,
       reason: 'no_secret',
     });
 
     process.env.ALLOW_UNSIGNED_WEBHOOKS = 'true';
-    expect(verifySlackEventsRequest(Buffer.from('{}'), '')).toEqual({ authorized: true });
+    expect(verifySlackEventsRequest(Buffer.from('{}'), {})).toEqual({ authorized: true });
   });
 });

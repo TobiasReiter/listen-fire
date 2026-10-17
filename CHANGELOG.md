@@ -1274,6 +1274,19 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   and its `credentialUpdate` is written back, from a failed call too. An update naming a field the
   module does not declare is refused. In `lf` today; hosted installs do not store declarations yet.
 
+### ev2-inbound
+
+- Every inbound webhook now goes through one shared inbound core in the engine package (signature
+  schemes, the capture-queue-ack pipeline, the emit and wake push doors, and an HTTP contract suite),
+  so `lf` can serve the same doors next. Webhook URLs, signature headers and keys are unchanged for
+  every provider.
+- Fixed: a built-in provider's delivery is no longer refused 401 because an `x-listen-fire-signature`
+  header beside its own good signature was wrong. That header now verifies remote installs only.
+- Fixed: a webhook delivery whose receipt could not be queued was acked 200 and the receipt never
+  ran. It now answers 500, so the provider retries and the stored receipt is queued again.
+- Fixed: a webhook body over 100 KB is answered 413 with `{"error":"payload_too_large"}`, the doors'
+  JSON error shape, instead of an HTML page.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

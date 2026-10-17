@@ -172,7 +172,7 @@ async function main() {
   // raw body for HMAC signature verification, so they mount before the JSON
   // parser.
   if (mounts('automations')) {
-    app.use('/api/public/webhook-sync', express.raw({ type: 'application/json' }), webhookSyncRouter);
+    app.use('/api/public/webhook-sync', webhookSyncRouter);
     // A remote adapter's push doors (emit / wake) — the presented credential
     // names the team, so they sit with the other self-authorising doors.
     app.use('/api/public/adapter', adapterDoorsRouter);

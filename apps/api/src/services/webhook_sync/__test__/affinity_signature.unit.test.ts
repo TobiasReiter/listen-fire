@@ -35,6 +35,7 @@ jest.mock('../../../adapters/affinity/apiClient', () => ({
 import crypto from 'node:crypto';
 
 import { affinityProvider } from '../providers/affinity';
+import { verifyAsProvider } from '../../inbound/__test__/verify_as_provider';
 
 let storedCredential: Record<string, unknown> = { apiKey: 'k' };
 
@@ -43,23 +44,23 @@ const BODY = Buffer.from(JSON.stringify({ type: 'organization.created', body: { 
 const hexSig = () => crypto.createHmac('sha256', KEY).update(BODY).digest('hex');
 const b64Sig = () => crypto.createHmac('sha256', KEY).update(BODY).digest('base64');
 
-describe('affinityProvider.verifySignature', () => {
+describe('Affinity signature verification', () => {
   it('URL-trust when no key is configured (empty secret)', () => {
-    expect(affinityProvider.verifySignature(BODY, '', '')).toBe(true);
-    expect(affinityProvider.verifySignature(BODY, 'anything', '')).toBe(true);
+    expect(verifyAsProvider('AFFINITY', BODY, '', '')).toBe(true);
+    expect(verifyAsProvider('AFFINITY', BODY, 'anything', '')).toBe(true);
   });
 
   it('accepts a correct HMAC as hex, base64, or sha256=-prefixed', () => {
-    expect(affinityProvider.verifySignature(BODY, hexSig(), KEY)).toBe(true);
-    expect(affinityProvider.verifySignature(BODY, b64Sig(), KEY)).toBe(true);
-    expect(affinityProvider.verifySignature(BODY, `sha256=${hexSig()}`, KEY)).toBe(true);
+    expect(verifyAsProvider('AFFINITY', BODY, hexSig(), KEY)).toBe(true);
+    expect(verifyAsProvider('AFFINITY', BODY, b64Sig(), KEY)).toBe(true);
+    expect(verifyAsProvider('AFFINITY', BODY, `sha256=${hexSig()}`, KEY)).toBe(true);
   });
 
   it('rejects a wrong signature and an unsigned delivery once a key is set', () => {
     const tampered = crypto.createHmac('sha256', 'other-key').update(BODY).digest('hex');
-    expect(affinityProvider.verifySignature(BODY, tampered, KEY)).toBe(false);
-    expect(affinityProvider.verifySignature(BODY, 'not-a-signature', KEY)).toBe(false);
-    expect(affinityProvider.verifySignature(BODY, '', KEY)).toBe(false);
+    expect(verifyAsProvider('AFFINITY', BODY, tampered, KEY)).toBe(false);
+    expect(verifyAsProvider('AFFINITY', BODY, 'not-a-signature', KEY)).toBe(false);
+    expect(verifyAsProvider('AFFINITY', BODY, '', KEY)).toBe(false);
   });
 });
 
