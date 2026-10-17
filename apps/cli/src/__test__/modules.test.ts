@@ -142,3 +142,24 @@ listen to crm { events: ["company.created"] } fire found
     dealroom.close();
   }
 });
+
+const TELEGRAM = resolve(__dirname, '../../../../modules/telegram');
+
+test("a module's inbound declaration verifies its deliveries: @lf/telegram's secret token", () => {
+  const dir = project();
+  mkdirSync(join(dir, 'externals/telegram'));
+  writeFileSync(join(dir, 'externals/telegram/lf-external.yaml'), `name: telegram\nmodule: ${JSON.stringify(TELEGRAM)}\n`);
+  appendFileSync(join(dir, '.lf/secrets.yaml'), '\ntg:\n  module: telegram\n  webhook_secret: tok\n');
+  const update = { update_id: 1, message: { message_id: 5, date: 1760000000, chat: { id: 42, type: 'private' }, from: { id: 7, is_bot: false, first_name: 'Ada' }, text: 'hi' } };
+  writeFileSync(join(dir, 'update.json'), JSON.stringify(update));
+  const deliver = (...header: string[]) => lf(dir, 'run', '--ephemeral', '--webhook', 'telegram', '--body', 'update.json', ...header);
+
+  for (const refused of [deliver(), deliver('--header', 'x-telegram-bot-api-secret-token:nope')]) {
+    assert.equal(refused.code, 1, refused.out);
+    assert.match(refused.out, /signature did not verify for external "telegram"/);
+  }
+  // The token Telegram echoes, compared whole: not an HMAC of the body.
+  const accepted = deliver('--header', 'x-telegram-bot-api-secret-token:tok');
+  assert.equal(accepted.code, 0, accepted.out);
+  assert.match(accepted.out, /no listen matched/);
+});
