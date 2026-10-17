@@ -87,6 +87,22 @@ create table if not exists park_library_source (
   source text not null,
   primary key (team_id, hash)
 );
+create table if not exists callback (
+  id text primary key,
+  team_id text not null,
+  run_id text not null,
+  address text not null,
+  params text not null,
+  state text not null,
+  calls text not null,
+  single_use integer not null,
+  expires_at text,
+  status text not null,
+  created_at text not null,
+  fired_at text,
+  revoked_at text
+);
+create index if not exists callback_run on callback (run_id);
 create table if not exists work (
   id integer primary key autoincrement,
   kind text not null,
@@ -102,7 +118,11 @@ create table if not exists work (
 /// The core's park reasons (`CORE_PARK_REASONS`).
 pub const CORE_PARK_REASONS: &[&str] = &["timer", "await", "limit"];
 /// The work kinds lf queues (apps/cli/src/state.ts `WorkKind`).
-pub const WORK_KINDS: &[&str] = &["resume_timer", "wake_await", "fire_event"];
+pub const WORK_KINDS: &[&str] = &["resume_timer", "wake_await", "fire_event", "fire_callback"];
+
+/// Columns a state file written by an earlier lf lacks (apps/cli/src/state.ts
+/// `addMissingColumns`), added on open so either host leaves the file alike.
+const ADDED_RUN_COLUMNS: &[&str] = &["cancel_requested_at", "cancel_reason"];
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -190,6 +210,15 @@ impl Store {
         // and a writer waits for another's transaction.
         db.execute_batch("pragma journal_mode = wal; pragma busy_timeout = 5000;")?;
         db.execute_batch(SCHEMA)?;
+        let columns = db
+            .prepare("select name from pragma_table_info('run')")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for column in ADDED_RUN_COLUMNS {
+            if !columns.iter().any(|c| c == column) {
+                db.execute_batch(&format!("alter table run add column {column} text"))?;
+            }
+        }
         Ok(Store { db })
     }
 
@@ -581,6 +610,21 @@ mod tests {
         let start = source.find("const SCHEMA = `").expect("state.ts declares SCHEMA") + "const SCHEMA = `".len();
         let end = start + source[start..].find('`').expect("SCHEMA ends");
         assert_eq!(&source[start..end], SCHEMA);
+    }
+
+    #[test]
+    fn the_work_kinds_and_added_columns_are_the_typescript_lfs() {
+        let source = include_str!("../../../apps/cli/src/state.ts");
+        let marker = "export const WorkKind = z.enum([";
+        let start = source.find(marker).expect("state.ts declares WorkKind") + marker.len();
+        let end = start + source[start..].find(']').expect("WorkKind ends");
+        let kinds: Vec<&str> = source[start..end].split(',').map(|k| k.trim().trim_matches('\'')).collect();
+        assert_eq!(kinds, WORK_KINDS);
+        let marker = "for (const column of [";
+        let start = source.find(marker).expect("state.ts adds missing columns") + marker.len();
+        let end = start + source[start..].find(']').expect("the column list ends");
+        let columns: Vec<&str> = source[start..end].split(',').map(|c| c.trim().trim_matches('\'')).collect();
+        assert_eq!(columns, ADDED_RUN_COLUMNS);
     }
 
     #[test]
