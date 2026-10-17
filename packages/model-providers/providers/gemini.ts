@@ -18,7 +18,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { FinishReason, FunctionCallingConfigMode, GoogleGenAI, ThinkingLevel } from '@google/genai';
+import type { FinishReason, GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { z } from 'zod';
 
 import type Anthropic from '@anthropic-ai/sdk';
@@ -59,8 +59,16 @@ function refuseUnknownKeys(value: object, known: readonly string[], where: strin
 
 let provider: ChatProvider | undefined;
 
-export function geminiChatProvider(env: NodeJS.ProcessEnv = process.env): ChatProvider {
+export function geminiChatProvider(env: NodeJS.ProcessEnv): ChatProvider {
   return (provider ??= buildProvider(geminiClient(env)));
+}
+
+// The SDK is an optional peer of this package: loaded when a Gemini call is
+// made, so a host that never routes to Gemini need not install it.
+type GenAiSdk = typeof import('@google/genai');
+let sdk: GenAiSdk | undefined;
+function genai(): GenAiSdk {
+  return (sdk ??= require('@google/genai'));
 }
 
 const clients = new Map<string, GoogleGenAI>();
@@ -74,7 +82,7 @@ const clients = new Map<string, GoogleGenAI>();
  * (image generation, which has always run in the project location) names it.
  */
 export function geminiClient(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   options: { location?: string } = {},
 ): GoogleGenAI {
   const location = options.location ?? googleModelRegion(env);
@@ -89,7 +97,7 @@ export function geminiClient(
 function buildClient(env: NodeJS.ProcessEnv, location: string): GoogleGenAI {
   const { projectId, privateKey, clientEmail } = googleServiceAccount(env);
   const baseUrl = env.GEMINI_BASE_URL;
-  return new GoogleGenAI({
+  return new (genai().GoogleGenAI)({
     vertexai: true,
     project: projectId,
     location,
@@ -215,12 +223,12 @@ function toolConfigFor(choice: Anthropic.ToolChoice): ToolConfig {
   }
   switch (choice.type) {
     case 'auto':
-      return { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } };
+      return { functionCallingConfig: { mode: genai().FunctionCallingConfigMode.AUTO } };
     case 'any':
-      return { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } };
+      return { functionCallingConfig: { mode: genai().FunctionCallingConfigMode.ANY } };
     case 'tool':
       return {
-        functionCallingConfig: { mode: FunctionCallingConfigMode.ANY, allowedFunctionNames: [choice.name] },
+        functionCallingConfig: { mode: genai().FunctionCallingConfigMode.ANY, allowedFunctionNames: [choice.name] },
       };
     case 'none':
       return unsupported('tool_choice "none"');
@@ -269,7 +277,7 @@ function thinkingConfigFor(
   if (thinking === undefined || thinking.type === 'disabled') {
     if (effort) return { thinkingLevel: thinkingLevelFor(effort) };
     if (canDisableThinking(wireModel)) return { thinkingBudget: 0 };
-    return thinking?.type === 'disabled' ? { thinkingLevel: ThinkingLevel.LOW } : undefined;
+    return thinking?.type === 'disabled' ? { thinkingLevel: genai().ThinkingLevel.LOW } : undefined;
   }
   const includeThoughts = thinking.display !== 'omitted';
   switch (thinking.type) {
@@ -293,13 +301,13 @@ function canDisableThinking(wireModel: string): boolean {
 function thinkingLevelFor(effort: NonNullable<Anthropic.OutputConfig['effort']>): ThinkingLevel {
   switch (effort) {
     case 'low':
-      return ThinkingLevel.LOW;
+      return genai().ThinkingLevel.LOW;
     case 'medium':
-      return ThinkingLevel.MEDIUM;
+      return genai().ThinkingLevel.MEDIUM;
     case 'high':
     case 'xhigh':
     case 'max':
-      return ThinkingLevel.HIGH;
+      return genai().ThinkingLevel.HIGH;
     default:
       return neverAsAny(effort);
   }
@@ -606,9 +614,9 @@ export function toAnthropicMessage(chunks: readonly GenerateContentResponse[], m
  */
 function stopReasonFor(finishReason: FinishReason | undefined, finishMessage: string | undefined): Anthropic.StopReason {
   switch (finishReason) {
-    case FinishReason.STOP:
+    case genai().FinishReason.STOP:
       return 'end_turn';
-    case FinishReason.MAX_TOKENS:
+    case genai().FinishReason.MAX_TOKENS:
       return 'max_tokens';
     case undefined:
       throw new Error(`${PROVIDER}'s reply stream ended without a finish reason.`);

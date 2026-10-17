@@ -12,11 +12,11 @@ jest.mock('../../providers/gemini', () => ({
 }));
 
 const recordLlmUsage = jest.fn().mockResolvedValue(undefined);
-jest.mock('../../../llm_usage', () => ({
-  recordLlmUsage: (...args: unknown[]) => recordLlmUsage(...args),
-}));
 
 import { transcribe } from '..';
+import { testHost } from '../../__test__/test_host';
+
+const host = (env: NodeJS.ProcessEnv) => testHost(env, (usage) => recordLlmUsage(usage));
 import { geminiAudioMimeType } from '../audio_format';
 import { GEMINI_INLINE_AUDIO_MAX_BYTES } from '../gemini';
 
@@ -45,33 +45,33 @@ beforeEach(() => {
 
 describe('who hears the audio', () => {
   it('is OpenAI when the map says nothing', async () => {
-    const result = await transcribe('whisper-1', { audio: OGG, name: 'voice.ogg' }, {});
+    const result = await transcribe('whisper-1', { audio: OGG, name: 'voice.ogg' }, host({}));
     expect(result).toEqual({ text: 'hello world', durationSeconds: 2.4 });
     expect(generateContent).not.toHaveBeenCalled();
   });
 
   it('is Gemini, under the map’s own wire model, where the map sends Whisper there', async () => {
-    const result = await transcribe('whisper-1', { audio: OGG }, GEMINI_ENV);
+    const result = await transcribe('whisper-1', { audio: OGG }, host(GEMINI_ENV));
     expect(result).toEqual({ text: 'the words that were said' });
     expect(transcriptionsCreate).not.toHaveBeenCalled();
     expect(generateContent.mock.calls[0][0].model).toBe('gemini-3.8-flash');
   });
 
   it("follows Whisper's own map line rather than Claude's", async () => {
-    await transcribe('whisper-1', { audio: OGG }, { MODEL_MAP: JSON.stringify({ 'claude-sonnet-5': 'vertex/x' }) });
+    await transcribe('whisper-1', { audio: OGG }, host({ MODEL_MAP: JSON.stringify({ 'claude-sonnet-5': 'vertex/x' }) }));
     expect(transcriptionsCreate).toHaveBeenCalled();
   });
 });
 
 describe('OpenAI', () => {
   async function uploadedName(audio: Buffer, options: { name?: string; contentType?: string }) {
-    await transcribe('whisper-1', { audio, ...options }, {});
+    await transcribe('whisper-1', { audio, ...options }, host({}));
     const [params] = transcriptionsCreate.mock.calls[0];
     return params.file.name;
   }
 
   it('asks for verbose_json under the wire model, and retries as the old queue did', async () => {
-    await transcribe('whisper-1', { audio: OGG, name: 'voice.ogg' }, {});
+    await transcribe('whisper-1', { audio: OGG, name: 'voice.ogg' }, host({}));
     const [params, options] = transcriptionsCreate.mock.calls[0];
     expect(params).toEqual(expect.objectContaining({ model: 'whisper-1', response_format: 'verbose_json' }));
     expect(options).toEqual({ maxRetries: 3 });
@@ -106,7 +106,7 @@ describe('OpenAI', () => {
 
 describe('Gemini', () => {
   it('sends the audio inline under Gemini’s spelling of its MIME type, at temperature 0', async () => {
-    await transcribe('whisper-1', { audio: OGG, contentType: 'audio/mpeg' }, GEMINI_ENV);
+    await transcribe('whisper-1', { audio: OGG, contentType: 'audio/mpeg' }, host(GEMINI_ENV));
     const [request] = generateContent.mock.calls[0];
     expect(request.contents[0].parts[0]).toEqual({
       inlineData: { mimeType: 'audio/ogg', data: OGG.toString('base64') },
@@ -117,11 +117,11 @@ describe('Gemini', () => {
 
   it('reads a blocked candidate as nothing said, not as an error', async () => {
     generateContent.mockResolvedValue({ candidates: [{}] });
-    await expect(transcribe('whisper-1', { audio: OGG }, GEMINI_ENV)).resolves.toEqual({ text: '' });
+    await expect(transcribe('whisper-1', { audio: OGG }, host(GEMINI_ENV))).resolves.toEqual({ text: '' });
   });
 
   it('bills Gemini under the wire model, keeping the name the caller asked for', async () => {
-    await transcribe('whisper-1', { audio: OGG, label: 'l' }, GEMINI_ENV);
+    await transcribe('whisper-1', { audio: OGG, label: 'l' }, host(GEMINI_ENV));
     expect(recordLlmUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         resolved: { preferred: 'whisper-1', provider: 'gemini', wireModel: 'gemini-3.8-flash' },
@@ -133,14 +133,14 @@ describe('Gemini', () => {
 
   it('refuses a format by name rather than sending it and hoping', async () => {
     await expect(
-      transcribe('whisper-1', { audio: NOT_AUDIO, name: 'recording.aiff', contentType: 'audio/aiff' }, GEMINI_ENV),
+      transcribe('whisper-1', { audio: NOT_AUDIO, name: 'recording.aiff', contentType: 'audio/aiff' }, host(GEMINI_ENV)),
     ).rejects.toThrow(/does not accept this audio format.*audio\/aiff/s);
     expect(generateContent).not.toHaveBeenCalled();
   });
 
   it('names the inline size limit rather than letting Google discover it', async () => {
     const tooBig = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(GEMINI_INLINE_AUDIO_MAX_BYTES)]);
-    await expect(transcribe('whisper-1', { audio: tooBig }, GEMINI_ENV)).rejects.toThrow(
+    await expect(transcribe('whisper-1', { audio: tooBig }, host(GEMINI_ENV))).rejects.toThrow(
       new RegExp(`over the ${GEMINI_INLINE_AUDIO_MAX_BYTES}-byte limit`),
     );
     expect(generateContent).not.toHaveBeenCalled();

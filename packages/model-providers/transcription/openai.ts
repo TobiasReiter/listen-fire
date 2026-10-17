@@ -1,8 +1,6 @@
 // Speech to text on OpenAI: the audio travels as a multipart upload, and the
 // endpoint reads its FORMAT from the uploaded filename's extension.
 
-import { toFile } from 'openai';
-
 import type { TranscriptionRequest, TranscriptionResult } from './index';
 
 import { logger } from 'movement-engine/services/logger';
@@ -64,9 +62,10 @@ export async function openAiTranscribe(
     name,
     bytes: req.audio.length,
   });
+  const sdk: typeof import('openai') = require('openai');
   const transcription = await openAiClient(env).audio.transcriptions.create(
     {
-      file: await toFile(req.audio, name),
+      file: await sdk.toFile(req.audio, name),
       model: wireModel,
       // verbose_json is the format that carries the audio's duration.
       response_format: 'verbose_json',

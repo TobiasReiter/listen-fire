@@ -358,6 +358,9 @@ importers:
       mime:
         specifier: 4.0.3
         version: 4.0.3
+      model-providers:
+        specifier: workspace:*
+        version: link:../../packages/model-providers
       movement-engine:
         specifier: workspace:*
         version: link:../../packages/movement-engine
@@ -768,6 +771,37 @@ importers:
       '@types/node':
         specifier: 20.16.5
         version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  packages/model-providers:
+    dependencies:
+      movement-engine:
+        specifier: workspace:*
+        version: link:../movement-engine
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.126.0
+        version: 0.126.0(zod@4.1.12)
+      '@anthropic-ai/vertex-sdk':
+        specifier: ^0.19.9
+        version: 0.19.10(zod@4.1.12)
+      '@google/genai':
+        specifier: ^2.24.0
+        version: 2.24.0(@modelcontextprotocol/sdk@1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12))
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      openai:
+        specifier: 5.22.0
+        version: 5.22.0(ws@8.18.0)(zod@4.1.12)
       typescript:
         specifier: 5.5.4
         version: 5.5.4

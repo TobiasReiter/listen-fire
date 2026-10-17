@@ -1,0 +1,11 @@
+// The compiled artifact, the arrangement engine-contracts uses: a SOURCE
+// package, emitted by the application build into its own output tree.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": true
+  },
+  "exclude": ["node_modules", "jest.config.borrowed.cjs", "**/__test__/**"]
+}

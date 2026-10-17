@@ -1,66 +1,18 @@
-// Embeddings behind the model map: the caller names a registry model and a
-// width, and the map decides which vendor computes the vectors.
+// Embeddings behind the model map, bound to the hosted product's environment,
+// usage ledger and tokenizer. The vendors live in packages/model-providers.
 
-import type { Resolved } from 'movement-engine/lib/models/map';
 import type { EmbeddingModelName } from 'movement-engine/lib/models/registry';
+import type { EmbeddingRequest, EmbeddingResult } from 'model-providers/embedding';
 
-import { assertRunBudget } from 'movement-engine/lib/run_spend';
-import { neverAsAny } from 'movement-engine/lib/utils/types';
-import { assertCallable, resolveModel } from 'movement-engine/lib/models/map';
-import { geminiEmbed } from './gemini';
-import { openAiEmbed } from './openai';
+import { embed as embedWith } from 'model-providers/embedding';
+import { hostedModelHost } from '../host';
 
-export interface EmbeddingRequest {
-  input: string[];
-  /** The width the vectors must have; the vendor's native width when absent. */
-  dimensions?: number;
-  label?: string;
-}
-
-export interface EmbeddingResult {
-  embeddings: number[][];
-}
-
-export async function embed(
+export function embed(
   name: EmbeddingModelName,
   req: EmbeddingRequest,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<EmbeddingResult> {
-  if (req.input.length === 0) return { embeddings: [] };
-  const resolved = resolveModel(name, env);
-  assertCallable(resolved, env);
-  assertRunBudget();
-  const { provider, wireModel } = resolved;
-  const result = await embedOn(resolved, req, env);
-  if (result.embeddings.length !== req.input.length) {
-    throw new Error(
-      `${provider}/${wireModel} returned ${result.embeddings.length} embeddings for ${req.input.length} texts.`,
-    );
-  }
-  // A vector of the wrong width is a row Postgres refuses, or worse, one it
-  // accepts into the wrong index; either way it never leaves here.
-  const wrong = result.embeddings.find((v) => req.dimensions !== undefined && v.length !== req.dimensions);
-  if (wrong) {
-    throw new Error(
-      `${provider}/${wireModel} returned a ${wrong.length}-dimension vector where ${req.dimensions} were asked for.`,
-    );
-  }
-  return result;
+  return embedWith(name, req, hostedModelHost(env));
 }
 
-function embedOn(resolved: Resolved, req: EmbeddingRequest, env: NodeJS.ProcessEnv): Promise<EmbeddingResult> {
-  const { provider, preferred: name } = resolved;
-  switch (provider) {
-    case 'openai':
-      return openAiEmbed(resolved, req, env);
-    case 'gemini':
-      return geminiEmbed(resolved, req, env);
-    case 'anthropic':
-    case 'vertex':
-      // Boot validation refuses this map line; reaching it means the map was
-      // never validated.
-      throw new Error(`MODEL_MAP sends "${name}" to ${provider}, which does not serve embeddings.`);
-    default:
-      return neverAsAny(provider);
-  }
-}
+export type { EmbeddingRequest, EmbeddingResult };

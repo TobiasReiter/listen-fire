@@ -2,11 +2,11 @@
 
 import { z } from 'zod';
 
+import type { ModelHost } from '../host';
 import type { Resolved } from 'movement-engine/lib/models/map';
 import type { GeneratedImage, ImageRequest } from './index';
 
 import { logger } from 'movement-engine/services/logger';
-import { recordLlmUsage } from '../../llm_usage';
 import { openAiClient } from '../providers/openai';
 
 
@@ -26,7 +26,7 @@ const GptImageOptions = z.object({
 export async function openAiGenerateImage(
   resolved: Resolved,
   req: ImageRequest,
-  env: NodeJS.ProcessEnv,
+  host: ModelHost,
 ): Promise<GeneratedImage> {
   const { wireModel } = resolved;
   const options = GptImageOptions.safeParse({ size: req.size, quality: req.quality });
@@ -35,7 +35,7 @@ export async function openAiGenerateImage(
   }
   const { size, quality } = options.data;
   logger.info(`OpenAI image submitted ${req.label ? `(${req.label})` : ''}`, { model: wireModel });
-  const response = await openAiClient(env).images.generate({
+  const response = await openAiClient(host.env).images.generate({
     model: wireModel,
     prompt: req.prompt,
     n: 1,
@@ -46,7 +46,7 @@ export async function openAiGenerateImage(
   // Priced per token like any other call: the reply counts the prompt's tokens
   // and the image's.
   if (response.usage) {
-    recordLlmUsage({
+    host.recordUsage({
       resolved,
       callType: 'image',
       label: req.label,

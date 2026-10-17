@@ -11,12 +11,11 @@
 // called: a long reply outlives a non streaming HTTP timeout on OpenAI just as
 // it does on Anthropic, and one assembly path means the two cannot drift.
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { ChatProvider } from '../chat';
 
-import { getEnvVar } from '../../utils/environment';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 
 type OpenAiRequest = OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
@@ -418,23 +417,25 @@ export function openAiChatProviderOver(client: OpenAI): ChatProvider {
   };
 }
 
-// Built at first use, not at import: `getEnvVar` throws in production on an
-// unset key, and merely importing this must not stop a deployment that never
-// maps a model to openai from booting.
+// Built at first use, not at import: a missing key throws, and merely importing
+// this must not stop a deployment that never maps a model to openai from
+// booting (nor require the SDK to be installed).
 let client: OpenAI | undefined;
 let provider: ChatProvider | undefined;
 
 /** The one OpenAI client every capability shares: chat here, and the
  *  transcription, embedding and image providers beside their capabilities. */
-export function openAiClient(env: NodeJS.ProcessEnv = process.env): OpenAI {
-  return (client ??= new OpenAI({
-    apiKey:
-      env.OPENAI_API_KEY ??
-      env.OPENAI_API_KEY_FALLBACK_OR_DEV ??
-      getEnvVar('OPENAI_API_KEY', {
-        devDefault: 'test',
-        because: 'it is the key for every model name that resolves to the openai provider',
-      }),
+export function openAiClient(env: NodeJS.ProcessEnv): OpenAI {
+  if (client) return client;
+  const apiKey = env.OPENAI_API_KEY ?? env.OPENAI_API_KEY_FALLBACK_OR_DEV;
+  if (apiKey === undefined) {
+    throw new Error(
+      'The OPENAI_API_KEY environment variable is required — it is the key for every model name that resolves to the openai provider',
+    );
+  }
+  const sdk: typeof import('openai') = require('openai');
+  return (client = new sdk.default({
+    apiKey,
     // Read from the passed environment rather than left to the SDK's own
     // `process.env` read, so a caller that threads one is not overruled.
     // Unset means OpenAI itself; the fake OpenAI in the dev loop sets it.
@@ -443,6 +444,6 @@ export function openAiClient(env: NodeJS.ProcessEnv = process.env): OpenAI {
   }));
 }
 
-export function openAiChatProvider(env: NodeJS.ProcessEnv = process.env): ChatProvider {
+export function openAiChatProvider(env: NodeJS.ProcessEnv): ChatProvider {
   return (provider ??= openAiChatProviderOver(openAiClient(env)));
 }

@@ -1166,6 +1166,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - A prototype a record plugin's data gives its record does not survive a park, on either engine: the
   parked record holds its own fields only.
 
+### ev1-providers
+
+- The model providers (OpenAI, Gemini, Claude on Vertex, Anthropic) and the embedding, image and
+  transcription callers moved into a new `model-providers` package. Vendor SDKs load on first use,
+  and the package reads no process environment; the hosted API passes its own. No behaviour change.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
