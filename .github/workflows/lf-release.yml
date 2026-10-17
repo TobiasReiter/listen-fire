@@ -60,7 +60,7 @@ jobs:
         # tag disagrees with it would ship a binary that misreports itself.
         if: startsWith(github.ref, 'refs/tags/lf-v')
         run: |
-          crate="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "lf") | .version')"
+          crate="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "listen-fire") | .version')"
           tag="${GITHUB_REF_NAME#lf-v}"
           if [ "$tag" != "$crate" ]; then
             echo "::error::tag $GITHUB_REF_NAME names $tag, but crates/lf/Cargo.toml is $crate: set the crate's version and tag again"
@@ -79,9 +79,9 @@ jobs:
       - name: Build lf
         run: |
           if [ "${{ matrix.zig }}" = "true" ]; then
-            cargo zigbuild --release --locked -p lf --target ${{ matrix.target }}
+            cargo zigbuild --release --locked -p listen-fire --target ${{ matrix.target }}
           else
-            cargo build --release --locked -p lf --target ${{ matrix.target }}
+            cargo build --release --locked -p listen-fire --target ${{ matrix.target }}
           fi
       - name: Smoke test (a binary that runs on this runner)
         if: "!matrix.zig && matrix.target == 'aarch64-apple-darwin'"

@@ -25,6 +25,9 @@ pub mod collection;
 mod combinator;
 pub mod env;
 pub mod env_services;
+// Native only: the WASM artifact is the JSON boundary, and stays as it is.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod embed;
 pub mod eval;
 pub mod executor;
 pub mod extract;

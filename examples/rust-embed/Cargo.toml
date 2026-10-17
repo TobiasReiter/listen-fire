@@ -1,0 +1,12 @@
+[package]
+name = "rust-embed-example"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+license.workspace = true
+description = "A toy game loop that runs a movement when an in-game event fires, its hosts in memory"
+
+[dependencies]
+# The facade without its `cli` feature: the three library crates alone.
+listen-fire = { path = "../../crates/lf", default-features = false }
+serde_json = "1"

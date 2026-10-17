@@ -1,12 +1,20 @@
 [package]
-name = "movement-engine"
-version = "0.1.0"
-edition = "2024"
-publish = false
-license = "Apache-2.0"
-description = "The movement engine, driven from TypeScript through a request/answer protocol over WASM"
+name = "listen-fire-engine"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "The listen-fire movement engine: runs a checked movement against a host you supply, natively or over WASM"
+readme = "README.md"
+keywords = ["movement", "automation", "dsl", "workflow", "listen-fire"]
+categories = ["compilers", "development-tools"]
+include = ["src/**/*", "Cargo.toml", "README.md"]
 
 [lib]
+name = "movement_engine"
 # cdylib is the WASM artifact; rlib lets `cargo test` link the crate natively.
 crate-type = ["cdylib", "rlib"]
 
@@ -14,11 +22,11 @@ crate-type = ["cdylib", "rlib"]
 # Parsing, lowering and the catalog. Its ABI (alloc, dealloc, last_panic and
 # the parse exports) is linked into this crate's artifact as-is, which is
 # what makes the one artifact serve both the parser and the engine.
-movement-parser = { path = "../movement-parser" }
+movement-parser = { package = "listen-fire-parser", version = "0.11.0", path = "../movement-parser" }
 # The checker, an alternative answer to `check.program` behind
 # `SegmentInput::native_check` (off by default). Its ABI export
 # (`check_program`) is linked into this crate's artifact as the parser's is.
-movement-checker = { path = "../movement-checker" }
+movement-checker = { package = "listen-fire-checker", version = "0.11.0", path = "../movement-checker" }
 serde = { version = "1", features = ["derive"] }
 # As the parser's: `preserve_order` off, so every emitted object's keys sort.
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }

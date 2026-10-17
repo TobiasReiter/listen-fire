@@ -14,7 +14,7 @@ The rule at the 2026-10-12 handover was: a program the TypeScript engine runs ei
 - Committed documentation: `crates/movement-engine/README.md` (its refusals — every reason the engine still emits — and Known divergences), `docs/contracts/` (the five host contracts with drift guards), `docs/engine-host.md`, `CHANGELOG.md` Unreleased.
 
 ## How to measure
-- The Rust engine (version 5): `cargo test -p movement-engine` (its oracles included), and from `apps/api` the `rust_*` suites under `services/movement_engine/__test__` (scoped: `pnpm test:unit --testPathPattern 'movement_engine/__test__/rust_'`). `scripts/movement-engine-gate.sh` runs the whole local gate. The oracles: `crates/movement-engine/tests/oracle/generate.ts` (one family at a time; CI checks "oracle is current").
+- The Rust engine (version 5): `cargo test -p listen-fire-engine` (its oracles included), and from `apps/api` the `rust_*` suites under `services/movement_engine/__test__` (scoped: `pnpm test:unit --testPathPattern 'movement_engine/__test__/rust_'`). `scripts/movement-engine-gate.sh` runs the whole local gate. The oracles: `crates/movement-engine/tests/oracle/generate.ts` (one family at a time; CI checks "oracle is current").
 - The TypeScript engine (versions 1 to 4): `pnpm test:conformance:v1|v2|v3|v4` from `apps/api`, and the recorded-run replays under `services/movement_engine/conformance` (the TypeScript engine in process and over the HTTP host double). There is no engine setting to pass.
 - Standing rules that each cost an incident: never unscoped `pnpm test:unit`; never build the language package in place; never source `apps/api/.env` (grep DATABASE_URL_TEST, port 9432); one implementer per checkout; never edit a frozen corpus (triage by name); never amend.
 

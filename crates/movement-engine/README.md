@@ -1242,7 +1242,7 @@ JavaScript one to the same file. Where they differed, and what was done:
 
 ```bash
 scripts/build-movement-wasm.sh    # the artifact, its sha256 and size
-cargo test -p movement-engine     # the executor, builders, evaluator, run, ABI and environment services, natively
+cargo test -p listen-fire-engine     # the executor, builders, evaluator, run, ABI and environment services, natively
 ```
 
 The TypeScript side: `packages/movement-engine/services/movement_engine/__test__/rust_engine.unit.test.ts`

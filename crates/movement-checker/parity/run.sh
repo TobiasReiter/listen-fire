@@ -23,4 +23,4 @@ fi
 if [ "${1:-}" != "--rust" ]; then
   (cd "$ROOT/packages/movement-lang" && node -r ../../apps/api/node_modules/ts-node/register/transpile-only -r ../../apps/api/src/test/test-env-defaults.ts "$HERE/reference.ts" "$WORK")
 fi
-cargo run --quiet --release -p movement-checker --example parity -- "$WORK" "$ROOT/crates/movement-checker/PARITY.md"
+cargo run --quiet --release -p listen-fire-checker --example parity -- "$WORK" "$ROOT/crates/movement-checker/PARITY.md"

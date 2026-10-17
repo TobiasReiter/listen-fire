@@ -125,7 +125,7 @@ jobs:
             ~/.cargo/git
           key: cargo-registry-${{ hashFiles('Cargo.lock') }}
       - name: Crate tests
-        run: cargo test --locked -p movement-parser -p movement-engine
+        run: cargo test --locked -p listen-fire-parser -p listen-fire-engine
       - uses: pnpm/action-setup@v3
         with:
           version: 9

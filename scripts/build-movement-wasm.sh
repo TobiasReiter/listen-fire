@@ -27,8 +27,8 @@ cd "$ROOT_DIR"
 # between 512 and 768 KiB of it (measured 2026-10-06), so about a third.
 RUSTFLAGS="--remap-path-prefix=$ROOT_DIR=/listen-fire --remap-path-prefix=$CARGO_HOME_DIR=/cargo -C link-arg=--stack-first -C link-arg=-zstack-size=2097152"
 export RUSTFLAGS
-cargo build --locked --release --target wasm32-unknown-unknown -p movement-engine
-cargo build --locked --release --target wasm32-unknown-unknown -p movement-parser
+cargo build --locked --release --target wasm32-unknown-unknown -p listen-fire-engine
+cargo build --locked --release --target wasm32-unknown-unknown -p listen-fire-parser
 
 WASM_DIR="$ROOT_DIR/packages/movement-lang/wasm"
 for artifact in movement_engine:movement movement_parser:movement_parser; do
