@@ -49,8 +49,10 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  re-harvested, 4,966 of 5,900 (84.2%). Lowered again when version 5
  *  refused the forms the engine does not run (MOV_WALK_ROOTLESS,
  *  MOV_JSON_HAS_NO_EDGES, MOV_KG_QUERY_RETIRED and others, a few programs
- *  each): 4,962 of 5,905 (84.0%). */
-const FLOOR = 0.84;
+ *  each): 4,962 of 5,905 (84.0%). Lowered at the merge of those slices:
+ *  the re-harvest took in every slice's new test programs at once, 62 more,
+ *  of which 38 upgrade clean: 5,000 of 5,967 (83.8%). */
+const FLOOR = 0.837;
 
 interface Program {
   source: string;
