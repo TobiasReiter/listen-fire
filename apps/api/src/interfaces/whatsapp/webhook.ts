@@ -354,11 +354,17 @@ const receiveWebhook = (config: WhatsappDoorConfig) => async (req: Request, res:
         res.status(200).send('EVENT_RECEIVED');
         return;
       }
+      // A signed delivery for some other Meta product (a page, an Instagram
+      // account): nothing here to do. Meta retries anything that is not a 200,
+      // so ack it like the ignorable statuses-only delivery rather than hang.
+      res.status(200).send('EVENT_RECEIVED');
+      return;
     } catch (error) {
       logger.warn('Failed to process request', {
         body: JSON.stringify(req.body),
         error: error,
       });
+      if (!res.headersSent) res.sendStatus(500);
     }
   } catch (error: unknown) {
     logger.error('Error processing WhatsApp webhook:', error);
