@@ -15,17 +15,35 @@ jest.mock('../../../../../lib/kysely', () => ({
   getAutomationsQb: () => jest.requireActual<typeof import('../../__test__/crm_parity/legacy_row')>('../../__test__/crm_parity/legacy_row').rowQueryBuilder(),
 }));
 
+// The platform's encrypted store, as a vault the test seeds: the module line
+// reads its credential through the secrets family exactly as in production.
+const vault: { current?: ReturnType<typeof import('movement-engine/public/secrets').createMemoryVault> } = {};
+jest.mock('../../../../credentials/secrets_postgres', () => ({
+  postgresSecrets: () => {
+    if (vault.current === undefined) throw new Error('no vault seeded');
+    return vault.current;
+  },
+}));
+
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Adapter } from 'movement-engine/public/adapter';
 
+import type { AddressInfo } from 'node:net';
+
+import { serveModule } from 'module-kit';
+import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
+import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
+import { airtableModule } from '@lf/airtable';
 import { createAirtableAdapter } from '..';
+import { getAdapter } from '../../registry';
+import { BUILTIN_MODULES } from '../../builtin_modules';
 import { recordingServer, replayingServer, type Exchange } from '../../dealroom/__test__/parity/exchange';
 import { bootFakeCrm } from '../../__test__/crm_parity/fake_channels';
 import { legacyRow } from '../../__test__/crm_parity/legacy_row';
-import { freezeClock, type TranscriptEntry } from '../../__test__/crm_parity/walk';
+import { freezeClock, unwrappedRemoteErrors, type TranscriptEntry } from '../../__test__/crm_parity/walk';
 import { runAirtableParityScript, type InjectChange } from './parity/script';
 
 const FIXTURE = join(__dirname, '__fixtures__/airtable_parity.json');
@@ -44,7 +62,8 @@ interface Recording {
 
 interface Subject {
   adapter: Adapter;
-  scoped: Adapter;
+  /** Absent for a subject that cannot be scoped to a base. */
+  scoped?: Adapter;
 }
 
 let subjects = 0;
@@ -95,15 +114,33 @@ function loadRecording(): Recording {
   return JSON.parse(readFileSync(FIXTURE, 'utf8')) as Recording;
 }
 
-/** Replay `subjectAt` against the recording: same answers, same requests. */
+const requestKey = (request: object): string => JSON.stringify(request);
+
+/** Replay `subjectAt` against the recording: same answers, same requests. A
+ *  subject with no scoped instance skips the scoped steps, so it is held to
+ *  the rest: the same answers step for step, and only recorded requests. */
 async function expectAirtableParity(subjectAt: (baseUrl: string) => Promise<Subject> | Subject): Promise<void> {
   const recorded = loadRecording();
   const server = await replayingServer(recorded.exchanges);
   try {
     const { adapter, scoped } = await subjectAt(server.baseUrl);
-    const transcript = await runAirtableParityScript(adapter, scoped);
-    expect(transcript).toEqual(recorded.transcript);
-    expect(server.requests()).toEqual(recorded.exchanges.map(({ status: _s, response: _r, ...request }) => request));
+    const transcript = unwrappedRemoteErrors(await runAirtableParityScript(adapter, scoped));
+    const recordedRequests = recorded.exchanges.map(({ status: _s, response: _r, ...request }) => request);
+    if (scoped !== undefined) {
+      expect(transcript).toEqual(recorded.transcript);
+      expect(server.requests()).toEqual(recordedRequests);
+      return;
+    }
+    const unscopedSteps = recorded.transcript.filter(
+      (entry) => !entry.step.startsWith('scoped ') && !entry.step.startsWith('Companies[0].') && !entry.step.startsWith('Contacts[0]'),
+    );
+    expect(transcript).toEqual(unscopedSteps);
+    const remaining = recordedRequests.map(requestKey);
+    for (const request of server.requests()) {
+      const at = remaining.indexOf(requestKey(request));
+      expect(at).toBeGreaterThanOrEqual(0);
+      remaining.splice(at, 1);
+    }
   } finally {
     await server.close();
   }
@@ -124,5 +161,45 @@ async function expectAirtableParity(subjectAt: (baseUrl: string) => Promise<Subj
 
   it('the legacy line replays identically', async () => {
     await expectAirtableParity(legacySubject);
+  });
+
+  it('the module in process, through the platform registry, replays identically', async () => {
+    expect(BUILTIN_MODULES.airtable?.line).toBe('module');
+    await expectAirtableParity((baseUrl) => {
+      const install = freshInstall();
+      vault.current = createMemoryVault({ [install.credentialsId]: { ...STORED, baseUrl } });
+      return {
+        adapter: getAdapter({ adapterType: 'airtable', ...install }),
+        scoped: getAdapter({ adapterType: 'airtable', ...install, constructionArgs: { base: 'Pipeline Tracker' } }),
+      };
+    });
+  });
+
+  it('the module served over protocol 2 replays identically (unscoped: protocol 2 carries no construction arguments)', async () => {
+    const served = await serveModule({ definition: airtableModule });
+    const { port } = served.server.address() as AddressInfo;
+    try {
+      await expectAirtableParity(async (baseUrl) => {
+        const install = freshInstall();
+        // A host that stores the protocol's own token fields (lf, an embedder).
+        const credentials = createMemoryVault({ [install.credentialsId]: { access_token: STORED.accessToken, refresh_token: STORED.refreshToken, baseUrl } });
+        const remoteAt = async () => {
+          const config = { adapterType: 'airtable', ...install, baseUrl: `http://127.0.0.1:${port}/`, authStrategy: { kind: 'bearer' as const } };
+          return createRemoteAdapter({
+            config,
+            secret: '',
+            cacheScopeId: install.credentialsId,
+            manifest: await fetchRemoteManifest(config, ''),
+            documents: { put: async () => ({}) } as never,
+            credential: { name: 'airtable', secrets: createSecretsFamily({ backend: credentials }), ref: install.credentialsId },
+          });
+        };
+        // Protocol 2 carries no construction arguments, so a remote Airtable
+        // cannot be scoped to a base: the scoped steps are skipped.
+        return { adapter: await remoteAt() };
+      });
+    } finally {
+      served.server.close();
+    }
   });
 });

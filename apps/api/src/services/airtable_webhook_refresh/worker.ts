@@ -23,7 +23,7 @@ import { logger } from 'movement-engine/services/logger';
 import { getAutomationsQb } from '../../lib/kysely';
 import { HOUR } from '../../constants';
 import { MOVEMENT_LISTEN_PROVISIONER } from '../translation_graph/movement/listen_subscriptions';
-import { createAirtableAdapter } from '../translation_graph/adapters/airtable';
+import { getAdapter } from '../translation_graph/adapters/registry';
 
 /** The webhook_subscription.provider key for Airtable (the uppercase trigger
  *  kind; see webhook_sync/providers/index.ts). */
@@ -83,14 +83,19 @@ export async function refreshDueAirtableWebhooks(now = new Date()): Promise<void
         continue;
       }
 
-      const adapter = createAirtableAdapter({
+      // Whichever line Airtable is on: its module or its legacy adapter. The
+      // refresh is not on the protocol (only Airtable's webhooks expire), so
+      // it is the in-process adapter's own method.
+      const adapter = getAdapter({
+        adapterType: 'airtable',
         teamId: row.team_id as TeamId,
         credentialsId: row.credentials_id as unknown as string,
       });
-      await adapter.refreshEventSubscription({
-        externalId: row.external_webhook_id,
-        scope,
-      });
+      const refresh: unknown = Reflect.get(adapter, 'refreshEventSubscription');
+      if (typeof refresh !== 'function') {
+        throw new Error('the Airtable adapter cannot refresh a webhook subscription');
+      }
+      await Reflect.apply(refresh, adapter, [{ externalId: row.external_webhook_id, scope }]);
 
       // Advance the window mark so it isn't re-refreshed until the next cycle.
       await getAutomationsQb(['webhook_subscription'])

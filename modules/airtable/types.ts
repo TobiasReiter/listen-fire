@@ -95,3 +95,7 @@ export interface AirtableTableMeta {
   fields: AirtableFieldMeta[];
   description?: string;
 }
+
+/** The meta types a walk lands on: a base, and a table within it. */
+export const BASE_META_TYPE = 'Base';
+export const TABLE_META_TYPE = 'Table';

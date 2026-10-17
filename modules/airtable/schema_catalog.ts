@@ -11,8 +11,8 @@ import type {
   SchemaFieldKind,
   SchemaReferenceDescriptor,
   SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
-import type { AirtableAPIClient } from '../../../../adapters/airtable/apiClient';
+} from 'movement-engine/public/catalog';
+import type { AirtableAPIClient } from './api_client';
 
 import {
   LINK_FIELD_TYPE,
@@ -267,8 +267,9 @@ function referenceDescriptor(input: {
 // `Base` doubles as the collection the `base:` construction arg draws from: its
 // members are the base NAMES the author picks between (the arg's value enum),
 // materialised through `getRelated` off the meta root (see index.ts).
-export const BASE_META_TYPE = 'Base';
-export const TABLE_META_TYPE = 'Table';
+import { BASE_META_TYPE, TABLE_META_TYPE } from './types';
+
+export { BASE_META_TYPE, TABLE_META_TYPE };
 
 /**
  * The POLYMORPHIC presentation of a base — the ONLY presentation. One `Base`

@@ -16,7 +16,7 @@ const COMPANIES = 'tblCOMPANIES';
 
 export type InjectChange = (input: { webhookId: string; body: Record<string, unknown> }) => Promise<void>;
 
-export async function runAirtableParityScript(adapter: Adapter, scoped: Adapter, inject?: InjectChange): Promise<TranscriptEntry[]> {
+export async function runAirtableParityScript(adapter: Adapter, scoped: Adapter | undefined, inject?: InjectChange): Promise<TranscriptEntry[]> {
   const t = new Transcript();
   // Writes first: the fake's tables start empty, and the walk should find rows.
   const created = await t.step('createRecord Companies', () =>
@@ -29,23 +29,27 @@ export async function runAirtableParityScript(adapter: Adapter, scoped: Adapter,
     );
   }
   await walkSurface(t, adapter, 'airtable', { extraTypes: ['Base', 'Table', 'Companies', 'Contacts', 'Vendors'], depth: 3 });
-  // The `base:` construction argument: an instance scoped to one base.
-  await t.step('scoped listEntryPoints', () => scoped.listEntryPoints());
-  const companies = await t.step('scoped root Companies', () =>
-    scoped.getRelated({ position: makeMetaPosition('airtable'), fieldId: 'Companies', direction: 'outgoing', limit: 5 }),
-  );
-  const company = firstPosition(companies);
-  if (company !== undefined) {
-    for (const field of ['Name', 'Stage', 'Notes']) {
-      await t.step(`Companies[0].${field}`, () => adapter.getFieldValue({ position: company, fieldId: field }));
+  // The `base:` construction argument: an instance scoped to one base. A
+  // subject that cannot be scoped (protocol 2 carries no construction
+  // arguments) skips these steps.
+  if (scoped !== undefined) {
+    await t.step('scoped listEntryPoints', () => scoped.listEntryPoints());
+    const companies = await t.step('scoped root Companies', () =>
+      scoped.getRelated({ position: makeMetaPosition('airtable'), fieldId: 'Companies', direction: 'outgoing', limit: 5 }),
+    );
+    const company = firstPosition(companies);
+    if (company !== undefined) {
+      for (const field of ['Name', 'Stage', 'Notes']) {
+        await t.step(`Companies[0].${field}`, () => adapter.getFieldValue({ position: company, fieldId: field }));
+      }
     }
-  }
-  const contact = firstPosition(
-    await t.step('scoped root Contacts', () => scoped.getRelated({ position: makeMetaPosition('airtable'), fieldId: 'Contacts', direction: 'outgoing', limit: 5 })),
-  );
-  if (contact !== undefined) {
-    await t.step('Contacts[0].Email', () => adapter.getFieldValue({ position: contact, fieldId: 'Email' }));
-    await t.step('Contacts[0] -[Company]->', () => adapter.getRelated({ position: contact, fieldId: 'Company', direction: 'outgoing' }));
+    const contact = firstPosition(
+      await t.step('scoped root Contacts', () => scoped.getRelated({ position: makeMetaPosition('airtable'), fieldId: 'Contacts', direction: 'outgoing', limit: 5 })),
+    );
+    if (contact !== undefined) {
+      await t.step('Contacts[0].Email', () => adapter.getFieldValue({ position: contact, fieldId: 'Email' }));
+      await t.step('Contacts[0] -[Company]->', () => adapter.getRelated({ position: contact, fieldId: 'Company', direction: 'outgoing' }));
+    }
   }
   if (id !== undefined) {
     await t.step('readRecord Companies', () => adapter.readRecord?.({ recordType: 'Companies', externalId: id }) ?? null);
@@ -55,9 +59,11 @@ export async function runAirtableParityScript(adapter: Adapter, scoped: Adapter,
     await t.step('resolveEntity Companies by Name', () =>
       adapter.resolveEntity({ record: { Name: 'Parity Labs' }, recordType: 'Companies', candidates: [], constraints: { any: [] } as never }),
     );
-    await t.step('scoped root Companies WHERE Name', () =>
-      scoped.getRelated({ position: makeMetaPosition('airtable'), fieldId: 'Companies', direction: 'outgoing', where: cmp(prop('Name'), 'eq', value('Parity Labs')) }),
-    );
+    if (scoped !== undefined) {
+      await t.step('scoped root Companies WHERE Name', () =>
+        scoped.getRelated({ position: makeMetaPosition('airtable'), fieldId: 'Companies', direction: 'outgoing', where: cmp(prop('Name'), 'eq', value('Parity Labs')) }),
+      );
+    }
     await t.step('deleteRecord Companies', () => adapter.deleteRecord({ recordType: 'Companies', externalId: id, mutationContext: MUTATION }));
   }
 

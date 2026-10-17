@@ -33,6 +33,7 @@ import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/p
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
+import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -81,7 +82,15 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
       return affinityModule;
     },
   },
-  airtable: { kind: 'adapter', line: 'legacy' },
+  airtable: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: AIRTABLE_MANIFEST,
+    load: () => {
+      const { airtableModule }: typeof import('@lf/airtable') = require('@lf/airtable');
+      return airtableModule;
+    },
+  },
   attio: { kind: 'adapter', line: 'legacy' },
   google_sheets: { kind: 'adapter', line: 'legacy' },
   google_drive: { kind: 'adapter', line: 'legacy' },

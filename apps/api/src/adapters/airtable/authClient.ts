@@ -1,24 +1,11 @@
 import { z } from 'zod';
 import { logger } from 'movement-engine/services/logger';
-import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector, type OAuth2Declaration } from 'movement-engine/public/secrets';
+import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector } from 'movement-engine/public/secrets';
+import { airtableOAuth2 } from '@lf/airtable/oauth';
 
-const scopes = [
-  'data.records:read',
-  'data.records:write',
-  'schema.bases:read',
-  'user.email:read',
-  'webhook:manage',
-];
-
-/** How an Airtable credential is connected: what Airtable's module manifest
- *  will declare. The client goes in an HTTP Basic header; PKCE is required. */
-export const airtableOAuth2: OAuth2Declaration = {
-  authorizeUrl: 'https://airtable.com/oauth2/v1/authorize',
-  tokenUrl: 'https://airtable.com/oauth2/v1/token',
-  scopes,
-  clientAuth: 'basic',
-  pkce: true,
-};
+/** How an Airtable credential is connected: the declaration Airtable's module
+ *  manifest makes. */
+export { airtableOAuth2 } from '@lf/airtable/oauth';
 
 const airtableTokenResponseSchema = z.object({
   access_token: z.string(),

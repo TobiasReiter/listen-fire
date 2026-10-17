@@ -20,7 +20,8 @@ import { SLACK_ADAPTER_TYPE, SLACK_MANIFEST, createSlackAdapter } from './slack'
 import { TELEGRAM_ADAPTER_TYPE, TELEGRAM_MANIFEST, createTelegramAdapter } from './telegram';
 import { EMAIL_ADAPTER_TYPE, EMAIL_MANIFEST, createEmailAdapter } from './email';
 import { WHATSAPP_ADAPTER_TYPE, WHATSAPP_MANIFEST, createWhatsappAdapter } from './whatsapp';
-import { AIRTABLE_ADAPTER_TYPE, AIRTABLE_MANIFEST, createAirtableAdapter } from './airtable';
+import { AIRTABLE_ADAPTER_TYPE } from '@lf/airtable/types';
+import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
 import { AFFINITY_ADAPTER_TYPE } from '@lf/affinity/types';
 import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
 import {
@@ -109,12 +110,14 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Airtable adapter — read/write target plus webhook source. An optional
   // `base:` entry position (constructionArgs.base) scopes introspection to one
   // base, so a large workspace doesn't walk every base.
-  [AIRTABLE_ADAPTER_TYPE]: ({ teamId, credentialsId, constructionArgs }) =>
-    createAirtableAdapter({
+  [AIRTABLE_ADAPTER_TYPE]: builtinAdapterFactory(AIRTABLE_ADAPTER_TYPE, ({ teamId, credentialsId, constructionArgs }) => {
+    const { createAirtableAdapter }: typeof import('./airtable') = require('./airtable');
+    return createAirtableAdapter({
       teamId,
       credentialsId,
       ...(constructionArgs?.base !== undefined ? { base: constructionArgs.base } : {}),
-    }),
+    });
+  }),
   // Google Sheets adapter — append-only write target (v3-output parity).
   // Source-side triggers (snapshot/poll) are deferred — Sheets has no v3
   // input — so it appears as a target in the editor picker, not a source.

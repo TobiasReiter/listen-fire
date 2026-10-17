@@ -4,8 +4,8 @@
 // (`output_v3/adapters/airtable.ts`) — copied, not imported (P4), so the TG
 // adapter carries its own behavioral reference.
 
-import type { AirtableAPIClient } from '../../../../adapters/airtable/apiClient';
-import type { UniquenessConstraints } from 'movement-engine/services/translation_graph/uniqueness';
+import type { AirtableAPIClient } from './api_client';
+import type { UniquenessConstraints } from 'movement-engine/public/adapter-support';
 import type {
   ResolveEntityInput,
   ResolveEntityResult,
@@ -23,20 +23,18 @@ import type {
   DeleteInput,
   DeleteResult,
   LinkedObjectCandidate,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { TeamId } from '../../../../generated/kysely/core/Team';
+} from 'movement-engine/public/adapter';
+import type { ModuleFiles } from 'module-kit';
 
-import { hasFileSource, streamFileRef } from '../../engine/files/retrieve';
-import { logger } from 'movement-engine/services/logger';
-import { exposeFile } from '../../engine/files/expose';
-import { UPDATE_NOT_FOUND, isHttp404 } from '../not_found';
+import { logger } from 'movement-engine/public/log';
+import { UPDATE_NOT_FOUND, isHttp404 } from 'module-kit/adapter/not_found';
 import {
   isStablePosition,
   makeStablePosition,
   positionData,
   positionRecordId,
   type SourcePosition,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import {
   AIRTABLE_ADAPTER_TYPE,
   LINK_FIELD_TYPE,
@@ -700,7 +698,9 @@ export async function readRecord(input: {
  */
 async function buildWritePayload(input: {
   client: AirtableAPIClient;
-  teamId: TeamId;
+  teamId: string;
+  /** Where an attachment's bytes are exposed for Airtable to fetch. */
+  files: ModuleFiles;
   ctx: TableContext;
   baseId: string;
   tables: AirtableTableMeta[];
@@ -732,7 +732,7 @@ async function buildWritePayload(input: {
     tables: input.tables,
   });
 
-  await resolveAttachmentFields({ teamId: input.teamId, fields, fieldMetaByKey: ctx.fieldMetaByKey });
+  await resolveAttachmentFields({ files: input.files, fields, fieldMetaByKey: ctx.fieldMetaByKey });
 
   // Parent linking: each edge name resolves to a multipleRecordLinks field on
   // this (child) table; set it to the parent's external record id. A linked
@@ -766,20 +766,21 @@ async function buildWritePayload(input: {
  *  neither is available. */
 async function toAttachmentObject(
   ref: unknown,
-  teamId: TeamId,
+  files: ModuleFiles,
 ): Promise<{ url: string; filename?: string } | null> {
   if (ref == null || typeof ref !== 'object') return null;
   const fileRef = ref as FileRef & { url?: unknown };
 
   let url: string | null = null;
-  if (hasFileSource(fileRef)) {
-    const resolved = await streamFileRef(fileRef, { teamId });
-    const exposed = await exposeFile({
-      stream: resolved.stream,
-      filename: fileRef.name,
-      contentType: resolved.contentType ?? fileRef.contentType,
-    });
-    url = exposed.url;
+  if (fileRef.source !== undefined) {
+    // The host exposes the bytes it holds; served as a process, the file came
+    // over the wire already exposed, at `url`.
+    try {
+      url = (await files.expose(fileRef)).url;
+    } catch (error) {
+      if (typeof fileRef.url !== 'string') throw error;
+      url = fileRef.url;
+    }
   } else if (typeof fileRef.url === 'string') {
     url = fileRef.url;
   }
@@ -800,14 +801,14 @@ async function toAttachmentObject(
  * still applies via the operators).
  */
 async function resolveAttachmentFields(input: {
-  teamId: TeamId;
+  files: ModuleFiles;
   fields: Record<string, unknown>;
   fieldMetaByKey: Map<string, AirtableFieldMeta>;
 }): Promise<void> {
   for (const [fieldId, value] of Object.entries(input.fields)) {
     if (input.fieldMetaByKey.get(fieldId)?.type !== 'multipleAttachments') continue;
     const refs = Array.isArray(value) ? value : [value];
-    const resolved = await Promise.all(refs.map((ref) => toAttachmentObject(ref, input.teamId)));
+    const resolved = await Promise.all(refs.map((ref) => toAttachmentObject(ref, input.files)));
     const attachments = resolved.filter(
       (a): a is { url: string; filename?: string } => a !== null,
     );
@@ -832,7 +833,8 @@ function resolveParentLinkField(input: { ctx: TableContext; edgeName: string }):
 
 export async function createRecord(input: {
   client: AirtableAPIClient;
-  teamId: TeamId;
+  teamId: string;
+  files: ModuleFiles;
   ids: AirtableTableId;
   write: WriteInput;
 }): Promise<WriteResult> {
@@ -855,6 +857,7 @@ export async function createRecord(input: {
   const { fields } = await buildWritePayload({
     client: input.client,
     teamId: input.teamId,
+    files: input.files,
     ctx,
     baseId,
     tables,
@@ -881,7 +884,8 @@ export async function createRecord(input: {
 
 export async function updateRecord(input: {
   client: AirtableAPIClient;
-  teamId: TeamId;
+  teamId: string;
+  files: ModuleFiles;
   ids: AirtableTableId;
   update: UpdateInput;
 }): Promise<UpdateResult> {
@@ -904,6 +908,7 @@ export async function updateRecord(input: {
   const { fields, association } = await buildWritePayload({
     client: input.client,
     teamId: input.teamId,
+    files: input.files,
     ctx,
     baseId,
     tables,

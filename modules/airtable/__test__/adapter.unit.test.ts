@@ -13,12 +13,7 @@
 // master key, logger → casl, the broken zod chain) are stubbed exactly as the
 // Attio adapter test does.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-
-jest.mock('movement-engine/services/logger', () => ({
+jest.mock('movement-engine/public/log', () => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
@@ -27,174 +22,35 @@ jest.mock('movement-engine/services/logger', () => ({
   },
 }));
 
-jest.mock('../../../../../lib/recording', () => ({
-  isTestHarnessTeam: () => false,
-  injectFakeBaseUrl: (p: unknown) => p,
-}));
-
-// The real Airtable apiClient pulls in the adapters registry / token-refresh
-// chain that crashes at module load in jest. The adapter under test only
-// references `AirtableAPIClient` (a class — unused as a value here, since
-// getApiClient is overridden) + `getAirtableClient` (never called). Stub both.
-jest.mock('../../../../../adapters/airtable/apiClient', () => ({
-  AirtableAPIClient: class {},
-  getAirtableClient: () => ({}),
-}));
-
-// types.ts transitively loads the broken output_v3/schemas zod chain. Stub at
-// the leaf — the adapter consumes it only at type level.
-jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret, extend: ret, merge: ret,
-    pick: ret, omit: ret, partial: ret, describe: ret, or: ret, and: ret, min: ret,
-  });
-  return {
-    traversalStepSchema: stub,
-    fieldRefSchema: stub,
-    expressionSchema: stub,
-    filterExpressionSchema: stub,
-    webhookGraphOutputConfigSchema: stub,
-  };
-});
-
-// uniqueness_constraints — the record module imports `isEdgeToEntry` (used in
-// branch building) + the type-level StoredUniquenessConstraints. The real
-// module's transitive zod import crashes at load. Provide a faithful
-// `isEdgeToEntry` (checks `kind === 'edge_to'`) so resolveEntity's branch
-// logic is exercised correctly.
-jest.mock('../../../../knowledge_pipeline/uniqueness_constraints', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret,
-  });
-  return {
-    isEdgeToEntry: (entry: { kind?: string }) => entry?.kind === 'edge_to',
-    storedUniquenessConstraintsSchema: stub,
-  };
-});
-
-// Attachment writes pull the FileRef's bytes and expose them at a short-lived
-// Listen-Fire URL (`exposeFile` → S3 + DB). Stub it so the test asserts the wiring
-// (FileRef → exposeFile → attachment url) without real S3/Postgres.
-jest.mock('../../../engine/files/expose', () => ({
-  exposeFile: jest.fn(async () => ({
-    url: 'https://example.test/api/files/blob/blob-1',
-    expiresAt: new Date(0),
-  })),
-}));
-
 import { scanInstanceChains } from 'movement-lang';
 
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { ResolveEntityInput } from 'movement-engine/services/translation_graph/adapter';
+import type { ResolveEntityInput } from 'movement-engine/public/adapter';
 
-import { installMemoryDocumentStore } from '../../../engine/files/__test__/memory_document_store';
 import { AirtableAdapter } from '../index';
+import {
+  DEALS_TYPE,
+  LINKED_TABLE_ID,
+  PEOPLE_TYPE,
+  BASE_ID,
+  TABLE_ID,
+  dealsTable,
+  makeAdapter,
+  makeMultiBaseAdapter,
+  peopleTable,
+  tasksTable,
+  testFileStore,
+  type FakeRecord,
+} from './fake_adapter';
 import { coerceAirtableValue } from '../record';
-import { makeStablePosition, makeMetaPosition, makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { makeStablePosition, makeMetaPosition, makeUnstablePosition, positionData } from 'movement-engine/public/catalog';
 import { eventsFromPayload } from '../webhook';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
-import { refineInstanceSchema } from '../../../movement/refinements';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 
 
 // ---------------------------------------------------------------------------
 // Fake API client + table fixtures
 // ---------------------------------------------------------------------------
 
-const BASE_ID = 'appBASE01';
-const TABLE_ID = 'tblDEALS01';
-const LINKED_TABLE_ID = 'tblPEOPLE1';
-
-// The NATURAL type name the adapter publishes for the Deals table: its OWN
-// name. A table lives behind its base and naming one needs a base, so the base
-// is the instance and never repeated in the name.
-// plans/2026-07-10-adapter-entry-positions/5_paths_as_addresses.md
-const DEALS_TYPE = 'Deals';
-// The People table's natural name — what a reference to it (and a `getRelated`
-// landing on it) is stamped with, instead of an encoded id.
-const PEOPLE_TYPE = 'People';
-
-type FakeRecord = { id: string; fields: Record<string, unknown> };
-
-function dealsTable() {
-  return {
-    id: TABLE_ID,
-    name: 'Deals',
-    primaryFieldId: 'fldName',
-    fields: [
-      { id: 'fldName', name: 'Name', type: 'singleLineText' },
-      { id: 'fldAmount', name: 'Amount', type: 'currency' },
-      { id: 'fldClosed', name: 'Closed', type: 'checkbox' },
-      { id: 'fldTags', name: 'Tags', type: 'multipleSelects' },
-      { id: 'fldCreated', name: 'Created', type: 'createdTime' },
-      { id: 'fldFormula', name: 'Score', type: 'formula' },
-      { id: 'fldDeck', name: 'Deck', type: 'multipleAttachments' },
-      {
-        id: 'fldOwner',
-        name: 'Owner',
-        type: 'multipleRecordLinks',
-        options: { linkedTableId: LINKED_TABLE_ID },
-      },
-    ],
-  };
-}
-
-function peopleTable() {
-  return {
-    id: LINKED_TABLE_ID,
-    name: 'People',
-    primaryFieldId: 'fldPersonName',
-    fields: [{ id: 'fldPersonName', name: 'Full Name', type: 'singleLineText' }],
-  };
-}
-
-interface FakeClientCalls {
-  createRecord: Array<{ baseId: string; tableId: string; fields: Record<string, unknown> }>;
-  listRecords: Array<{ baseId: string; tableId: string; filterByFormula?: string }>;
-}
-
-function makeAdapter(input?: { records?: FakeRecord[] }): {
-  adapter: AirtableAdapter;
-  calls: FakeClientCalls;
-} {
-  const adapter = new AirtableAdapter({
-    teamId: 'team-air' as TeamId,
-    credentialsId: 'creds-1',
-  });
-  const calls: FakeClientCalls = { createRecord: [], listRecords: [] };
-  const fakeClient = {
-    listBases: async () => [{ id: BASE_ID, name: 'CRM' }],
-    listTables: async ({ baseId }: { baseId: string }) =>
-      baseId === BASE_ID ? [dealsTable(), peopleTable()] : [],
-    listRecords: async (args: { baseId: string; tableId: string; filterByFormula?: string }) => {
-      calls.listRecords.push(args);
-      return input?.records ?? [];
-    },
-    getRecord: async ({ recordId }: { recordId: string }) => ({
-      id: recordId,
-      fields: { fldName: 'Fetched' },
-    }),
-    createRecord: async (args: { baseId: string; tableId: string; fields: Record<string, unknown> }) => {
-      calls.createRecord.push(args);
-      return { id: 'recNEW01', fields: args.fields };
-    },
-    updateRecord: async (args: { recordId: string; fields: Record<string, unknown> }) => ({
-      id: args.recordId,
-      fields: args.fields,
-    }),
-    deleteRecord: async ({ recordId }: { recordId: string }) => ({ id: recordId, deleted: true }),
-  };
-  (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () =>
-    fakeClient;
-  return { adapter, calls };
-}
 
 // ---------------------------------------------------------------------------
 // 1. Name → structured-identifier cache
@@ -506,7 +362,7 @@ describe('AirtableAdapter link-field write resolution', () => {
 describe('AirtableAdapter attachment write', () => {
   it('exposes a FileRef\'s bytes at a Listen-Fire URL and maps it to an Airtable attachment object', async () => {
     const { adapter, calls } = makeAdapter();
-    const store = installMemoryDocumentStore();
+    const store = testFileStore();
     await adapter.createRecord({
       recordType: DEALS_TYPE,
       fields: {
@@ -546,37 +402,6 @@ describe('AirtableAdapter attachment write', () => {
 // pre-existing full-workspace walk (no migration pressure on existing
 // movements). The `base:` value enum is the `Base` collection off the meta root.
 
-function tasksTable() {
-  return { id: 'tblTASKS01', name: 'Tasks', primaryFieldId: 'fldTask', fields: [] };
-}
-
-/** A multi-base fake client — each test uses a UNIQUE teamId so the module-level
- *  base/table LRU caches (keyed by team) never leak between cases. */
-function makeMultiBaseAdapter(input: {
-  teamId: string;
-  bases: Array<{ id: string; name: string; tables: ReturnType<typeof dealsTable>[] }>;
-  base?: string;
-  /** Rows the collection read lists back. */
-  records?: FakeRecord[];
-}): { adapter: AirtableAdapter; listedTableBaseIds: string[] } {
-  const adapter = new AirtableAdapter({
-    teamId: input.teamId as TeamId,
-    credentialsId: 'creds-1',
-    ...(input.base !== undefined ? { base: input.base } : {}),
-  });
-  const listedTableBaseIds: string[] = [];
-  const fakeClient = {
-    listBases: async () => input.bases.map((b) => ({ id: b.id, name: b.name })),
-    listTables: async ({ baseId }: { baseId: string }) => {
-      listedTableBaseIds.push(baseId);
-      return input.bases.find((b) => b.id === baseId)?.tables ?? [];
-    },
-    listRecords: async () => input.records ?? [],
-  };
-  (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () =>
-    fakeClient;
-  return { adapter, listedTableBaseIds };
-}
 
 describe('AirtableAdapter entry-position (base) scoping', () => {
   const crm = () => ({ id: 'appCRM01', name: 'CRM', tables: [dealsTable()] });
@@ -1114,41 +939,6 @@ movement m(x: <air-[:\`Record Change\`]->>) {
     write b-[:\`Deals\`]-> { Name: "X" }
   }
 }`;
-
-  it('a narrowed base\'s table edge is writable at the checker', async () => {
-    const { adapter } = makeMultiBaseAdapter({
-      teamId: 'team-air-checker-write',
-      bases: [crm(), ops()],
-    });
-    const { entries, projection } = await projectUnpositioned(adapter);
-
-    // The refined position the checker looks up — produced by the same
-    // `refineInstanceSchema` the catalog runs, off the real `describe('CRM')`.
-    const hop = await adapter.edgesFrom(makeMetaPosition('airtable'));
-    const { schema } = await refineInstanceSchema({
-      instance: {
-        adapterType: 'airtable',
-        schema: projection.schema,
-        entryPoints: entries.map((e) => ({
-          typeId: e.typeId,
-          displayName: e.displayName,
-          writable: e.writable === true,
-          readable: e.readable === true,
-        })),
-        describeType: (typeName: string) => adapter.describe(typeName),
-        membersOf: async () =>
-          Object.values(hop?.targetPositions ?? {}).map((position) => {
-            const data = positionData(position) as { Name: string };
-            return { name: data.Name, data };
-          }),
-      },
-      chains: scanInstanceChains(source),
-    });
-
-    const refined = schema.positions['Base "CRM"'];
-    expect(refined).toBeDefined();
-    expect(refined!.edges.Deals).toMatchObject({ target: 'Deals', writable: true });
-  });
 
   it('the root\'s own edges carry NO write promise — no base or event is created', async () => {
     const { adapter } = makeMultiBaseAdapter({
