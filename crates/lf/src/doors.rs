@@ -1,6 +1,6 @@
 //! lf's inbound doors, on the inbound core (crate::inbound): the core owns
 //! verification, the delivery pipeline and the push doors' answers; this file
-//! is what lf keeps behind them (apps/cli/src/doors.ts).
+//! is what lf keeps behind them.
 //!
 //!   POST /api/public/webhook-sync/<provider>/<install>   a provider's delivery
 //!        (`/hooks/<external>/<install>` is the same door under lf's older name)

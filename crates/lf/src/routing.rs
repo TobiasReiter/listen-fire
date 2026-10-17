@@ -1,7 +1,6 @@
 //! Routing read from source: every `listen … fire …` across the project's
-//! files is the routing table, as the TypeScript lf reads it
-//! (apps/cli/src/sources.ts `collectListens` over movement-engine's
-//! `movement/file_listeners.ts`), plus the scope gate an inbound event must
+//! files is the routing table (as movement-engine's
+//! `movement/file_listeners.ts` reads it), plus the scope gate an inbound event must
 //! clear to reach a listen (`triggers/listen_config.ts`) and the trigger
 //! event a run is handed (`triggers/trigger_event.ts`, with
 //! `engine/inbound/discriminate.ts`).

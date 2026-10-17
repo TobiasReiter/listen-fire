@@ -1,7 +1,6 @@
 //! A project is a folder with `lf.yaml` at its root: the engine version it is
 //! pinned to, where its movement files live, and its externals folder. `.lf/`
-//! beside it holds what the host keeps (state, files, secrets). The same file
-//! format the TypeScript lf reads (apps/cli/src/project.ts), read the same way.
+//! beside it holds what the host keeps (state, files, secrets).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,7 +19,7 @@ pub const CURRENT_ENGINE_VERSION: &str = "0.11.0";
 /// versions 1–4 run only on the hosted TypeScript engine.
 pub const FIRST_LF_LANGUAGE_VERSION: u32 = 5;
 
-// Unknown keys are ignored, as the TypeScript schema strips them.
+// Unknown keys are ignored, so a newer lf.yaml still loads.
 #[derive(Deserialize)]
 struct ProjectFile {
     engine: String,
@@ -164,7 +163,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
     }
     let path = dir.join(PROJECT_FILE);
     let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    // An empty file reads as an empty mapping, as the TypeScript `parse(…) ?? {}` does.
+    // An empty file reads as an empty mapping: every key at its default.
     let value: serde_yaml::Value = serde_yaml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let value = if value.is_null() { serde_yaml::Value::Mapping(Default::default()) } else { value };
     let file: ProjectFile = serde_yaml::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;

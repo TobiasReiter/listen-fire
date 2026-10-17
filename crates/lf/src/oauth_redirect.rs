@@ -1,6 +1,5 @@
 //! Where the provider sends the person back after they sign in, for `lf
-//! credential add` / `update` of an OAuth 2 credential (apps/cli/src/
-//! oauth_redirect.ts). Three ways, because lf runs on a laptop, on a headless
+//! credential add` / `update` of an OAuth 2 credential. Three ways, because lf runs on a laptop, on a headless
 //! box over ssh, and deployed behind a URL:
 //!
 //!   loopback (default)  lf listens on 127.0.0.1 for the one redirect
@@ -196,9 +195,8 @@ async fn respond(stream: &mut TcpStream, status: u16, text: &str) {
 // ── The public redirect, through lf serve ──────────────────────────────────
 // The waiting command leaves a marker named by the state's hash; `lf serve`
 // writes a redirect only where a marker waits, so its route cannot be used to
-// write arbitrary files, and the state itself never names a file. The same
-// files the TypeScript lf uses, so either binary's serve hands over to either
-// binary's command.
+// write arbitrary files, and the state itself never names a file. One lf's
+// serve hands over to another lf process's command through them.
 
 fn pickup_base(lf_dir: &Path, state: &str) -> PathBuf {
     lf_dir.join("oauth").join(hex(&Sha256::digest(state.as_bytes())))

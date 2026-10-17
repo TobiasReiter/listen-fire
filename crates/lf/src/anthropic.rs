@@ -1,4 +1,4 @@
-//! The Anthropic Messages API as the TypeScript lf calls it (movement-engine
+//! The Anthropic Messages API as the hosted engine calls it (movement-engine
 //! `lib/anthropic/index.ts` `anthropicChatDetailed`, over the SDK): one
 //! streamed request per turn, a reply cut off at the output ceiling continued
 //! where it stopped, a reply that spent the whole ceiling thinking asked again

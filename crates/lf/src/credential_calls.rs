@@ -1,6 +1,5 @@
-//! One protocol call to an external under a credential, as the TypeScript lf
-//! makes it (apps/cli/src/{externals,remote,secrets}.ts over movement-engine's
-//! RemoteAdapter):
+//! One protocol call to an external under a credential, as the hosted
+//! engine's RemoteAdapter makes it:
 //!
 //! - An external whose manifest declares a credential is sent it on each call
 //!   (the request's `credential`): only the fields the declaration names (and

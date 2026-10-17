@@ -1,7 +1,6 @@
 //! `lf upgrade`: the project's movement files rewritten into the language
 //! version the project's engine runs, by the Rust checker's own fixes (the
-//! TypeScript `lf upgrade`, apps/cli/src/upgrade.ts, over the shared loop in
-//! packages/movement-lang/checker/upgrade.ts). Check, take the fixes that do
+//! loop of packages/movement-lang/checker/upgrade.ts). Check, take the fixes that do
 //! not overlap, apply them, check again, until nothing fixable is left. Only
 //! fixes marked safe are applied unless `--all`; the rest are listed with their
 //! rewrite. Only the rewritten spans change, so comments and layout survive.

@@ -1,4 +1,4 @@
-//! `lf credential add|update|delete|list` (apps/cli/src/credentials.ts): a
+//! `lf credential add|update|delete|list`: a
 //! person's credentials for a module, as the platform's credential pages hold
 //! them (a name, the module it is for, its fields), written to the secrets
 //! file by these commands only.

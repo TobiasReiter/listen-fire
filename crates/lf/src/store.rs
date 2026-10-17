@@ -1,12 +1,11 @@
 //! The run host's backend families (movement-engine
-//! `services/run_host/store.ts`) over SQLite, in the TypeScript lf's state
-//! file: the same schema and the same statements as apps/cli/src/state.ts,
-//! so one `.lf/state.db` reads alike from either host. Held to the hosted
+//! `services/run_host/store.ts`) over SQLite, in the state file
+//! `.lf/state.db` (@lf/sqlite-store, the store slot's default). Held to the hosted
 //! Postgres backend's meaning by the run host's contract suite, which drives
 //! this store through `--contract-store` (crate::contract_store).
 //!
-//! Instants are text in `Date.toISOString`'s form, compared as text, exactly
-//! as the TypeScript store compares them.
+//! Instants are text in `Date.toISOString`'s form, compared as text: that
+//! form sorts as the instants do.
 
 use std::path::Path;
 
@@ -14,8 +13,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use crate::json::Js;
 
-/// The TypeScript lf's schema (apps/cli/src/state.ts `SCHEMA`), verbatim; a
-/// test holds the two equal.
+/// The state file's tables, created when missing on every open.
 pub const SCHEMA: &str = "
 create table if not exists run (
   id text primary key,
@@ -127,11 +125,10 @@ create table if not exists work (
 
 /// The core's park reasons (`CORE_PARK_REASONS`).
 pub const CORE_PARK_REASONS: &[&str] = &["timer", "await", "limit"];
-/// The work kinds lf queues (apps/cli/src/state.ts `WorkKind`).
+/// The work kinds lf queues.
 pub const WORK_KINDS: &[&str] = &["resume_timer", "wake_await", "fire_event", "fire_callback"];
 
-/// Columns a state file written by an earlier lf lacks (apps/cli/src/state.ts
-/// `addMissingColumns`), added on open so either host leaves the file alike.
+/// Columns a state file written by an earlier lf lacks, added on open.
 const ADDED_RUN_COLUMNS: &[&str] = &["cancel_requested_at", "cancel_reason"];
 
 #[derive(Debug)]

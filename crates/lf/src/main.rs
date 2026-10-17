@@ -307,7 +307,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             let session = runs::open_session(project, false, &store).await?;
             let outcomes = match args.rest.first() {
                 Some(run_id) => vec![session.resume_run(run_id).await?],
-                // As the TypeScript lf: a work row that fails is retried later, unlogged.
+                // A work row that fails is retried later, unlogged.
                 None => session.resume_all(&mut std::io::sink()).await?,
             };
             if outcomes.is_empty() {

@@ -1,5 +1,4 @@
-//! The catalog snapshot the checker reads, built as the TypeScript lf builds
-//! it (apps/cli/src/sources.ts `catalogOf` over movement-engine's
+//! The catalog snapshot the checker reads (movement-engine's
 //! `catalog_snapshot.ts` `buildCatalogSnapshot`): each adapter external's
 //! manifest answer and schema, the credentials the secrets name, and the
 //! project's files. Written in the TypeScript's key order (crate::json).

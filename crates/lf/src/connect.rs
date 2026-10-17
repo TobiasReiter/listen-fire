@@ -1,5 +1,5 @@
 //! `lf connect <module>`: set a module up for this project, once, by prompts —
-//! never by editing the secrets file (apps/cli/src/connect.ts). Everything the
+//! never by editing the secrets file. Everything the
 //! module needs before any user signs in:
 //!   - installed: an `externals/<name>/lf-external.yaml`, serving a module
 //!     package with serve-module, or reaching a module run separately at its

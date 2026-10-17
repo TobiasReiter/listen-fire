@@ -1,6 +1,5 @@
 //! Externals: the project's installed modules (a folder each under the
-//! externals folder, with an `lf-external.yaml`), read and started as the
-//! TypeScript lf does (apps/cli/src/externals.ts). An external is a process
+//! externals folder, with an `lf-external.yaml`), read and started. An external is a process
 //! speaking adapter protocol 2 over HTTP: started with `PORT=0`, it prints
 //! `listening <port>`. A `module` external is served by `serve-module` (the
 //! module kit's runner; `LF_SERVE_MODULE` names another command). A plugin
@@ -487,8 +486,8 @@ fn bundled_module(module: &str) -> Option<String> {
 }
 
 /// How a `module` external is served: `LF_SERVE_MODULE` when set, else the
-/// module kit's `serve-module` as the TypeScript lf finds it
-/// (`require.resolve('module-kit/bin/serve-module.cjs')`): the project's
+/// module kit's `serve-module`, found as node's
+/// `require.resolve('module-kit/bin/serve-module.cjs')` finds it: the project's
 /// node_modules (its `.bin` shim, or the package's script under node), then
 /// the workspace lf was built in.
 fn serve_module_command(project: &Project, external: &str) -> Result<Vec<String>, String> {

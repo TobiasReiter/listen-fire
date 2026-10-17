@@ -1,5 +1,4 @@
-//! The secrets host family, as the TypeScript lf drives it (movement-engine
-//! services/secrets/family.ts): where a credential's fields are read from,
+//! The secrets host family (movement-engine services/secrets/family.ts): where a credential's fields are read from,
 //! written back to and refreshed through, whatever stores them (a plain or
 //! SOPS file, the environment). A store implements `SecretsBackend`; every
 //! caller goes through the one `SecretsFamily`, so the rules a refresh keeps
@@ -9,8 +8,7 @@
 //!   the stored credential has moved on (compare-and-swap).
 //! - A refresh runs at most once at a time per credential: in this process by
 //!   sharing the one in flight, across processes by the store's lock file (the
-//!   same `<secrets file>.lock` the TypeScript lf takes, so the two binaries
-//!   never refresh at once). The refresher runs only if the stored credential
+//!   `<secrets file>.lock`, so two lf processes never refresh at once). The refresher runs only if the stored credential
 //!   is still the one the caller found stale.
 //! - A store that could not keep a rotated token refuses before the token is
 //!   spent.
@@ -124,8 +122,8 @@ pub struct SecretsFamily {
 }
 
 const POLL: Duration = Duration::from_millis(20);
-/// As the TypeScript lf: how long a lock is waited for, and when one left by
-/// a process that died is taken over.
+/// How long a lock is waited for, and when one left by a process that died
+/// is taken over.
 const LOCK_WAIT: Duration = Duration::from_secs(10);
 const LOCK_STALE: Duration = Duration::from_secs(30);
 
@@ -270,8 +268,7 @@ impl Drop for Held {
     }
 }
 
-/// A secrets file's lock: `<file>.lock`, created exclusively beside it (the
-/// TypeScript lf's `withFileLock`). One left by a process that died is taken
+/// A secrets file's lock: `<file>.lock`, created exclusively beside it. One left by a process that died is taken
 /// over once it is older than LOCK_STALE.
 pub struct FileLock {
     lock: PathBuf,

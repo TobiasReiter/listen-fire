@@ -1,9 +1,8 @@
 //! A session — one project opened for running: its secrets, externals,
 //! catalog, files and listens — and the entry points the run commands share:
 //! an event routed to the listens it matches and run, a parked run resumed,
-//! the work queue drained, a callback called and a run cancelled. A port of
-//! apps/cli/src/runs.ts, its output (`report`) the TypeScript lf's line for
-//! line.
+//! the work queue drained, a callback called and a run cancelled, and the
+//! line each run is reported by (`report`).
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -122,7 +121,7 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
     for r in running.iter().filter(|r| !r.is_plugin()) {
         schemas.insert(r.external.manifest.name.clone(), describe_external(r, &credentials).await?);
     }
-    // Scanned again after the externals start, as the TypeScript session does.
+    // Scanned again after the externals start: one may have written a movement file.
     let files = scan_movements(&project)?;
     let catalog = catalog_of(&running, &schemas, &credentials, &files);
     let listens = collect_listens(&files, project.language_version);
