@@ -1663,6 +1663,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   hand-written `external:` entry works as before. lf-host checks the same bindings, sends the
   connection's credential and signs with the install's secret, as the TypeScript `lf` does.
 
+### r-small
+
+- A team's own Telegram bot is now registered by the platform with a random secret token, and every delivery to it must carry that token (a missing or wrong one is refused). The shared bot is unchanged.
+- `@lf/web` off the platform now reads plain PDF, PowerPoint and spreadsheet links through the file-text package; only LinkedIn profiles and gated document sources are still refused.
+- The builtins handbook chapter's sections are headed by the v5 spellings (`builtins#Text.join`, `builtins#List.sum`); the language search still finds a function by its old name but never shows it.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

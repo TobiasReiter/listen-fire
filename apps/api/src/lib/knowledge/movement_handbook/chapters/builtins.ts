@@ -5,9 +5,9 @@ export const builtins: Chapter = {
   title: 'Builtins',
   content: `## Builtins — every function and helper family, one entry each
 
-Every built-in function, one section each — fetch one by name (\`builtins#SUM\`) instead of the whole chapter. Each entry gives the signature, what it means, whether the result is always there or \`T | absent\`, an ordering requirement where one exists, and an example. The reference chapter's *operators-and-functions* is the one-page version of this list. Entries run in groups: the core words, then each namespace with its members. Core words are always there and never qualified; a namespace member is always written with its namespace (\`Text.upper(x)\`). Every argument is checked when you save, and a call is typed by what it gives back (\`Text.upper(x)\` is text), so a built-in's call written into a number field is refused. A call can sit inside any expression and runs left to right.
+Every built-in function, one section each — fetch one by name (\`builtins#List.sum\`) instead of the whole chapter. Each entry gives the signature, what it means, whether the result is always there or \`T | absent\`, an ordering requirement where one exists, and an example. The reference chapter's *operators-and-functions* is the one-page version of this list. Entries run in groups: the core words, then each namespace with its members. Core words are always there and never qualified; a namespace member is always written with its namespace (\`Text.upper(x)\`). Every argument is checked when you save, and a call is typed by what it gives back (\`Text.upper(x)\` is text), so a built-in's call written into a number field is refused. A call can sit inside any expression and runs left to right.
 
-Inside walk brackets \`-[…]->\` these functions are spelled in capitals: \`LOWER UPPER TRIM LENGTH ABS ROUND FLOOR CEIL DATE DATETIME NUMBER COALESCE EXISTS\`, as in \`ch-[m:Messages WHERE LOWER(m.Text) CONTAINS "urgent"]->\`. Each section is headed by that capitals name, which is what you fetch it by; its example uses the spelling outside brackets.
+Inside walk brackets \`-[…]->\` these functions are spelled in capitals: \`LOWER UPPER TRIM LENGTH ABS ROUND FLOOR CEIL DATE DATETIME NUMBER COALESCE EXISTS\`, as in \`ch-[m:Messages WHERE LOWER(m.Text) CONTAINS "urgent"]->\`. Each section is headed by the name you write outside brackets (\`Text.upper\`, \`List.sum\`), which is what you fetch it by; the capitals names above are only the spellings inside walk brackets.
 
 ## Core words
 
@@ -19,7 +19,7 @@ Inside walk brackets \`-[…]->\` these functions are spelled in capitals: \`LOW
 if (\`Suggested Action\` == null) { fail("nothing to act on") }
 \`\`\`
 
-### EXISTS
+### exists
 
 \`exists(walk)\` → \`boolean\`, always present — whether a relationship has any records. Takes a walk only, with an optional \`WHERE\` through an alias (\`exists(m-[a:Attachments WHERE a.Name CONTAINS "pdf"]->)\`); on a value it is refused with the \`!= null\` rewrite. \`!exists(…)\` is has-none. \`if (x != null) { … }\` narrows \`x\` present *inside that arm only*; \`x != null ? a : b\` narrows the same way inside \`a\`.
 
@@ -27,7 +27,7 @@ if (\`Suggested Action\` == null) { fail("nothing to act on") }
 if (exists(msg-[:Attachments]->)) { … }
 \`\`\`
 
-### COALESCE
+### coalesce
 
 \`coalesce(a, b, …)\` → the first argument with a value, present whenever at least one argument is unconditionally present (a literal, or anything already known to be there). It stops at the first argument that has a value and never evaluates the rest, so a later argument that calls a model, reads a file or fails the run does nothing when an earlier one is present. A \`coalesce\` whose arguments might *all* be empty is itself \`T | absent\` and discharges nothing.
 
@@ -35,7 +35,7 @@ if (exists(msg-[:Attachments]->)) { … }
 Name: coalesce(msg-[:Sender]->.Name, msg-[:Sender]->.Email, "unknown")
 \`\`\`
 
-### COUNT
+### count
 
 \`count(list | walk)\` → \`number\`, always present, reads any order. The member count; \`0\` for null.
 
@@ -43,7 +43,7 @@ Name: coalesce(msg-[:Sender]->.Name, msg-[:Sender]->.Email, "unknown")
 n = count(co-[t:Team]->)
 \`\`\`
 
-### ONLY
+### only
 
 \`only(list | walk)\` → \`T | absent\`, reads any order — *the one that matched*: answers that record or value, and fails the run if there turns out to be more than one. Reach for it whenever a \`WHERE\` narrows to a single thing; over a bare walk it binds the whole record.
 
@@ -51,7 +51,7 @@ n = count(co-[t:Team]->)
 channel = only(chat-[ch:Channels WHERE ch.Name == "ops"]->)
 \`\`\`
 
-### FIRST
+### first
 
 \`first(list)\` → \`T | absent\` — needs an ordered sequence, refused otherwise (the message points at \`only\` when the source is really a single-match lookup).
 
@@ -59,7 +59,7 @@ channel = only(chat-[ch:Channels WHERE ch.Name == "ops"]->)
 newest = first(crm-[c:Companies ORDER BY c.\`Created At\` DESC]->.Name)
 \`\`\`
 
-### SORT
+### sort
 
 \`sort(list)\` / \`sort(list, { order: "desc" })\` / \`sort(list, (r) => r.score)\` / \`sort(list, (r) => r.score, { order: "desc" })\` → the same members in order, always present (commutative — reads any order in). Plain values sort by themselves; a list of records or dicts takes a key function reading one field. The settings record is last, and \`"asc"\` is the default order.
 
@@ -67,7 +67,7 @@ newest = first(crm-[c:Companies ORDER BY c.\`Created At\` DESC]->.Name)
 ranked = sort(rows, (r) => r.score, { order: "desc" })
 \`\`\`
 
-### MAP
+### map
 
 \`map(list, f)\` or \`map(list, f, settings)\` → a list of what \`f\` returned, member by member, in the order given — always present (each slot may itself be absent when \`f\`'s value is). \`f\` is a function \`(member) => { … }\` or \`(member) => expression\` and takes its parameter's type from the collection; it may \`await\` (each member waits on its own). \`map\` alone among the five may skip \`return\` — each slot is then absent and the closure's writes still run — and a bare \`map(...)\` with no binding is a legal statement on its own.
 
@@ -79,7 +79,7 @@ map(ch-[m:Messages]->, (m) => { write graph-[:note]-> { text: m.Text } })
 
 \`settings\` is a record written in place, last: \`onError\` (\`"error"\`, the default, \`"warn"\` or \`"ignore"\`: what a member whose function fails does — the other two leave it out of the answer, \`"warn"\` with a warning on the trace), \`concurrency\` (members run at once) and \`initialConcurrency\` (a first batch of that size runs to the end before the rest start, so a prompt cache is warm before the fan-out). The answer stays in input order, and members writing the same \`unique by\` key take turns, so the record is made once. See *map-and-filter-settings* in the expressions chapter.
 
-### FILTER
+### filter
 
 \`filter(list, f)\` or \`filter(list, f, settings)\` → the members \`f\` answered \`true\` for, in order, always present. \`f\` must give a boolean — \`return\` one, or write the condition as the body. \`settings\` is the same record \`map\` takes; a member whose predicate fails is not kept.
 
@@ -87,7 +87,7 @@ map(ch-[m:Messages]->, (m) => { write graph-[:note]-> { text: m.Text } })
 kept = filter(lines, (t) => { return Text.length(t) > 0 })
 \`\`\`
 
-### REDUCE
+### reduce
 
 \`reduce(list, f, start)\` → whatever \`f\` last returned, always present when \`start\` is. Needs an ordered list — \`f\` is \`(carried, member) => { … }\` and must \`return\` the next carried value.
 
@@ -95,7 +95,7 @@ kept = filter(lines, (t) => { return Text.length(t) > 0 })
 total = reduce(lines, (carried, t) => { return carried + Text.length(t) }, 0)
 \`\`\`
 
-### MEMBERS
+### members
 
 \`members(<T>)\` → a list of a **closed** type's values, always present, in the order they were **declared** — a refinement you wrote, or a field's option set borrowed from a system. Refused on a field whose values are merely *known* (other values are legal there too), since that has no complete membership.
 
@@ -103,7 +103,7 @@ total = reduce(lines, (carried, t) => { return carried + Text.length(t) }, 0)
 theses = members(<Thesis>)
 \`\`\`
 
-### AI
+### ai
 
 \`ai("…")\` → a value from a language model, resolving to a real null when nothing applies — gate with \`!= null\`. Optional settings record last: \`{ tier: "quick" }\` (default), \`"careful"\`, \`"thorough"\`. See *ai* in the expressions chapter for the full treatment — prompting, tiers, and the null-gating idiom.
 
@@ -149,7 +149,7 @@ bucket = copy.intro
 
 ## Text
 
-### TRIM
+### Text.trim
 
 \`Text.trim(text)\` → the text with leading and trailing whitespace removed. Null in, null out.
 
@@ -157,7 +157,7 @@ bucket = copy.intro
 name = Text.trim(msg.Subject)
 \`\`\`
 
-### LOWER
+### Text.lower
 
 \`Text.lower(text)\` → the text, lowercased. Null in, null out.
 
@@ -165,7 +165,7 @@ name = Text.trim(msg.Subject)
 key = Text.lower(msg.From)
 \`\`\`
 
-### UPPER
+### Text.upper
 
 \`Text.upper(text)\` → the text, uppercased. Null in, null out.
 
@@ -173,7 +173,7 @@ key = Text.lower(msg.From)
 code = Text.upper(Text.trim(msg.Subject))
 \`\`\`
 
-### LENGTH
+### Text.length
 
 \`Text.length(text)\` → \`number\`, always present — the character count of a text (an emoji is one character). \`0\` for null. A list's length is \`count(xs)\`.
 
@@ -181,7 +181,7 @@ code = Text.upper(Text.trim(msg.Subject))
 big = Text.length(msg.Body) > 500
 \`\`\`
 
-### TOSTRING
+### Text.from
 
 \`Text.from(value)\` → the value's text form. Null in, null out — a number, date, or boolean prints as its usual text; a record or list is refused (write a field off it instead).
 
@@ -189,7 +189,7 @@ big = Text.length(msg.Body) > 500
 label = Text.from(amount)
 \`\`\`
 
-### SPLIT
+### Text.split
 
 \`Text.split(text, separator?)\` → a list of text, always present (empty when the text is empty). Each piece is trimmed and empty pieces are dropped; \`separator\` defaults to \`","\`.
 
@@ -197,7 +197,7 @@ label = Text.from(amount)
 tags = Text.split(msg.Subject, ";")
 \`\`\`
 
-### CONCAT
+### Text.concat
 
 \`Text.concat(a, b, …)\` → \`text\`, always present — joins its arguments as text. A part that is \`T | absent\` is accepted and prints as nothing, the same rule interpolation follows (\`"\${x}"\` desugars to this same call). A structured value (a dict, a record) is refused — write a field off it first.
 
@@ -205,7 +205,7 @@ tags = Text.split(msg.Subject, ";")
 line = Text.concat(msg.From, " — ", msg.Subject)
 \`\`\`
 
-### JOIN
+### Text.join
 
 \`Text.join(list, separator)\` → \`text\`, always present — the separator is text written in place (\`", "\`), never a name or a template. Needs an ordered sequence (an \`ORDER BY\` on the hop, a relationship the source keeps in order, or a \`sort\`), refused otherwise naming the fix. Over a bound block it joins what the iterations returned.
 
@@ -213,7 +213,7 @@ line = Text.concat(msg.From, " — ", msg.Subject)
 roster = Text.join(sort(co-[t:Team]->.Name), ", ")
 \`\`\`
 
-### CHUNKS
+### Text.chunks
 
 \`Text.chunks(text, { size | entities, overlap })\` → a list of text, always present — cuts a long text into pieces. \`size\` bounds each piece by characters; \`entities\` instead sizes each piece by the records it is expected to yield, cutting on whole lines; exactly one of the two is written, and \`overlap\` (characters repeated from the piece before) works with either. \`unit:\` takes only \`"chars"\`.
 
@@ -221,7 +221,7 @@ roster = Text.join(sort(co-[t:Team]->.Name), ", ")
 pieces = Text.chunks(text, { size: 40000, overlap: 2000 })
 \`\`\`
 
-### TEXT.REGEX_EXTRACT
+### Text.regexExtract
 
 \`Text.regexExtract(text, pattern, group?)\` → \`text\`, empty when nothing matches — the first regex match, or the first capture group when the pattern has one. The pattern reads whole characters (\`.\` matches an emoji) and is absent when malformed: escape only punctuation (\`\\\\.\`, \`\\\\-\`) or a known escape (\`\\\\d\`, \`\\\\s\`, \`\\\\x41\`, \`\\\\u{1F600}\`); an octal escape or an unknown letter escape is malformed.
 
@@ -229,7 +229,7 @@ pieces = Text.chunks(text, { size: 40000, overlap: 2000 })
 ref = Text.regexExtract(m.Subject, "(DEAL-\\\\d+)")
 \`\`\`
 
-### TEXT.SLUG
+### Text.slug
 
 \`Text.slug(text)\` → \`text\`, always present — a lowercase-hyphen slug.
 
@@ -237,7 +237,7 @@ ref = Text.regexExtract(m.Subject, "(DEAL-\\\\d+)")
 slug = Text.slug("Acme Corp Ltd.")   # "acme-corp-ltd"
 \`\`\`
 
-### TEXT.PAIRS
+### Text.pairs
 
 \`Text.pairs(record, separator?)\` → \`text\`, always present — a record or a dict rendered as \`key=value\` pairs, keys in the order they were written (a dict literal's own order; a declared or extracted record's field order), joined by \`separator\` (default \`" | "\`). It takes a record from a walk or a name — \`Text.pairs(e)\` inside \`deduped-[e:entries]-> { … }\`, an extracted node, a \`first(…)\` answer — as well as a literal. Each value renders exactly as \`\${…}\` interpolation would: absent is empty, a boolean is \`true\`/\`false\`, a number is \`Text.from\`'s form. A nested node or edge field is SKIPPED, not stringified — only scalar fields make it into the line. Refused on \`<json>\`: it looks keyed but the checker cannot see its keys, so name the fields into a dict first.
 
@@ -254,7 +254,7 @@ line = "candidate — \${Text.pairs({ name: c.Name, url: c.Website }, ", ")}"
 
 ## Json
 
-### TEXT.SERIALISE
+### Json.stringify
 
 \`Json.stringify(value)\` → \`text\`, always present — any value written out as JSON text for a prompt, the same bytes every time it is the same value (so a prompt that opens with it stays cacheable). The JSON has two-space indent and keys sorted at every level, so the order you wrote fields in never shows. A record is its fields, plus one key per edge it carries holding the nodes on that edge as a list (always a list, even for one node). A dict, list or record inside the value is written out the same way. Absent is \`null\` (a record's absent field keeps its key; a whole absent value is the text \`null\`). Dates and datetimes are ISO text; a file is \`{ contentType, kind: "file", name, size }\`, never its contents. A record read live from a system is refused (build a dict of the fields you want).
 
@@ -265,7 +265,7 @@ card = Json.stringify({ name: "Acme", stage: c.Stage })
 
 ## Number
 
-### ABS
+### Number.abs
 
 \`Number.abs(number)\` → \`number\`, the absolute value.
 
@@ -273,7 +273,7 @@ card = Json.stringify({ name: "Acme", stage: c.Stage })
 diff = Number.abs(before - after)
 \`\`\`
 
-### ROUND
+### Number.round
 
 \`Number.round(number)\` → \`number\`, rounded to the nearest whole number (a half rounds away from zero: 2.5 is 3, -2.5 is -3).
 
@@ -281,7 +281,7 @@ diff = Number.abs(before - after)
 pct = Number.round(score * 100)
 \`\`\`
 
-### FLOOR
+### Number.floor
 
 \`Number.floor(number)\` → \`number\`, rounded down.
 
@@ -289,7 +289,7 @@ pct = Number.round(score * 100)
 pages = Number.floor(Text.length(text) / 3000)
 \`\`\`
 
-### CEIL
+### Number.ceil
 
 \`Number.ceil(number)\` → \`number\`, rounded up.
 
@@ -305,7 +305,7 @@ batches = Number.ceil(count(rows) / 50)
 n = Number.parse(msg.Subject)
 \`\`\`
 
-### NUMBER
+### Number.parse
 
 \`Number.parse(value)\` → \`number\` — coerces text to a number. \`NUMBER(value)\` is its spelling inside walk brackets.
 
@@ -313,7 +313,7 @@ n = Number.parse(msg.Subject)
 crm-[t:Teams WHERE t.\`Team Size\` <= NUMBER(m.Body)]->
 \`\`\`
 
-### NUMBER.FORMAT
+### Number.format
 
 \`Number.format(number, style)\` → \`text | absent\` — a number written out. \`style\` is a literal, checked when you save: \`"compact"\` abbreviates with K/M/B/T, one decimal at most and no trailing \`.0\`; \`"grouped"\` adds thousands separators, keeping a decimal part up to two places.
 
@@ -324,7 +324,7 @@ long  = Number.format(1200000, "grouped")   # "1,200,000"
 
 ## Date
 
-### DATE
+### Date.from
 
 \`Date.from(value)\` → \`date\` — coerces any readable date or timestamp to a calendar day (midnight UTC). Reach for it when a comparison spans two kinds of value; \`DATE(value)\` is its spelling inside walk brackets.
 
@@ -332,7 +332,7 @@ long  = Number.format(1200000, "grouped")   # "1,200,000"
 crm-[s:Tasks WHERE s.\`Snoozed Until\` <= DATE(m.Body)]->
 \`\`\`
 
-### DATE.PARSE
+### Date.parse
 
 \`Date.parse(text)\` → \`date | absent\` — a written date read as an ISO date; unreadable text (including an ambiguous numeric form like \`"12/03/2026"\`) is absent rather than a guess.
 
@@ -340,7 +340,7 @@ crm-[s:Tasks WHERE s.\`Snoozed Until\` <= DATE(m.Body)]->
 d = Date.parse("12 March 2026")   # "2026-03-12"
 \`\`\`
 
-### DATE.ADD_DAYS
+### Date.addDays
 
 \`Date.addDays(date, days)\` → \`date\`, always present — a date shifted by whole days.
 
@@ -348,7 +348,7 @@ d = Date.parse("12 March 2026")   # "2026-03-12"
 deadline = Date.addDays(@current_date, 14)
 \`\`\`
 
-### DATE.FORMAT
+### Date.format
 
 \`Date.format(value, pattern)\` → \`text\`, always present — a date written out for a person to read, from the tokens \`YYYY YY MMMM MMM MM M DD D dddd ddd HH H mm m ss s\`; anything that is not a letter prints as written. The pattern is a literal, checked when you save.
 
@@ -356,7 +356,7 @@ deadline = Date.addDays(@current_date, 14)
 line = Date.format(@current_date, "MMMM D, YYYY")   # "August 31, 2026"
 \`\`\`
 
-### DATE.TODAY
+### Date.today
 
 \`Date.today(zone)\` → \`date\`, always present — the calendar date it is right now in a place, reading the run's pinned instant (not a live clock: every read in one run gives the same day). \`zone\` is a literal IANA name, checked when you save.
 
@@ -366,7 +366,7 @@ today = Date.today("Europe/Berlin")
 
 ## DateTime
 
-### DATETIME
+### DateTime.from
 
 \`DateTime.from(value)\` → \`datetime\` — coerces to a full UTC instant; \`DATETIME(value)\` is its spelling inside walk brackets.
 
@@ -374,7 +374,7 @@ today = Date.today("Europe/Berlin")
 sent = DateTime.from(m.Date)
 \`\`\`
 
-### DATETIME.AT
+### DateTime.at
 
 \`DateTime.at(date, time, zone)\` → \`datetime\`, always present — the instant a wall-clock time on a date names in a place. \`time\` and \`zone\` are literals, checked when you save. Move days with \`Date.addDays\` and anchor each end of a window separately — a daylight-saving change then takes care of itself.
 
@@ -382,7 +382,7 @@ sent = DateTime.from(m.Date)
 win_end = DateTime.at(today, "07:00", "Europe/Berlin")
 \`\`\`
 
-### DATE.FORMAT_ISO
+### DateTime.toIso
 
 \`DateTime.toIso(value)\` → any readable date or timestamp normalised to a full ISO 8601 UTC timestamp. A text with a time of day is read as ISO 8601 / RFC 3339 only (\`2026-03-05T10:00\`, \`2026-03-05 10:00:30+01:00\`); with no offset it is UTC.
 
@@ -392,7 +392,7 @@ iso = DateTime.toIso(m.Date)
 
 ## Currency
 
-### CURRENCY.GET_NUMBER_FROM_FIGURE
+### Currency.numberFromFigure
 
 \`Currency.numberFromFigure(figure)\` → \`number\`, always present (empty when unreadable) — the numeric amount in a money figure.
 
@@ -400,7 +400,7 @@ iso = DateTime.toIso(m.Date)
 amount = Currency.numberFromFigure("£1.2m")   # 1200000
 \`\`\`
 
-### CURRENCY.GET_CODE_FROM_FIGURE
+### Currency.codeFromFigure
 
 \`Currency.codeFromFigure(figure)\` → \`text\` — the ISO currency code in a money figure.
 
@@ -408,7 +408,7 @@ amount = Currency.numberFromFigure("£1.2m")   # 1200000
 code = Currency.codeFromFigure("£1.2m")   # "GBP"
 \`\`\`
 
-### CURRENCY.FORMAT_FIGURE
+### Currency.formatFigure
 
 \`Currency.formatFigure(number, code)\` → \`text | absent\` — a number as a money figure, the inverse of \`Currency.numberFromFigure\`: a symbol where the code has one, the ISO code after a space where it doesn't, the bare number for an empty or unrecognised code. \`code\` may be any expression, not only a literal.
 
@@ -419,7 +419,7 @@ chf  = Currency.formatFigure(1200000, "CHF")   # "1.2M CHF"
 
 ## Url
 
-### URL.HOST
+### Url.host
 
 \`Url.host(text)\` → \`text | absent\` — the host, lowercased and otherwise verbatim (\`www.\` kept, no port, no path). Takes a full URL (\`https://acme.com\`) or a scheme-less address (\`acme.com\`, \`acme.com:8080\`, \`www.Acme.com/path\`) — the bare form is read as if \`http://\` were in front of it. Absent for an email (\`joe@acme.com\` names an account, not a host) and for text that names no address at all.
 
@@ -430,7 +430,7 @@ host2 = Url.host("acme.com")                             # "acme.com" — no sch
 
 ## List
 
-### SUM
+### List.sum
 
 \`List.sum(list of number)\` → \`number\`, always present, reads any order — the total. \`0\` over an empty list.
 
@@ -438,7 +438,7 @@ host2 = Url.host("acme.com")                             # "acme.com" — no sch
 total = List.sum(co-[o:Orders]->.Amount)
 \`\`\`
 
-### AVG
+### List.avg
 
 \`List.avg(list of number)\` → \`number\`, always present, reads any order — the mean.
 
@@ -446,7 +446,7 @@ total = List.sum(co-[o:Orders]->.Amount)
 average = List.avg(co-[o:Orders]->.Amount)
 \`\`\`
 
-### MIN
+### List.min
 
 \`List.min(list)\` → \`T | absent\`, reads any order — the smallest member; absent over an empty list. The element must be orderable (a number, date, datetime, or text).
 
@@ -454,7 +454,7 @@ average = List.avg(co-[o:Orders]->.Amount)
 earliest = List.min(co-[o:Orders]->.\`Placed At\`)
 \`\`\`
 
-### MAX
+### List.max
 
 \`List.max(list)\` → \`T | absent\`, reads any order — the largest member; absent over an empty list.
 
@@ -462,7 +462,7 @@ earliest = List.min(co-[o:Orders]->.\`Placed At\`)
 biggest = List.max(co-[o:Orders]->.Amount)
 \`\`\`
 
-### LAST
+### List.last
 
 \`List.last(list)\` → \`T | absent\` — the same ordering requirement as \`first\`, reading the other end.
 
@@ -470,7 +470,7 @@ biggest = List.max(co-[o:Orders]->.Amount)
 oldest = List.last(sort(co-[o:Orders]->.\`Placed At\`))
 \`\`\`
 
-### COLLECT
+### List.from
 
 \`List.from(list | walk)\` → a list, always present (empty rather than absent), reads any order but keeps the source's order when it has one. Materialises a walk into an ordinary list value — the form to reach for when a later fold (\`Text.join\`, \`first\`, \`xs[n]\`) needs one and the walk itself has none to give.
 
@@ -478,7 +478,7 @@ oldest = List.last(sort(co-[o:Orders]->.\`Placed At\`))
 names = List.from(co-[p:People]->.Name)
 \`\`\`
 
-### MULTI
+### List.compact
 
 \`List.compact(a, b, c, …)\` → a flat list of the arguments with nulls dropped, always present. A list argument flattens one level in, so \`List.compact\` is the way to combine several possibly-empty values (or lists of them) into one list.
 
@@ -486,7 +486,7 @@ names = List.from(co-[p:People]->.Name)
 Tags: List.compact("inbound", region, [\`Sub Tag\`])
 \`\`\`
 
-### GROUPBY
+### List.groupBy
 
 \`List.groupBy(list, key)\` → a dict of lists, always present — files each member under the key its function answers. The values carry the members' own shape (a dict literal's fields read straight off a group); the keys are data, so a lookup with \`by[key]\` is always \`T | absent\` even against a literal string.
 
@@ -494,7 +494,7 @@ Tags: List.compact("inbound", region, [\`Sub Tag\`])
 by = List.groupBy(rows, (r) => { return r.thesis })
 \`\`\`
 
-### KEYBY
+### List.keyBy
 
 \`List.keyBy(list, key)\` → a dict of members, one per key, always present — a repeated key fails the run, naming it. Same shape-carrying and key-lookup rules as \`List.groupBy\`.
 
@@ -504,7 +504,7 @@ byId = List.keyBy(co-[p:People]->, (p) => { return p.Email })
 
 ## File
 
-### FILE
+### File.from
 
 \`File.from(content, "pdf" | "text")\` → a \`file\` value, always present — turns a composed string into a file for a file-typed field. \`type\` is a literal; the content renders as plain text, line breaks preserved.
 
@@ -512,7 +512,7 @@ byId = List.keyBy(co-[p:People]->, (p) => { return p.Email })
 File: File.from(digest, "pdf")
 \`\`\`
 
-### READ
+### File.read
 
 \`File.read(file)\` → \`text | absent\` — the text in a file. An extraction reads a file in its content itself; reach for \`File.read\` when you want the text in hand to cut, measure, or pass to a plugin.
 
