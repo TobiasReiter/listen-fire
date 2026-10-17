@@ -683,7 +683,11 @@ twice. `refreshCredential` needs
 
 ### Credentials
 
-Declare the credential your module needs to reach its provider:
+Declare the credential your module needs to reach its provider. Several
+declarations are ALTERNATIVES (Gmail sign-in or a service account): a
+connection uses exactly one (`connect gmail using alice_gmail`), and the host
+sends only that one. A module that needs two secrets at once declares them as
+two fields of one credential:
 
 ```json
 "credentials": [
@@ -754,9 +758,9 @@ The host sends the connection's credential on every request, beside
   `refresh_token` and `expires_at` for an `oauth2` one. Anything else the host
   keeps beside them (its client secret, say) is never sent.
 - `credential` is the one the connection names, under the declared
-  credential it fills; `credentials` adds the module's other declared ones
-  the host holds ([below](#kinds-settings-spend-and-the-hosts-models)). A
-  module that declares none is sent none.
+  credential it fills. Never more than one: the request has no `credentials`
+  list (an older host that sends one is ignored). A module that declares none
+  is sent none.
 - The host sends a credential only to an installed module that declares it,
   and only over loopback or HTTPS.
 - Never log it, echo it in an error, or store it beyond the call.
@@ -929,11 +933,10 @@ page = web.fetchUrl(u)
   The host asks for them when the module is set up (`lf connect`, the
   platform's install screen) and sends them on every request as
   `"settings": { "base": "app123" }`.
-- **Every declared credential.** A request carries `credential` (the first
-  declared one) and `credentials`, every declared credential the host holds
-  for the connection. A module reads any of them by declared name. One
-  `credentialUpdate` rides an answer: the first credential's, else the first
-  that changed.
+- **One credential.** A request carries `credential`, the one the connection
+  names, under the declared alternative it fills. Read it from
+  `ctx.credential`; `ctx.credential.name` says which alternative it is. One
+  `credentialUpdate` rides an answer: that credential's.
 - **A refused token.** Answer `ok: false` with the code `credential_refused`
   when the provider refused the request's credential. The host refreshes it
   (its OAuth 2 grant, or your `refreshCredential`) and retries the call once.
@@ -1229,9 +1232,10 @@ from the root, so no automation can walk the collection.
   `plugins` (a package of them), paired with the optional method
   `invokePlugin`. Additive: a server that declares none is unchanged, and an
   older host ignores the declaration. See [Plugins](#plugins).
+- **One credential per request** (within version 2, no bump; 2026-10-17). The request's `credentials` list is removed; `credential` is the one the connection names. A module declaring several credentials declares alternatives.
 - **Core modules, settings, spend** (within version 2, no bump; 2026-10-17).
   The manifest may declare `kind`, `slot`, `settings` and `hostModels`; a
-  request may carry `credentials` and `settings`; an answer may carry `cost`;
+  request may carry `settings`; an answer may carry `cost`;
   the error code `credential_refused`; the host's models door; an event's
   `idempotencyKey`. All additive: an older server sends and declares none of
   them and is unchanged, and an older host ignores them. See

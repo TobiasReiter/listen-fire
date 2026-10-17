@@ -211,8 +211,6 @@ export interface CheckedRequest {
    *  gate, not a transform. */
   params: unknown;
   credential?: WireCredentialShape;
-  /** Every declared credential the host sent (protocol 2's `credentials`). */
-  credentials?: WireCredentialShape[];
   /** The install's declared settings. */
   settings?: Readonly<Record<string, string>>;
 }
@@ -267,7 +265,6 @@ export async function readProtocolRequest(
       method,
       params,
       ...(parsed.credential !== undefined ? { credential: parsed.credential } : {}),
-      ...(parsed.credentials !== undefined ? { credentials: parsed.credentials } : {}),
       ...(parsed.settings !== undefined ? { settings: parsed.settings } : {}),
     },
   };

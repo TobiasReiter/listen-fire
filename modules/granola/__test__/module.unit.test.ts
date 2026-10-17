@@ -12,7 +12,6 @@ function contextOver(fields: () => CredentialFields, config: { baseUrlOverride?:
   const requests: string[] = [];
   const ctx: ModuleContext = {
     credential: { name: 'granola', fields: async () => fields(), update: async () => refuse() },
-    credentialNamed: refuse,
     spend: { charge: () => undefined },
     fetch: (async (url: string | URL | Request) => {
       requests.push(String(url));

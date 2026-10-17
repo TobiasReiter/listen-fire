@@ -18,7 +18,6 @@ function contextOver(fields: () => CredentialFields, config: { baseUrlOverride?:
   const seen: Seen[] = [];
   const ctx: ModuleContext = {
     credential: { name: 'evertrace', fields: async () => fields(), update: async () => refuse() },
-    credentialNamed: refuse,
     spend: { charge: () => undefined },
     fetch: (async (url: string | URL | Request, init?: RequestInit) => {
       seen.push({ url: String(url), headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)) });

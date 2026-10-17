@@ -137,11 +137,10 @@ export interface ModuleSpend {
 }
 
 export interface ModuleContext {
-  /** The first credential the module declares. */
+  /** The one credential the connection names, under the declared alternative
+   *  it fills (`credential.name`). Refuses when read if the request carried
+   *  none. */
   credential: ModuleCredential;
-  /** Any credential the module declares, by its declared name (the first is
-   *  `credential`). One the request did not carry refuses when read. */
-  credentialNamed(name: string): ModuleCredential;
   /** Default: the charge is dropped by a host that meters nothing. */
   spend: ModuleSpend;
   fetch: typeof fetch;
