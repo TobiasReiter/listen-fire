@@ -9,6 +9,7 @@ import * as adapter from 'movement-engine/public/adapter';
 import * as catalog from 'movement-engine/public/catalog';
 import * as inbound from 'movement-engine/public/inbound';
 import * as secrets from 'movement-engine/public/secrets';
+import * as plugins from 'movement-engine/public/plugins';
 import * as models from 'movement-engine/public/models';
 import * as files from 'movement-engine/public/files';
 import * as testing from 'movement-engine/public/testing';
@@ -32,7 +33,9 @@ describe('public entries', () => {
     expect(typeof adapter.normalizeAdapterType).toBe('function');
     expect(typeof catalog.buildCatalogSnapshot).toBe('function');
     expect(typeof inbound.verifyRemoteSignature).toBe('function');
-    expect(Object.keys(secrets)).toEqual([]);
+    expect(typeof inbound.receiveDelivery).toBe('function');
+    expect(typeof secrets.createSecretsFamily).toBe('function');
+    expect(Object.keys(plugins.bundledPluginSpecs()).length).toBeGreaterThan(0);
     expect(typeof models.resolveModel).toBe('function');
     expect(typeof files.redeemFileRef).toBe('function');
     expect(typeof testing.makeTestHost).toBe('function');
