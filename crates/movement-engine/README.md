@@ -1,4 +1,13 @@
-# movement-engine
+# listen-fire-engine
+
+The movement engine. Embed it in a Rust program with `embed`: implement the
+host traits your movements need (`Adapters` for the systems they read and
+write, `Store` to park a `sleep`, `Models`, `Judge`, `Files`, `Modules`,
+`Secrets`, `Clock`, `Trace`), then `embed::check` a movement and
+`embed::run` it on an event. `examples/rust-embed` in the repository is a toy
+game loop doing exactly that; the `listen-fire` crate's docs carry a short
+example. The rest of this file is the engine's internals.
+
 
 The movement engine in Rust. A segment of a run executes inside one WASM
 instance and asks for everything outside the program in the host contract's

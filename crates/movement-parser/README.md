@@ -1,4 +1,4 @@
-# movement-parser
+# listen-fire-parser
 
 The movement-language parser and expression lowering in Rust, compiled to
 WASM and called from TypeScript through `packages/movement-lang/wasm/loader.ts`.

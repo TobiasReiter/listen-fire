@@ -9,6 +9,10 @@
 //! its expressions are the evaluator's (`eval`, with `stdlib` and `filter`).
 //! JavaScript's value semantics are `js`'s, and values cross on `env`'s
 //! wire.
+//!
+//! Natively, a Rust program embeds the engine through [`embed`]: typed run
+//! inputs and outcomes, and one trait per host family, over the same
+//! segment and requests.
 
 // A list's cells are a `RefCell`; a borrow held across an await would let a
 // concurrent member's push panic.
