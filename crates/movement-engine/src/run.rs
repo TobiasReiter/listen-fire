@@ -2793,11 +2793,15 @@ mod tests {
         let mut segment = crate::begin(&input.to_string()).unwrap();
         let mut seen = Vec::new();
         let mut step = segment.start().unwrap();
+        // Requests in flight together (a combinator's arms) are answered in
+        // the order they were made.
+        let mut outstanding = std::collections::VecDeque::new();
         loop {
             match step {
                 Step::Done(done) => return (done, seen),
                 Step::Pending(pending) => {
-                    let request = pending.into_iter().next().expect("one request at a time");
+                    outstanding.extend(pending);
+                    let request = outstanding.pop_front().expect("a request to answer");
                     let answer = crate::read_answer(&serve(&request).to_string()).unwrap();
                     seen.push(request.clone());
                     step = segment.answer(request.id, answer).unwrap();
@@ -3132,6 +3136,16 @@ mod tests {
         assert_eq!(code(limited(body, json!({ "maxCollectionItems": 1 }))), "MOVENG_LIMIT_COLLECTION_SIZE");
         let done = limited(body, json!({ "maxResultBytes": 10 }));
         assert_eq!(done["thrown"]["code"], json!("MOVENG_LIMIT_RESULT_SIZE"), "{done}");
+    }
+
+    /// An ordinary failure an `onError` would forgive is never reported in
+    /// place of a limit met beside it, so the limit is never forgiven.
+    #[test]
+    fn a_limit_met_in_one_arm_outranks_an_earlier_arms_forgivable_failure() {
+        let body = "  a = \"xxxx\"\n  r = map([1], (n) => {\n    both = all(() => {\n      fail(\"boom\")\n    }, () => {\n      return \"${a}${a}\"\n    })\n    return both\n  }, { onError: \"ignore\" })";
+        assert!(limited(body, json!({})).get("result").is_some(), "{}", limited(body, json!({})));
+        let done = limited(body, json!({ "maxTextBytes": 6 }));
+        assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_LIMIT_TEXT_SIZE"), "{done}");
     }
 
     #[test]

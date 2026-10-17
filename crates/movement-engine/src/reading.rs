@@ -664,8 +664,11 @@ impl Run<'_> {
                     for result in join_all(hops).await {
                         match result {
                             Ok(found) => reached.extend(found),
+                            // The first record's failure, unless a later one met a limit.
                             Err(error) => {
-                                failure.get_or_insert(error);
+                                if failure.as_ref().is_none_or(|held| matches!(error, Failure::Limit(_)) && !matches!(held, Failure::Limit(_))) {
+                                    failure = Some(error);
+                                }
                             }
                         }
                     }

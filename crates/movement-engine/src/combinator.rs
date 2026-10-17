@@ -9,7 +9,8 @@
 //! the combinator's in arm order once every arm has stopped. The receipt is
 //! a tuple: slot k what arm k returned, a null value where it returned
 //! nothing. An arm that failed fails the combinator, once every other arm
-//! has stopped too; the failure is the earliest arm's.
+//! has stopped too; the failure is the earliest arm's (a limit met before
+//! any other).
 //!
 //! `all(…, { concurrency: n })` (language version 5's `parallel`) runs at
 //! most n arms at once: an arm that parks is waiting, not running, so it
@@ -28,7 +29,7 @@ use std::rc::Rc;
 use movement_parser::ast::{ArmExpression, ClosureExpression, CombinatorArms, CombinatorExpression, CombinatorKind, Statement};
 
 use crate::bindings::{Binding, Closure, Scope};
-use crate::collection::{OnError, is_member_failure};
+use crate::collection::{OnError, is_member_failure, reported_over};
 use crate::env::{Trail, ValueBinding};
 use crate::executor::join_all;
 use crate::flow::{Boundary, Code};
@@ -161,7 +162,7 @@ impl Run<'_> {
         join_all((0..lanes).map(lane).collect()).await;
         let mut settled: Vec<Option<Binding>> = Vec::with_capacity(count);
         let mut parked: Vec<usize> = Vec::new();
-        let mut failure = None;
+        let mut failure: Option<(usize, Stop)> = None;
         for (index, outcome) in ended.into_inner().into_iter().enumerate() {
             let Some((outcome, trace)) = outcome else {
                 settled.push(None);
@@ -170,7 +171,9 @@ impl Run<'_> {
             self.trace.extend(trace);
             match outcome {
                 Ended::Failed(stop) => {
-                    failure.get_or_insert(stop);
+                    if failure.as_ref().is_none_or(|(earliest, held)| reported_over(&stop, index, held, *earliest)) {
+                        failure = Some((index, stop));
+                    }
                     settled.push(None);
                 }
                 Ended::Settled(value) => settled.push(Some(value)),
@@ -180,8 +183,9 @@ impl Run<'_> {
                 }
             }
         }
-        // The earliest arm's failure, once every arm running has stopped.
-        if let Some(stop) = failure {
+        // The earliest arm's failure (a limit met before any other), once
+        // every arm running has stopped.
+        if let Some((_, stop)) = failure {
             return Err(stop);
         }
         let receipt = || Binding::Tuple(Rc::new(settled.iter().map(|slot| slot.clone().unwrap_or_else(null_slot)).collect()));
