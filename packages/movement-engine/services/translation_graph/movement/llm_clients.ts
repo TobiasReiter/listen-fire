@@ -22,6 +22,10 @@ export interface ModelClientOptions {
    *  without passing any other boundary inside its statement. Absent ⇒ never
    *  cancelled. */
   cancel?: CancelGate;
+  /** Whether the loop guard below is on. The host decides (the hosted shell
+   *  reads `EXTRACTION_OUTPUT_BUDGET`); the engine never reads the environment.
+   *  Absent ⇒ off. */
+  outputBudget?: boolean;
 }
 
 async function throwIfCancelledBy(cancel: CancelGate | undefined): Promise<void> {
@@ -40,8 +44,9 @@ async function throwIfCancelledBy(cancel: CancelGate | undefined): Promise<void>
 // output tokens over 7½ minutes, because nothing in the request tied the size
 // of the answer to the size of the question — a flat 64k ceiling paired with
 // the chat wrapper's five continuations put the real ceiling at 384k output
-// tokens for any extraction, however small. `EXTRACTION_OUTPUT_BUDGET=1` (or
-// `true`) switches a model that DOES loop onto the tighter leash below: a
+// tokens for any extraction, however small. A host that sets `outputBudget` (the hosted shell does for
+// `EXTRACTION_OUTPUT_BUDGET=1` or `true`) switches a model that DOES loop onto
+// the tighter leash below: a
 // reply is not free-form, it restates part of its OWN INPUT as records of
 // fields with evidence quotes that are literal substrings of that input, so
 // the budget below sizes the ceiling proportional to the input instead of a
@@ -65,7 +70,7 @@ const CHARS_PER_TOKEN = 4;
 
 /**
  * How much room THIS extraction's reply gets, from the size of what it was
- * asked about. Only consulted when the guard ({@link extractionOutputBudgetEnabled})
+ * asked about. Only consulted when the guard (`outputBudget`)
  * is on — do not delete this on the assumption the flat ceiling replaced it.
  */
 function extractionMaxTokens(input: { system: string; userMessage: string }): number {
@@ -83,17 +88,6 @@ function extractionMaxTokens(input: { system: string; userMessage: string }): nu
  * `callWithRetry` gets its one clean retry.
  */
 const EXTRACTION_MAX_CONTINUATIONS = 1;
-
-/**
- * Opt-in switch for the loop guard above. Read directly off `process.env`
- * (the `LOOP_GUARD_*` idiom, not the prod-required `getEnvVar`) because this
- * is an ops calibration knob, not a required deployment setting — unset must
- * fall back to trusting the model, in every environment including production.
- */
-function extractionOutputBudgetEnabled(): boolean {
-  const raw = process.env.EXTRACTION_OUTPUT_BUDGET;
-  return raw === '1' || raw === 'true';
-}
 
 /** How much of a truncated reply's tail is kept in the diagnostic log —
  *  enough to see what the model was mid-writing when the ceiling landed. */
@@ -167,7 +161,7 @@ export function makeAnthropicLlmClient(options: ModelClientOptions): LlmClient {
       // asked about, capped at one continuation; guard off (the default) ⇒ the
       // flat ceiling and the wrapper's own continuation default — trusting the
       // model like any other caller.
-      const budgetOn = extractionOutputBudgetEnabled();
+      const budgetOn = options.outputBudget === true;
       const maxTokens = input.maxTokens ?? (budgetOn ? extractionMaxTokens(input) : EXTRACTION_MAX_TOKENS);
       const maxContinuations = budgetOn ? EXTRACTION_MAX_CONTINUATIONS : MAX_CHAT_CONTINUATIONS;
       const reply = await options.chat({
@@ -216,7 +210,7 @@ export function makeAnthropicExtractCallClient(options: ModelClientOptions): Ext
     async call(input) {
       await throwIfCancelledBy(options.cancel);
       const joined = input.blocks.map((block) => block.text).join('\n\n');
-      const budgetOn = extractionOutputBudgetEnabled();
+      const budgetOn = options.outputBudget === true;
       const maxTokens =
         input.maxTokens ?? (budgetOn ? extractionMaxTokens({ system: input.system, userMessage: joined }) : EXTRACTION_MAX_TOKENS);
       const reply = await options.chat({

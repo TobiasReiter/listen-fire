@@ -92,7 +92,7 @@ import { registeredPluginSpecs } from '../../services/translation_graph/movement
 /**
  * The three models the tier mapping can currently reach, named by the key
  * production's client already understands. Prices are dollars per million
- * tokens, copied from `lib/llm_usage.ts`'s `MODEL_PRICING` — the table this
+ * tokens, copied from movement-engine's `lib/models/prices.json` — the table this
  * repo actually bills against — so the bake-off's cost column and the app's
  * own cost column cannot drift apart.
  */
@@ -218,7 +218,7 @@ type Tier = keyof typeof TIERS;
 const ALL_TIERS: Tier[] = ['base', 'opus5', 'sonnetLow', 'sonnetHigh'];
 
 /** Dollars per million tokens for the models the tier map can name, from
- *  `lib/llm_usage.ts`'s `MODEL_PRICING` — the same table round 1 copied. Every
+ *  movement-engine's `lib/models/prices.json` — the same table round 1 copied. Every
  *  Opus is priced alike, so the baseline and its replacement differ only in
  *  how many tokens they spend. */
 const TIER_PRICING: Record<TierCallSettings['model'], { input: number; output: number }> = {

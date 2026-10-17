@@ -1204,6 +1204,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   transcription callers moved into a new `model-providers` package. Vendor SDKs load on first use,
   and the package reads no process environment; the hosted API passes its own. No behaviour change.
 
+### ev1-pricing
+
+- Model prices are data: `packages/movement-engine/lib/models/prices.json`, read through `pricing.ts`. The hosted product's costs are unchanged to the microdollar.
+- `lf` now prices its model calls from the same table and charges them to the run, so a run's cost cap sees them.
+- The extraction output budget is a host input (`outputBudget`) rather than an environment read inside the engine; the hosted product still reads `EXTRACTION_OUTPUT_BUDGET`.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

@@ -109,7 +109,7 @@ const ARMS: Record<string, ArmSpec> = {
 
 const DEFAULT_ARMS = ['base', 'opus5', 'sonnet5', 'sonnet5High'];
 
-/** Dollars per million tokens, from `lib/llm_usage.ts`'s `MODEL_PRICING`. The
+/** Dollars per million tokens, from movement-engine's `lib/models/prices.json`. The
  *  grounding judge is a fourth model every arm pays for identically. */
 const PRICING: Record<string, { input: number; output: number }> = {
   'claude-opus-4-8': { input: 5.0, output: 25.0 },
