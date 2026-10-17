@@ -10,20 +10,22 @@ jest.mock('movement-engine/lib/google_cloud', () => {
     ...actual,
     delegatedGoogleAuth: jest.fn((input: { subject: string; scopes: readonly string[] }) => {
       delegatedAuthCalls.push({ subject: input.subject, scopes: input.scopes });
-      return { __marker: 'delegated-auth', subject: input.subject, scopes: input.scopes };
+      return {
+        getClient: async () => ({ getAccessToken: async () => ({ token: `delegated:${input.scopes.join(' ')}` }) }),
+      };
     }),
   };
 });
 
 interface BuiltApi {
-  auth: unknown;
+  auth: { credentials: Record<string, unknown> };
   users: {
     getProfile: jest.Mock;
     messages: { send: jest.Mock };
   };
 }
 const built: BuiltApi[] = [];
-const gmailFactory = jest.fn((opts: { auth: unknown }) => {
+const gmailFactory = jest.fn((opts: { auth: { credentials: Record<string, unknown> } }) => {
   const api: BuiltApi = {
     auth: opts.auth,
     users: {
@@ -39,7 +41,10 @@ const gmailFactory = jest.fn((opts: { auth: unknown }) => {
   return api;
 });
 jest.mock('googleapis', () => ({
-  google: { gmail: (opts: { auth: unknown }) => gmailFactory(opts) },
+  google: {
+    auth: { OAuth2: class { credentials: Record<string, unknown> = {}; setCredentials(credentials: Record<string, unknown>) { this.credentials = credentials; } } },
+    gmail: (opts: { auth: { credentials: Record<string, unknown> } }) => gmailFactory(opts),
+  },
 }));
 
 import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';
@@ -193,6 +198,7 @@ describe('GmailApiClient — each call asks for only the scope it needs', () => 
     await client.getProfile();
 
     expect(readApi.users.getProfile).toHaveBeenCalledTimes(1);
+    expect(readApi.auth.credentials).toEqual({ access_token: `delegated:${GMAIL_READONLY_SCOPE}` });
     expect(sendApi.users.messages.send).not.toHaveBeenCalled();
   });
 
@@ -203,21 +209,24 @@ describe('GmailApiClient — each call asks for only the scope it needs', () => 
     await client.sendMessage({ raw: 'cmF3' });
 
     expect(sendApi.users.messages.send).toHaveBeenCalledTimes(1);
+    expect(sendApi.auth.credentials).toEqual({ access_token: `delegated:${GMAIL_SEND_SCOPE}` });
     expect(readApi.users.getProfile).not.toHaveBeenCalled();
   });
 });
 
 describe('GmailApiClient — the signed-in shape', () => {
-  it('builds ONE token-bearing client rather than impersonating anybody', () => {
-    // eslint-disable-next-line no-new
-    new GmailApiClient(oauthCredentials());
+  it('carries the sign-in\'s ONE token for both scopes rather than impersonating anybody', async () => {
+    const client = new GmailApiClient(oauthCredentials());
+    await client.getProfile();
+    await client.sendMessage({ raw: 'cmF3' });
     expect(delegatedAuthCalls).toEqual([]);
-    expect(gmailFactory).toHaveBeenCalledTimes(1);
+    const [readApi, sendApi] = built;
+    expect(readApi.auth.credentials.access_token).toBe(sendApi.auth.credentials.access_token);
   });
 
   it('refuses a send from the GRANTED SCOPES, before Google is called at all', async () => {
     const client = new GmailApiClient(oauthCredentials([GMAIL_READONLY_SCOPE]));
-    const [api] = built;
+    const [, api] = built;
 
     await expect(client.sendMessage({ raw: 'cmF3' })).rejects.toThrow(/missing_send_scope/);
     expect(api.users.messages.send).not.toHaveBeenCalled();
@@ -225,7 +234,7 @@ describe('GmailApiClient — the signed-in shape', () => {
 
   it('sends when the sign-in did grant the send scope', async () => {
     const client = new GmailApiClient(oauthCredentials());
-    const [api] = built;
+    const [, api] = built;
 
     await client.sendMessage({ raw: 'cmF3' });
 

@@ -1,0 +1,1362 @@
+{
+  "transcript": [
+    {
+      "step": "listEntryPoints",
+      "answer": [
+        {
+          "typeId": "Folder",
+          "displayName": "Folder",
+          "description": "A Google Drive folder this connection has been granted. Create new folders inside one via its `Folders` edge.",
+          "writable": false,
+          "readable": true,
+          "collectionName": "Folders"
+        },
+        {
+          "typeId": "File",
+          "displayName": "File",
+          "description": "A file in Google Drive (granted at the root; create new files inside a folder via its `Files` edge).",
+          "writable": false,
+          "readable": true,
+          "collectionName": "Files"
+        }
+      ]
+    },
+    {
+      "step": "describe Folder",
+      "answer": {
+        "typeId": "Folder",
+        "displayName": "Folder",
+        "description": "A Google Drive folder. Creating one reuses an existing folder with the same name in the same parent instead of duplicating it. Create folders inside a connected folder (`write folder-[:Folders]-> { … }`).",
+        "fields": [
+          {
+            "fieldId": "name",
+            "displayName": "Name",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": true
+          },
+          {
+            "fieldId": "id",
+            "displayName": "Id",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "url",
+            "displayName": "Url",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "folders",
+            "targetTypeId": "Folder",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Folders",
+            "writable": true
+          },
+          {
+            "fieldId": "files",
+            "targetTypeId": "File",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Files",
+            "writable": true
+          }
+        ],
+        "uniquenessAuthorable": false
+      }
+    },
+    {
+      "step": "describe File",
+      "answer": {
+        "typeId": "File",
+        "displayName": "File",
+        "description": "A file in Google Drive. On a create (along a folder's `Files` edge), provide EITHER `File` (upload bytes) OR `Content` (text imported as a Google Doc) — not both. `File` reads the content back as bytes.",
+        "fields": [
+          {
+            "fieldId": "name",
+            "displayName": "Name",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false,
+            "description": "The file name. Optional on a create — defaults to the file value's own name."
+          },
+          {
+            "fieldId": "file",
+            "displayName": "File",
+            "kind": "file",
+            "cardinality": "one",
+            "writable": true,
+            "required": false,
+            "description": "The file content. On a create: a File-typed value (e.g. FILE(…) or a file read from another system) or inline text uploaded as-is. On a read: the bytes — Docs-native files cannot be fetched this way (export is a recorded follow-up)."
+          },
+          {
+            "fieldId": "content",
+            "displayName": "Content",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false,
+            "readable": false,
+            "description": "Text imported as a Google Doc (the doc body). Write-only — a Doc's text cannot be read back through this adapter today. Provide either Content or File, not both."
+          },
+          {
+            "fieldId": "id",
+            "displayName": "Id",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "mimeType",
+            "displayName": "Mime Type",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "url",
+            "displayName": "Url",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          },
+          {
+            "fieldId": "size",
+            "displayName": "Size",
+            "kind": "number",
+            "cardinality": "one",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": [],
+        "uniquenessAuthorable": false
+      }
+    },
+    {
+      "step": "describe Google Drive",
+      "answer": null
+    },
+    {
+      "step": "describe Nonexistent",
+      "answer": null
+    },
+    {
+      "step": "edgesFrom meta",
+      "answer": {
+        "descriptor": {
+          "typeId": "meta",
+          "displayName": "Google Drive",
+          "description": "The Drive items this connection has been granted. Nothing else in the account is visible — granting happens through the Google picker. Create inside a folder via its `Folders` / `Files` edges.",
+          "fields": [],
+          "references": [
+            {
+              "fieldId": "Folders",
+              "targetTypeId": "Folder",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Folders",
+              "description": "Folders this connection has been granted.",
+              "sequenced": "arrival"
+            },
+            {
+              "fieldId": "Files",
+              "targetTypeId": "File",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Files",
+              "description": "Files this connection has been granted.",
+              "sequenced": "arrival"
+            }
+          ]
+        },
+        "targetPositions": {
+          "Folders": {
+            "adapterType": "google_drive",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          },
+          "Files": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          }
+        },
+        "targetNodes": {
+          "Folders": {
+            "typeId": "Folder",
+            "displayName": "Folder",
+            "description": "A Google Drive folder. Creating one reuses an existing folder with the same name in the same parent instead of duplicating it. Create folders inside a connected folder (`write folder-[:Folders]-> { … }`).",
+            "fields": [
+              {
+                "fieldId": "name",
+                "displayName": "Name",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": true
+              },
+              {
+                "fieldId": "id",
+                "displayName": "Id",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "url",
+                "displayName": "Url",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              }
+            ],
+            "uniquenessAuthorable": false
+          },
+          "Files": {
+            "typeId": "File",
+            "displayName": "File",
+            "description": "A file in Google Drive. On a create (along a folder's `Files` edge), provide EITHER `File` (upload bytes) OR `Content` (text imported as a Google Doc) — not both. `File` reads the content back as bytes.",
+            "fields": [
+              {
+                "fieldId": "name",
+                "displayName": "Name",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "description": "The file name. Optional on a create — defaults to the file value's own name."
+              },
+              {
+                "fieldId": "file",
+                "displayName": "File",
+                "kind": "file",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "description": "The file content. On a create: a File-typed value (e.g. FILE(…) or a file read from another system) or inline text uploaded as-is. On a read: the bytes — Docs-native files cannot be fetched this way (export is a recorded follow-up)."
+              },
+              {
+                "fieldId": "content",
+                "displayName": "Content",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "readable": false,
+                "description": "Text imported as a Google Doc (the doc body). Write-only — a Doc's text cannot be read back through this adapter today. Provide either Content or File, not both."
+              },
+              {
+                "fieldId": "id",
+                "displayName": "Id",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "mimeType",
+                "displayName": "Mime Type",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "url",
+                "displayName": "Url",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "size",
+                "displayName": "Size",
+                "kind": "number",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              }
+            ],
+            "uniquenessAuthorable": false
+          }
+        }
+      }
+    },
+    {
+      "step": "Folders collection",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "fold-deals",
+              "data": {
+                "id": "fold-deals",
+                "name": "Deals",
+                "mimeType": "application/vnd.google-apps.folder",
+                "webViewLink": null,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Files collection",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "file-memo",
+              "data": {
+                "id": "file-memo",
+                "name": "acme-memo.txt",
+                "mimeType": "text/plain",
+                "webViewLink": null,
+                "size": null
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "gone-file",
+              "data": {
+                "id": "gone-file",
+                "name": "gone-file",
+                "mimeType": "application/pdf",
+                "webViewLink": null,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Folder collection (type name)",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "fold-deals",
+              "data": {
+                "id": "fold-deals",
+                "name": "Deals",
+                "mimeType": "application/vnd.google-apps.folder",
+                "webViewLink": null,
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "unknown collection",
+      "answer": []
+    },
+    {
+      "step": "refused: incoming direction",
+      "answer": {
+        "error": "GoogleDriveAdapter.getRelated only supports outgoing direction."
+      }
+    },
+    {
+      "step": "edgesFrom Deals",
+      "answer": {
+        "descriptor": {
+          "typeId": "Folder",
+          "displayName": "Folder",
+          "description": "A Google Drive folder. Creating one reuses an existing folder with the same name in the same parent instead of duplicating it. Create folders inside a connected folder (`write folder-[:Folders]-> { … }`).",
+          "fields": [
+            {
+              "fieldId": "name",
+              "displayName": "Name",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": true,
+              "required": true
+            },
+            {
+              "fieldId": "id",
+              "displayName": "Id",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "url",
+              "displayName": "Url",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": false,
+              "required": false
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "folders",
+              "targetTypeId": "Folder",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Folders",
+              "writable": true
+            },
+            {
+              "fieldId": "files",
+              "targetTypeId": "File",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Files",
+              "writable": true
+            }
+          ],
+          "uniquenessAuthorable": false
+        },
+        "targetPositions": {
+          "folders": {
+            "adapterType": "google_drive",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          },
+          "files": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          }
+        },
+        "targetNodes": {
+          "folders": {
+            "typeId": "Folder",
+            "displayName": "Folder",
+            "description": "A Google Drive folder. Creating one reuses an existing folder with the same name in the same parent instead of duplicating it. Create folders inside a connected folder (`write folder-[:Folders]-> { … }`).",
+            "fields": [
+              {
+                "fieldId": "name",
+                "displayName": "Name",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": true
+              },
+              {
+                "fieldId": "id",
+                "displayName": "Id",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "url",
+                "displayName": "Url",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              }
+            ],
+            "uniquenessAuthorable": false
+          },
+          "files": {
+            "typeId": "File",
+            "displayName": "File",
+            "description": "A file in Google Drive. On a create (along a folder's `Files` edge), provide EITHER `File` (upload bytes) OR `Content` (text imported as a Google Doc) — not both. `File` reads the content back as bytes.",
+            "fields": [
+              {
+                "fieldId": "name",
+                "displayName": "Name",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "description": "The file name. Optional on a create — defaults to the file value's own name."
+              },
+              {
+                "fieldId": "file",
+                "displayName": "File",
+                "kind": "file",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "description": "The file content. On a create: a File-typed value (e.g. FILE(…) or a file read from another system) or inline text uploaded as-is. On a read: the bytes — Docs-native files cannot be fetched this way (export is a recorded follow-up)."
+              },
+              {
+                "fieldId": "content",
+                "displayName": "Content",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": true,
+                "required": false,
+                "readable": false,
+                "description": "Text imported as a Google Doc (the doc body). Write-only — a Doc's text cannot be read back through this adapter today. Provide either Content or File, not both."
+              },
+              {
+                "fieldId": "id",
+                "displayName": "Id",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "mimeType",
+                "displayName": "Mime Type",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "url",
+                "displayName": "Url",
+                "kind": "string",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              },
+              {
+                "fieldId": "size",
+                "displayName": "Size",
+                "kind": "number",
+                "cardinality": "one",
+                "writable": false,
+                "required": false
+              }
+            ],
+            "uniquenessAuthorable": false
+          }
+        }
+      }
+    },
+    {
+      "step": "Deals / Folders",
+      "answer": []
+    },
+    {
+      "step": "Deals / Files",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "file-memo",
+              "data": {
+                "id": "file-memo",
+                "name": "acme-memo.txt",
+                "mimeType": "text/plain",
+                "webViewLink": "https://drive.google.com/file/d/file-memo",
+                "size": 47
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "refused: Deals / unknown edge",
+      "answer": {
+        "error": "'Drives' is not a known edge of 'Folder' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current edges, or rename in the source system."
+      }
+    },
+    {
+      "step": "memo hop",
+      "answer": {
+        "descriptor": {
+          "typeId": "File",
+          "displayName": "File",
+          "description": "A file in Google Drive. On a create (along a folder's `Files` edge), provide EITHER `File` (upload bytes) OR `Content` (text imported as a Google Doc) — not both. `File` reads the content back as bytes.",
+          "fields": [
+            {
+              "fieldId": "name",
+              "displayName": "Name",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": true,
+              "required": false,
+              "description": "The file name. Optional on a create — defaults to the file value's own name."
+            },
+            {
+              "fieldId": "file",
+              "displayName": "File",
+              "kind": "file",
+              "cardinality": "one",
+              "writable": true,
+              "required": false,
+              "description": "The file content. On a create: a File-typed value (e.g. FILE(…) or a file read from another system) or inline text uploaded as-is. On a read: the bytes — Docs-native files cannot be fetched this way (export is a recorded follow-up)."
+            },
+            {
+              "fieldId": "content",
+              "displayName": "Content",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": true,
+              "required": false,
+              "readable": false,
+              "description": "Text imported as a Google Doc (the doc body). Write-only — a Doc's text cannot be read back through this adapter today. Provide either Content or File, not both."
+            },
+            {
+              "fieldId": "id",
+              "displayName": "Id",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "mimeType",
+              "displayName": "Mime Type",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "url",
+              "displayName": "Url",
+              "kind": "string",
+              "cardinality": "one",
+              "writable": false,
+              "required": false
+            },
+            {
+              "fieldId": "size",
+              "displayName": "Size",
+              "kind": "number",
+              "cardinality": "one",
+              "writable": false,
+              "required": false
+            }
+          ],
+          "references": [],
+          "uniquenessAuthorable": false
+        }
+      }
+    },
+    {
+      "step": "memo / Files (a file has no edges)",
+      "answer": []
+    },
+    {
+      "step": "memo.Id",
+      "answer": "file-memo"
+    },
+    {
+      "step": "memo.Name",
+      "answer": "acme-memo.txt"
+    },
+    {
+      "step": "memo.Mime Type",
+      "answer": "text/plain"
+    },
+    {
+      "step": "memo.Url",
+      "answer": "https://drive.google.com/file/d/file-memo"
+    },
+    {
+      "step": "memo.Size",
+      "answer": 47
+    },
+    {
+      "step": "memo.File",
+      "answer": {
+        "__brand": "FileRef",
+        "name": "acme-memo.txt",
+        "contentType": "text/plain",
+        "size": 47,
+        "source": {
+          "adapterType": "google_drive",
+          "credentialId": "cred-parity",
+          "handle": "file-memo"
+        }
+      }
+    },
+    {
+      "step": "memo.Content",
+      "answer": null
+    },
+    {
+      "step": "memo.Missing",
+      "answer": null
+    },
+    {
+      "step": "Deals.Name",
+      "answer": "Deals"
+    },
+    {
+      "step": "Deals.File",
+      "answer": null
+    },
+    {
+      "step": "granted memo.Url",
+      "answer": null
+    },
+    {
+      "step": "granted memo.File",
+      "answer": {
+        "__brand": "FileRef",
+        "name": "acme-memo.txt",
+        "contentType": "text/plain",
+        "source": {
+          "adapterType": "google_drive",
+          "credentialId": "cred-parity",
+          "handle": "file-memo"
+        }
+      }
+    },
+    {
+      "step": "gone file.File",
+      "answer": {
+        "__brand": "FileRef",
+        "name": "gone-file",
+        "contentType": "application/pdf",
+        "source": {
+          "adapterType": "google_drive",
+          "credentialId": "cred-parity",
+          "handle": "gone-file"
+        }
+      }
+    },
+    {
+      "step": "memo bytes",
+      "answer": {
+        "contentType": "text/plain",
+        "base64": "QWNtZSBpbnZlc3RtZW50IG1lbW86IEFSUiAxLjJNLCBncm93aW5nIDglIE1vTS4="
+      }
+    },
+    {
+      "step": "granted memo bytes",
+      "answer": {
+        "contentType": "text/plain",
+        "base64": "QWNtZSBpbnZlc3RtZW50IG1lbW86IEFSUiAxLjJNLCBncm93aW5nIDglIE1vTS4="
+      }
+    },
+    {
+      "step": "refused: gone file bytes",
+      "answer": {
+        "error": "Request failed with status code 404"
+      }
+    },
+    {
+      "step": "refused: bytes of a file with no handle",
+      "answer": {
+        "error": "GoogleDriveAdapter.resolveFileRef: FileRef has no source handle."
+      }
+    },
+    {
+      "step": "resolveEntity Folder",
+      "answer": {
+        "candidates": []
+      }
+    },
+    {
+      "step": "create Folder under Deals",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "1",
+        "data": {
+          "name": "Q3 Deals",
+          "url": "https://drive.google.com/drive/folders/1"
+        }
+      }
+    },
+    {
+      "step": "create Folder again (reused by name)",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "1",
+        "data": {
+          "name": "Q3 Deals",
+          "url": "https://drive.google.com/drive/folders/1"
+        }
+      }
+    },
+    {
+      "step": "create Folder by the parent field",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "2",
+        "data": {
+          "name": "Pinned",
+          "url": "https://drive.google.com/drive/folders/2"
+        }
+      }
+    },
+    {
+      "step": "refused: create Folder with no parent",
+      "answer": {
+        "error": "GoogleDriveAdapter.createFolder: no parent folder — create it along a connected folder's edge (write folder-[:Folders]-> { … })."
+      }
+    },
+    {
+      "step": "create File from Content (a Google Doc)",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "3",
+        "data": {
+          "name": "Deal notes",
+          "url": "https://drive.google.com/file/d/3"
+        }
+      }
+    },
+    {
+      "step": "create File from inline text",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "4",
+        "data": {
+          "name": "inline.txt",
+          "url": "https://drive.google.com/file/d/4"
+        }
+      }
+    },
+    {
+      "step": "create File from inline content",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "5",
+        "data": {
+          "name": "composed.md",
+          "url": "https://drive.google.com/file/d/5"
+        }
+      }
+    },
+    {
+      "step": "create File from the memo file (upload)",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "6",
+        "data": {
+          "name": "memo-copy.txt",
+          "url": "https://drive.google.com/file/d/6"
+        }
+      }
+    },
+    {
+      "step": "create File from the memo file, its own name",
+      "answer": {
+        "adapterType": "google_drive",
+        "externalId": "7",
+        "data": {
+          "name": "acme-memo.txt",
+          "url": "https://drive.google.com/file/d/7"
+        }
+      }
+    },
+    {
+      "step": "refused: create File with both Content and File",
+      "answer": {
+        "error": "GoogleDriveAdapter.createRecord(File): both `Content` and `File` are set — provide exactly one (`Content` imports text as a Google Doc; `File` uploads bytes as-is)."
+      }
+    },
+    {
+      "step": "refused: create File with neither",
+      "answer": {
+        "error": "GoogleDriveAdapter.createRecord(File): neither `Content` nor `File` is set — provide one (`Content` imports text as a Google Doc; `File` uploads bytes as-is)."
+      }
+    },
+    {
+      "step": "refused: create File with no parent",
+      "answer": {
+        "error": "GoogleDriveAdapter.createRecord(File): no parent folder — create it along a connected folder's edge (write folder-[:Files]-> { … })."
+      }
+    },
+    {
+      "step": "refused: create File from a file with no bytes",
+      "answer": {
+        "error": "GoogleDriveAdapter.createRecord(File): file value \"nothing.bin\" has no retrievable file and no inline content."
+      }
+    },
+    {
+      "step": "refused: create an unknown type",
+      "answer": {
+        "error": "GoogleDriveAdapter.createRecord: unrecognised recordType \"Drive\"."
+      }
+    },
+    {
+      "step": "refused: updateRecord",
+      "answer": {
+        "error": "Google Drive is create-only — updateRecord is not supported. Folder and File creates have no in-place edit; model a change as a new write instead."
+      }
+    },
+    {
+      "step": "refused: deleteRecord",
+      "answer": {
+        "error": "Google Drive is create-only — deleteRecord is not supported. Created folders/files have no delete path through this adapter."
+      }
+    },
+    {
+      "step": "Deals / Folders after the writes",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "1",
+              "data": {
+                "id": "1",
+                "name": "Q3 Deals",
+                "mimeType": "application/vnd.google-apps.folder",
+                "webViewLink": "https://drive.google.com/drive/folders/1",
+                "size": null
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "Folder",
+            "identity": {
+              "kind": "stable",
+              "recordId": "2",
+              "data": {
+                "id": "2",
+                "name": "Pinned",
+                "mimeType": "application/vnd.google-apps.folder",
+                "webViewLink": "https://drive.google.com/drive/folders/2",
+                "size": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Deals / Files after the writes",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "file-memo",
+              "data": {
+                "id": "file-memo",
+                "name": "acme-memo.txt",
+                "mimeType": "text/plain",
+                "webViewLink": "https://drive.google.com/file/d/file-memo",
+                "size": 47
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "3",
+              "data": {
+                "id": "3",
+                "name": "Deal notes",
+                "mimeType": "application/vnd.google-apps.document",
+                "webViewLink": "https://drive.google.com/file/d/3",
+                "size": 24
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "4",
+              "data": {
+                "id": "4",
+                "name": "inline.txt",
+                "mimeType": "application/octet-stream",
+                "webViewLink": "https://drive.google.com/file/d/4",
+                "size": 19
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "5",
+              "data": {
+                "id": "5",
+                "name": "composed.md",
+                "mimeType": "application/octet-stream",
+                "webViewLink": "https://drive.google.com/file/d/5",
+                "size": 10
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "6",
+              "data": {
+                "id": "6",
+                "name": "memo-copy.txt",
+                "mimeType": "application/octet-stream",
+                "webViewLink": "https://drive.google.com/file/d/6",
+                "size": 47
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "google_drive",
+            "recordType": "File",
+            "identity": {
+              "kind": "stable",
+              "recordId": "7",
+              "data": {
+                "id": "7",
+                "name": "acme-memo.txt",
+                "mimeType": "application/octet-stream",
+                "webViewLink": "https://drive.google.com/file/d/7",
+                "size": 47
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "memo copy.File",
+      "answer": {
+        "__brand": "FileRef",
+        "name": "memo-copy.txt",
+        "contentType": "application/octet-stream",
+        "size": 47,
+        "source": {
+          "adapterType": "google_drive",
+          "credentialId": "cred-parity",
+          "handle": "6"
+        }
+      }
+    },
+    {
+      "step": "memo copy bytes",
+      "answer": {
+        "contentType": "application/octet-stream",
+        "base64": "QWNtZSBpbnZlc3RtZW50IG1lbW86IEFSUiAxLjJNLCBncm93aW5nIDglIE1vTS4="
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=%27fold-deals%27%20in%20parents%20and%20trashed%20%3D%20false%20and%20mimeType%20%3D%20%27application%2Fvnd.google-apps.folder%27&fields=files%28id%2Cname%2CmimeType%2CwebViewLink%2Csize%29&pageSize=200&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=%27fold-deals%27%20in%20parents%20and%20trashed%20%3D%20false%20and%20mimeType%20%21%3D%20%27application%2Fvnd.google-apps.folder%27&fields=files%28id%2Cname%2CmimeType%2CwebViewLink%2Csize%29&pageSize=200&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[{\"id\":\"file-memo\",\"name\":\"acme-memo.txt\",\"mimeType\":\"text/plain\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/file-memo\",\"size\":47}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/file-memo?alt=media",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "Acme investment memo: ARR 1.2M, growing 8% MoM.",
+      "responseContentType": "text/plain; charset=utf-8"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/file-memo?alt=media",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "Acme investment memo: ARR 1.2M, growing 8% MoM.",
+      "responseContentType": "text/plain; charset=utf-8"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/gone-file?alt=media",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 404,
+      "response": "{\"error\":\"not found\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=name%20%3D%20%27Q3%20Deals%27%20and%20%27fold-deals%27%20in%20parents%20and%20mimeType%20%3D%20%27application%2Fvnd.google-apps.folder%27%20and%20trashed%20%3D%20false&fields=files%28id%2Cname%29&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/drive/v3/files?fields=id%2CwebViewLink",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "name": "Q3 Deals",
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [
+          "fold-deals"
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"1\",\"name\":\"Q3 Deals\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/drive/folders/1\",\"size\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=name%20%3D%20%27Q3%20Deals%27%20and%20%27fold-deals%27%20in%20parents%20and%20mimeType%20%3D%20%27application%2Fvnd.google-apps.folder%27%20and%20trashed%20%3D%20false&fields=files%28id%2Cname%29&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[{\"id\":\"1\",\"name\":\"Q3 Deals\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/drive/folders/1\",\"size\":null}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=name%20%3D%20%27Pinned%27%20and%20%27fold-deals%27%20in%20parents%20and%20mimeType%20%3D%20%27application%2Fvnd.google-apps.folder%27%20and%20trashed%20%3D%20false&fields=files%28id%2Cname%29&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/drive/v3/files?fields=id%2CwebViewLink",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "name": "Pinned",
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [
+          "fold-deals"
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"2\",\"name\":\"Pinned\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/drive/folders/2\",\"size\":null}"
+    },
+    {
+      "method": "POST",
+      "path": "/upload/drive/v3/files?fields=id%2CwebViewLink&uploadType=multipart",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "multipart": [
+          {
+            "contentType": "application/json",
+            "body": {
+              "name": "Deal notes",
+              "mimeType": "application/vnd.google-apps.document",
+              "parents": [
+                "fold-deals"
+              ]
+            }
+          },
+          {
+            "contentType": "text/plain",
+            "body": "Acme: term sheet signed."
+          }
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"3\",\"name\":\"Deal notes\",\"mimeType\":\"application/vnd.google-apps.document\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/3\",\"size\":24}"
+    },
+    {
+      "method": "POST",
+      "path": "/upload/drive/v3/files?fields=id%2CwebViewLink&uploadType=multipart",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "multipart": [
+          {
+            "contentType": "application/json",
+            "body": {
+              "name": "inline.txt",
+              "parents": [
+                "fold-deals"
+              ]
+            }
+          },
+          {
+            "contentType": "text/plain",
+            "body": "plain bytes, inline"
+          }
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"4\",\"name\":\"inline.txt\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/4\",\"size\":19}"
+    },
+    {
+      "method": "POST",
+      "path": "/upload/drive/v3/files?fields=id%2CwebViewLink&uploadType=multipart",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "multipart": [
+          {
+            "contentType": "application/json",
+            "body": {
+              "name": "composed.md",
+              "parents": [
+                "fold-deals"
+              ]
+            }
+          },
+          {
+            "contentType": "text/markdown",
+            "body": "# Composed"
+          }
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"5\",\"name\":\"composed.md\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/5\",\"size\":10}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/file-memo?alt=media",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "Acme investment memo: ARR 1.2M, growing 8% MoM.",
+      "responseContentType": "text/plain; charset=utf-8"
+    },
+    {
+      "method": "POST",
+      "path": "/upload/drive/v3/files?fields=id%2CwebViewLink&uploadType=multipart",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "multipart": [
+          {
+            "contentType": "application/json",
+            "body": {
+              "name": "memo-copy.txt",
+              "parents": [
+                "fold-deals"
+              ]
+            }
+          },
+          {
+            "contentType": "text/plain",
+            "body": "Acme investment memo: ARR 1.2M, growing 8% MoM."
+          }
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"6\",\"name\":\"memo-copy.txt\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/6\",\"size\":47}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/file-memo?alt=media",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "Acme investment memo: ARR 1.2M, growing 8% MoM.",
+      "responseContentType": "text/plain; charset=utf-8"
+    },
+    {
+      "method": "POST",
+      "path": "/upload/drive/v3/files?fields=id%2CwebViewLink&uploadType=multipart",
+      "authorization": "Bearer parity-google-access-token",
+      "body": {
+        "multipart": [
+          {
+            "contentType": "application/json",
+            "body": {
+              "name": "acme-memo.txt",
+              "parents": [
+                "fold-deals"
+              ]
+            }
+          },
+          {
+            "contentType": "text/plain",
+            "body": "Acme investment memo: ARR 1.2M, growing 8% MoM."
+          }
+        ]
+      },
+      "status": 200,
+      "response": "{\"id\":\"7\",\"name\":\"acme-memo.txt\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/7\",\"size\":47}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=%27fold-deals%27%20in%20parents%20and%20trashed%20%3D%20false%20and%20mimeType%20%3D%20%27application%2Fvnd.google-apps.folder%27&fields=files%28id%2Cname%2CmimeType%2CwebViewLink%2Csize%29&pageSize=200&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[{\"id\":\"1\",\"name\":\"Q3 Deals\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/drive/folders/1\",\"size\":null},{\"id\":\"2\",\"name\":\"Pinned\",\"mimeType\":\"application/vnd.google-apps.folder\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/drive/folders/2\",\"size\":null}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files?q=%27fold-deals%27%20in%20parents%20and%20trashed%20%3D%20false%20and%20mimeType%20%21%3D%20%27application%2Fvnd.google-apps.folder%27&fields=files%28id%2Cname%2CmimeType%2CwebViewLink%2Csize%29&pageSize=200&spaces=drive",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"files\":[{\"id\":\"file-memo\",\"name\":\"acme-memo.txt\",\"mimeType\":\"text/plain\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/file-memo\",\"size\":47},{\"id\":\"3\",\"name\":\"Deal notes\",\"mimeType\":\"application/vnd.google-apps.document\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/3\",\"size\":24},{\"id\":\"4\",\"name\":\"inline.txt\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/4\",\"size\":19},{\"id\":\"5\",\"name\":\"composed.md\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/5\",\"size\":10},{\"id\":\"6\",\"name\":\"memo-copy.txt\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/6\",\"size\":47},{\"id\":\"7\",\"name\":\"acme-memo.txt\",\"mimeType\":\"application/octet-stream\",\"parents\":[\"fold-deals\"],\"webViewLink\":\"https://drive.google.com/file/d/7\",\"size\":47}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/drive/v3/files/6?alt=media",
+      "authorization": "Bearer parity-google-access-token",
+      "body": null,
+      "status": 200,
+      "response": "Acme investment memo: ARR 1.2M, growing 8% MoM.",
+      "responseContentType": "application/octet-stream; charset=utf-8"
+    }
+  ]
+}

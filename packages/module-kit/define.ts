@@ -51,11 +51,16 @@ export interface ModuleFiles {
 }
 
 /** Small durable state of the module's own, per install (a dedup mark, a
- *  cursor nothing else holds). Values are JSON. */
+ *  cursor nothing else holds, the items a user granted it). Values are JSON;
+ *  `get` of a key never set answers undefined. A host may answer a key from
+ *  its own records and refuse to `set` or `delete` it. */
 export interface ModuleKv {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<void>;
   delete(key: string): Promise<void>;
+  /** Every entry whose key starts with `prefix`, in the order the keys were
+   *  first set. */
+  list(prefix: string): Promise<Array<{ key: string; value: unknown }>>;
 }
 
 export interface ModuleConfig {

@@ -3,13 +3,14 @@
 // `listening <port>` once it answers (the line lf's externals wait for), logs
 // as JSON lines on stderr, and binds loopback unless told otherwise.
 
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { resolve as resolvePath } from 'node:path';
 
 import type { ModuleDefinition, ModuleFiles, ModuleLog } from './define';
 
-import { refusingKv } from './in_process';
+import { fileKv } from './file_kv';
+import { refusingFiles, refusingKv } from './in_process';
 import { createModuleProtocolHandler } from './module_server';
 
 /** A log that writes one JSON line per entry to `write`. */
@@ -39,6 +40,13 @@ function urlFiles(module: string): ModuleFiles {
   };
 }
 
+/** The host part of this server's own URL: a wildcard bind is reached at
+ *  loopback (a caller elsewhere needs MODULE_PUBLIC_URL). */
+function ownOrigin(bindHost: string): string {
+  if (bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '') return '127.0.0.1';
+  return bindHost.includes(':') ? `[${bindHost}]` : bindHost;
+}
+
 export interface ServeModuleOptions {
   definition: ModuleDefinition;
   /** 0 (the default) picks a free one. */
@@ -49,6 +57,14 @@ export interface ServeModuleOptions {
   token?: string;
   baseUrlOverride?: string;
   log?: ModuleLog;
+  /** Where the module's kv is kept, one file per tenant. Absent: the module
+   *  has no kv, and using it is refused. */
+  stateDir?: string;
+  /** The install's construction arguments, for every request. */
+  constructionArgs?: Readonly<Record<string, string>>;
+  /** Where callers reach this server (behind a proxy), for file URLs.
+   *  Default: the address it binds. */
+  publicUrl?: string;
 }
 
 export async function serveModule(options: ServeModuleOptions): Promise<{ port: number; server: Server }> {
@@ -56,23 +72,37 @@ export async function serveModule(options: ServeModuleOptions): Promise<{ port: 
   const log = options.log ?? jsonLineLog(definition.name, (line) => process.stderr.write(line));
   const unavailable = (what: string) =>
     `module ${definition.name}: ${what} is not available when the module is served as a process (protocol 2 carries files by URL and keeps no module state)`;
-  const handler = createModuleProtocolHandler({
-    definition,
-    log,
-    files: urlFiles(definition.name),
-    kv: refusingKv(unavailable('ctx.kv')),
-    ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
-    ...(token !== undefined ? { authenticate: (headers) => headers.authorization === `Bearer ${token}` } : {}),
-  });
+  const { stateDir } = options;
+  const noKv = refusingKv(`${unavailable('ctx.kv')}; set MODULE_STATE_DIR to keep it in files`);
+  // The handler is built once the port is known: a file's URL is under
+  // MODULE_PUBLIC_URL, else this server's own bound address, and never under
+  // a request's Host header.
+  let handler: ((req: IncomingMessage, res: ServerResponse) => Promise<void>) | undefined;
   const server = createServer((req, res) => {
+    if (handler === undefined) {
+      res.writeHead(503).end();
+      return;
+    }
     handler(req, res).catch((error: unknown) => {
       log.error('request failed outside the envelope', { error: error instanceof Error ? error.message : String(error) });
       if (!res.headersSent) res.writeHead(500).end();
     });
   });
-  await new Promise<void>((done) => server.listen(options.port ?? 0, options.host ?? '127.0.0.1', done));
+  const bindHost = options.host ?? '127.0.0.1';
+  await new Promise<void>((done) => server.listen(options.port ?? 0, bindHost, done));
   const address: AddressInfo | string | null = server.address();
   if (address === null || typeof address === 'string') throw new Error('serve-module: the server is not listening on a port');
+  const publicUrl = options.publicUrl ?? `http://${ownOrigin(bindHost)}:${address.port}`;
+  handler = createModuleProtocolHandler({
+    definition,
+    log,
+    files: refusingFiles(unavailable('ctx.files')),
+    kvFor: stateDir !== undefined ? (tenant) => fileKv(stateDir, tenant) : () => noKv,
+    ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
+    ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
+    publicUrl,
+    ...(token !== undefined ? { authenticate: (headers) => headers.authorization === `Bearer ${token}` } : {}),
+  });
   return { port: address.port, server };
 }
 
@@ -99,8 +129,21 @@ export function loadModuleDefinition(specifier: string, cwd: string): ModuleDefi
   throw new Error(`serve-module: ${specifier} exports no module (a default export or \`module\` made with defineModule)`);
 }
 
+/** A JSON object of strings (`MODULE_CONSTRUCTION_ARGS`), or a refusal. */
+export function parseConstructionArgs(text: string): Record<string, string> {
+  const refuse = (): never => {
+    throw new Error('serve-module: MODULE_CONSTRUCTION_ARGS is a JSON object of strings, e.g. {"spreadsheet":"Pipeline"}');
+  };
+  const parsed: unknown = JSON.parse(text);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return refuse();
+  const args: Record<string, string> = {};
+  for (const [name, value] of Object.entries(parsed)) args[name] = typeof value === 'string' ? value : refuse();
+  return args;
+}
+
 /** The command line: `serve-module <module> [--port N] [--host H]`; PORT,
- *  MODULE_TOKEN and MODULE_BASE_URL_OVERRIDE from the environment. */
+ *  MODULE_TOKEN, MODULE_BASE_URL_OVERRIDE, MODULE_STATE_DIR,
+ *  MODULE_CONSTRUCTION_ARGS and MODULE_PUBLIC_URL from the environment. */
 export async function main(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): Promise<void> {
   const args = [...argv];
   const flag = (name: string): string | undefined => {
@@ -120,6 +163,11 @@ export async function main(argv: readonly string[], env: Readonly<Record<string,
     ...(host !== undefined ? { host } : {}),
     ...(env.MODULE_TOKEN !== undefined && env.MODULE_TOKEN !== '' ? { token: env.MODULE_TOKEN } : {}),
     ...(env.MODULE_BASE_URL_OVERRIDE !== undefined && env.MODULE_BASE_URL_OVERRIDE !== '' ? { baseUrlOverride: env.MODULE_BASE_URL_OVERRIDE } : {}),
+    ...(env.MODULE_STATE_DIR !== undefined && env.MODULE_STATE_DIR !== '' ? { stateDir: env.MODULE_STATE_DIR } : {}),
+    ...(env.MODULE_CONSTRUCTION_ARGS !== undefined && env.MODULE_CONSTRUCTION_ARGS !== ''
+      ? { constructionArgs: parseConstructionArgs(env.MODULE_CONSTRUCTION_ARGS) }
+      : {}),
+    ...(env.MODULE_PUBLIC_URL !== undefined && env.MODULE_PUBLIC_URL !== '' ? { publicUrl: env.MODULE_PUBLIC_URL } : {}),
   });
   process.stdout.write(`listening ${served.port}\n`);
 }

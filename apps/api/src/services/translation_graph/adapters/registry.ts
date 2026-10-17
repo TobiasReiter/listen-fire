@@ -108,7 +108,8 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Google Sheets adapter — append-only write target (v3-output parity).
   // Source-side triggers (snapshot/poll) are deferred — Sheets has no v3
   // input — so it appears as a target in the editor picker, not a source.
-  [GOOGLE_SHEETS_ADAPTER_TYPE]: ({ teamId, credentialsId, constructionArgs }) =>
+  // Its line in BUILTIN_MODULES says module or legacy.
+  [GOOGLE_SHEETS_ADAPTER_TYPE]: builtinAdapterFactory(GOOGLE_SHEETS_ADAPTER_TYPE, ({ teamId, credentialsId, constructionArgs }) =>
     createGoogleSheetsAdapter({
       teamId,
       credentialsId,
@@ -116,11 +117,13 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
         ? { spreadsheet: constructionArgs.spreadsheet }
         : {}),
     }),
+  ),
   // Google Drive adapter — create-only write target (v3-output parity).
   // Source-side triggers (snapshot/poll) are deferred — Drive has no v3
   // input — so it appears as a target in the editor picker, not a source.
-  [GOOGLE_DRIVE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
+  [GOOGLE_DRIVE_ADAPTER_TYPE]: builtinAdapterFactory(GOOGLE_DRIVE_ADAPTER_TYPE, ({ teamId, credentialsId }) =>
     createGoogleDriveAdapter({ teamId, credentialsId }),
+  ),
   // Dropbox adapter — create-only write target (v3-output parity). Source-side
   // triggers (snapshot/poll) are deferred — Dropbox has no v3 input — so it
   // appears as a target in the editor picker, not a source.
@@ -168,8 +171,10 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // mailbox. Event production lives on its PollSource (POLL_SOURCE_FACTORIES
   // below). Distinct from the `email` adapter, which only ever sees mail
   // FORWARDED to the deployment's inbound address.
-  [GMAIL_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
+  // Its line in BUILTIN_MODULES says module or legacy.
+  [GMAIL_ADAPTER_TYPE]: builtinAdapterFactory(GMAIL_ADAPTER_TYPE, ({ teamId, credentialsId }) =>
     createGmailAdapter({ teamId, credentialsId }),
+  ),
   [ASK_ADAPTER_TYPE]: ({ teamId }) => createAskAdapter({ teamId }),
   // System — the platform itself as a source (a run failed, …). Credential-
   // free and read-only; event production lives on its PollSource, which reads
@@ -197,8 +202,9 @@ const POLL_SOURCE_FACTORIES: Record<string, PollSourceFactory> = {
     const { createDealroomPollSource }: typeof import('./dealroom') = require('./dealroom');
     return createDealroomPollSource({ teamId, credentialsId });
   }),
-  [GMAIL_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
+  [GMAIL_ADAPTER_TYPE]: builtinPollSourceFactory(GMAIL_ADAPTER_TYPE, ({ teamId, credentialsId }) =>
     createGmailPollSource({ teamId, credentialsId }),
+  ),
   [SYSTEM_ADAPTER_TYPE]: ({ teamId }) => createSystemPollSource({ teamId }),
 };
 

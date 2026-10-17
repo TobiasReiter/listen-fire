@@ -112,6 +112,12 @@ export class DropboxAuthClient {
     });
   }
 
+  /** This app as a module line's host app: its client, at the token URL it
+   *  connects to. */
+  hostApp(): { clientId: string; clientSecret: string; tokenUrl: string } {
+    return { clientId: this.clientId, clientSecret: this.clientSecret, tokenUrl: this.oauth2.tokenUrl };
+  }
+
   async getValidAccessToken(credentialsId: string, creds: DropboxCreds): Promise<string> {
     if (creds.expiresAt > Date.now() + REFRESH_WINDOW_MS) {
       return creds.accessToken;

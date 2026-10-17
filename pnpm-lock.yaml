@@ -130,15 +130,24 @@ importers:
       '@lf/dealroom':
         specifier: workspace:*
         version: link:../../modules/dealroom
-      '@lf/evertrace':
-        specifier: workspace:*
-        version: link:../../modules/evertrace
-      '@lf/granola':
-        specifier: workspace:*
-        version: link:../../modules/granola
       '@lf/dropbox':
         specifier: workspace:*
         version: link:../../modules/dropbox
+      '@lf/evertrace':
+        specifier: workspace:*
+        version: link:../../modules/evertrace
+      '@lf/gmail':
+        specifier: workspace:*
+        version: link:../../modules/gmail
+      '@lf/google-drive':
+        specifier: workspace:*
+        version: link:../../modules/google-drive
+      '@lf/google-sheets':
+        specifier: workspace:*
+        version: link:../../modules/google-sheets
+      '@lf/granola':
+        specifier: workspace:*
+        version: link:../../modules/granola
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@4.1.12)
@@ -811,6 +820,37 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
+  modules/dropbox:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
   modules/evertrace:
     dependencies:
       '#shared':
@@ -842,8 +882,112 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
+  modules/gmail:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      '@lf/google-sheets':
+        specifier: workspace:*
+        version: link:../google-sheets
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      googleapis:
+        specifier: 164.1.0
+        version: 164.1.0
+      html-to-text:
+        specifier: 9.0.5
+        version: 9.0.5
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/html-to-text':
+        specifier: 9.0.4
+        version: 9.0.4
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  modules/google-drive:
+    dependencies:
+      '@lf/google-sheets':
+        specifier: workspace:*
+        version: link:../google-sheets
+      googleapis:
+        specifier: 164.1.0
+        version: 164.1.0
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  modules/google-sheets:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      exponential-backoff:
+        specifier: 3.1.1
+        version: 3.1.1
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
   modules/granola:
-  modules/dropbox:
     dependencies:
       '#shared':
         specifier: workspace:@listen-fire/shared@*

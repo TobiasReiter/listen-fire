@@ -38,7 +38,7 @@ import { logger } from 'movement-engine/public/log';
 import { GranolaAdapter, GranolaClient, pollGranola } from '@lf/granola';
 import { getAdapter, getPollSource } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
-import { recordingServer, replayingServer, type Exchange } from '../../dealroom/__test__/parity/exchange';
+import { recordingServer, replayingServer, type Exchange } from '../../__test__/parity/exchange';
 import { bootFakeGranola } from './parity/fake_granola';
 import { runParityScript, type ParitySubject, type TranscriptEntry } from './parity/script';
 

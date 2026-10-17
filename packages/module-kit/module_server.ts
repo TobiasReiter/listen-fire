@@ -3,17 +3,19 @@
 // that request — its tenant (the team header), its credential (the envelope's)
 // — so nothing of one install's call outlives it. A credential the module
 // changes (`ctx.credential.update`) rides back as the answer's
-// `credentialUpdate`, on a failure too.
+// `credentialUpdate`, on a failure too. A file whose bytes the module
+// resolves (`resolveFileRef`) is held for one fetch at a URL of the server's
+// own (`served_files.ts`).
 
 import { ADAPTER_TEAM_HEADER } from 'movement-engine/public/adapter';
 
-import { randomUUID } from 'node:crypto';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import { METHODS, type MethodName, type RpcResponseShape, type WireCredentialShape } from 'engine-contracts';
 
 import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog } from './define';
 
 import { moduleContext, noCredential } from './in_process';
+import { servedFiles, type ServedFile, type ServedFiles } from './served_files';
 import { loadedModule, moduleManifest, type LoadedModule } from './manifest';
 import {
   UNAUTHORIZED,
@@ -32,8 +34,17 @@ export interface ModuleServerOptions {
   authenticate?: (headers: IncomingHttpHeaders) => boolean;
   log: ModuleLog;
   files: ModuleFiles;
-  kv: ModuleKv;
+  /** The kv of the tenant a request names. */
+  kvFor: (tenant: string) => ModuleKv;
   baseUrlOverride?: string;
+  /** The install's construction arguments (an entry position), the same for
+   *  every request: protocol 2 carries none, so a served module is one
+   *  install's. */
+  constructionArgs?: Readonly<Record<string, string>>;
+  /** Where callers reach this server, for the URLs of the files it holds.
+   *  Never taken from a request's Host header (a caller could name any host);
+   *  absent, a file without a URL of its own is not served. */
+  publicUrl?: string;
 }
 
 function headerValue(headers: IncomingHttpHeaders, name: string): string | undefined {
@@ -63,54 +74,6 @@ function requestCredential(
       Object.assign(updates, changed);
     },
   };
-}
-
-// ── Files the module serves ─────────────────────────────────────────────────
-// `resolveFileRef` answers by URL: the bytes of a file the module hands back
-// are hosted here, at an unguessable path that serves them once and goes
-// stale, which is the whole of the capability (the caller fetches it
-// unauthenticated, as it does a URL the protocol's reference kit returns).
-
-const SERVED_FILE_TTL_MS = 60_000;
-const SERVED_FILE_PATH = '/files/';
-
-interface ServedFile {
-  stream: NodeJS.ReadableStream & { destroy?(): void };
-  contentType?: string;
-  timer: NodeJS.Timeout;
-}
-
-class ServedFiles {
-  private readonly files = new Map<string, ServedFile>();
-
-  add(file: { stream: NodeJS.ReadableStream; contentType?: string }): string {
-    const token = randomUUID();
-    const timer = setTimeout(() => this.drop(token), SERVED_FILE_TTL_MS);
-    timer.unref();
-    this.files.set(token, { ...file, timer });
-    return `${SERVED_FILE_PATH}${token}`;
-  }
-
-  private drop(token: string): ServedFile | undefined {
-    const file = this.files.get(token);
-    if (file === undefined) return undefined;
-    this.files.delete(token);
-    clearTimeout(file.timer);
-    return file;
-  }
-
-  /** Serve the file at `path` once; false when the path is not a live one. */
-  serve(path: string, res: ServerResponse): boolean {
-    if (!path.startsWith(SERVED_FILE_PATH)) return false;
-    const file = this.drop(path.slice(SERVED_FILE_PATH.length));
-    if (file === undefined) {
-      res.writeHead(404).end();
-      return true;
-    }
-    res.writeHead(200, file.contentType !== undefined ? { 'content-type': file.contentType } : {});
-    file.stream.pipe(res);
-    return true;
-  }
 }
 
 /** The module's own methods (beyond an adapter's), answered from its instance. */
@@ -162,21 +125,28 @@ async function answerModuleMethod(loaded: LoadedModule, request: CheckedRequest)
 const MODULE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>(['refreshCredential', 'invokePlugin', 'poll', 'runPeriodic']);
 
 /** One request, answered by the module built for it. */
-async function answer(options: ModuleServerOptions, served: ServedFiles, req: IncomingMessage, request: CheckedRequest): Promise<ProtocolAnswer> {
-  const { definition } = options;
+async function answer(
+  options: ModuleServerOptions,
+  req: IncomingMessage,
+  request: CheckedRequest,
+  files: ServedFiles,
+): Promise<ProtocolAnswer> {
+  const { definition, publicUrl } = options;
   const updates: Record<string, string> = {};
   const credential = requestCredential(definition, request.credential, updates);
+  const tenant = headerValue(req.headers, ADAPTER_TEAM_HEADER) ?? '';
   let loaded: LoadedModule;
   try {
     loaded = loadedModule(
       definition,
       moduleContext({
-        tenant: headerValue(req.headers, ADAPTER_TEAM_HEADER) ?? '',
+        tenant,
         credential,
         log: options.log,
         files: options.files,
-        kv: options.kv,
+        kv: options.kvFor(tenant),
         ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
+        ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
         validateResults: false,
       }),
     );
@@ -195,7 +165,7 @@ async function answer(options: ModuleServerOptions, served: ServedFiles, req: In
                 adapter: loaded.instance,
                 warn: (message) => options.log.warn(message),
                 manifest: () => moduleManifest(loaded),
-                serveBytes: (file) => `http://${headerValue(req.headers, 'host') ?? 'localhost'}${served.add(file)}`,
+                ...(publicUrl !== undefined ? { exposeFile: (file: ServedFile) => files.expose(file, publicUrl) } : {}),
               },
               request,
             )
@@ -209,9 +179,9 @@ async function answer(options: ModuleServerOptions, served: ServedFiles, req: In
 
 /** The HTTP handler that serves one module over adapter protocol 2. */
 export function createModuleProtocolHandler(options: ModuleServerOptions): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const served = new ServedFiles();
+  const files = servedFiles();
   return async function handle(req, res) {
-    if (req.method === 'GET' && served.serve(req.url ?? '', res)) return;
+    if (files.serve(req, res)) return;
     if (options.authenticate && !options.authenticate(req.headers)) {
       sendAnswer(res, UNAUTHORIZED);
       return;
@@ -221,6 +191,6 @@ export function createModuleProtocolHandler(options: ModuleServerOptions): (req:
       sendAnswer(res, read.answer);
       return;
     }
-    sendAnswer(res, await answer(options, served, req, read.request));
+    sendAnswer(res, await answer(options, req, read.request, files));
   };
 }

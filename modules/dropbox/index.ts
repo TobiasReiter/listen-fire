@@ -2,11 +2,12 @@
 // credential — already refreshed, the host's job — and a fetch; the module
 // builds a client per call from them, so a token refreshed between calls is
 // read by the next one. `ctx.config.baseUrlOverride` (the dev loop's fake)
-// wins over the credential's own base URL. Bytes a write carries are read
-// through `ctx.files`; a file the module returns is a handle (a Dropbox
-// path) the host redeems through `resolveFileRef`.
+// wins over the credential's own base URL. Bytes a write carries are read at
+// the URL the host handed, else through `ctx.files`; a file the module
+// returns is a handle (a Dropbox path) the host redeems through
+// `resolveFileRef`.
 
-import { defineModule, type CredentialFields, type ModuleContext } from 'module-kit';
+import { defineModule, readHandedFile, type CredentialFields, type ModuleContext } from 'module-kit';
 
 import { DropboxAdapter, type DropboxClientSource } from './adapter';
 import { DropboxClient } from './api_client';
@@ -46,7 +47,7 @@ export const dropboxModule = defineModule({
       oauth2: DROPBOX_OAUTH2,
     },
   ],
-  create: (ctx) => new DropboxAdapter({ client: dropboxClientFrom(ctx), files: ctx.files, log: ctx.log }),
+  create: (ctx) => new DropboxAdapter({ client: dropboxClientFrom(ctx), files: { read: (ref) => readHandedFile(ctx, ref) }, log: ctx.log }),
 });
 
 export default dropboxModule;

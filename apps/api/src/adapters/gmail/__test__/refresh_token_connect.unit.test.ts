@@ -25,13 +25,19 @@ jest.mock('google-auth-library', () => {
       getTokenInfo(accessToken: string) {
         return tokenInfoMock(accessToken);
       }
+      getAccessToken() {
+        return Promise.resolve({ token: this.credentials.access_token });
+      }
     },
   };
 });
 
 const profileMock = jest.fn();
 jest.mock('googleapis', () => ({
-  google: { gmail: () => ({ users: { getProfile: profileMock } }) },
+  google: {
+    auth: { OAuth2: class { credentials: Record<string, unknown> = {}; setCredentials(credentials: Record<string, unknown>) { this.credentials = credentials; } } },
+    gmail: () => ({ users: { getProfile: profileMock } }),
+  },
 }));
 
 import { GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE } from 'movement-engine/lib/google_cloud';

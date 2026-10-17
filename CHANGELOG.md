@@ -1509,6 +1509,45 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   provides `ctx.files` (a team's own bytes). A served module hosts the bytes of a file it returns at
   a short-lived one-use URL and reads a file value's bytes from the URL the host sent; a file it
   returns names its owner type and handle in the wire's spelling.
+### ev4-google
+
+- Google Sheets is a module: `@lf/google-sheets` (`modules/google-sheets`). Nothing changes for a
+  team using it: the same requests, the same answers and the same writes (create, grant and share a
+  spreadsheet, table rows and unique-by overwrites, tab appends, named cells, cells), held by a
+  recording of the old adapter replayed against the module in process and as a process. Switching
+  back is one line (`BUILTIN_MODULES`).
+- The platform now refreshes a module's Google token itself, five minutes before it expires (as
+  google-auth-library did), once per credential however many calls find it stale, and stores it
+  back in the shape the connect flow wrote. Stored credentials are unchanged.
+- The spreadsheets a user granted are the module's own state (`ctx.kv`); on the platform that is the
+  same grants table the picker writes, so existing grants carry over untouched.
+- `serve-module` keeps a module's state in files when given `MODULE_STATE_DIR` (one file per team),
+  and serves one install's construction arguments from `MODULE_CONSTRUCTION_ARGS` (the protocol
+  carries none).
+- Google Drive is a module: `@lf/google-drive` (`modules/google-drive`). Nothing changes for a team
+  using it: the same requests, answers and writes (granted folders and files, a folder's children,
+  a file's fields and bytes, folder creates, Google Doc imports and uploads), held by a recording of
+  the old adapter replayed against the module in process and as a process. Switching back is one
+  line (`BUILTIN_MODULES`).
+- A module can now read files out and be handed files in. A file it reads names itself by its own
+  handle and the host names it as the install's, so a run can fetch its bytes later; a file handed
+  to a write is read at its URL, or else from the platform's files.
+- `serve-module` serves a file's bytes at a one-time URL of its own when the module resolves them
+  from its provider (set `MODULE_PUBLIC_URL` when callers reach it through a proxy).
+- The platform's own Drive calls (the older pipeline outputs) now get their token per call from the
+  platform's Google client, and send through Node's fetch instead of node-fetch.
+- Gmail is a module: `@lf/gmail` (`modules/gmail`). Nothing changes for a team using it: the same
+  requests, answers and sends (the mailbox search, a message's fields, its attachments and their
+  bytes, sends and replies with files, and the poll for arriving mail with its checkpoint), held by
+  a recording of the old adapter, for a signed-in mailbox and a delegated one, replayed against the
+  module in process and as a process. Switching back is one line (`BUILTIN_MODULES`).
+- Gmail's credential reaches the module as one set of fields whichever way the mailbox was
+  connected. A signed-in mailbox is refreshed by the platform five minutes before expiry and stored
+  back as before; a delegated mailbox's tokens are minted per scope by the deployment's service
+  account, held in memory until they near expiry (previously minted per call) and never stored.
+  The mailbox allowlist is checked before the module is handed anything.
+- In the dev loop a delegated Gmail mailbox now authenticates to the fake with a placeholder bearer
+  token instead of an API key parameter.
 
 ## [v0.11.0] - 2026-10-12
 

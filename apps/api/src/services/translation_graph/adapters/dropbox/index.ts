@@ -15,7 +15,9 @@ import { decryptToken } from '../../../../lib/credentials';
 import { getAutomationsQb } from '../../../../lib/kysely';
 import { isTestHarnessTeam, injectFakeBaseUrl } from '../../../../lib/recording';
 import { services } from '../../../../adapters/registry';
-import { nameFileOwner, platformFiles } from '../module_files';
+import { readHandedFile } from 'module-kit';
+import { ownedFilesAdapter } from 'movement-engine/public/modules';
+import { platformModuleFiles } from '../../engine/files/module_files';
 
 export { DROPBOX_ADAPTER_TYPE, DROPBOX_MANIFEST } from '@lf/dropbox';
 
@@ -96,8 +98,9 @@ export function createDropboxAdapter(input: { teamId: TeamId; credentialsId?: st
     );
   }
   const install = { teamId: input.teamId, credentialsId: input.credentialsId };
-  return nameFileOwner(
-    new DropboxAdapter({ client: legacyClient(install), files: platformFiles(input.teamId), log: logger }),
-    input.credentialsId,
+  const files = platformModuleFiles({ teamId: input.teamId, module: '@lf/dropbox' });
+  return ownedFilesAdapter(
+    new DropboxAdapter({ client: legacyClient(install), files: { read: (ref) => readHandedFile({ fetch, files }, ref) }, log: logger }),
+    { adapterType: 'dropbox', credentialsId: input.credentialsId },
   );
 }

@@ -37,6 +37,9 @@ COPY modules/dealroom/package.json modules/dealroom/
 COPY modules/granola/package.json modules/granola/
 COPY modules/evertrace/package.json modules/evertrace/
 COPY modules/dropbox/package.json modules/dropbox/
+COPY modules/google-sheets/package.json modules/google-sheets/
+COPY modules/google-drive/package.json modules/google-drive/
+COPY modules/gmail/package.json modules/gmail/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/

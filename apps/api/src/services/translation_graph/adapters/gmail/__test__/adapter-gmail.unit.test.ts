@@ -12,7 +12,7 @@ jest.mock('movement-engine/services/logger', () => ({
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { Expression } from '#shared/expression/types';
-import type { GmailApiClient } from '../client';
+import type { GmailApiClient } from '@lf/gmail';
 
 import {
   ADAPTER_META_TYPE_ID,
@@ -25,11 +25,23 @@ import {
   type GmailMessage,
   type GmailMessageRef,
   type GmailProfile,
-} from '../../../../../adapters/gmail/apiClient';
-import { decodeGmailMessage } from '../../../../../adapters/gmail/mime';
+} from '@lf/gmail';
+import { decodeGmailMessage } from '@lf/gmail';
 import { GmailAdapter, GMAIL_MANIFEST, createGmailAdapter } from '../index';
-import { GmailPollSource, listenQuery } from '../poll';
-import { combineGmailQueries, gmailQueryFromWhere } from '../filter';
+
+/** The module's adapter over a test's client: no files, a silent log. */
+function adapterOver(client: GmailApiClient): GmailAdapter {
+  const quiet = () => undefined;
+  return new GmailAdapter({
+    client: async () => client,
+    readFile: async () => {
+      throw new Error('this test hands the adapter no files to read');
+    },
+    log: { debug: quiet, info: quiet, warn: quiet, error: quiet },
+  });
+}
+import { GmailPollSource, listenQuery } from '@lf/gmail';
+import { combineGmailQueries, gmailQueryFromWhere } from '@lf/gmail';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { normaliseSchemaForAgent } from '../../../movement/agent_schema';
 import {
@@ -38,7 +50,7 @@ import {
   GMAIL_MESSAGE_EVENT_TAG,
   GMAIL_MESSAGE_TYPE_ID,
   decodeAttachmentId,
-} from '../types';
+} from '@lf/gmail';
 
 import { applyHopOrderLimit, hopPushdown } from '#shared/expression/order_limit';
 
@@ -153,12 +165,12 @@ function asClient(client: unknown): GmailApiClient {
 
 function adapterWith(setup: Parameters<typeof fakeClient>[0]) {
   const { client, calls } = fakeClient(setup);
-  return { adapter: new GmailAdapter(TEAM, 'cred-1', asClient(client)), calls };
+  return { adapter: adapterOver(asClient(client)), calls };
 }
 
 function pollWith(setup: Parameters<typeof fakeClient>[0]) {
   const { client, calls } = fakeClient(setup);
-  return { source: new GmailPollSource(TEAM, 'cred-1', asClient(client)), calls };
+  return { source: new GmailPollSource(async () => asClient(client)), calls };
 }
 
 const property = (name: string): Expression => ({ type: 'property', propertyTypeId: name } as Expression);
@@ -348,10 +360,10 @@ describe('describe', () => {
 describe('the walk', () => {
   it('lands on Message from the root and on Attachment from a message', async () => {
     const adapter = createGmailAdapter({ teamId: TEAM });
-    const fromRoot = await adapter.edgesFrom(makeMetaPosition('gmail'));
+    const fromRoot = await adapter.edgesFrom?.(makeMetaPosition('gmail'));
     expect(fromRoot?.targetNodes?.['Messages']).toMatchObject({ displayName: 'Message' });
 
-    const fromMessage = await adapter.edgesFrom(
+    const fromMessage = await adapter.edgesFrom?.(
       makeStablePosition({
         adapterType: 'gmail',
         recordType: 'Message',
@@ -514,7 +526,7 @@ describe('attachments', () => {
 
 describe('event typing', () => {
   it('discriminates by tag alone — the poll stamps every event', async () => {
-    const types = await createGmailAdapter({ teamId: TEAM }).listEventTypes();
+    const types = await createGmailAdapter({ teamId: TEAM }).listEventTypes?.();
     expect(types).toEqual([
       { tag: GMAIL_MESSAGE_EVENT_TAG, positionType: GMAIL_MESSAGE_TYPE_ID, match: { path: 'id', equals: [] } },
     ]);
@@ -745,7 +757,7 @@ describe('an expired change marker', () => {
         throw new GmailApiError('other', 500, 'history.list', 'boom');
       },
     };
-    const source = new GmailPollSource(TEAM, 'cred-1', asClient(failing));
+    const source = new GmailPollSource(async () => asClient(failing));
     await expect(
       source.getEvents({ config: {}, checkpoint: { historyId: '4000' } }),
     ).rejects.toThrow(/boom/);

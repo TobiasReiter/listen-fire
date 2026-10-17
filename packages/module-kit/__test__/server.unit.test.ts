@@ -223,7 +223,7 @@ describe('resolveFileRef with a host that serves bytes', () => {
   const owner = baseAdapter({
     resolveFileRef: async ({ ref }) => ({ stream: Readable.from([`bytes of ${ref.name}`]), contentType: ref.contentType }),
   });
-  const handler = createAdapterProtocolHandler({ adapter: owner, serveBytes: (file) => {
+  const handler = createAdapterProtocolHandler({ adapter: owner, exposeFile: (file) => {
     void (async () => {
       let text = '';
       for await (const chunk of file.stream) text += String(chunk);

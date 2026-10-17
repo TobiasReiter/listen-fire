@@ -27,8 +27,10 @@
 // has no cursor to resume from.
 //
 // `resolveFileRef` answers by URL: bytes never ride the envelope, so a file
-// crosses the wire only when its ref carries a fetchable `url` (the client
-// fetches it). A ref without one answers `method_not_implemented`.
+// crosses the wire only at a fetchable `url` (the client fetches it): the
+// ref's own, else — when the server can hold bytes (`exposeFile`, as
+// serve-module does) — a URL of the server's own for the stream the adapter
+// resolves. Otherwise a ref without one answers `method_not_implemented`.
 //
 // Dependency-light by design: Node `http` types only, no express.
 
@@ -36,7 +38,10 @@ import { fileDescriptorOf, fileValueOf, MANIFEST_PROTOCOL_VERSION, METHODS, PROT
 
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
-import type { Adapter, ResolveFileRefResult } from 'movement-engine/public/adapter';
+import type { Adapter } from 'movement-engine/public/adapter';
+import type { ServedFile } from './served_files';
+
+import { Readable } from 'node:stream';
 import type { MethodName, RpcResponseShape, WireCredentialShape } from 'engine-contracts';
 
 /**
@@ -282,10 +287,8 @@ export async function answerAdapterRequest(
     adapter: Adapter;
     manifest: () => unknown;
     warn: (message: string) => void;
-    /** Hosts the bytes of a file the adapter serves, at a short-lived URL the
-     *  caller fetches (`resolveFileRef` answers by URL). Absent: only a ref
-     *  that already carries a URL is servable. */
-    serveBytes?: (file: { stream: NodeJS.ReadableStream; contentType?: string }) => string;
+    /** Hold a resolved file's bytes for one fetch; its URL. */
+    exposeFile?: (file: ServedFile) => string;
   },
   request: CheckedRequest,
 ): Promise<ProtocolAnswer> {
@@ -303,7 +306,7 @@ export async function answerAdapterRequest(
   // `resolveFileRef`'s in-process answer is a stream, which can't ride the
   // envelope; the wire answer is a URL the client fetches. A ref that already
   // carries one is answered with it; otherwise the bytes are hosted at a URL
-  // of the host's making (`serveBytes`) or the ref is not servable.
+  // of the host's making (`exposeFile`) or the ref is not servable.
   if (method === 'resolveFileRef') {
     const { ref } = METHODS.resolveFileRef.params.parse(params);
     if (typeof ref.url === 'string') {
@@ -312,11 +315,13 @@ export async function answerAdapterRequest(
         body: { ok: true, result: { url: ref.url, ...(ref.contentType !== undefined ? { contentType: ref.contentType } : {}) } },
       };
     }
-    if (opts.serveBytes !== undefined) {
+    const { exposeFile } = opts;
+    if (exposeFile !== undefined) {
       try {
-        const file = (await call({ ref })) as ResolveFileRefResult;
-        const contentType = file.contentType ?? ref.contentType;
-        const url = opts.serveBytes({ stream: file.stream, ...(contentType !== undefined ? { contentType } : {}) });
+        const resolved = await call({ ref });
+        if (!isResolvedFile(resolved)) throw new Error('resolveFileRef answered no stream');
+        const contentType = resolved.contentType ?? ref.contentType;
+        const url = exposeFile({ stream: resolved.stream, ...(contentType !== undefined ? { contentType } : {}) });
         return { status: 200, body: { ok: true, result: { url, ...(contentType !== undefined ? { contentType } : {}) } } };
       } catch (err) {
         return { status: 200, body: errorAnswer(method, err) };
@@ -405,8 +410,8 @@ export function createAdapterProtocolHandler(opts: {
    *  `DRAINED_PAGE_LIMIT`). Defaults to `console.warn`, keeping the kit free
    *  of the host's logger. */
   warn?: (message: string) => void;
-  /** Hosts the bytes of a file the adapter serves (see `answerAdapterRequest`). */
-  serveBytes?: (file: { stream: NodeJS.ReadableStream; contentType?: string }) => string;
+  /** Hold a resolved file's bytes for one fetch; its URL (see `answerAdapterRequest`). */
+  exposeFile?: (file: ServedFile) => string;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { adapter, authenticate } = opts;
   const warn = opts.warn ?? ((message: string) => console.warn(message));
@@ -429,7 +434,7 @@ export function createAdapterProtocolHandler(opts: {
           adapter,
           warn,
           manifest: () => adapterManifestResult(adapter, advertisedMethods),
-          ...(opts.serveBytes !== undefined ? { serveBytes: opts.serveBytes } : {}),
+          ...(opts.exposeFile !== undefined ? { exposeFile: opts.exposeFile } : {}),
         },
         read.request,
       ),
@@ -449,6 +454,11 @@ async function withDeclaredFiles(adapter: Adapter, input: unknown): Promise<unkn
   const recordType: unknown = Reflect.get(input, 'recordType');
   const fields: unknown = Reflect.get(input, 'fields');
   if (typeof recordType !== 'string' || fields === null || typeof fields !== 'object' || Array.isArray(fields)) return input;
+  // No value the wire spelled as a file: nothing to make one, and no need to
+  // ask the adapter's catalog (a describe can cost the provider a fetch).
+  const spelledAsFile = (value: unknown): boolean =>
+    Array.isArray(value) ? value.some((member) => fileValueOf(member) !== undefined) : fileValueOf(value) !== undefined;
+  if (!Object.values(fields).some(spelledAsFile)) return input;
   const descriptor = await adapter.describe(recordType).catch(() => null);
   const files = new Set(
     (descriptor?.fields ?? []).filter((field) => field.kind === 'file').flatMap((field) => [field.fieldId, field.displayName]),
@@ -511,4 +521,11 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
     typeof value === 'object' &&
     typeof Reflect.get(value, Symbol.asyncIterator) === 'function'
   );
+}
+
+/** An in-process `resolveFileRef` answer: a Node stream and its type. */
+function isResolvedFile(value: unknown): value is { stream: Readable; contentType?: string } {
+  if (value === null || typeof value !== 'object') return false;
+  const contentType: unknown = Reflect.get(value, 'contentType');
+  return Reflect.get(value, 'stream') instanceof Readable && (contentType === undefined || typeof contentType === 'string');
 }

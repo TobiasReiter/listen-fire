@@ -94,12 +94,11 @@ import { declaredFields, declaredRefresher, OAUTH2_TOKEN_FIELDS, type OAuth2Clie
 import { DOCUMENT_STORE_OWNER, type DocumentStore } from '../../engine/files/document_store';
 import { fileOwner, hasFileSource, redeemFileRef } from '../../engine/files/redeem';
 import { countAdapterCall } from '../../segment_scope';
+import { FileOwnership } from '../owned_files';
 import {
   fileDescriptorOf,
   isFileValue,
   iterateRelatedPages,
-  RESOURCES_REFERENCE_FIELD_ID,
-  ownedFileSource,
   unsupportedAssociation,
   writeParentLinks,
   type EarlierFileSource,
@@ -310,6 +309,13 @@ export class RemoteAdapter implements Adapter {
     this.advertised = new Set(input.manifest.methods);
     if (this.advertised.has('resolveAwait')) this.awaitable = this.remoteAwaitable();
     this.bound = input.credential !== undefined ? this.bind(input.credential, input.manifest) : undefined;
+    this.files = new FileOwnership(
+      { adapterType: this.adapterType, credentialsId: this.config.credentialsId },
+      {
+        describe: (typeRef) => this.describe(typeRef),
+        describeFailed: (recordType, fieldId, error) => new RemoteDescribeFailed(this.adapterType, recordType, fieldId, error),
+      },
+    );
   }
 
   /** Only a module that declares the credential is sent it, and only over a
@@ -489,83 +495,22 @@ export class RemoteAdapter implements Adapter {
 
   async getFieldValue(input: GetFieldValueInput): Promise<unknown> {
     const value = await this.call('getFieldValue', { ...input, position: wirePosition(input.position) });
-    // A scalar is no file whatever the catalog says: no need to ask it.
-    if (value === null || typeof value !== 'object') return value;
-    const field = await this.declaredField(input.position.recordType, input.fieldId);
-    if (field?.kind !== 'file') return value;
-    return Array.isArray(value) ? value.map((member) => this.ownedFile(member)) : this.ownedFile(value);
-  }
-
-  /** The remote's own catalog entries, by type, asked once each. */
-  private readonly described = new Map<string, Promise<SchemaTypeDescriptor | null>>();
-
-  /** The field a read names, as the remote's catalog declares it on the
-   *  position's type — by its natural name or its id. */
-  private async declaredField(
-    recordType: string | null,
-    fieldId: string,
-  ): Promise<SchemaTypeDescriptor['fields'][number] | undefined> {
-    if (recordType === null) return undefined;
-    let descriptor = this.described.get(recordType);
-    if (descriptor === undefined) {
-      const asked = this.describe(recordType);
-      descriptor = asked;
-      this.described.set(recordType, asked);
-      // A failure is this call's, never remembered: the next read asks again.
-      asked.catch(() => {
-        if (this.described.get(recordType) === asked) this.described.delete(recordType);
-      });
-    }
-    let described: SchemaTypeDescriptor | null;
-    try {
-      described = await descriptor;
-    } catch (error) {
-      throw new RemoteDescribeFailed(this.adapterType, recordType, fieldId, error);
-    }
-    return described?.fields.find((field) => field.displayName === fieldId || field.fieldId === fieldId);
+    return this.files.fieldValue(input, value);
   }
 
   /**
-   * A file read off the wire, at a field the remote declares a file: its
-   * descriptor names the file by the remote's own handle (`{ ownerAdapterType,
-   * handle }`); this side's names the owning INSTANCE — this remote install,
-   * with its credential — so the host can resolve it again to redeem the handle
-   * through `resolveFileRef`. The wire makes `source` optional: a file that
-   * arrives with only a `url` is named by that url, and `resolveFileRef` sends
-   * it back as before (the reference kit answers with the ref's url). A value
-   * there that spells no descriptor stays as it came. The engine makes the
+   * A file read off the wire, at a field the remote declares a file (or a
+   * resource's file): its descriptor names the file by the remote's own handle
+   * (`{ ownerAdapterType, handle }`); this side's names the owning INSTANCE —
+   * this remote install, with its credential — so the host can resolve it
+   * again to redeem the handle through `resolveFileRef`. The engine makes the
    * descriptor a file by the same declaration (its catalog snapshot).
    */
-  private ownedFile(value: unknown): unknown {
-    const ref = fileDescriptorOf(value);
-    if (ref === undefined) return value;
-    const { source, ...rest } = ref;
-    const handle = wireHandle(source) ?? (typeof rest.url === 'string' ? rest.url : undefined);
-    return handle === undefined
-      ? rest
-      : {
-          ...rest,
-          source: ownedFileSource({
-            adapterType: this.adapterType,
-            credentialsId: this.config.credentialsId,
-            handle,
-          }),
-        };
-  }
+  private readonly files: FileOwnership;
 
   async getRelated(input: GetRelatedInput): Promise<RelatedResult[]> {
     const related = (await this.call('getRelated', { ...input, position: wirePosition(input.position) })) as RelatedResult[];
-    return input.fieldId === RESOURCES_REFERENCE_FIELD_ID ? related.map((r) => this.ownedResource(r)) : related;
-  }
-
-  /** A resource the remote answered: its `fileRef` slot (typed — whatever it
-   *  holds is that resource's file) named as a file this install owns. */
-  private ownedResource(related: RelatedResult): RelatedResult {
-    const identity = related.position.identity;
-    const data: unknown = identity.data;
-    if (typeof data !== 'object' || data === null || !('fileRef' in data) || data.fileRef === undefined) return related;
-    const owned = { ...data, fileRef: this.ownedFile(data.fileRef) };
-    return { ...related, position: { ...related.position, identity: { ...identity, data: owned } } };
+    return this.files.related(input.fieldId, related);
   }
 
   async createRecord(input: WriteInput): Promise<WriteResult> {
@@ -799,12 +744,6 @@ function wireSource(source: FileSource | EarlierFileSource): EarlierFileSource |
   return owner.kind === 'document'
     ? { ownerAdapterType: DOCUMENT_STORE_OWNER, handle: owner.objectUri }
     : { ownerAdapterType: owner.adapterType, handle: owner.handle };
-}
-
-/** The handle a wire FileRef's `source` carries, when it carries one. */
-function wireHandle(source: unknown): string | undefined {
-  if (source === null || typeof source !== 'object' || !('handle' in source)) return undefined;
-  return typeof source.handle === 'string' ? source.handle : undefined;
 }
 
 /**

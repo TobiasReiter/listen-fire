@@ -39,7 +39,7 @@ import { getAdapter, getPollSource } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
 import { DealroomApiClient, DealroomAdapter, pollDealroom } from '@lf/dealroom';
 import { logger } from 'movement-engine/public/log';
-import { recordingServer, replayingServer, type Exchange } from './parity/exchange';
+import { recordingServer, replayingServer, type Exchange } from '../../__test__/parity/exchange';
 import { bootFakeDealroom } from './parity/fake_dealroom';
 import { runParityScript, type ParitySubject, type TranscriptEntry } from './parity/script';
 

@@ -232,5 +232,8 @@ export function refusingKv(reason: string): ModuleKv {
     delete: async () => {
       throw new Error(reason);
     },
+    list: async () => {
+      throw new Error(reason);
+    },
   };
 }

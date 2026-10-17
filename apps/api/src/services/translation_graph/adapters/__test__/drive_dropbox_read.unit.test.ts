@@ -1,7 +1,8 @@
 // Drive read graph (the Dropbox half moved with the module, modules/dropbox):
 // stable nouns — collections off the meta root, children via
 // `folders`/`files` edges, bytes via the file's `File` field (FileRef).
-// Clients are mocked by overriding each adapter's private getClient.
+// Drive's client and grants are what its module adapter is constructed with,
+// its files named as the install's as the platform names them.
 
 jest.mock('../../../../lib/credentials', () => ({
   decryptToken: async () => '{}',
@@ -23,8 +24,9 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { isStablePosition, makeMetaPosition } from 'movement-engine/services/translation_graph/types';
-import * as grantedItems from '../../../credentials/granted_items';
-import { GoogleDriveAdapter } from '../google_drive';
+import { GoogleDriveAdapter, type GoogleDriveClient } from '@lf/google-drive';
+import { refusingFiles } from 'module-kit';
+import { ownedFilesAdapter } from 'movement-engine/public/modules';
 
 const TEAM = 'team-1' as TeamId;
 
@@ -45,16 +47,8 @@ describe('GoogleDriveAdapter read graph', () => {
     ],
   } as Record<string, unknown[]>;
 
-  beforeEach(() => {
-    jest.spyOn(grantedItems, 'listGrantedItems').mockResolvedValue([
-      { itemId: 'fold-1', mimeType: FOLDER_MIME, name: 'Deals' },
-    ]);
-  });
-  afterEach(() => jest.restoreAllMocks());
-
   function adapter() {
-    const a = new GoogleDriveAdapter({ teamId: TEAM, credentialsId: 'cred-1' });
-    (a as unknown as { getClient: () => Promise<unknown> }).getClient = async () => ({
+    const client = {
       listChildren: async (options: { parentId: string; kind?: string }) =>
         (items[options.parentId] ?? []).filter((i) =>
           options.kind === 'folder'
@@ -64,8 +58,19 @@ describe('GoogleDriveAdapter read graph', () => {
               : true,
         ),
       downloadFile: async () => Readable.from('memo bytes'),
+    };
+    const drive = new GoogleDriveAdapter({
+      client: async () => client as unknown as GoogleDriveClient,
+      kv: {
+        get: async () => undefined,
+        set: async () => undefined,
+        delete: async () => undefined,
+        list: async () => [{ key: 'granted/fold-1', value: { mimeType: FOLDER_MIME, name: 'Deals' } }],
+      },
+      readFile: (ref) => refusingFiles('no files').read(ref),
+      log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     });
-    return a;
+    return ownedFilesAdapter(drive, { adapterType: 'google_drive', credentialsId: 'cred-1' });
   }
 
   it('meta → Folders → files: stable positions, fields, and a working FileRef', async () => {
@@ -90,6 +95,6 @@ describe('GoogleDriveAdapter read graph', () => {
     const ref = (await a.getFieldValue({ position: file.position, fieldId: 'File' })) as FileRef;
     expect(ref.__brand).toBe('FileRef');
     expect(ref.source).toEqual({ adapterType: 'google_drive', credentialId: 'cred-1', handle: 'file-1' });
-    expect(await text((await a.resolveFileRef({ ref })).stream as Readable)).toBe('memo bytes');
+    expect(await text(((await a.resolveFileRef?.({ ref }))?.stream ?? Readable.from([])) as Readable)).toBe('memo bytes');
   });
 });
