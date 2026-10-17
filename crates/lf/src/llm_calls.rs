@@ -16,9 +16,49 @@ use crate::models::{self, TokenCounts};
 use crate::obj;
 use crate::secrets::Credentials;
 
-/// `EXTRACTION_MAX_TOKENS`: the flat output ceiling of an extraction call
-/// that names none (the loop guard `EXTRACTION_OUTPUT_BUDGET` is off in lf).
+// ── The output ceiling ──────────────────────────────────────────────────────
+//
+// A loop guard for a model that loops, off unless the deployment sets
+// `EXTRACTION_OUTPUT_BUDGET=1` (or `true`), as the hosted product reads it.
+// Off, a call that names no ceiling gets the flat one and the chat's own five
+// continuations. On, the ceiling is sized from what the call was asked about
+// and one continuation is allowed: an extraction restates its own input, so a
+// reply that has spent four times its input and wants more is far likelier to
+// be looping than mid-answer.
+
+/// The flat ceiling with the guard off, and the hard ceiling with it on.
 const EXTRACTION_MAX_TOKENS: u64 = 32_000;
+/// The floor with the guard on: a tiny input can still ask for a real answer.
+const EXTRACTION_MIN_TOKENS: u64 = 8_000;
+/// Output tokens allowed per token of input, with the guard on.
+const EXTRACTION_OUTPUT_RATIO: f64 = 4.0;
+/// Rough characters per token; only sizes a budget, so being off costs nothing.
+const CHARS_PER_TOKEN: f64 = 4.0;
+/// Continuations after a cut-off reply, with the guard on.
+const EXTRACTION_MAX_CONTINUATIONS: u32 = 1;
+
+const OUTPUT_BUDGET_ENV_VAR: &str = "EXTRACTION_OUTPUT_BUDGET";
+
+/// Whether the deployment switched the guard on; anything but `1` or `true`
+/// leaves it off, in every environment.
+fn output_budget_on() -> bool {
+    matches!(std::env::var(OUTPUT_BUDGET_ENV_VAR).as_deref(), Ok("1" | "true"))
+}
+
+/// `extractionMaxTokens`: the ceiling sized from the call's input. Lengths
+/// are counted in UTF-16 units, as the TypeScript host counts them.
+fn extraction_max_tokens(system: &str, user: &UserMessage) -> u64 {
+    let user_units = match user {
+        UserMessage::Text(text) => text.encode_utf16().count(),
+        // The blocks as one text, joined as the TypeScript client joins them.
+        UserMessage::Blocks(blocks) => {
+            blocks.iter().map(|b| b.text.encode_utf16().count()).sum::<usize>() + 2 * blocks.len().saturating_sub(1)
+        }
+    };
+    let input_tokens = (system.encode_utf16().count() + user_units) as f64 / CHARS_PER_TOKEN;
+    let proportional = (input_tokens * EXTRACTION_OUTPUT_RATIO).ceil() as u64;
+    proportional.clamp(EXTRACTION_MIN_TOKENS, EXTRACTION_MAX_TOKENS)
+}
 
 const BUDGET_SPENT: &str = "this run's cost budget is spent: the priced call was refused before it started";
 
@@ -32,9 +72,14 @@ pub enum Failed {
 
 /// Serve one `llm` request of the engine.
 pub async fn serve(label: &str, args: &Json, credentials: &Credentials) -> Result<Js, Failed> {
+    serve_guarded(label, args, credentials, output_budget_on()).await
+}
+
+async fn serve_guarded(label: &str, args: &Json, credentials: &Credentials, output_budget: bool) -> Result<Js, Failed> {
     match label {
         "llm.client.call" | "llm.extractCall.call" => {
-            let request = ModelRequest::read(label, args).map_err(Failed::Fault)?;
+            let mut request = ModelRequest::read(label, args).map_err(Failed::Fault)?;
+            request.output_budget = output_budget;
             let meter = Meter::new(request.budget);
             let answered = answer(&request, credentials, &meter).await;
             match answered {
@@ -135,6 +180,7 @@ pub async fn host_model_call(body: &Js, credentials: &Credentials) -> Result<Js,
         max_tokens: None,
         budget: None,
         reports_usage: false,
+        output_budget: false,
     };
     let meter = Meter::new(None);
     let answered = answer(&request, credentials, &meter).await;
@@ -172,6 +218,8 @@ struct ModelRequest {
     budget: Option<f64>,
     /// An extraction call also answers its usage.
     reports_usage: bool,
+    /// The loop guard (above) is on.
+    output_budget: bool,
 }
 
 impl ModelRequest {
@@ -210,7 +258,7 @@ impl ModelRequest {
             let message = text("userMessage")?;
             (UserMessage::Text(message), false)
         };
-        Ok(ModelRequest { label: text("label")?, system: text("system")?, user, wire_model, effort, max_tokens, budget, reports_usage })
+        Ok(ModelRequest { label: text("label")?, system: text("system")?, user, wire_model, effort, max_tokens, budget, reports_usage, output_budget: false })
     }
 }
 
@@ -218,7 +266,10 @@ impl ModelRequest {
 async fn answer(request: &ModelRequest, credentials: &Credentials, meter: &Meter) -> Result<Obj, ChatError> {
     let key = models::provider_key(credentials).map_err(ChatError::Failed)?;
     let provider = Provider::new(key);
-    let max_tokens = request.max_tokens.unwrap_or(EXTRACTION_MAX_TOKENS);
+    // The caller's own ceiling wins where it named one.
+    let max_tokens = request.max_tokens.unwrap_or_else(|| {
+        if request.output_budget { extraction_max_tokens(&request.system, &request.user) } else { EXTRACTION_MAX_TOKENS }
+    });
     let options = ChatOptions {
         system: request.system.clone(),
         user: match &request.user {
@@ -230,7 +281,7 @@ async fn answer(request: &ModelRequest, credentials: &Credentials, meter: &Meter
         model: request.wire_model.to_string(),
         max_tokens,
         effort: request.effort.clone(),
-        max_continuations: MAX_CHAT_CONTINUATIONS,
+        max_continuations: if request.output_budget { EXTRACTION_MAX_CONTINUATIONS } else { MAX_CHAT_CONTINUATIONS },
     };
     let reply = provider.chat_detailed(&options, &|| meter.open()).await;
     // Charged as the call returns, truncated or not: the tokens were spent.
@@ -242,9 +293,10 @@ async fn answer(request: &ModelRequest, credentials: &Credentials, meter: &Meter
     // nulled fields: fail loudly instead.
     if reply.truncated {
         return Err(ChatError::Failed(format!(
-            "Extraction '{}' produced no complete answer: {} (EXTRACTION_OUTPUT_BUDGET off).",
+            "Extraction '{}' produced no complete answer: {} (EXTRACTION_OUTPUT_BUDGET {}).",
             request.label,
-            describe_truncation(&reply, max_tokens)
+            describe_truncation(&reply, max_tokens),
+            if request.output_budget { "on" } else { "off" }
         )));
     }
     let mut out = Obj::new();
@@ -468,6 +520,38 @@ mod tests {
             message,
             "Extraction 'test' produced no complete answer: the model hit the 50-token output ceiling and was still truncated after 5 continuations (EXTRACTION_OUTPUT_BUDGET off)."
         );
+    }
+
+    #[tokio::test]
+    async fn with_the_output_budget_on_the_ceiling_follows_the_input_and_one_continuation_is_allowed() {
+        let (url, seen) = fake_anthropic(vec![Scripted::Stream(stream_of(&[("text", "{\"a\":")], "max_tokens", (1, 1)))]).await;
+        let Err(Failed::Run(message)) = serve_guarded("llm.client.call", &request(json!({ "remainingMicrodollars": null })), &credentials(&url), true).await else {
+            panic!("expected a run failure")
+        };
+        // A two-character input is under the floor.
+        assert_eq!(
+            message,
+            "Extraction 'test' produced no complete answer: the model hit the 8000-token output ceiling and was still truncated after 1 continuation (EXTRACTION_OUTPUT_BUDGET on)."
+        );
+        let seen = seen.lock().unwrap();
+        assert_eq!((seen.len(), &seen[0].0["max_tokens"]), (2, &json!(8000)));
+    }
+
+    #[test]
+    fn the_guarded_ceiling_is_four_times_the_input_between_the_floor_and_the_cap() {
+        let user = |chars: usize| UserMessage::Text("x".repeat(chars));
+        assert_eq!(extraction_max_tokens("", &user(10)), 8_000);
+        // 12,000 characters is 3,000 tokens in, so 12,000 out.
+        assert_eq!(extraction_max_tokens("", &user(12_000)), 12_000);
+        assert_eq!(extraction_max_tokens("", &user(1_000_000)), 32_000);
+        // Two blocks count as one text joined by a blank line: 5,999 + 2 + 5,999.
+        let blocks = UserMessage::Blocks(vec![
+            UserBlock { text: "x".repeat(5_999), cache_breakpoint: false },
+            UserBlock { text: "x".repeat(5_999), cache_breakpoint: false },
+        ]);
+        assert_eq!(extraction_max_tokens("", &blocks), 12_000);
+        // UTF-16 units: an emoji is two.
+        assert_eq!(extraction_max_tokens(&"😀".repeat(4_000), &user(4_000)), 12_000);
     }
 
     #[tokio::test]

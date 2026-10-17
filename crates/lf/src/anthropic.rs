@@ -3,6 +3,9 @@
 //! streamed request per turn, a reply cut off at the output ceiling continued
 //! where it stopped, a reply that spent the whole ceiling thinking asked again
 //! one effort lower, and a failed request retried with the same backoff.
+//! At most eight requests are in flight from one process at a time, as the
+//! TypeScript client's queue allowed: a run that fans out wide waits its turn
+//! rather than meeting the provider's rate limit.
 //!
 //! The request is streamed because above about 16K `max_tokens` a plain
 //! request outlives the provider's HTTP timeout; the stream is read to its
@@ -21,6 +24,7 @@ use hyper_util::rt::TokioIo;
 use serde_json::{Value as Json, json};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio::sync::Semaphore;
 
 use crate::models::{ProviderKey, TokenCounts};
 
@@ -29,6 +33,11 @@ const API_VERSION: &str = "2023-06-01";
 /// A request that has not finished after this long has hung (the SDK's own
 /// default timeout).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Model requests one process has in flight at once (the TypeScript client's
+/// `rateLimitQueue`). A request holds its slot through its retries.
+const MAX_REQUESTS_IN_FLIGHT: usize = 8;
+static REQUEST_SLOTS: Semaphore = Semaphore::const_new(MAX_REQUESTS_IN_FLIGHT);
 
 /// `MAX_CHAT_CONTINUATIONS`.
 pub const MAX_CHAT_CONTINUATIONS: u32 = 5;
@@ -143,11 +152,14 @@ fn uses_adaptive_thinking(model: &str) -> bool {
 pub struct Provider {
     pub key: ProviderKey,
     pub backoff: Backoff,
+    /// The slots its requests wait for: the process's, except in a test that
+    /// counts its own.
+    slots: &'static Semaphore,
 }
 
 impl Provider {
     pub fn new(key: ProviderKey) -> Provider {
-        Provider { key, backoff: Backoff::default() }
+        Provider { key, backoff: Backoff::default(), slots: &REQUEST_SLOTS }
     }
 
     /// `anthropicChatDetailed`. `budget_open` is asked before every request:
@@ -248,6 +260,8 @@ impl Provider {
     }
 
     async fn request_with_backoff(&self, body: &Json) -> Result<Message, RequestError> {
+        // The slots are never closed, so acquiring only waits.
+        let _slot = self.slots.acquire().await.map_err(|e| RequestError::Connection(e.to_string()))?;
         let backoff = self.backoff;
         let mut attempt = 1;
         loop {
@@ -496,6 +510,7 @@ impl Message {
 #[cfg(test)]
 pub mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -544,48 +559,75 @@ pub mod tests {
             let mut served = 0usize;
             loop {
                 let Ok((mut socket, _)) = listener.accept().await else { return };
-                let mut raw = Vec::new();
-                let mut buf = [0u8; 4096];
-                let (head_end, length) = loop {
-                    let n = socket.read(&mut buf).await.unwrap_or(0);
-                    if n == 0 {
-                        break (0, 0);
-                    }
-                    raw.extend_from_slice(&buf[..n]);
-                    if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let head = String::from_utf8_lossy(&raw[..at]).to_lowercase();
-                        let length = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
-                        break (at + 4, length);
-                    }
-                };
-                while raw.len() < head_end + length {
-                    let n = socket.read(&mut buf).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    raw.extend_from_slice(&buf[..n]);
-                }
-                let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
-                let headers = head.lines().skip(1).filter_map(|l| l.split_once(": ")).map(|(k, v)| (k.to_lowercase(), v.to_string())).collect();
-                let body: Json = serde_json::from_slice(&raw[head_end..]).unwrap_or(Json::Null);
-                log.lock().unwrap().push((body, headers));
+                let request = read_request(&mut socket).await;
+                log.lock().unwrap().push(request);
                 let answer = &script[served.min(script.len() - 1)];
                 served += 1;
                 let (status, content_type, payload) = match answer {
                     Scripted::Stream(text) => (200, "text/event-stream", text.clone()),
                     Scripted::Status(status, text) => (*status, "application/json", text.clone()),
                 };
-                let reply = format!("HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}", payload.len());
-                let _ = socket.write_all(reply.as_bytes()).await;
-                let _ = socket.shutdown().await;
+                write_reply(&mut socket, status, content_type, &payload).await;
             }
         });
         (url, seen)
     }
 
+    /// Every future driven at once on this task, their outputs in order.
+    async fn join_all<F: std::future::Future>(futures: Vec<F>) -> Vec<F::Output> {
+        let mut pending: Vec<_> = futures.into_iter().map(Box::pin).collect();
+        let mut outputs: Vec<Option<F::Output>> = pending.iter().map(|_| None).collect();
+        std::future::poll_fn(|cx| {
+            for (future, output) in pending.iter_mut().zip(outputs.iter_mut()) {
+                if output.is_none()
+                    && let std::task::Poll::Ready(value) = future.as_mut().poll(cx)
+                {
+                    *output = Some(value);
+                }
+            }
+            if outputs.iter().all(Option::is_some) { std::task::Poll::Ready(()) } else { std::task::Poll::Pending }
+        })
+        .await;
+        outputs.into_iter().flatten().collect()
+    }
+
+    /// One request read whole: its body as JSON, and its headers.
+    async fn read_request(socket: &mut TcpStream) -> (Json, Vec<(String, String)>) {
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        let (head_end, length) = loop {
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            if n == 0 {
+                break (0, 0);
+            }
+            raw.extend_from_slice(&buf[..n]);
+            if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&raw[..at]).to_lowercase();
+                let length = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                break (at + 4, length);
+            }
+        };
+        while raw.len() < head_end + length {
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buf[..n]);
+        }
+        let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
+        let headers = head.lines().skip(1).filter_map(|l| l.split_once(": ")).map(|(k, v)| (k.to_lowercase(), v.to_string())).collect();
+        (serde_json::from_slice(&raw[head_end..]).unwrap_or(Json::Null), headers)
+    }
+
+    async fn write_reply(socket: &mut TcpStream, status: u16, content_type: &str, payload: &str) {
+        let reply = format!("HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}", payload.len());
+        let _ = socket.write_all(reply.as_bytes()).await;
+        let _ = socket.shutdown().await;
+    }
+
     fn quick(url: String) -> Provider {
         let backoff = Backoff { attempts: 4, initial: Duration::ZERO, multiple: 4, rate_limit_wait: Duration::ZERO };
-        Provider { key: ProviderKey { api_key: "test-key".into(), base_url: Some(url) }, backoff }
+        Provider { key: ProviderKey { api_key: "test-key".into(), base_url: Some(url) }, backoff, slots: &REQUEST_SLOTS }
     }
 
     fn options(effort: Option<&str>, model: &str) -> ChatOptions {
@@ -678,9 +720,38 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn https_reaches_the_provider() {
-        let provider = Provider { key: ProviderKey { api_key: "not-a-key".into(), base_url: None }, backoff: Backoff::default() };
+        let provider = Provider::new(ProviderKey { api_key: "not-a-key".into(), base_url: None });
         let Err(ChatError::Failed(message)) = provider.chat_detailed(&options(None, "claude-sonnet-5"), &|| true).await else { panic!("expected a refusal") };
         assert!(message.starts_with("401 "), "{message}");
+    }
+
+    #[tokio::test]
+    async fn at_most_eight_requests_are_in_flight_at_once() {
+        // Its own slots, so another test's requests cannot hold one.
+        static SLOTS: Semaphore = Semaphore::const_new(MAX_REQUESTS_IN_FLIGHT);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (in_flight, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (counting, peaked) = (in_flight.clone(), peak.clone());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let (counting, peaked) = (counting.clone(), peaked.clone());
+                tokio::spawn(async move {
+                    read_request(&mut socket).await;
+                    peaked.fetch_max(counting.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    counting.fetch_sub(1, Ordering::SeqCst);
+                    write_reply(&mut socket, 200, "text/event-stream", &stream_of(&[("text", "ok")], "end_turn", (1, 1))).await;
+                });
+            }
+        });
+        let mut provider = quick(url);
+        provider.slots = &SLOTS;
+        let options = options(None, "claude-sonnet-5");
+        let replies = join_all((0..12).map(|_| provider.chat_detailed(&options, &|| true)).collect()).await;
+        assert!(replies.iter().all(|reply| reply.as_ref().is_ok_and(|r| r.text == "ok")));
+        assert_eq!(peak.load(Ordering::SeqCst), MAX_REQUESTS_IN_FLIGHT);
     }
 
     #[test]
