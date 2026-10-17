@@ -11,8 +11,9 @@
 //     `brightDataUnlockerZone`) when configured, else a plain GET — a local
 //     host reads the open web as its user does.
 //   - No profile reader, no gated-document browser and no document store: a
-//     profile address and a document source come back as nothing, said once
-//     on the log, and a page whose body is not HTML or text is not kept.
+//     profile address or a document source (a deck host, a data room, a file
+//     the platform keeps) fails, naming what is not available off the
+//     platform; a page whose body is not HTML or text is not kept.
 //
 // `ctx.config.baseUrlOverride` stands in for api.brightdata.com and Anthropic
 // alike, so a test serves both from one fake.
@@ -26,6 +27,7 @@ import type { FetchedResource, SearchResult, WebTools } from './tools';
 
 import { anthropicClient, anthropicKeyedChatProvider, type LlmUsage } from 'movement-engine/public/anthropic';
 import { costMicrodollars, models } from 'movement-engine/public/anthropic';
+import { FULLY_SUPPORTED_DOCUMENT_REGEXES, NOTION_REGEX } from '#shared/constants/document_sources';
 import { isLinkedInUrl, looksLikeNonHtmlAddress } from './addresses';
 
 const BRIGHT_DATA = 'https://api.brightdata.com';
@@ -44,6 +46,27 @@ export const WEB_CREDENTIAL_FIELDS: WireCredentialDeclarationShape['fields'] = [
 
 type Fields = Readonly<Record<string, string>>;
 
+/** The addresses the platform reads through its document sources (a browser
+ *  for gated decks and data rooms, a store that keeps the file). Canva's edit
+ *  links are read as its view links there, so any design link is one. */
+const DOCUMENT_SOURCES = [...FULLY_SUPPORTED_DOCUMENT_REGEXES, NOTION_REGEX, /^https:\/\/www\.canva\.com\/design\//];
+
+export function isDocumentSourceAddress(url: string): boolean {
+  return DOCUMENT_SOURCES.some((source) => source.test(url));
+}
+
+/** What this host cannot do that the platform does, as the refusal a plugin
+ *  call fails with. */
+export class NotAvailableOffPlatform extends Error {
+  constructor(what: string, needs: string) {
+    super(`@lf/web: ${what} needs ${needs}, which is not available off the platform`);
+    this.name = 'NotAvailableOffPlatform';
+  }
+}
+
+const PROFILE_READER = "the platform's LinkedIn profile reader";
+const DOCUMENT_BROWSER = "the platform's gated-document browser and document store";
+
 /** The fields, or none when the host connected no credential. */
 async function fieldsOf(ctx: ModuleContext): Promise<Fields> {
   try {
@@ -56,12 +79,6 @@ async function fieldsOf(ctx: ModuleContext): Promise<Fields> {
 export async function standaloneTools(ctx: ModuleContext): Promise<WebTools> {
   const fields = await fieldsOf(ctx);
   const brightData = ctx.config.baseUrlOverride ?? BRIGHT_DATA;
-  const said = new Set<string>();
-  const sayOnce = (message: string) => {
-    if (said.has(message)) return;
-    said.add(message);
-    ctx.log.info(message);
-  };
   let spent = 0;
 
   const models_ = anthropicClient({
@@ -126,13 +143,15 @@ export async function standaloneTools(ctx: ModuleContext): Promise<WebTools> {
     },
     scrape,
     missingScraperSettings: () => [],
-    profiles: undefined,
-    isDocumentSource: () => false,
+    profiles: {
+      getProfileTextByUrl: async (url) => {
+        throw new NotAvailableOffPlatform(`reading the LinkedIn profile ${url}`, PROFILE_READER);
+      },
+    },
+    isDocumentSource: isDocumentSourceAddress,
     async fetchResource(url): Promise<FetchedResource | null> {
-      if (isLinkedInUrl(url)) {
-        sayOnce('@lf/web: this host has no profile reader, so a LinkedIn address is read as nothing');
-        return null;
-      }
+      if (isLinkedInUrl(url)) throw new NotAvailableOffPlatform(`reading the LinkedIn profile ${url}`, PROFILE_READER);
+      if (isDocumentSourceAddress(url)) throw new NotAvailableOffPlatform(`reading the document at ${url}`, DOCUMENT_BROWSER);
       let content = await scrape(url);
       if (!content || content.trim().length < 50) return null;
       if (content.length > PAGE_CHAR_LIMIT) content = content.slice(0, PAGE_CHAR_LIMIT);
