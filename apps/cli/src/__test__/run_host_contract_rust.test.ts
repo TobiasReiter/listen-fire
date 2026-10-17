@@ -10,7 +10,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { callbackContractCases, cancelContractCases, runHostContractCases } from 'movement-engine/services/run_host/contract';
+import {
+  callbackContractCases,
+  cancelContractCases,
+  runHostContractCases,
+  type RecordsContractBackend,
+} from 'movement-engine/services/run_host/contract';
 import { RpcStoreBackend } from 'movement-engine/services/run_host/rpc_store';
 import { LOCAL_TENANT } from '../host';
 import { lfHostBinary } from './lf_host';
@@ -19,21 +24,22 @@ for (const contractCase of [...runHostContractCases, ...callbackContractCases, .
   test(contractCase.name, async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'lf-host-contract-')), 'state.db');
     const backend = new RpcStoreBackend(lfHostBinary(), ['--contract-store', path]);
+    const records: RecordsContractBackend = {
+      store: backend.store,
+      callbacks: backend.callbacks,
+      runs: backend.runs,
+      teamId: LOCAL_TENANT,
+      newRun: async () => {
+        const id = randomUUID();
+        await backend.startRun({ id, file: 'f', movement: 'm', startedAt: new Date().toISOString(), input: '{}' });
+        return id;
+      },
+      requestCancel: (input) => backend.requestCancel(input),
+      runStatus: (runId) => backend.runStatus(runId),
+      completeRun: (runId) => backend.completeRun(runId),
+    };
     try {
-      await contractCase.run({
-        store: backend.store,
-        callbacks: backend.callbacks,
-        runs: backend.runs,
-        teamId: LOCAL_TENANT,
-        newRun: async () => {
-          const id = randomUUID();
-          await backend.startRun({ id, file: 'f', movement: 'm', startedAt: new Date().toISOString(), input: '{}' });
-          return id;
-        },
-        requestCancel: (input) => backend.requestCancel(input),
-        runStatus: (runId) => backend.runStatus(runId),
-        completeRun: (runId) => backend.completeRun(runId),
-      });
+      await contractCase.run(records);
     } finally {
       await backend.close();
     }
