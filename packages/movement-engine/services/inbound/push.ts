@@ -12,8 +12,17 @@
 // credential matches no install, so the door says nothing about who installed
 // what; 409 when it matches installs on several teams and none is named; 400
 // for a malformed body, judged only after authentication.
+//
+// Beside them, the models door a module served as a process asks for model
+// calls through (module kit `hostModels`), authenticated the same way:
+//
+//   POST …/<adapterType>/models  HostModelRequest  →  200 HostModelAnswer
+//
+// The host answers through its models; the door bills no run itself. The
+// answer's `cost` rides back on the response of the call whose work asked,
+// so the run that made that call is charged.
 
-import { AdapterEmitBody, AdapterWakeBody } from 'engine-contracts';
+import { AdapterEmitBody, AdapterWakeBody, HostModelRequest, type HostModelAnswerShape, type HostModelRequestShape } from 'engine-contracts';
 import type { z } from 'zod';
 
 import type { DiscriminableEvent, EventType } from '../translation_graph/adapter';
@@ -153,3 +162,30 @@ export async function answerWake<C>(store: PushStore<C>, request: PushRequest): 
     return { status: 500, body: { error: 'internal' } };
   }
 }
+
+/** How a host answers its models door: one model call for the install that asked. */
+export type HostModelCall = (input: { caller: PushCaller; request: HostModelRequestShape }) => Promise<HostModelAnswerShape>;
+
+/** A request the host's models refuse as asked (a model it does not know, a
+ *  schema a forced tool cannot carry): answered 400 with its message. */
+export class HostModelRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HostModelRefused';
+  }
+}
+
+export async function answerModels<C>(store: PushStore<C>, request: PushRequest, models: HostModelCall): Promise<InboundAnswer> {
+  try {
+    const body = HostModelRequest.safeParse(request.body);
+    const caller = await callerOf(store, request);
+    if ('status' in caller) return caller;
+    if (!body.success) return badRequest(body.error);
+    return { status: 200, body: await models({ caller, request: body.data }) };
+  } catch (err) {
+    if (err instanceof HostModelRefused) return { status: 400, body: { error: 'bad_request', message: err.message } };
+    logger.error('[AdapterDoors] model call failed', { err });
+    return { status: 502, body: { error: 'model_call_failed', message: err instanceof Error ? err.message : String(err) } };
+  }
+}
+

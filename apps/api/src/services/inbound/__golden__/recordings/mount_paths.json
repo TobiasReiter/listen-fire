@@ -5,6 +5,7 @@
     ],
     "/api/public/adapter": [
       "POST /:adapterType/emit",
+      "POST /:adapterType/models",
       "POST /:adapterType/wake"
     ],
     "/api/public/telegram": [

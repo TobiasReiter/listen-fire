@@ -43,12 +43,24 @@ jest.mock('../../../services/movement_engine/await_wake', () => ({
   },
 }));
 jest.mock('../../../services/work/drain', () => ({ notifyWork: () => notifyWork() }));
+// The platform's model client: answers, and reports what the call spent as a
+// model call reports it (`recordLlmUsage` → `reportRunCost`).
+const anthropicChat = jest.fn();
+const anthropicChatStructured = jest.fn();
+jest.mock('../../../lib/anthropic', () => ({
+  anthropicChat: (input: unknown) => anthropicChat(input),
+  anthropicChatStructured: (input: unknown) => anthropicChatStructured(input),
+}));
 jest.mock('movement-engine/services/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 import { timingSafeEqual } from 'node:crypto';
 
+import { z } from 'zod';
+import { reportRunCost } from 'movement-engine/public/models';
+
+import { currentLlmUsageContext } from '../../../lib/llm_usage';
 import { adapterDoorsRouter } from '../adapterDoors';
 
 let server: Server;
@@ -362,3 +374,52 @@ describe('wake', () => {
     expect(notifyWork).toHaveBeenCalled();
   });
 });
+
+describe('the models door — a module served as a process asks for a model call', () => {
+  const ASK = { label: 'acme.summarise', system: 'Be brief.', userMessage: 'Summarise Acme.' };
+
+  it("answers the text and what it cost, billed to the install's team", async () => {
+    let billedTo: string | undefined;
+    anthropicChat.mockImplementation(async () => {
+      billedTo = currentLlmUsageContext()?.data.teamId;
+      reportRunCost({ source: { kind: 'model', name: 'claude-haiku-4-5' }, microdollars: 830 });
+      return 'Acme makes anvils.';
+    });
+
+    const res = await post('/acme_crm/models', { ...ASK, model: 'claude-haiku-4-5', effort: 'low' }, BEARER_A);
+
+    expect(res).toEqual({ status: 200, body: { text: 'Acme makes anvils.', cost: [{ label: 'anthropic/claude-haiku-4-5', microdollars: 830 }] } });
+    expect(anthropicChat).toHaveBeenCalledWith({ ...ASK, model: 'claude-haiku-4-5', effort: 'low' });
+    expect(billedTo).toBe(A_TEAM);
+  });
+
+  it("asks a schema request as a forced tool call carrying the module's JSON schema, and answers the data", async () => {
+    const schema = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] };
+    anthropicChatStructured.mockImplementation(async (input: { schema: z.ZodType; toolName: string }) => {
+      expect(z.toJSONSchema(input.schema)).toMatchObject(schema);
+      expect(input.toolName).toBe('location');
+      return { city: 'Leeds' };
+    });
+
+    const res = await post('/acme_crm/models', { ...ASK, schema, toolName: 'location', toolDescription: 'Where it is.' }, BEARER_A);
+
+    expect(res).toEqual({ status: 200, body: { text: '{"city":"Leeds"}', data: { city: 'Leeds' }, cost: [] } });
+  });
+
+  it('refuses an unauthenticated caller before reading the request, and a request the models cannot take', async () => {
+    expect(await post('/acme_crm/models', ASK, { authorization: 'Bearer nope' })).toEqual({ status: 401, body: { error: 'unauthorized' } });
+    expect((await post('/acme_crm/models', { label: 'x' }, BEARER_A)).status).toBe(400);
+    const unknownModel = await post('/acme_crm/models', { ...ASK, model: 'gpt-9' }, BEARER_A);
+    expect(unknownModel.status).toBe(400);
+    expect(unknownModel.body.message).toMatch(/gpt-9/);
+    expect((await post('/acme_crm/models', { ...ASK, schema: { type: 'array' } }, BEARER_A)).status).toBe(400);
+    expect(anthropicChat).not.toHaveBeenCalled();
+    expect(anthropicChatStructured).not.toHaveBeenCalled();
+  });
+
+  it('answers 502 when the model call fails', async () => {
+    anthropicChat.mockRejectedValue(new Error('overloaded'));
+    expect(await post('/acme_crm/models', ASK, BEARER_A)).toEqual({ status: 502, body: { error: 'model_call_failed', message: 'overloaded' } });
+  });
+});
+
