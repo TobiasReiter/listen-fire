@@ -328,6 +328,28 @@ impl Run<'_> {
                     let field = direct_field(expr, name, "a shape position")?;
                     Ok(self.shape_position_field(&position, field))
                 }
+                // `cb-[k:Called]->`: the calls so far, read off the ledger,
+                // as a block head over the callback reads them; hops past
+                // them walk on over the records in hand.
+                Binding::Callback(callback) if !steps.is_empty() => {
+                    let Some((TraversalStep::Edge(step), rest)) = steps.split_first() else {
+                        return Err(unsupported(&format!("'{}' hops from a callback ('{name}')", crate::traverse::step_type(&steps[0]))));
+                    };
+                    if step.edge_type_id != crate::awaits::CALLED {
+                        return Err(Failure::unsupported(
+                            &format!("'-[:{}]->' on a callback", step.edge_type_id),
+                            &format!("a callback has one edge, '{}'", crate::awaits::CALLED),
+                        ));
+                    }
+                    let filter = step.expression_filter.as_deref().map(|filter| (filter.clone(), step.alias.clone()));
+                    let called = self.called_landings(&Binding::Callback(callback), filter.as_ref(), scope).await.map_err(crate::write::failure_of)?;
+                    let reached = self.walk_meta(called, rest, name, scope, span).await?;
+                    if let Some((hops, where_)) = exists_terminal(expr, name, true)? {
+                        let found = self.exists(hops, where_, reached, scope, span).await?;
+                        return Ok(Evaluated { value: Js::Bool(found), prov: none() });
+                    }
+                    self.read_landings(expr, reached, name, "a callback's calls").await
+                }
                 Binding::Callback(callback) => {
                     let field = direct_field(expr, name, "a callback")?;
                     Ok(Evaluated { value: callback_field(&callback, field), prov: none() })

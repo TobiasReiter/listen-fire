@@ -21,7 +21,6 @@ export const KNOWN_GAPS: readonly string[] = [
   "MOVENG_UNSUPPORTED: traversing from a value binding ('…') is not supported by the movement",
   "MOVENG_UNSUPPORTED: traversing inside EXISTS() from '…', which holds nothing rather than a",
   "MOVENG_UNSUPPORTED: traversing inside EXISTS() from '…', which holds a list that is not al",
-  "MOVENG_UNSUPPORTED: traversing from a callback ('…') is not supported by the movement engi",
   "MOVENG_UNSUPPORTED: await '…' is not supported by the movement engine yet (await needs a w",
   "MOVENG_UNSUPPORTED: the expression kind '…' is not supported by the movement engine yet",
   "MOVENG_UNSUPPORTED: reading '…' (a deferred traversal) as a bare value is not supported by",
