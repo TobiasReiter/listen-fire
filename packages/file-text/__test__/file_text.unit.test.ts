@@ -13,7 +13,7 @@ import { Readable } from 'node:stream';
 
 import { getPptxText, getXlsxContent, makeFileTextResolver, type FileDescriptor } from '../index';
 
-const FIXTURES = path.join(__dirname, 'fixtures');
+const FIXTURES = path.join(__dirname, '__fixtures__');
 const fixture = (name: string) => createReadStream(path.join(FIXTURES, name));
 
 const logger = { debug: jest.fn(), warn: jest.fn() };
