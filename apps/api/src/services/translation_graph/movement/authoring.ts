@@ -194,11 +194,12 @@ export function diagnoseMovementSource(
     };
   }
 
-  const checkedInRust = options.snapshot !== undefined && since(languageVersion, RUST_ENGINE_FROM_VERSION);
+  const { snapshot } = options;
+  const checkedInRust = snapshot !== undefined && since(languageVersion, RUST_ENGINE_FROM_VERSION);
   const upgrading = options.upgradingFrom !== undefined ? { upgradingFrom: options.upgradingFrom } : {};
   const collected: Diagnostic[] = [
     ...(checkedInRust
-      ? checkSourceInRust(source, options.snapshot, { languageVersion, ...upgrading })
+      ? checkSourceInRust(source, snapshot, { languageVersion, ...upgrading })
       : checkProgram(program, options.catalog, {
           languageVersion,
           ...upgrading,
