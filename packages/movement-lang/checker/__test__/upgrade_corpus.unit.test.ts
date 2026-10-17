@@ -42,8 +42,12 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  now pinned to 4 (295 programs left holding MOV_EXTRACT_KEYWORD_RETIRED,
  *  which only a person rewrites). Lowered by the walk off a record that may
  *  be absent (MOV_ABSENT_REQUIRED from 5: only a person decides where the
- *  guard goes): 4,972 of 5,881 (84.5%), 15 programs left holding it. */
-const FLOOR = 0.845;
+ *  guard goes): 4,972 of 5,881 (84.5%), 15 programs left holding it.
+ *  Lowered at the wasm shrink: a file-level value is refused from 5
+ *  (MOV_FILE_VALUE_RUNS, 3 programs) and more walks off records that may be
+ *  absent are caught (MOV_ABSENT_REQUIRED, now 27): 4,958 of 5,881 (84.3%);
+ *  re-harvested, 4,966 of 5,900 (84.2%). */
+const FLOOR = 0.841;
 
 interface Program {
   source: string;
