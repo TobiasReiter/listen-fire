@@ -1243,6 +1243,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf check` reports a file that does not parse at the column the parser names. It reported column 1
   for every such file.
 
+### ev2-cbhost
+
+- The hosted product now runs a fired callback's body with the same body runner lf uses (the run
+  host's core). Webhook URLs, callback ids, door answers, database rows and the `fire_callback`
+  work kind are unchanged, so callbacks already queued still run.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
