@@ -1365,6 +1365,30 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
   signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
 
+### ev4-lfcreds
+
+- lf's secrets file is no longer edited by hand. `lf connect <module>` sets a module up once: it
+  installs it if needed (a module package the project has, or a separately-run module at its
+  server URL), then asks for its install's secrets — the server secret, the webhook secret
+  (generated on enter), and your OAuth app's client id and secret with the loopback port it
+  registered — and prints the redirect URIs to register. It never asks for a user's credential.
+  `lf connect` with no module lists the modules it knows and whether each is set up.
+- `lf credential add --module <module> [name]` creates a named user credential bound to that
+  module and the credential its manifest declares (`--credential <declared>` when it declares
+  several): it signs in at the provider for an OAuth 2 one, through a loopback redirect (default),
+  `--headless` (print the sign-in URL, paste back the URL the browser was sent to), or `--public`
+  (through `lf serve` at lf.yaml's `publicUrl`, at `/oauth/callback`); a static one's fields are
+  asked for. `lf credential update <name>` signs in again (`--no-reauthorize` to only edit
+  fields), `lf credential delete <name>`, `lf credential list` (never a value). The OAuth app
+  stays with the install and is not copied into a user's credential.
+- Each entry records what it is for: `module:` alone is a module's install, `module:` +
+  `credential:` a user credential. An entry written by hand (`external:`) reads as before; `lf
+  credential update` records its binding and keeps every field and its name, so webhook URLs
+  naming it keep working. Writes go through the secrets file's lock, plain or SOPS (`sops set` /
+  `sops unset`, never decrypted onto disk); a credential with fields from the environment is
+  refused, since lf cannot write the environment.
+- `lf connect <credential>` (wave 3) is replaced by `lf credential update <credential>`.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

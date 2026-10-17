@@ -47,6 +47,9 @@ export async function addCredential(
   if (external === undefined) throw new Error(`module "${input.module}" is not installed here; set it up first: lf connect ${input.module}`);
   const module = external.manifest.name;
   const install = installOf(credentials, module);
+  if (install === undefined && external.manifest.auth !== undefined) {
+    throw new Error(`module "${module}" is not set up here (its server secret): lf connect ${module}`);
+  }
   const running = await readManifest(project, external, install);
   const declaration = chooseDeclared(module, running.credentials, input.declared);
 
