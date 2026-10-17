@@ -56,6 +56,12 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 - The packages are ready to publish (not published): `@lf/engine` (was `movement-engine`), `@lf/engine-contracts`, `@lf/module-kit`, `@lf/movement-lang`, `@lf/shared`, `@lf/file-text`, `@lf/model-providers` and every `@lf/<module>`, each 0.11.0, built to `dist/` with declarations by `scripts/build-packages.cjs` on `pnpm pack`. Sources still import the old spellings through workspace aliases; `pnpm --filter` takes the new names.
 - Merged onto r-boundary: the published `@lf/engine` serves only `public/*` (its `publishConfig.exports`); in the workspace the internals still resolve only under the `movement-engine-internals` condition. The engine's own tests reach internals by relative path, not the old package name.
 
+### tidy-rust2
+
+- A third-party store module fills lf's store slot: an externals folder whose `lf-external.yaml` says `kind: core`, `slot: store` and its `command`, named by lf.yaml's `core: { store: <name> }`. lf starts it and speaks the store slot's wire to it, JSON-RPC on its stdin and stdout ([docs/contracts/store-slot.md](docs/contracts/store-slot.md), within adapter protocol 2): the methods `lf --contract-store` serves, plus `store.open` with the module's settings. `lf connect <name>` asks its declared settings and opens it once. `lf --contract-store-slot` serves the project's store slot, so the run host's contract suite runs through a module. The models, judge and files slots still take only a built-in.
+- An event with an `idempotencyKey` runs each listen once: a redelivery runs nothing and `lf run` says so. A dry run notes no receipt. The receipts are the SQLite state file's new `event_receipt` table and @lf/postgres-store's migration 2 (`lf.event_receipt`); **a Postgres store needs `lf connect @lf/postgres-store` once** to apply it (lf refuses a schema at version 1 until then).
+- The host's models door is served outside `lf serve` too: under `lf run`, `resume` and `drain` a process module's `ctx.models` reaches the models slot (LF_HOST_URL is a loopback listener with the models door alone; a push to it answers 404).
+
 ### tidy-rust
 
 - `lf` is built from the Cargo package `lf` (`crates/lf`; was `lf-host`): `cargo build --release -p lf`. `lf --version` prints the crate's version, now 0.11.0 with the packages; the release workflow refuses an `lf-v<version>` tag that names another.
