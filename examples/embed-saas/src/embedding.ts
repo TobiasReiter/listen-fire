@@ -69,6 +69,9 @@ export class Embedding {
   constructor(private readonly options: { models?: ModelClient; limits?: Limits } = {}) {
     this.host = inProcessHost({
       adapters: { resolve: ({ adapterType, teamId, credentialsId }) => this.crmFor({ adapterType, tenant: teamId, credentialsId }) },
+      // A run reaches only its own tenant's connection: the host asks this
+      // before it builds an instance for the credential a run names.
+      credentials: { belongsTo: ({ teamId, credentialsId }) => credentialsId === credentialRef(teamId) },
       ...(options.models !== undefined ? { llm: pricedModels({ client: options.models }) } : {}),
     });
   }
@@ -154,12 +157,11 @@ export class Embedding {
     });
   }
 
-  /** The customer's CRM, loaded in process. A run reaches only its own
-   *  tenant's connection: the credential a run names must be its tenant's. */
+  /** The customer's CRM, loaded in process, over the connection named. */
   private crmFor(input: { adapterType: string; tenant: string; credentialsId: string | undefined }): Adapter {
     const { adapterType, tenant, credentialsId } = input;
     if (adapterType !== 'crm') throw new Error(`no adapter "${adapterType}" here`);
-    if (credentialsId !== credentialRef(tenant)) throw new Error(`tenant ${tenant} has no connection ${String(credentialsId)}`);
+    if (credentialsId === undefined) throw new Error(`the CRM needs a connection`);
     return adapterInProcess(this.crm, {
       tenant,
       credential: secretsCredential({ name: 'crm', ref: credentialsId, secrets: this.secrets }),

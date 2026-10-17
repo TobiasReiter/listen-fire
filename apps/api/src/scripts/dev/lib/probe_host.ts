@@ -19,6 +19,8 @@ export function probeEngineHost(input: {
   return productionEngineHost({
     teamId: input.teamId,
     resolveLive: input.resolve,
+    // The probe's credential ids name no vault row: its adapters ignore them.
+    credentials: { belongsTo: () => true },
     ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });
 }

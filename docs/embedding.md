@@ -122,6 +122,7 @@ if (listener.adapter === 'crm' && eventMatchesTriggerScope(event, listener.confi
 ```ts
 const host = inProcessHost({
   adapters: { resolve: ({ adapterType, teamId, credentialsId }) => adapterFor(teamId, credentialsId) },
+  credentials: { belongsTo: ({ teamId, credentialsId }) => vault.tenantOf(credentialsId) === teamId },
   llm: pricedModels({ client: models }),
 });
 ```
@@ -155,7 +156,7 @@ The full table is [docs/contracts/run-limits.md](contracts/run-limits.md).
 
 - Every run names its tenant, and the host answers every call for the tenant of the segment it was made in.
 - Build each tenant's catalog from that tenant's connections only, and keep each tenant's credentials under its own ids.
-- Check in your adapter resolver that the credential id a run names belongs to the run's tenant. The engine passes the id through; holding it to the tenant is yours. The example does this in `crmFor`.
+- Tell the host which tenant owns each credential (`credentials.belongsTo` on `inProcessHost`). Before it builds an instance for the credential a run names, the host asks; a credential that is not the run's tenant's is refused (`CredentialNotTenants`), and a host told nothing refuses every run that names one.
 - A movement reaches the network only through modules. The engine has no network code, and no family takes a URL from a movement.
 
 ## What the example leaves out

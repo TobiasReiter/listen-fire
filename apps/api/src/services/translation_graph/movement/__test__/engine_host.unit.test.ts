@@ -26,6 +26,18 @@ jest.mock('../raw_text_store', () => ({
   postgresRawTextStore: (teamId: string) => postgresRawTextStore(teamId),
 }));
 
+// The vault's answer to "is this credential the team's?", as the test sets it.
+const ownedCredentials = new Map<string, string>();
+const ownershipAsked: Array<{ teamId: string; credentialsId: string }> = [];
+jest.mock('../../../credentials/credential_ownership', () => ({
+  teamCredentials: {
+    belongsTo: async (input: { teamId: string; credentialsId: string }) => {
+      ownershipAsked.push(input);
+      return ownedCredentials.get(input.credentialsId) === input.teamId;
+    },
+  },
+}));
+
 import { HOST_FAMILIES_VERSION, tenantIdOf } from 'engine-contracts';
 
 import type { Adapter } from 'movement-engine/services/translation_graph/adapter';
@@ -41,6 +53,9 @@ const MUTATION_CONTEXT = userEditContext('user-1');
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-0000000000e1');
 
 beforeEach(() => {
+  ownedCredentials.clear();
+  ownershipAsked.length = 0;
+  for (const credentialsId of ['cred-a', 'cred-b']) ownedCredentials.set(credentialsId, TEAM_ID);
   fileTextSpends = false;
   resolverStores.length = 0;
   postgresRawTextStore.mockClear();
@@ -163,6 +178,29 @@ describe('productionEngineHost — adapter instances', () => {
     expect(answer).toMatchObject({ result: { adapterType: 'attio' } });
     expect(writes).toEqual([]);
     expect(captured).toEqual([{ kind: 'create', adapterType: 'attio', recordType: 'companies', fields: { name: 'Acme' } }]);
+    await host.segment.close({ segmentId });
+  });
+
+  it("refuses an instance for a credential that is not the segment's team's, asking the vault before building it", async () => {
+    ownedCredentials.set('cred-other', tenantIdOf('00000000-0000-0000-0000-0000000000e2'));
+    const built: Array<string | undefined> = [];
+    const host = productionEngineHost({
+      teamId: teamOfTenant(TEAM_ID),
+      resolveLive: ({ credentialsId }) => {
+        built.push(credentialsId);
+        return liveAdapter([]);
+      },
+    });
+    const { segmentId } = await host.segment.open({ teamId: TEAM_ID, languageVersion: 2, hostFamiliesVersion: HOST_FAMILIES_VERSION });
+    await expect(host.adapters.resolve({ adapterType: 'attio', credentialsId: 'cred-other', role: 'target', segmentId })).rejects.toThrow(
+      `credential 'cred-other' does not belong to tenant '${TEAM_ID}'`,
+    );
+    await host.adapters.resolve({ adapterType: 'attio', credentialsId: 'cred-a', role: 'target', segmentId });
+    expect(ownershipAsked).toEqual([
+      { teamId: TEAM_ID, credentialsId: 'cred-other' },
+      { teamId: TEAM_ID, credentialsId: 'cred-a' },
+    ]);
+    expect(built).toEqual(['cred-a']);
     await host.segment.close({ segmentId });
   });
 

@@ -21,5 +21,7 @@ export {
   adapterTable,
   type AdapterTable,
   type ClassifyHostError,
+  CredentialNotTenants,
+  type CredentialOwnership,
   type LiveAdapterResolver,
 } from '../services/translation_graph/engine/adapter_table';

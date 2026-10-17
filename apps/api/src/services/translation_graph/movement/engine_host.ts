@@ -53,7 +53,8 @@ import {
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 import { resolveAdapter } from '../adapters/resolve';
 import { meteredArbitration } from '../engine/entity_match';
-import { adapterTable, type LiveAdapterResolver } from 'movement-engine/public/host';
+import { adapterTable, type CredentialOwnership, type LiveAdapterResolver } from 'movement-engine/public/host';
+import { teamCredentials } from '../../credentials/credential_ownership';
 import { hostSegments, segmentScopedCalls } from 'movement-engine/public/run-support';
 import { metered, refusingPastBudget } from 'movement-engine/public/models';
 import { renderFileArtifactFor } from './file_render';
@@ -70,6 +71,9 @@ export function productionEngineHost(input: {
   /** Where live adapter instances come from. Absent ⇒ the adapter registry
    *  (a dev probe supplies a client pointed at its fake server). */
   resolveLive?: LiveAdapterResolver;
+  /** Whether a credential a run names is its team's. Absent ⇒ the team's
+   *  rows in the credentials vault. */
+  credentials?: CredentialOwnership;
   /** Receives each write a rehearsed (`dryRun`) target captured. */
   writeSink?: DryRunWriteSink;
   /** The run the host's model, plugin and file-text calls are billed to. Absent
@@ -113,6 +117,7 @@ export function productionEngineHost(input: {
           credentialsId,
           ...(constructionArgs !== undefined ? { constructionArgs } : {}),
         })),
+    credentials: input.credentials ?? teamCredentials,
     ...segmentScopedCalls,
     ...(input.writeSink !== undefined ? { writeSink: input.writeSink } : {}),
   });

@@ -12,7 +12,7 @@ import { parkSources } from '../run_host/rules';
 import type { ParkSink } from './run';
 import { isCheckFailure } from './errors';
 
-import type { adapterTable, LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
+import type { adapterTable, CredentialOwnership, LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
 import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
 import { appendingInto, type ActingUserLookup, type QueuedWake } from './host_kit';
 import { inProcessHost } from '../embed/in_process_host';
@@ -27,6 +27,8 @@ export interface TestHostOverrides {
   adapters?: Partial<Pick<Parameters<typeof adapterTable>[0], 'around' | 'classify'>> & {
     resolve?: LiveAdapterResolver;
   };
+  /** Absent ⇒ every credential is the run's tenant's. */
+  credentials?: CredentialOwnership;
   llm?: Partial<EngineHost['llm']>;
   park?: Partial<EngineHost['park']>;
   control?: Partial<EngineHost['control']>;
@@ -79,6 +81,7 @@ export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
   const segmentTeams = new Map<string, QueuedWake['teamId']>();
   return inProcessHost({
     ...(adapters !== undefined ? { adapters } : {}),
+    credentials: overrides.credentials ?? { belongsTo: () => true },
     ...(llm !== undefined ? { llm } : {}),
     ...(control !== undefined ? { control } : {}),
     ...(lookup !== undefined ? { lookup } : {}),

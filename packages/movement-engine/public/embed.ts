@@ -5,6 +5,7 @@
 // movement (its `listen` statements). docs/embedding.md walks through it.
 
 export { inProcessHost, type InProcessHostOptions } from '../services/embed/in_process_host';
+export { CredentialNotTenants, type CredentialOwnership } from '../services/translation_graph/engine/adapter_table';
 export { introspectAdapter } from '../services/embed/introspect';
 export { InMemoryWriteLocks, type WriteLocks } from '../services/write_locks/write_locks';
 export { collectFileListeners, type FileListener } from '../services/translation_graph/movement/file_listeners';
