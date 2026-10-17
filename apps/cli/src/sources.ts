@@ -128,8 +128,7 @@ export function checkFile(input: {
     parseProgram(input.file.source, { languageVersion: input.languageVersion });
   } catch (error) {
     if (!(error instanceof MovementParseError)) throw error;
-    const at = /line (\d+)(?:, column (\d+))?/.exec(error.message);
-    return [{ file: input.file, line: Number(at?.[1] ?? 1), column: Number(at?.[2] ?? 1), code: 'MOV_PARSE', message: error.message, severity: 'error' }];
+    return [{ file: input.file, line: error.loc.line, column: error.loc.col, code: 'MOV_PARSE', message: error.message, severity: 'error' }];
   }
   return checkSourceInRust(input.file.source, input.catalog, { languageVersion: input.languageVersion }).map((d) => ({
     file: input.file,

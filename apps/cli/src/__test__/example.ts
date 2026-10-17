@@ -1,5 +1,7 @@
 // The example project (examples/lf-acme), copied into a temporary folder per
-// test, and the real `lf` entry point run against it.
+// test, and the real `lf` entry point run against it. `LF_BIN=<executable>`
+// runs the tests against another binary instead (the Rust lf-host:
+// `LF_BIN=target/debug/lf-host`), so one set of tests holds both.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -8,6 +10,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 export const LF = resolve(__dirname, '../../bin/lf.cjs');
+
+/** The command and arguments that run `lf <args>`: the TypeScript entry
+ *  point under this Node, or the executable `LF_BIN` names. */
+export function lfCommand(args: readonly string[]): [string, string[]] {
+  const bin = process.env.LF_BIN;
+  return bin !== undefined && bin !== '' ? [resolve(bin), [...args]] : [process.execPath, [LF, ...args]];
+}
 export const EXAMPLE = resolve(__dirname, '../../../../examples/lf-acme');
 
 /** The example project; with a fixture, its movements replaced by the
@@ -25,7 +34,7 @@ export function project(fixture?: string): string {
 }
 
 export function lf(dir: string, ...args: string[]): { code: number; out: string } {
-  const run = spawnSync(process.execPath, [LF, ...args], {
+  const run = spawnSync(...lfCommand(args), {
     cwd: dir,
     encoding: 'utf8',
     env: { ...process.env, NODE_NO_WARNINGS: '1' },
@@ -43,7 +52,7 @@ export interface Served {
 
 /** `lf serve` on a free port, its output collected. */
 export async function served(dir: string, args: string[] = [], env: Record<string, string> = {}): Promise<Served> {
-  const server = spawn(process.execPath, [LF, 'serve', '--port', '0', ...args], {
+  const server = spawn(...lfCommand(['serve', '--port', '0', ...args]), {
     cwd: dir,
     env: { ...process.env, NODE_NO_WARNINGS: '1', ...env },
     stdio: ['ignore', 'pipe', 'inherit'],
