@@ -949,8 +949,7 @@ async fn invoke_plugin(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
     // What the answer's `cost` says it spent rides the engine's own cost
     // lines; on a failure there are none to ride, so it goes to the run's
     // account directly.
-    let mut lines: Vec<Js> =
-        spent.iter().map(|(label, micro)| Js::Obj(obj! { "source" => Js::Str(format!("adapter:{label}")), "microdollars" => Js::Num(serde_json::Number::from_f64(*micro).unwrap_or(0.into())) })).collect();
+    let mut lines = cost_lines(&spent);
     let answer = match answer {
         Ok(answer) => answer,
         Err(message) => {
@@ -1039,8 +1038,19 @@ async fn adapters_call(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
         return Err(Fault(format!("adapters.call {method} filesIn is \"resources\" or absent")));
     }
     let (called, spent) = crate::protocol::spending(host.adapters.call(&instance, &method, &call_args)).await;
-    charge_run(host, &spent).map_err(Fault)?;
-    match called {
+    // What the module said it spent rides the answer, failed or not: the
+    // engine's ledger charges it at once, so the cap counts it before the
+    // segment's next priced call, and the host's account matches.
+    let lines = cost_lines(&spent);
+    let cost = (!lines.is_empty()).then(|| Js::Arr(lines));
+    host.charge(cost.as_ref());
+    let with_cost = |mut answer: Json| {
+        if let Some(cost) = &cost {
+            answer["cost"] = json_of_js(cost);
+        }
+        answer
+    };
+    Ok(Ok(Some(with_cost(match called {
         Err(failed) => {
             let message = failed.message().to_string();
             let mut errors = host.host_errors.borrow_mut();
@@ -1050,10 +1060,10 @@ async fn adapters_call(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
                 _ => Obj::new(),
             };
             error.insert("ref".into(), Js::Num((errors.len() - 1).into()));
-            Ok(Ok(Some(json!({ "error": json_of_js(&Js::Obj(error)) }))))
+            json!({ "error": json_of_js(&Js::Obj(error)) })
         }
         // An answer of nothing crosses as no result.
-        Ok(None) => Ok(Ok(Some(json!({})))),
+        Ok(None) => json!({}),
         Ok(Some(result)) => {
             let answered = if files_in == Some("resources") { resources_with_files(&mut host.wire.borrow_mut(), &result) } else { None };
             let mut wire = host.wire.borrow_mut();
@@ -1061,14 +1071,26 @@ async fn adapters_call(host: &SegmentHost<'_>, args: &Json) -> Result<Answer, Fa
                 Some(hv) => hv,
                 None => files_at_type(&mut wire, files_at.as_ref(), &result),
             };
-            Ok(Ok(Some(json!({ "result": wire.write(&value) }))))
+            json!({ "result": wire.write(&value) })
         }
-    }
+    }))))
 }
 
-/// What an adapter call's answers said they spent on paid services, added
-/// to the run's account (counted by its cost cap from the next segment on):
-/// the engine's ledger has no line for an adapter call.
+/// What a module's answers said they spent on paid services, as the
+/// engine's cost lines (`adapter:<label>`), each rounded as its ledger
+/// rounds it so the two accounts agree.
+fn cost_lines(spent: &[(String, f64)]) -> Vec<Js> {
+    spent
+        .iter()
+        .map(|(label, micro)| {
+            let rounded = (micro + 0.5).floor();
+            Js::Obj(obj! { "source" => Js::Str(format!("adapter:{label}")), "microdollars" => Js::Num(serde_json::Number::from_f64(rounded).unwrap_or(0.into())) })
+        })
+        .collect()
+}
+
+/// What a failed plugin call's module said it spent: no answer carries it
+/// to the engine's ledger, so it goes to the run's account directly.
 fn charge_run(host: &SegmentHost<'_>, spent: &[(String, f64)]) -> Result<(), String> {
     let total: f64 = spent.iter().map(|(_, micro)| micro).sum();
     if total > 0.0 {

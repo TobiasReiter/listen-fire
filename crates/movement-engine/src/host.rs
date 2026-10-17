@@ -655,14 +655,17 @@ pub enum CallAnswer {
     Error(Json),
 }
 
-pub fn call_answer(answer: Option<Json>) -> Result<CallAnswer, String> {
+/// `{result} | {error}`, either with the `cost` lines the module answered
+/// it with (what a paid service it reached spent), charged to the run.
+pub fn call_answer(answer: Option<Json>) -> Result<(CallAnswer, Option<Json>), String> {
     let Some(Json::Object(mut envelope)) = answer else {
         return Err("an adapters.call answer is {result} or {error}".into());
     };
+    let cost = envelope.remove("cost");
     match (envelope.remove("result"), envelope.remove("error")) {
-        (result, None) if envelope.is_empty() => Ok(CallAnswer::Result(result)),
-        (None, Some(error)) if error.get("message").is_some_and(Json::is_string) => Ok(CallAnswer::Error(error)),
-        _ => Err("an adapters.call answer is {result} or {error: {kind, message}}".into()),
+        (result, None) if envelope.is_empty() => Ok((CallAnswer::Result(result), cost)),
+        (None, Some(error)) if error.get("message").is_some_and(Json::is_string) => Ok((CallAnswer::Error(error), cost)),
+        _ => Err("an adapters.call answer is {result} or {error: {kind, message}}, and cost?".into()),
     }
 }
 
@@ -702,9 +705,12 @@ mod tests {
 
     #[test]
     fn an_adapter_call_answers_a_result_or_an_error() {
-        assert!(matches!(call_answer(Some(json!({ "result": 1 }))), Ok(CallAnswer::Result(Some(_)))));
-        assert!(matches!(call_answer(Some(json!({}))), Ok(CallAnswer::Result(None))));
-        assert!(matches!(call_answer(Some(json!({ "error": { "kind": "adapter_error", "message": "m" } }))), Ok(CallAnswer::Error(_))));
+        assert!(matches!(call_answer(Some(json!({ "result": 1 }))), Ok((CallAnswer::Result(Some(_)), None))));
+        assert!(matches!(call_answer(Some(json!({}))), Ok((CallAnswer::Result(None), None))));
+        assert!(matches!(call_answer(Some(json!({ "error": { "kind": "adapter_error", "message": "m" } }))), Ok((CallAnswer::Error(_), None))));
+        let cost = json!([{ "source": "adapter:brightdata", "microdollars": 3 }]);
+        assert!(matches!(call_answer(Some(json!({ "result": 1, "cost": cost }))), Ok((CallAnswer::Result(Some(_)), Some(c))) if c == cost));
+        assert!(call_answer(Some(json!({ "result": 1, "other": 2 }))).is_err());
         assert!(call_answer(Some(json!({ "error": {} }))).is_err());
         assert!(call_answer(None).is_err());
     }

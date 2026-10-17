@@ -1652,9 +1652,13 @@ impl Run<'_> {
     }
 
     /// An `adapters.call` answer: the result off the eval wire, or the
-    /// host's error as the stand-in raises it.
+    /// host's error as the stand-in raises it. What the call spent is
+    /// charged first, failed or not, so the run's cap counts it before the
+    /// segment's next priced call.
     pub(crate) fn adapter_answer(&self, answer: Option<Json>) -> Result<Js, Failure> {
-        match host::call_answer(answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))? {
+        let (answer, cost) = host::call_answer(answer).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
+        self.ledger.charge(cost.as_ref()).map_err(|message| Failure::Engine { class: crate::eval::ErrorClass::Error, message })?;
+        match answer {
             host::CallAnswer::Result(Some(wire)) => self.wire.decode(&wire).map_err(|e| Failure::engine("MOVENG_RUNTIME", e)),
             host::CallAnswer::Result(None) => Ok(Js::Undefined),
             host::CallAnswer::Error(error) => Err(Failure::Host(HostError { detail: error })),

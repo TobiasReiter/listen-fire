@@ -3495,6 +3495,31 @@ mod tests {
         assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1200.0 }));
     }
 
+    /// What an adapter call's module answered it spent is charged at once:
+    /// the segment's next priced call already meets the cap it took the run to.
+    #[test]
+    fn an_adapter_calls_cost_counts_against_the_cap_within_the_segment() {
+        let source = "import { email } from adapters\nimport { fetchUrl } from plugins\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n  page = fetchUrl(s)\n}";
+        let mut catalog = serde_json::from_str::<Json>(CATALOG).unwrap();
+        catalog["plugins"] = json!({ "fetch_url": { "args": ["url"], "requiredArgs": ["url"], "priced": true, "output": { "kind": "value", "type": "text" } } });
+        let mut input = segment_input(source, json!(["o", []]), &[]);
+        input["catalog"] = catalog;
+        input["spend"] = json!({ "priorMicrodollars": 0, "capBaselineMicrodollars": 0, "capMicrodollars": 1_000 });
+        let fetched = RefCell::new(0);
+        let (done, _) = drive_input(input, |request| match (request.family, request.method.as_str()) {
+            ("adapters", "call") => json!({ "value": { "result": "Acme", "cost": [{ "source": "adapter:scraper", "microdollars": 1_500 }] } }),
+            ("llm.transforms", "invoke") => {
+                *fetched.borrow_mut() += 1;
+                json!({ "value": wire(json!({ "text": "page" })) })
+            }
+            ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+            _ => plain_host(json!({}))(request),
+        });
+        assert_eq!(*fetched.borrow(), 0, "the priced call was refused: {done}");
+        assert_eq!(done["failed"]["error"], json!({ "class": "RunCostCapExceeded", "capMicrodollars": 1000.0, "spentMicrodollars": 1500.0 }), "{done}");
+        assert_eq!(done["cost"], json!([{ "source": "adapter:scraper", "microdollars": 1500.0 }]), "{done}");
+    }
+
     /// A run that meets its cost cap pauses before the statement that would
     /// spend, and its resume, with the usage reset, runs that statement and
     /// the rest: the call before the pause is not made again.
