@@ -1,0 +1,439 @@
+[
+  {
+    "id": "register-new-destination",
+    "door": "valuations_webhooks",
+    "note": "Registering a URL inserts one subscription row per requested event type and returns their ids.",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/valuations/webhooks",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"url\":\"https://hooks.subscriber.test/valuations\",\"eventTypes\":[\"valuations:legal_entity:create\",\"valuations:investment:update\"],\"secret\":\"golden-subscriber-secret-0001\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "184"
+      },
+      "body": "{\"data\":{\"url\":\"https://hooks.subscriber.test/valuations\",\"rows\":[{\"id\":\"row-new-1\",\"type\":\"valuations:legal_entity:create\"},{\"id\":\"row-new-2\",\"type\":\"valuations:investment:update\"}]}}"
+    },
+    "effects": [
+      {
+        "kind": "valuations_db",
+        "op": "select",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "where",
+            [
+              "team_id",
+              "=",
+              "team-1"
+            ]
+          ],
+          [
+            "where",
+            [
+              "url",
+              "=",
+              "https://hooks.subscriber.test/valuations"
+            ]
+          ],
+          [
+            "where",
+            [
+              "event_type",
+              "in",
+              [
+                "valuations:legal_entity:create",
+                "valuations:investment:update"
+              ]
+            ]
+          ],
+          [
+            "where",
+            [
+              "deleted_at",
+              "is",
+              null
+            ]
+          ],
+          [
+            "select",
+            [
+              [
+                "id",
+                "event_type"
+              ]
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "valuations_db",
+        "op": "insert",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "values",
+            [
+              [
+                {
+                  "team_id": "team-1",
+                  "url": "https://hooks.subscriber.test/valuations",
+                  "event_type": "valuations:legal_entity:create",
+                  "name": "Valuations → hooks.subscriber.test",
+                  "secret": "golden-subscriber-secret-0001"
+                },
+                {
+                  "team_id": "team-1",
+                  "url": "https://hooks.subscriber.test/valuations",
+                  "event_type": "valuations:investment:update",
+                  "name": "Valuations → hooks.subscriber.test",
+                  "secret": "golden-subscriber-secret-0001"
+                }
+              ]
+            ]
+          ],
+          [
+            "returning",
+            [
+              [
+                "id",
+                "event_type"
+              ]
+            ]
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "id": "register-existing-destination-rotates-secret",
+    "door": "valuations_webhooks",
+    "note": "Re-registering reuses existing rows, inserts only the missing types and rotates the secret across the existing rows.",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/valuations/webhooks",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"url\":\"https://hooks.subscriber.test/valuations\",\"eventTypes\":[\"valuations:legal_entity:create\",\"valuations:investment:update\"],\"secret\":\"golden-subscriber-secret-0002\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "180"
+      },
+      "body": "{\"data\":{\"url\":\"https://hooks.subscriber.test/valuations\",\"rows\":[{\"id\":\"row-1\",\"type\":\"valuations:legal_entity:create\"},{\"id\":\"row-new-1\",\"type\":\"valuations:investment:update\"}]}}"
+    },
+    "effects": [
+      {
+        "kind": "valuations_db",
+        "op": "select",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "where",
+            [
+              "team_id",
+              "=",
+              "team-1"
+            ]
+          ],
+          [
+            "where",
+            [
+              "url",
+              "=",
+              "https://hooks.subscriber.test/valuations"
+            ]
+          ],
+          [
+            "where",
+            [
+              "event_type",
+              "in",
+              [
+                "valuations:legal_entity:create",
+                "valuations:investment:update"
+              ]
+            ]
+          ],
+          [
+            "where",
+            [
+              "deleted_at",
+              "is",
+              null
+            ]
+          ],
+          [
+            "select",
+            [
+              [
+                "id",
+                "event_type"
+              ]
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "valuations_db",
+        "op": "insert",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "values",
+            [
+              [
+                {
+                  "team_id": "team-1",
+                  "url": "https://hooks.subscriber.test/valuations",
+                  "event_type": "valuations:investment:update",
+                  "name": "Valuations → hooks.subscriber.test",
+                  "secret": "golden-subscriber-secret-0002"
+                }
+              ]
+            ]
+          ],
+          [
+            "returning",
+            [
+              [
+                "id",
+                "event_type"
+              ]
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "valuations_db",
+        "op": "update",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "set",
+            [
+              {
+                "secret": "golden-subscriber-secret-0002",
+                "updated_at": "2026-10-17T12:00:00.000Z"
+              }
+            ]
+          ],
+          [
+            "where",
+            [
+              "id",
+              "in",
+              [
+                "row-1"
+              ]
+            ]
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "id": "register-invalid-event-type",
+    "door": "valuations_webhooks",
+    "note": "An event type outside the valuations shape is 400 with the issue tree.",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/valuations/webhooks",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"url\":\"https://hooks.subscriber.test/valuations\",\"eventTypes\":[\"attio:record:create\"]}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "177"
+      },
+      "body": "{\"error\":\"invalid_body\",\"issues\":{\"_errors\":[],\"eventTypes\":{\"0\":{\"_errors\":[\"Invalid string: must match pattern /^valuations:[a-z_]+:(create|update|delete)$/\"]},\"_errors\":[]}}}"
+    },
+    "effects": []
+  },
+  {
+    "id": "register-short-secret",
+    "door": "valuations_webhooks",
+    "note": "A secret under 16 characters is 400.",
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/valuations/webhooks",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"url\":\"https://hooks.subscriber.test/valuations\",\"eventTypes\":[\"valuations:legal_entity:create\"],\"secret\":\"short\"}"
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "124"
+      },
+      "body": "{\"error\":\"invalid_body\",\"issues\":{\"_errors\":[],\"secret\":{\"_errors\":[\"Too small: expected string to have >=16 characters\"]}}}"
+    },
+    "effects": []
+  },
+  {
+    "id": "delete-destination",
+    "door": "valuations_webhooks",
+    "note": "DELETE soft-deletes every row for the url and reports the count.",
+    "request": {
+      "method": "DELETE",
+      "path": "/api/v1/valuations/webhooks?url=https%3A%2F%2Fhooks.subscriber.test%2Fvaluations",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "71"
+      },
+      "body": "{\"data\":{\"url\":\"https://hooks.subscriber.test/valuations\",\"deleted\":2}}"
+    },
+    "effects": [
+      {
+        "kind": "valuations_db",
+        "op": "update",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "set",
+            [
+              {
+                "deleted_at": "2026-10-17T12:00:00.000Z",
+                "updated_at": "2026-10-17T12:00:00.000Z"
+              }
+            ]
+          ],
+          [
+            "where",
+            [
+              "team_id",
+              "=",
+              "team-1"
+            ]
+          ],
+          [
+            "where",
+            [
+              "url",
+              "=",
+              "https://hooks.subscriber.test/valuations"
+            ]
+          ],
+          [
+            "where",
+            [
+              "deleted_at",
+              "is",
+              null
+            ]
+          ]
+        ]
+      }
+    ]
+  },
+  {
+    "id": "delete-without-url",
+    "door": "valuations_webhooks",
+    "note": "No url query parameter is 400.",
+    "request": {
+      "method": "DELETE",
+      "path": "/api/v1/valuations/webhooks",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "35"
+      },
+      "body": "{\"error\":\"missing url query param\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "list-destinations-grouped-by-url",
+    "door": "valuations_webhooks",
+    "note": "GET lists active destinations grouped by url.",
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/valuations/webhooks",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "212"
+      },
+      "body": "{\"data\":[{\"url\":\"https://hooks.subscriber.test/valuations\",\"name\":\"Valuations -> hooks.subscriber.test\",\"eventTypes\":[\"valuations:legal_entity:create\",\"valuations:investment:update\"],\"rowIds\":[\"row-1\",\"row-2\"]}]}"
+    },
+    "effects": [
+      {
+        "kind": "valuations_db",
+        "op": "select",
+        "table": "webhook_subscription",
+        "steps": [
+          [
+            "where",
+            [
+              "team_id",
+              "=",
+              "team-1"
+            ]
+          ],
+          [
+            "where",
+            [
+              "event_type",
+              "like",
+              "valuations:%"
+            ]
+          ],
+          [
+            "where",
+            [
+              "deleted_at",
+              "is",
+              null
+            ]
+          ],
+          [
+            "select",
+            [
+              [
+                "id",
+                "url",
+                "event_type",
+                "name",
+                "created_at"
+              ]
+            ]
+          ],
+          [
+            "orderBy",
+            [
+              "created_at",
+              "desc"
+            ]
+          ]
+        ]
+      }
+    ]
+  }
+]

@@ -5,6 +5,7 @@
 // fakes in world.ts saw. Recordings live beside this file; a replay compares
 // them byte for byte.
 
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -87,7 +88,6 @@ export function buildBody(spec: BodySpec): Buffer {
 
 function describeBytes(buffer: Buffer): string | { bytes: number; sha256: string; head: string } {
   if (buffer.length <= 4096) return buffer.toString('utf-8');
-  const { createHash } = require('node:crypto') as typeof import('node:crypto');
   return {
     bytes: buffer.length,
     sha256: createHash('sha256').update(buffer).digest('hex'),
@@ -178,3 +178,11 @@ export function writeRecording(door: string, cases: RecordedCase[]): void {
 }
 
 export const RECORD_MODE = process.env.GOLDEN_RECORD === '1';
+
+export function readSnapshot(name: string): unknown {
+  return JSON.parse(readFileSync(recordingPath(name), 'utf-8'));
+}
+
+export function writeSnapshot(name: string, value: unknown): void {
+  writeFileSync(recordingPath(name), `${JSON.stringify(value, null, 2)}\n`);
+}

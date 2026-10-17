@@ -75,13 +75,13 @@ export interface World {
   telegramBuiltin: (raw: unknown) => unknown;
   slackEvents: (raw: unknown) => unknown;
   whatsappSender: { teamId: string | null; displayName: string | null };
-  /** Meta number → team the sender dispatch resolves to; the dispatch fake records it. */
-  responseUrlPosts: boolean;
   /** Mailgun / Resend routing decision. */
   emailRoute: unknown;
   resendFetch: unknown;
   emailActingUser: unknown;
   emailTriggerLive: boolean;
+  /** Rows the valuations webhook_subscription table holds for the calling team. */
+  valuationsRows: Record<string, unknown>[];
 }
 
 export type Effect = Record<string, unknown>;
@@ -129,11 +129,11 @@ export function freshWorld(): World {
     telegramBuiltin: () => ({ result: { ok: true, classification: 'no_message' } }),
     slackEvents: () => ({ ok: true, classification: 'dispatched', eventsProcessed: 1 }),
     whatsappSender: { teamId: 'team-1', displayName: 'Ada' },
-    responseUrlPosts: true,
     emailRoute: null,
     resendFetch: null,
     emailActingUser: null,
     emailTriggerLive: true,
+    valuationsRows: [],
   };
 }
 

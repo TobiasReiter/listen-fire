@@ -1,0 +1,95 @@
+{
+  "providerKeys": {
+    "ATTIO": "https://golden.example.test/api/public/webhook-sync/attio/SUBSCRIPTION-ID",
+    "AIRTABLE": "https://golden.example.test/api/public/webhook-sync/airtable/SUBSCRIPTION-ID",
+    "AFFINITY": "https://golden.example.test/api/public/webhook-sync/affinity/SUBSCRIPTION-ID",
+    "NATIVE_VALUATIONS": "https://golden.example.test/api/public/webhook-sync/native_valuations/SUBSCRIPTION-ID",
+    "KG_MUTATION": "https://golden.example.test/api/public/webhook-sync/kg_mutation/SUBSCRIPTION-ID",
+    "SLACK": "https://golden.example.test/api/public/webhook-sync/slack/SUBSCRIPTION-ID",
+    "TELEGRAM": "https://golden.example.test/api/public/webhook-sync/telegram/SUBSCRIPTION-ID",
+    "INBOUND_WHATSAPP": "https://golden.example.test/api/public/webhook-sync/inbound_whatsapp/SUBSCRIPTION-ID",
+    "ACME-CRM (a remote install)": "https://golden.example.test/api/public/webhook-sync/acme-crm/SUBSCRIPTION-ID"
+  },
+  "adapterKeys": {
+    "kg": {
+      "providerKey": "KG_MUTATION",
+      "url": "https://golden.example.test/api/public/webhook-sync/kg_mutation/SUBSCRIPTION-ID"
+    },
+    "attio": {
+      "providerKey": "ATTIO",
+      "url": "https://golden.example.test/api/public/webhook-sync/attio/SUBSCRIPTION-ID"
+    },
+    "affinity": {
+      "providerKey": "AFFINITY",
+      "url": "https://golden.example.test/api/public/webhook-sync/affinity/SUBSCRIPTION-ID"
+    },
+    "native-valuations": {
+      "providerKey": "NATIVE_VALUATIONS",
+      "url": "https://golden.example.test/api/public/webhook-sync/native_valuations/SUBSCRIPTION-ID"
+    },
+    "slack": {
+      "providerKey": "SLACK",
+      "url": "https://golden.example.test/api/public/webhook-sync/slack/SUBSCRIPTION-ID"
+    },
+    "telegram": {
+      "providerKey": "TELEGRAM",
+      "url": "https://golden.example.test/api/public/webhook-sync/telegram/SUBSCRIPTION-ID"
+    },
+    "email": {
+      "providerKey": "CUSTOM_EMAIL",
+      "url": "https://golden.example.test/api/public/webhook-sync/custom_email/SUBSCRIPTION-ID"
+    },
+    "whatsapp": {
+      "providerKey": "INBOUND_WHATSAPP",
+      "url": "https://golden.example.test/api/public/webhook-sync/inbound_whatsapp/SUBSCRIPTION-ID"
+    },
+    "airtable": {
+      "providerKey": "AIRTABLE",
+      "url": "https://golden.example.test/api/public/webhook-sync/airtable/SUBSCRIPTION-ID"
+    },
+    "google_sheets": {
+      "providerKey": "GOOGLE_SHEETS",
+      "url": "https://golden.example.test/api/public/webhook-sync/google_sheets/SUBSCRIPTION-ID"
+    },
+    "google_drive": {
+      "providerKey": "GOOGLE_DRIVE",
+      "url": "https://golden.example.test/api/public/webhook-sync/google_drive/SUBSCRIPTION-ID"
+    },
+    "dropbox": {
+      "providerKey": "DROPBOX",
+      "url": "https://golden.example.test/api/public/webhook-sync/dropbox/SUBSCRIPTION-ID"
+    },
+    "cron": {
+      "providerKey": "cron",
+      "url": "https://golden.example.test/api/public/webhook-sync/cron/SUBSCRIPTION-ID"
+    },
+    "manual": {
+      "providerKey": "web",
+      "url": "https://golden.example.test/api/public/webhook-sync/web/SUBSCRIPTION-ID"
+    },
+    "granola": {
+      "providerKey": "GRANOLA",
+      "url": "https://golden.example.test/api/public/webhook-sync/granola/SUBSCRIPTION-ID"
+    },
+    "evertrace": {
+      "providerKey": "EVERTRACE",
+      "url": "https://golden.example.test/api/public/webhook-sync/evertrace/SUBSCRIPTION-ID"
+    },
+    "dealroom": {
+      "providerKey": "DEALROOM",
+      "url": "https://golden.example.test/api/public/webhook-sync/dealroom/SUBSCRIPTION-ID"
+    },
+    "gmail": {
+      "providerKey": "GMAIL",
+      "url": "https://golden.example.test/api/public/webhook-sync/gmail/SUBSCRIPTION-ID"
+    },
+    "ask": {
+      "providerKey": "ASK",
+      "url": "https://golden.example.test/api/public/webhook-sync/ask/SUBSCRIPTION-ID"
+    },
+    "system": {
+      "providerKey": "SYSTEM",
+      "url": "https://golden.example.test/api/public/webhook-sync/system/SUBSCRIPTION-ID"
+    }
+  }
+}

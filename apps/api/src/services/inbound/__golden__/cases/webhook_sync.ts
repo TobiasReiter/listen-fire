@@ -9,7 +9,7 @@ import type { GoldenCase } from '../harness';
 import { SECRETS, hmacBase64, hmacHex, slackSignature } from '../secrets';
 import { GOLDEN_CALLBACK, world } from '../world';
 import { REMOTE_SIGNATURE_HEADER_FOR_CASES } from './names';
-import { define, givenSubscription, givenTrigger, hex, json, post, text } from './support';
+import { define, givenSubscription, givenTrigger, json, post, text } from './support';
 
 const ATTIO_BODY = { events: [{ event_type: 'record.created', id: { record_id: 'rec-1' } }], event_id: 'evt-attio-1' };
 const SLACK_TIMESTAMP = '1760702400';

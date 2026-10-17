@@ -1,0 +1,447 @@
+[
+  {
+    "id": "mail-routed-to-trigger",
+    "door": "resend",
+    "note": "A signed email.received is verified, routed, its message fetched, and stored against the matching trigger before the 201.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "resend_fetch",
+        "emailId": "re_golden_1"
+      },
+      {
+        "kind": "store_trigger_event",
+        "triggerId": "trigger-1",
+        "event": {
+          "pipelineInputId": "trigger:trigger-1",
+          "adapterType": "inbound_email",
+          "triggerType": "webhook",
+          "payload": {
+            "messageId": "<m-1@example.com>",
+            "subject": "Intro",
+            "sender": "Ada <ada@example.com>",
+            "recipient": "inbox+deals@example.com",
+            "bodyText": "Hello there",
+            "attachments": []
+          },
+          "changeType": "create",
+          "rootRecordType": "email:message",
+          "idempotencyKey": "<m-1@example.com>",
+          "externalRecordRef": {
+            "adapterType": "email",
+            "externalId": "<m-1@example.com>",
+            "recordType": "email:message"
+          },
+          "occurredAt": "2026-10-17T12:00:00.000Z"
+        },
+        "teamId": "team-1"
+      }
+    ]
+  },
+  {
+    "id": "mail-no-trigger-matches-quarantined",
+    "door": "resend",
+    "note": "Authenticated mail nothing listens for is stored for replay, ops is told, and the answer is 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "resend_fetch",
+        "emailId": "re_golden_1"
+      },
+      {
+        "kind": "db",
+        "op": "insert",
+        "table": "dropped_inbound_email",
+        "steps": [
+          [
+            "values",
+            [
+              {
+                "team_id": "team-1",
+                "request_id": "request-1",
+                "reason": "no_matching_trigger",
+                "recipients": [
+                  "inbox+deals@example.com"
+                ],
+                "body": {
+                  "messageId": "<m-1@example.com>",
+                  "subject": "Intro",
+                  "sender": "Ada <ada@example.com>",
+                  "recipient": "inbox+deals@example.com",
+                  "bodyText": "Hello there",
+                  "attachments": []
+                }
+              }
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Dropped an inbound email for team team-1 (recipients: inbox+deals@example.com) — no automation listens for that address. Stored for replay.",
+        "opsTitle": "Dropped an inbound email with no matching automation (recipients: inbox+deals@example.com)"
+      }
+    ]
+  },
+  {
+    "id": "mail-trigger-not-live-quarantined",
+    "door": "resend",
+    "note": "A matching trigger with no movement behind it is not dispatched; the mail is quarantined.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "resend_fetch",
+        "emailId": "re_golden_1"
+      },
+      {
+        "kind": "db",
+        "op": "insert",
+        "table": "dropped_inbound_email",
+        "steps": [
+          [
+            "values",
+            [
+              {
+                "team_id": "team-1",
+                "request_id": "request-1",
+                "reason": "no_matching_trigger",
+                "recipients": [
+                  "inbox+deals@example.com"
+                ],
+                "body": {
+                  "messageId": "<m-1@example.com>",
+                  "subject": "Intro",
+                  "sender": "Ada <ada@example.com>",
+                  "recipient": "inbox+deals@example.com",
+                  "bodyText": "Hello there",
+                  "attachments": []
+                }
+              }
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "ops_notification",
+        "type": "SUPPORT",
+        "text": "Dropped an inbound email for team team-1 (recipients: inbox+deals@example.com) — no automation listens for that address. Stored for replay.",
+        "opsTitle": "Dropped an inbound email with no matching automation (recipients: inbox+deals@example.com)"
+      }
+    ]
+  },
+  {
+    "id": "sender-not-a-team-member",
+    "door": "resend",
+    "note": "Mail whose sender maps to no acting user is 401 after the fetch.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": [
+      {
+        "kind": "resend_fetch",
+        "emailId": "re_golden_1"
+      }
+    ]
+  },
+  {
+    "id": "fetch-fails",
+    "door": "resend",
+    "note": "A Resend API outage while fetching the message is a retryable 500.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 500,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "secret-unset",
+    "door": "resend",
+    "note": "With no webhook secret configured every delivery is refused 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "bad-signature",
+    "door": "resend",
+    "note": "A delivery signed with another key is refused 406 (never a code Resend retries).",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,8/qAOgr21hsTiEJSgobTGhtoLR7Sb+Gh9rIqroPGj0c=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "missing-signature",
+    "door": "resend",
+    "note": "No Svix headers: 406.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "stale-timestamp",
+    "door": "resend",
+    "note": "A correctly signed delivery older than the tolerance is 406 (replay protection).",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,A19gn2Fz8tlG5Fb50oUVuvuvH3zwV8o7wUqFWyo47Q0=",
+        "svix-timestamp": "1792234800"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "other-event-type-acknowledged",
+    "door": "resend",
+    "note": "Resend sends its whole event stream here; anything that is not mail arriving is acknowledged 200 and ignored.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,u4N+Ku9DP5BSsTn23ro1UR+B97vhUdfCHGlTormbjSM=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.delivered\",\"data\":{\"email_id\":\"re_x\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "received-without-email-id",
+    "door": "resend",
+    "note": "An email.received with no email id is 406.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,CTpDh7YsoquAsqo9AiyTYFsndAblSdRo8GxIEJ1Hy4o=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"from\":\"Ada <ada@example.com>\"}}"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "received-without-sender",
+    "door": "resend",
+    "note": "No parseable sender is 406.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,IPNBoZGQ1VLjdruRUkhQVeuQs9dcGyoG64HgO5/mOSE=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"nobody\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "sender-unrecognised-refused-201",
+    "door": "resend",
+    "note": "Routing refuses a sender with no account (201, so the provider does not retry).",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "application/json",
+        "svix-id": "msg_golden0001",
+        "svix-signature": "v1,9fTqcWZsFUrzFmMdMzvduuUVa1xEQMK3pp1W6absvaI=",
+        "svix-timestamp": "1792238400"
+      },
+      "body": "{\"type\":\"email.received\",\"data\":{\"email_id\":\"re_golden_1\",\"from\":\"Ada <ada@example.com>\",\"to\":[\"inbox+deals@example.com\"],\"received_for\":[\"inbox+deals@example.com\"],\"message_id\":\"<m-1@example.com>\",\"subject\":\"Intro\"}}"
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  },
+  {
+    "id": "not-json-content-type",
+    "door": "resend",
+    "note": "Without the raw body the signature can never be checked: 406.",
+    "request": {
+      "method": "POST",
+      "path": "/api/resend/callback",
+      "headers": {
+        "content-type": "text/plain"
+      },
+      "body": "plain"
+    },
+    "response": {
+      "status": 406,
+      "headers": {
+        "content-length": "0"
+      },
+      "body": ""
+    },
+    "effects": []
+  }
+]

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-var-requires, import/order -- jest.mock factories run before this file's imports exist, and './env' must load before the routers are imported */
 // Replays the golden corpus against today's inbound handlers.
 //
 // Each case in cases/ is a request; each recording in recordings/ is what the
@@ -99,15 +100,25 @@ jest.mock('../../context', () => ({ ...jest.requireActual('../../context'), ...r
 
 import { allCases } from './cases';
 import { buildGoldenApp } from './app';
-import { RECORD_MODE, readRecording, run, serve, writeRecording, type GoldenCase, type RecordedCase, type Served } from './harness';
+import { RECORD_MODE, readRecording, readSnapshot, writeSnapshot, run, serve, writeRecording, type GoldenCase, type RecordedCase, type Served } from './harness';
 import { FIXED_NOW_MS } from './secrets';
+import { mountLines, routerTables, targetUrls } from './mounts';
 import { record, resetWorld } from './world';
 
 let served: Served;
 let realFetch: typeof fetch;
 
 beforeAll(async () => {
-  jest.spyOn(Date, 'now').mockReturnValue(FIXED_NOW_MS);
+  // Only the clock is faked: handlers stamp `new Date()` into what they store,
+  // and Svix checks timestamp drift. Timers stay real so the server runs.
+  jest.useFakeTimers({
+    now: FIXED_NOW_MS,
+    doNotFake: [
+      'hrtime', 'nextTick', 'performance', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
+      'requestIdleCallback', 'cancelIdleCallback', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval',
+      'setTimeout', 'clearTimeout',
+    ],
+  });
   // express logs the errors it turns into a response (the 413); the recording
   // already carries the response.
   jest.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -123,6 +134,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  jest.useRealTimers();
   global.fetch = realFetch;
   await served.close();
 });
@@ -154,7 +166,27 @@ describe.each([...byDoor.entries()])('golden corpus: %s', (door, cases) => {
     expect(recorded).not.toBeNull();
     expect(results.map((entry) => entry.id)).toEqual((recorded ?? []).map((entry) => entry.id));
     for (const [index, actual] of results.entries()) {
-      expect({ id: actual.id, ...actual }).toEqual({ id: actual.id, ...recorded?.[index] });
+      expect(actual).toEqual(recorded?.[index]);
     }
+  });
+});
+
+describe('golden corpus: mount paths and callback URLs', () => {
+  const MOUNTS = 'mount_paths';
+  const URLS = 'webhook_target_urls';
+  const compare = (name: string, actual: unknown) => {
+    if (RECORD_MODE) {
+      writeSnapshot(name, actual);
+      return;
+    }
+    expect(actual).toEqual(readSnapshot(name));
+  };
+
+  it('mounts every inbound door at the path it has today', () => {
+    compare(MOUNTS, { routers: routerTables(), mountLines: mountLines() });
+  });
+
+  it('tells every provider key to call back the same URL as today', () => {
+    compare(URLS, targetUrls());
   });
 });

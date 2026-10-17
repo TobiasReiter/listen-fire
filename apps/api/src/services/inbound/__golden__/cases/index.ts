@@ -1,6 +1,8 @@
 import type { GoldenCase } from '../harness';
 
 import { adapterDoorCases, slackActionsCases, slackEventsCases, telegramSharedCases, whatsappCases } from './doors';
+import { askCases, callbackCases } from './links';
+import { resendCases, valuationsWebhookCases } from './mail';
 import { webhookSyncCases } from './webhook_sync';
 
 export const allCases: GoldenCase[] = [
@@ -10,4 +12,8 @@ export const allCases: GoldenCase[] = [
   ...slackEventsCases,
   ...slackActionsCases,
   ...whatsappCases,
+  ...callbackCases,
+  ...askCases,
+  ...resendCases,
+  ...valuationsWebhookCases,
 ];

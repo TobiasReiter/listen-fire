@@ -3,7 +3,7 @@
 // stay real. Every fake reports what it was asked to do to `effects`, which is
 // how a recording says "this delivery was enqueued" without a database.
 
-import { effects, record, world } from './world';
+import { adapterFor, effects, record, world } from './world';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -72,8 +72,11 @@ export function kyselyFake(): AnyRecord {
     getValuationsQb: () =>
       queryBuilder(({ op, table, steps }) => {
         record({ kind: 'valuations_db', op, table, steps: plain(steps) });
-        if (op === 'select') return [];
-        if (op === 'insert') return [{ id: 'row-new', event_type: 'valuations:legal_entity:create' }];
+        if (op === 'select') return world.valuationsRows;
+        if (op === 'insert') {
+          const values = (steps.find(([name]) => name === 'values')?.[1][0] ?? []) as { event_type: string }[];
+          return values.map((value, index) => ({ id: `row-new-${index + 1}`, event_type: value.event_type }));
+        }
         return { numUpdatedRows: 2n };
       }),
   };
@@ -89,7 +92,6 @@ export function recordingFake(): AnyRecord {
 }
 
 export function resolveFake(): AnyRecord {
-  const { adapterFor } = require('./world') as typeof import('./world');
   return {
     resolveAdapter: async (input: { adapterType: string; teamId: string; credentialsId?: string }) => {
       const fake = adapterFor(input.adapterType);
@@ -220,6 +222,7 @@ export function callbackStoreFake(actual: AnyRecord): AnyRecord {
   return {
     ...actual,
     getCallback: async (id: string) => {
+      if (!(actual.isCallbackId as (value: string) => boolean)(id)) return null;
       const found = world.callbacks[id];
       return found ? { ...found, expiresAt: found.expiresAt } : null;
     },
