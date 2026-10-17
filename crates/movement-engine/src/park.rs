@@ -37,6 +37,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 use serde_json::Value as Json;
 
+use crate::code::CodeAt;
 use crate::bindings::{Binding, Handle, InstanceBinding, LandingShape, Node, Scope};
 use crate::env::Trail;
 use crate::env::{json_round_trip, object_of};
@@ -737,6 +738,19 @@ pub(crate) fn provenance_of(run: &Run<'_>, trail: &Trail) -> Js {
 /// code (a closure, an arm's body, a kept walk, a body-local declaration)
 /// reads back as the syntax tree it rides as.
 pub fn resume_refusal(state: &Json) -> Option<String> {
+    resume_refusal_in(state, None)
+}
+
+/// What a code reference is read against: the pinned program and its
+/// libraries, once the run has them. Without it only the shape of a reference
+/// is checked (a place named as text).
+pub type Cx<'a> = Option<&'a crate::program::Checked>;
+
+/// `resume_refusal`, and with the pinned program at hand also that every code
+/// the state names is there: a place that holds no such code, or a library
+/// the program does not link, is a state of another program, refused before
+/// the run starts rather than partway through it.
+pub fn resume_refusal_in(state: &Json, cx: Cx) -> Option<String> {
     let Ok(state) = crate::env::decode(state) else { return Some("resume_state_does_not_read".into()) };
     if !matches!(at(&state, "version"), Some(Js::Number(n)) if *n == PARK_STATE_VERSION) {
         return Some("resume_state_version".into());
@@ -764,22 +778,22 @@ pub fn resume_refusal(state: &Json) -> Option<String> {
     // descriptors' kinds are read, each by the structure its kind has
     // (park_state.ts), never by a key name — the names of bindings, captures
     // and edges are the author's.
-    scopes_refusal(&scopes).or_else(|| frames_refusal(&frames)).or_else(|| journal_refusal(&journal))
+    scopes_refusal(cx, &scopes).or_else(|| frames_refusal(cx, &frames)).or_else(|| journal_refusal(cx, &journal))
 }
 
 const NOT_READ: &str = "resume_state_code_does_not_read";
 
-fn scopes_refusal(chain: &Js) -> Option<String> {
-    items(Some(chain)).iter().find_map(|scope| map_refusal(at(scope, "bindings")).or_else(|| at(scope, "parent").and_then(scope_link_refusal)))
+fn scopes_refusal(cx: Cx, chain: &Js) -> Option<String> {
+    items(Some(chain)).iter().find_map(|scope| map_refusal(cx, at(scope, "bindings")).or_else(|| at(scope, "parent").and_then(|x| scope_link_refusal(cx, x))))
 }
 
 /// A scope link a closure holds, or a numbered scope's parent: a written
 /// scope's bindings and parent read as theirs do; a reference or a file's
 /// scope holds nothing.
-fn scope_link_refusal(link: &Js) -> Option<String> {
+fn scope_link_refusal(cx: Cx, link: &Js) -> Option<String> {
     match text(at(link, "kind")) {
         Some("scope") if id_of(at(link, "id")).is_some() => {
-            map_refusal(at(link, "bindings")).or_else(|| at(link, "parent").and_then(scope_link_refusal))
+            map_refusal(cx, at(link, "bindings")).or_else(|| at(link, "parent").and_then(|x| scope_link_refusal(cx, x)))
         }
         Some("scopeRef") if id_of(at(link, "id")).is_some() => None,
         Some("file") => None,
@@ -787,42 +801,42 @@ fn scope_link_refusal(link: &Js) -> Option<String> {
     }
 }
 
-fn journal_refusal(journal: &Js) -> Option<String> {
+fn journal_refusal(cx: Cx, journal: &Js) -> Option<String> {
     items(Some(journal)).iter().find_map(|event| match at(event, "value") {
         None | Some(Js::Null) | Some(Js::Undefined) => None,
-        Some(value) => descriptor_refusal(value),
+        Some(value) => descriptor_refusal(cx, value),
     })
 }
 
-fn frames_refusal(frames: &Js) -> Option<String> {
+fn frames_refusal(cx: Cx, frames: &Js) -> Option<String> {
     items(Some(frames)).iter().find_map(|frame| match text(at(frame, "kind")) {
-        Some("call" | "member") => scopes_refusal(at(frame, "scopeChain").unwrap_or(&Js::Undefined))
-            .or_else(|| journal_refusal(at(frame, "journal").unwrap_or(&Js::Undefined))),
+        Some("call" | "member") => scopes_refusal(cx, at(frame, "scopeChain").unwrap_or(&Js::Undefined))
+            .or_else(|| journal_refusal(cx, at(frame, "journal").unwrap_or(&Js::Undefined))),
         // A run-time arm: its body is code.
-        Some("arm") => (!names_code(at(frame, "body"))).then(|| NOT_READ.to_string()),
+        Some("arm") => (!names_code(cx, at(frame, "body"), is_closure)).then(|| NOT_READ.to_string()),
         _ => Some("resume_state_does_not_read".into()),
     })
 }
 
 /// A map keyed by the author's names, every entry a descriptor.
-fn map_refusal(entries: Option<&Js>) -> Option<String> {
-    pairs(entries).iter().find_map(|(_, entry)| descriptor_refusal(entry))
+fn map_refusal(cx: Cx, entries: Option<&Js>) -> Option<String> {
+    pairs(entries).iter().find_map(|(_, entry)| descriptor_refusal(cx, entry))
 }
 
-fn walk_refusal(walk: Option<&Js>) -> Option<String> {
+fn walk_refusal(cx: Cx, walk: Option<&Js>) -> Option<String> {
     let walk = walk?;
     let mapping = at(walk, "mapping");
-    if !names_code(at(walk, "head")) || mapping.is_some_and(|m| !names_code(Some(m))) {
+    if !names_code(cx, at(walk, "head"), |c| matches!(c, CodeAt::Head(_))) || mapping.is_some_and(|m| !names_code(cx, Some(m), |c| matches!(c, CodeAt::Literal(_)))) {
         return Some(NOT_READ.into());
     }
-    map_refusal(at(walk, "captured"))
+    map_refusal(cx, at(walk, "captured"))
 }
 
-fn value_refusal(value: &Js) -> Option<String> {
+fn value_refusal(cx: Cx, value: &Js) -> Option<String> {
     match text(at(value, "kind")) {
-        Some("record") => at(value, "binding").and_then(descriptor_refusal),
-        Some("list") => items(at(value, "of")).iter().find_map(value_refusal),
-        Some("map") => pairs(at(value, "of")).iter().find_map(|(_, entry)| value_refusal(entry)),
+        Some("record") => at(value, "binding").and_then(|x| descriptor_refusal(cx, x)),
+        Some("list") => items(at(value, "of")).iter().find_map(|x| value_refusal(cx, x)),
+        Some("map") => pairs(at(value, "of")).iter().find_map(|(_, entry)| value_refusal(cx, entry)),
         // Data the engine held, never looked into.
         Some("data" | "file") => None,
         _ => Some("resume_state_does_not_read".into()),
@@ -832,38 +846,51 @@ fn value_refusal(value: &Js) -> Option<String> {
 /// The first reason this engine does not rebuild one binding descriptor.
 /// Every kind is named: a kind added to park_state.ts and not here ends at
 /// the last arm, a refusal, never a silent skip.
-fn descriptor_refusal(descriptor: &Js) -> Option<String> {
+fn descriptor_refusal(cx: Cx, descriptor: &Js) -> Option<String> {
     let Some(kind) = text(at(descriptor, "kind")) else { return Some("resume_state_does_not_read".into()) };
     match kind {
         "blockMeta" => Some(format!("resume_state_kind:{kind}")),
         "closure" => {
-            if !names_code(at(descriptor, "closure")) {
+            if !names_code(cx, at(descriptor, "closure"), is_closure) {
                 return Some(NOT_READ.into());
             }
-            map_refusal(at(descriptor, "captured")).or_else(|| at(descriptor, "scope").and_then(scope_link_refusal))
+            map_refusal(cx, at(descriptor, "captured")).or_else(|| at(descriptor, "scope").and_then(|x| scope_link_refusal(cx, x)))
         }
-        "localShape" => (!names_code(at(descriptor, "declaration"))).then(|| NOT_READ.to_string()),
-        "lazyWalk" => walk_refusal(at(descriptor, "walk")),
-        "handle" => at(descriptor, "old").and_then(descriptor_refusal),
-        "positions" => items(at(descriptor, "landings")).iter().find_map(descriptor_refusal),
-        "tuple" => items(at(descriptor, "slots")).iter().find_map(descriptor_refusal),
-        "recordValue" => at(descriptor, "value").and_then(value_refusal),
+        "localShape" => (!names_code(cx, at(descriptor, "declaration"), |c| matches!(c, CodeAt::Shape(_)))).then(|| NOT_READ.to_string()),
+        "lazyWalk" => walk_refusal(cx, at(descriptor, "walk")),
+        "handle" => at(descriptor, "old").and_then(|x| descriptor_refusal(cx, x)),
+        "positions" => items(at(descriptor, "landings")).iter().find_map(|x| descriptor_refusal(cx, x)),
+        "tuple" => items(at(descriptor, "slots")).iter().find_map(|x| descriptor_refusal(cx, x)),
+        "recordValue" => at(descriptor, "value").and_then(|x| value_refusal(cx, x)),
         "nodePosition" => pairs(at(descriptor, "edges")).iter().find_map(|(_, edge)| match text(at(edge, "kind")) {
-            Some("landed") => items(at(edge, "landings")).iter().find_map(descriptor_refusal),
-            Some("deferred") => walk_refusal(at(edge, "walk")),
+            Some("landed") => items(at(edge, "landings")).iter().find_map(|x| descriptor_refusal(cx, x)),
+            Some("deferred") => walk_refusal(cx, at(edge, "walk")),
             _ => Some("resume_state_does_not_read".into()),
         }),
         // Data, a name or an identity: nothing to look into.
+        // A name in the file it was declared in: a library has to be one the
+        // program links.
+        "shape" | "movement" | "fileClosure" => match (cx, text(at(descriptor, "file"))) {
+            (Some(checked), Some(path)) if checked.file(&crate::program::DeclaringFile::Library(path.to_string())).is_none() => Some(NOT_READ.into()),
+            _ => None,
+        },
         "event" | "instance" | "handleRef" | "nodeRef" | "extractRoot" | "extractPosition" | "sourcePosition" | "resource"
-        | "value" | "callback" | "shape" | "movement" | "fileClosure" | "shapePosition" | "opaque" => None,
+        | "value" | "callback" | "shapePosition" | "opaque" => None,
         _ => Some("resume_state_does_not_read".into()),
     }
 }
 
-/// Whether a descriptor's code is named as a park names it (`code_ref`).
-/// Whether the place holds that code is the resume's to find.
-fn names_code(code: Option<&Js>) -> bool {
-    matches!(code, Some(Js::String(_)))
+/// Whether a descriptor's code is named as a park names it (`code_ref`) and,
+/// given the pinned program, that place holds code of the kind the descriptor
+/// needs.
+fn names_code(cx: Cx, code: Option<&Js>, wants: fn(&CodeAt) -> bool) -> bool {
+    let Some(path) = text(code) else { return false };
+    cx.is_none_or(|checked| checked.code(path).is_some_and(|found| wants(&found)))
+}
+
+/// Code a closure rides as: a closure, or a movement read as a value.
+fn is_closure(code: &CodeAt) -> bool {
+    matches!(code, CodeAt::Closure(_) | CodeAt::Movement(_))
 }
 
 // ── Suspension ──

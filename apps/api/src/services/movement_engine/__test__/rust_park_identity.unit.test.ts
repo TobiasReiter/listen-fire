@@ -603,7 +603,7 @@ describe('a parked state the engine cannot rebuild is refused loudly', () => {
         '{"kind":"shape","name":"Lead","file":"lib/leads"}',
         '{"kind":"shape","name":"Lead","file":"lib/gone"}',
       ),
-      'resume: the parked state names the library "lib/gone", which the re-parsed program does not link',
+      "this run's parked state does not read (resume_state_code_does_not_read)",
     );
   });
 

@@ -317,8 +317,8 @@ describe('lone surrogates on the wire', () => {
     expect(ended).not.toContain('\\udc00');
   });
 
-  it("reads a plugin's answer holding them as U+FFFD: a record's data, and a records plugin's text spread into its code units", async () => {
-    const answer = JSON.parse('{"text":"a page \\ud83d","data":{"name":"\\udfffAcme","x":"y"},"records":["a😀"]}');
+  it("reads a plugin's answer holding them as U+FFFD: a record's data, and a records plugin's record", async () => {
+    const answer = JSON.parse('{"text":"a page \\ud83d","data":{"name":"\\udfffAcme","x":"y"},"records":[{"s":"a\\ud83d"}]}');
     const { ended } = await run({
       source: program(
         '  page = probe({ q: msg.`subject` })',
@@ -329,8 +329,7 @@ describe('lone surrogates on the wire', () => {
     });
     expect(ended).toContain('MOVENG_ERROR: \ufffdAcme 5 {');
     expect(ended).toContain('"text": "a page \ufffd"');
-    // `{ ..."a😀" }`: three code units, the pair's halves apart.
-    expect(ended).toContain('"1": "\\ud83d"');
+    expect(ended).toContain('"s": "a\ufffd"');
   });
 
   it('reads a model reply holding them as U+FFFD, and traces an AI() prompt cut through a pair with U+FFFD for the half', async () => {

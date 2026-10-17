@@ -59,10 +59,7 @@ impl Run<'_> {
         if !matches!(unreadable, Js::Undefined)
             && !matches!(&unreadable, Js::String(why) if matches!(why.as_form(), "unsupported_type" | "bytes_unavailable" | "extraction_failed" | "no_text"))
         {
-            return Err(Failure::unreproduced(
-                &format!("a file the host calls unreadable for {}", crate::js::json_stringify(&unreadable, 0)),
-                "a file is unreadable as unsupported_type, bytes_unavailable, extraction_failed or no_text",
-            ));
+            return Err(Failure::host_answer("files.resolveFileText", "`unreadable` as unsupported_type, bytes_unavailable, extraction_failed or no_text, or absent", &unreadable));
         }
         if matches!(member(&answer, "unreadable"), Js::String(why) if why == "bytes_unavailable") {
             let key = file_handle(file).or_else(|| match member(file, "name") {

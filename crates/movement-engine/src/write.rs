@@ -407,9 +407,8 @@ impl Run<'_> {
         {
             return self.local_write(write, &lines, path, node, binding_name, scope).await;
         }
-        if write.bind.is_some() {
-            return Err(thrown(Failure::unreproduced("a bound write", "the Rust engine runs identity writes")));
-        }
+        // From version 5 the checker refuses `bind` whole (MOV_WRITE_BIND_RETIRED).
+        assert!(write.bind.is_none(), "the checker refuses a bound write");
         match &write.target {
             WriteTarget::Position { root: PathRoot::Name { name }, .. } => {
                 if let Some(Binding::Node(landing)) = scope.resolve(name) {
@@ -417,10 +416,8 @@ impl Run<'_> {
                 }
                 return self.position_write(name, &lines, binding_name, scope).await;
             }
-            // Admission refuses it (`write_position_member_path`).
-            WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => {
-                return Err(thrown(Failure::unreproduced("a write from a member path", "the Rust engine runs writes from a name")));
-            }
+            // The parser refuses a write from anything but a name.
+            WriteTarget::Position { root: PathRoot::Expression { .. }, .. } => unreachable!("the parser refuses a write rooted in an expression"),
             WriteTarget::Linked { .. } | WriteTarget::Tuple { .. } => {}
         }
         let resolved = self.write_target(&write.target, scope, Verb::Write).await?;

@@ -930,15 +930,15 @@ describe('extraction calls and plugin calls in the Rust engine', () => {
       event: { ...EVENT, payload: { subject: 'Acme', deck } },
       fileText: { unreadable: 'garbled' } as never,
     });
-    // A host-contract fault (the host broke its typed contract), which the
-    // engine refuses by name; the engine's own refusal fails the run, so the
-    // door's refusal counter stays empty.
+    // A host-contract fault (the host broke its typed contract): the run
+    // ends coded MOVENG_RUNTIME, naming the host call and what was wrong.
     expect(rustRunStats.segments).toBe(1);
     expect(rustRunStats.shimFaults).toBe(0);
     expect(rustRunStats.unsupported).toEqual({});
     const cause = String('error' in rust ? runFailureCause(rust.error) : undefined);
-    expect(cause).toContain('MOVENG_UNSUPPORTED');
-    expect(cause).toContain('a file the host calls unreadable for "garbled"');
+    expect(cause).toContain('MOVENG_RUNTIME');
+    expect(cause).toContain("the host's files.resolveFileText answered something malformed");
+    expect(cause).toContain('got string ("garbled")');
   });
 
   it("parks what an extraction yielded, and the park resumes to the same writes", async () => {

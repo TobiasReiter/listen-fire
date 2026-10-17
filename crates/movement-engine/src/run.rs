@@ -28,14 +28,12 @@
 //! - `{failed: {error, result}}`: the body failed (`MovementRunFailed`,
 //!   which carries what the run did before it);
 //! - `{thrown: error}`: it failed before the body ran;
-//! - `{refused: reason}`: admission (crate::admit) found, on this engine's
-//!   own parse and before any host request, that the program or its parked
-//!   state needs what this engine does not run;
-//! - `{declined: reason}`: past admission, before anything the host can see
-//!   happened, the check's stamps or the run's input turned out to need what
-//!   this engine does not run.
+//! - `{refused: reason}`: the pin is below version 5 (those versions run on
+//!   the TypeScript engine), before any host request;
+//! - `{declined: reason}`: before anything the host can see happened, the
+//!   run's input or the check's answer did not read.
 //!
-//! For either the shim runs the program on the TypeScript engine instead.
+//! The shim fails the run on either; nothing runs it elsewhere.
 //!
 //! `error` is `{class: "MovementEngineError", code, message}`, `{class:
 //! "Error" | "RangeError", message}`, `{class: "RunCostCapExceeded",
@@ -124,7 +122,7 @@ pub struct SegmentInput {
     /// instead of asking the host: its diagnostics, stamps and import link
     /// (movement_checker::answer). The host turns it on for every segment
     /// it runs on this engine (rust_engine.ts); off, the host's checker
-    /// answers, as an admission dry run's start never asks.
+    /// answers.
     #[serde(default)]
     pub native_check: bool,
     /// With `native_check`: the `models` the run's snapshot itself lists
@@ -159,7 +157,7 @@ pub struct SegmentInput {
     pub limit_paused: bool,
     /// Where to suspend, by address, once each (`RunMovementInput.suspendAt`):
     /// a statement's address suspends the flow just before it. An address
-    /// before a call (`… .c k`) is refused at admission (`suspend_at_call`).
+    /// before a call (`… .c k`) suspends before its statement's k-th call.
     #[serde(default)]
     pub suspend_at: Vec<String>,
     /// Every host method the run's host serves, by path
@@ -227,8 +225,8 @@ pub async fn segment(host: Host, mut input: SegmentInput) -> Json {
         Ok(result) => json!({ "result": result }),
         Err(Stop::Refused(reason)) => return json!({ "refused": reason }),
         Err(Stop::Declined(reason)) => return json!({ "declined": reason }),
-        Err(Stop::Thrown(failure)) => failure.marked(json!({ "thrown": failure.to_json() })),
-        Err(Stop::Failed(failure, result)) => failure.marked(json!({ "failed": { "error": failure.to_json(), "result": result } })),
+        Err(Stop::Thrown(failure)) => json!({ "thrown": failure.to_json() }),
+        Err(Stop::Failed(failure, result)) => json!({ "failed": { "error": failure.to_json(), "result": result } }),
         Err(Stop::Cancelled | Stop::Parked(_) | Stop::EndedQuietly) => {
             unreachable!("a cancel, a park or a quiet end ends the body, and the run returns its result")
         }
@@ -288,6 +286,18 @@ impl Failure {
         Failure::Engine { class: ErrorClass::Engine(code), message }
     }
 
+    /// A host answer that is not the shape the host contract gives it: the
+    /// run ends coded MOVENG_RUNTIME, naming the host call and what was wrong,
+    /// never as the JavaScript TypeError reading it would have thrown.
+    pub(crate) fn host_answer(call: &str, wanted: &str, got: &Js) -> Failure {
+        let got = match got {
+            Js::Undefined => "nothing".to_string(),
+            Js::Null => "null".to_string(),
+            other => format!("{} ({})", other.type_of(), crate::js::json_stringify(other, 0).chars().take(80).collect::<String>()),
+        };
+        Failure::engine("MOVENG_RUNTIME", format!("the host's {call} answered something malformed: expected {wanted}, got {got}"))
+    }
+
     /// `unsupported(construct, detail?)`: an empty detail is none.
     pub(crate) fn unsupported(construct: &str, detail: &str) -> Failure {
         Failure::engine("MOVENG_UNSUPPORTED", unsupported_message(construct, detail))
@@ -297,12 +307,6 @@ impl Failure {
     /// on through (`ErrorClass::Unreproduced`): `unsupported`'s message.
     pub(crate) fn unreproduced(construct: &str, detail: &str) -> Failure {
         Failure::Engine { class: ErrorClass::Unreproduced, message: unsupported_message(construct, detail) }
-    }
-
-    /// This engine's own refusal of what the TypeScript engine runs on
-    /// through (`unreproduced`).
-    pub(crate) fn is_unreproduced(&self) -> bool {
-        matches!(self, Failure::Engine { class: ErrorClass::Unreproduced, .. })
     }
 
     /// The failure as an evaluation carries it out of a read it awaited.
@@ -317,7 +321,7 @@ impl Failure {
     }
 
     /// What an evaluation failed with; a reading this engine hands back
-    /// fails the run, `unreproduced` saying so.
+    /// fails the run as an engine refusal (`unreproduced` says what it was).
     pub(crate) fn of_eval(error: EvalError, unreproduced: &str) -> Failure {
         match error {
             EvalError::Thrown { class, message } => Failure::Engine { class, message },
@@ -325,19 +329,6 @@ impl Failure {
             EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
             EvalError::Fallback(reason) => Failure::unreproduced(&format!("this reading ({reason})"), unreproduced),
         }
-    }
-
-    /// A `done` that ended in this failure, marked `unreproduced` where it
-    /// is this engine's own refusal of what the TypeScript engine runs on
-    /// through (met after an effect, or it would have declined): the wire
-    /// codes it MOVENG_UNSUPPORTED, as it codes the TypeScript's own
-    /// failure this engine mirrors, so the marker is what tells a
-    /// divergence from a mirrored ending.
-    fn marked(&self, mut done: Json) -> Json {
-        if self.is_unreproduced() {
-            done["unreproduced"] = json!(true);
-        }
-        done
     }
 
     fn to_json(&self) -> Json {
@@ -553,6 +544,12 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
     let mut checked = program::join_check(root, &answer, version).map_err(|_| Stop::Declined("check_answer_malformed".into()))?;
     for (file, _) in checked.files.values_mut() {
         movement_parser::catalog::packages::expand_package_imports(&mut file.program, &catalog.plugins, version);
+    }
+    // The state's code is read against the program it pinned: a reference
+    // that resolves to nothing there is a state of another program, refused
+    // before anything runs (not partway through the resume).
+    if let Some(reason) = input.resume.as_ref().and_then(|resume| crate::park::resume_refusal_in(&resume.state, Some(&checked))) {
+        return Err(Stop::Thrown(Failure::engine("MOVENG_UNSUPPORTED", format!("this run's parked state does not read ({reason})"))));
     }
     let run = Run {
         host,
@@ -1097,7 +1094,7 @@ impl Run<'_> {
     }
 
     /// `interpretFileStatement`, for what this engine runs at file scope
-    /// with no effect (admission refused the rest; `prepare` evaluates the
+    /// with no effect (the checker refused the rest; `prepare` evaluates the
     /// file-level values).
     fn file_statement(&self, statement: &Statement, file: &Scope, written: &DeclaringFile) {
         match statement {
@@ -1647,13 +1644,8 @@ impl Run<'_> {
     /// `bindSlotValue` for what this engine binds: the value the slot
     /// evaluates to, with its trail.
     async fn bind_slot(&self, slot: &ExprSlot, scope: &Rc<Scope>) -> Result<ValueBinding, Stop> {
-        // A file-level value holding a nested call: this engine binds the
-        // file's values before anything else, and stages none there.
-        if let Ok(tree) = movement_parser::expr::parse_expression(&slot.raw)
-            && !crate::nested::staged_calls(&tree, &|call| self.runs_as_call(call, scope)).is_empty()
-        {
-            return Err(Stop::Thrown(Failure::unreproduced("a nested call in a file-level value", "the Rust engine stages nested calls in a body")));
-        }
+        // A file-level value holding a call never gets here: the checker
+        // refuses it (MOV_FILE_VALUE_RUNS), so nothing stages a nested call.
         let expr = lowered(slot, |tree| movement_parser::lowering::lower_expression(tree, &slot.raw), "expression")
             .map_err(Stop::Thrown)?;
         self.bind_evaluated(&expr, slot, scope).await
@@ -1957,16 +1949,12 @@ impl Run<'_> {
                 if !acting.truthy() {
                     return Ok(Js::Null);
                 }
-                // `acting.principal.display`: a principal the host left out
-                // throws JavaScript's TypeError (forgivable, as any).
-                let principal = |field: &str| {
-                    let principal = event_get(&acting, "principal");
-                    crate::record::get(&principal, field).map_err(|error| Failure::of_eval(error, ""))
-                };
+                // The answer was validated when it came (`acting_user_answer`).
+                let principal = event_get(&acting, "principal");
                 Ok(match key {
                     "user_email" => nullish(event_get(&acting, "email")),
-                    "user_name" => nullish(principal("display")?),
-                    _ => principal("id")?,
+                    "user_name" => nullish(event_get(&principal, "display")),
+                    _ => event_get(&principal, "id"),
                 })
             }
             _ => {
@@ -2009,7 +1997,11 @@ impl Run<'_> {
                 let trigger_id = trigger.truthy().then(|| trigger.to_js_string());
                 let request = host::lookup::resolve_acting_user(self.segment(), trigger_id.as_deref(), &source.instance, self.encode(&self.event)?);
                 match self.ask(request).await {
-                    Ok(Some(user)) => self.wire.decode(&user).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?,
+                    Ok(Some(user)) => {
+                        let user = self.wire.decode(&user).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
+                        acting_user_answer(&user)?;
+                        user
+                    }
                     Ok(None) | Err(Failure::Host(_)) => Js::Null,
                     Err(other) => return Err(other),
                 }
@@ -2264,8 +2256,9 @@ impl Run<'_> {
         self.host.request(request).await.map_err(Failure::Host)
     }
 
-    /// `value` for a host request. Admission keeps a record from every
-    /// request's values; one that got past fails the run before the request.
+    /// `value` for a host request. A record is never a host request's value:
+    /// one that reaches here (a known gap in the checker) fails the run
+    /// before the request.
     pub(crate) fn encode(&self, value: &Js) -> Result<Json, Failure> {
         self.wire.encode(value).map_err(|crate::env::HeldRecord(kind)| {
             Failure::unreproduced(
@@ -2278,6 +2271,32 @@ impl Run<'_> {
     async fn ask_bool(&self, request: host::Request) -> Result<bool, Failure> {
         Ok(self.ask(request).await?.is_some_and(|v| v.as_bool() == Some(true)))
     }
+}
+
+/// `lookup.resolveActingUser`'s answer, which the contract
+/// (`ActingPrincipal`) gives as `{principal: {id, display?}, email?}` or
+/// nothing: anything else ends the run, coded, where the answer is read.
+fn acting_user_answer(user: &Js) -> Result<(), Failure> {
+    const CALL: &str = "lookup.resolveActingUser";
+    if user.is_nullish() {
+        return Ok(());
+    }
+    let Js::Object(_) = user else { return Err(Failure::host_answer(CALL, "{principal: {id}, email?} or nothing", user)) };
+    let principal = event_get(user, "principal");
+    if !matches!(principal, Js::Object(_)) {
+        return Err(Failure::host_answer(CALL, "a principal object ({id, display?}) under `principal`", &principal));
+    }
+    let text_or_absent = |value: &Js| value.is_nullish() || matches!(value, Js::String(_));
+    let id = event_get(&principal, "id");
+    if !matches!(id, Js::String(_)) {
+        return Err(Failure::host_answer(CALL, "the principal's `id` as text", &id));
+    }
+    for (what, value) in [("the principal's `display` as text or absent", event_get(&principal, "display")), ("`email` as text or absent", event_get(user, "email"))] {
+        if !text_or_absent(&value) {
+            return Err(Failure::host_answer(CALL, what, &value));
+        }
+    }
+    Ok(())
 }
 
 /// A write record with every citation of a write by number the ledger
@@ -2774,33 +2793,88 @@ mod tests {
         }
     }
 
-    /// A run that ends in this engine's own refusal (met after an effect)
-    /// says so on its `done`, apart from the TypeScript's own
-    /// MOVENG_UNSUPPORTED, which this engine mirrors and the wire codes the
-    /// same.
-    #[test]
-    fn an_unreproduced_ending_is_marked_apart_from_a_mirrored_one() {
-        let own = Failure::unreproduced("a bound write", "the Rust engine runs identity writes");
-        let mirrored = Failure::unsupported("DOMAIN_OF", "");
-        assert_eq!(own.to_json()["code"], mirrored.to_json()["code"]);
-        assert_eq!(own.marked(json!({ "thrown": own.to_json() }))["unreproduced"], json!(true));
-        let failed = own.marked(json!({ "failed": { "error": own.to_json(), "result": {} } }));
-        assert_eq!(failed["unreproduced"], json!(true));
-        assert_eq!(mirrored.marked(json!({ "thrown": mirrored.to_json() })).get("unreproduced"), None);
-    }
-
     /// The pinned instant with no offset is UTC, whatever zone the host
-    /// names (a `localZone` is not read from version 5): 00:30 on 15 July is
+    /// names (the run reads no zone of its own from version 5): 00:30 on 15 July is
     /// the 15th.
     #[test]
     fn the_pinned_instant_with_no_offset_is_utc() {
         let source = "import { email } from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {\n  day = DATE.TODAY(\"UTC\")\n  if day == \"2026-07-15\" {\n    s = msg.`subject`\n  }\n}";
         let mut input = segment_input(source, json!(["o", [["subject", "Hi"]]]), &[]);
         input["now"] = json!("2026-07-15T00:30");
-        input["localZone"] = json!("America/Los_Angeles");
         let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
         assert!(done.get("result").is_some(), "{done}");
         assert!(seen.iter().any(|r| r.family == "adapters" && r.method == "call"));
+    }
+
+    /// A host answer that is not the shape its contract gives ends the run
+    /// coded MOVENG_RUNTIME, naming the host call and what was wrong, never
+    /// as the JavaScript TypeError that reading it would have thrown.
+    #[test]
+    fn a_malformed_host_answer_ends_the_run_coded_and_names_the_call() {
+        let source = "import { email } from adapters\nimport { findFiles } from plugins\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  found = findFiles(q: \"x\")\n  n = COUNT(found)\n}";
+        let run = |answer: Json| {
+            let mut catalog = serde_json::from_str::<Json>(CATALOG).unwrap();
+            catalog["plugins"] = json!({ "find_files": {
+                "args": ["q"], "requiredArgs": ["q"], "priced": true, "output": { "kind": "records", "fields": { "url": "text" } },
+            } });
+            let mut input = segment_input(source, json!(["o", []]), &[]);
+            input["catalog"] = catalog;
+            let host = |request: &PendingRequest| match (request.family, request.method.as_str()) {
+                ("llm.transforms", "invoke") => json!({ "value": wire(answer.clone()) }),
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                _ => plain_host(json!({}))(request),
+            };
+            drive_input(input, host).0
+        };
+        let ended = |done: &Json| (done["failed"]["error"]["code"].clone(), done["failed"]["error"]["message"].as_str().unwrap_or_default().to_string());
+        for (answer, wanted) in [
+            (json!({ "records": { "url": "u" } }), "expected `records` as a list or absent, got object ({\"url\":\"u\"})"),
+            (json!({ "records": [{ "url": "u" }, null] }), "expected every entry of `records` as an object, got null"),
+            (json!({ "records": ["ab"] }), "expected every entry of `records` as an object, got string (\"ab\")"),
+            (json!({ "text": 5 }), "expected `text` as text or absent, got number (5)"),
+            (json!({ "data": [1] }), "expected `data` as an object or absent, got object ([1])"),
+            (json!(5), "expected an object with text, data, records and outcome members, got number (5)"),
+        ] {
+            let done = run(answer.clone());
+            let (code, message) = ended(&done);
+            assert_eq!(code, json!("MOVENG_RUNTIME"), "{answer}: {done}");
+            assert_eq!(message, format!("the host's llm.transforms.invoke answered something malformed: {wanted}"), "{answer}");
+        }
+        assert!(run(json!({ "records": [{ "url": "u" }] })).get("result").is_some());
+    }
+
+    /// The acting user the host answers is `{principal: {id, display?},
+    /// email?}`: one that is not ends the run coded where `@user_*` reads it.
+    #[test]
+    fn a_malformed_acting_user_ends_the_run_coded() {
+        let source = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  who = @user_name\n}";
+        let run = |user: Json| {
+            let host = |request: &PendingRequest| match (request.family, request.method.as_str()) {
+                ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["getActorCandidates"] } }),
+                ("lookup", "resolveActingUser") => json!({ "value": wire(user.clone()) }),
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                _ => plain_host(json!({}))(request),
+            };
+            drive_input(segment_input(source, json!(["o", []]), &[]), host).0
+        };
+        for (user, wanted) in [
+            (json!({ "email": "ada@acme.example" }), "a principal object ({id, display?}) under `principal`, got nothing"),
+            (json!({ "principal": { "display": "Ada" } }), "the principal's `id` as text, got nothing"),
+            (json!({ "principal": { "id": "u1", "display": 5 } }), "the principal's `display` as text or absent, got number (5)"),
+            (json!({ "principal": { "id": "u1" }, "email": ["a"] }), "`email` as text or absent, got object ([\"a\"])"),
+            (json!("ada"), "{principal: {id}, email?} or nothing, got string (\"ada\")"),
+        ] {
+            let done = run(user.clone());
+            assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_RUNTIME"), "{user}: {done}");
+            assert_eq!(
+                done["failed"]["error"]["message"],
+                json!(format!("the host's lookup.resolveActingUser answered something malformed: expected {wanted}")),
+                "{user}"
+            );
+        }
+        for user in [json!({ "principal": { "id": "u1" } }), json!({ "principal": { "id": "u1", "display": "Ada" }, "email": "a@b.c" }), Json::Null] {
+            assert!(run(user.clone()).get("result").is_some(), "{user}");
+        }
     }
 
     /// A segment pinned below version 5 is refused by name before anything
@@ -3138,6 +3212,39 @@ mod tests {
         suspended["suspended"] = json!(true);
         suspended["journal"] = json!([]);
         assert_eq!(crate::park::resume_refusal(&wire(suspended)), None);
+    }
+
+    /// A parked state naming code the pinned program does not hold (another
+    /// program's place, a library it never linked) is refused before the run
+    /// starts, the same reason as a state that names none: it does not fail
+    /// partway through the resume.
+    #[test]
+    fn a_parked_state_naming_code_the_program_lacks_is_refused_up_front() {
+        let source = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  await sleep(1h)\n  s = 1\n}";
+        let state = |binding: Json| json!({ "version": 2, "address": "s0", "bindingName": null, "scopeChain": [{ "bindings": {} }, { "bindings": { "x": binding } }] });
+        for binding in [
+            json!({ "kind": "closure", "closure": "/statements/40/value", "captured": {} }),
+            // A place that holds a statement, but not a closure.
+            json!({ "kind": "closure", "closure": "/statements/1", "captured": {} }),
+            json!({ "kind": "localShape", "declaration": "/statements/0/body/0" }),
+            json!({ "kind": "fileClosure", "name": "f", "file": "lib/gone" }),
+            json!({ "kind": "lazyWalk", "walk": { "head": "/statements/9/body/0", "captured": {} } }),
+        ] {
+            let input = json!({
+                "entry": "segment", "source": source, "languageVersion": 5, "segmentId": "g1", "serves": [],
+                "now": "2026-03-12T12:00:00.000Z", "event": wire(json!({})), "catalog": serde_json::from_str::<Json>(CATALOG).unwrap(),
+                "resume": { "state": wire(state(binding.clone())) }, "nativeCheck": true,
+            });
+            let mut segment = crate::begin(&input.to_string()).unwrap();
+            match segment.start().unwrap() {
+                Step::Done(done) => assert_eq!(
+                    done["thrown"],
+                    json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": "this run's parked state does not read (resume_state_code_does_not_read)" }),
+                    "{binding}"
+                ),
+                Step::Pending(pending) => panic!("{binding}: asked {:?}", pending.iter().map(|r| r.method.clone()).collect::<Vec<_>>()),
+            }
+        }
     }
 
     /// A declared shape travels by name and is re-resolved from the program's

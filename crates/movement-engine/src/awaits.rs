@@ -221,10 +221,7 @@ impl Run<'_> {
         };
         match calls {
             Js::Array(list) => Ok(list.items().clone()),
-            other => Err(Stop::Thrown(Failure::Engine {
-                class: ErrorClass::TypeError,
-                message: format!("{} is not iterable", if other.is_nullish() { other.to_js_string() } else { "calls".into() }),
-            })),
+            other => Err(Stop::Thrown(Failure::host_answer("park.callbacks.calls", "the callback's calls as a list", &other))),
         }
     }
 
@@ -351,6 +348,10 @@ impl Run<'_> {
     /// WHERE takes it (through the adapter's own `getFieldValue`).
     async fn check_landing(&self, read: &Rc<crate::traverse::Read>, adapter_type: &str, point: &Js, filter: Option<&(Expression, Option<String>)>, scope: &Rc<Scope>) -> Result<Checked, Stop> {
         let resolution = self.call_adapter(&read.instance, "resolveAwait", point.clone()).await.map_err(Stop::Thrown)?;
+        const CALL: &str = "adapters.call resolveAwait";
+        if !matches!(resolution, Js::Object(_)) {
+            return Err(Stop::Thrown(Failure::host_answer(CALL, "an object with a status of pending, empty or landed", &resolution)));
+        }
         let get = |value: &Js, key: &str| crate::record::get(value, key).map_err(|e| Stop::Thrown(Failure::of_eval(e, "")));
         let status = get(&resolution, "status")?;
         match status {
@@ -359,7 +360,7 @@ impl Run<'_> {
             Js::String(status) if status == "landed" => {
                 let landings = match get(&resolution, "landings")? {
                     Js::Array(list) => list.items().clone(),
-                    other => return Err(Stop::Thrown(Failure::Engine { class: ErrorClass::TypeError, message: format!("{} is not iterable", other.to_js_string()) })),
+                    other => return Err(Stop::Thrown(Failure::host_answer(CALL, "`landings` as a list", &other))),
                 };
                 for landing in landings {
                     let taken = match filter {
@@ -373,7 +374,7 @@ impl Run<'_> {
                 // Landings, none of which the WHERE takes: still armed.
                 Ok(Checked::Wait(env::json_of_js(&get(&resolution, "correlationKey")?)))
             }
-            other => Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("resolveAwait answered a status of {}", crate::js::json_stringify(&other, 0))))),
+            other => Err(Stop::Thrown(Failure::host_answer(CALL, "a status of pending, empty or landed", &other))),
         }
     }
 

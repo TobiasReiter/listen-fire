@@ -436,6 +436,11 @@ describe.each([4, 5] as const)('a resume against a program that no longer links 
         state: park.state,
         reenter: park.kind !== 'timer',
       }),
-    ).rejects.toThrow('resume: the parked state names the library "lib/leads", which the re-parsed program does not link');
+    ).rejects.toThrow(
+      // The Rust engine (version 5) refuses it up front, by the reason a state that names unreadable code gets.
+      version === 5
+        ? "this run's parked state does not read (resume_state_code_does_not_read)"
+        : 'resume: the parked state names the library "lib/leads", which the re-parsed program does not link',
+    );
   });
 });

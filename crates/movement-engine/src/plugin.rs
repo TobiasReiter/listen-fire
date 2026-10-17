@@ -39,32 +39,6 @@ pub fn output_under(spec: &PluginSpec, language_version: u32) -> Option<&PluginO
     earlier.map(|entry| &entry.output).or(spec.output.as_ref())
 }
 
-/// `{ ...record }` and `Object.keys(record)` of what a records output found:
-/// an object's own fields, a list's or a text's by index, nothing of a
-/// number or a flag; null and undefined throw, as `Object.keys` throws.
-fn spread_fields(record: &Js) -> Result<JsObject, Stop> {
-    let mut fields = JsObject::new();
-    match record {
-        Js::Object(object) => return Ok(JsObject::clone_of(object)),
-        Js::Undefined | Js::Null => {
-            return Err(Stop::Thrown(Failure::Engine { class: crate::eval::ErrorClass::TypeError, message: "Cannot convert undefined or null to object".into() }));
-        }
-        Js::Array(list) => {
-            for (i, item) in list.items().iter().enumerate() {
-                fields.set(i.to_string(), item.clone());
-            }
-        }
-        // By UTF-16 unit: an astral character spreads as its two halves.
-        Js::String(text) => {
-            for (i, unit) in crate::js_string::split_units(text.as_form()).into_iter().enumerate() {
-                fields.set(i.to_string(), Js::str(unit));
-            }
-        }
-        _ => {}
-    }
-    Ok(fields)
-}
-
 impl Run<'_> {
     /// `executeCall` for a plugin: the statement's next call opened (so it is
     /// numbered, a `suspendAt` before it suspends, and a statement re-run
@@ -206,15 +180,11 @@ impl Run<'_> {
             // landings a hop would give, so FIRST, MAP and a field read work
             // across them (`pluginCallBinding`). None found is the empty list.
             Some(PluginOutput::Records { .. }) => {
-                if result.records_not_a_list {
-                    return Err(Stop::Thrown(Failure::Engine {
-                        class: crate::eval::ErrorClass::TypeError,
-                        message: "(result.records ?? []).map is not a function".into(),
-                    }));
-                }
                 let mut landings: Vec<Binding> = Vec::new();
                 for record in &result.records {
-                    let fields = spread_fields(record)?;
+                    // `{ ...record }`: every record is an object (`PluginResult::of`).
+                    let Js::Object(object) = record else { unreachable!("PluginResult::of holds records to objects") };
+                    let fields = JsObject::clone_of(object);
                     let field_order: Vec<String> = fields.entries().iter().map(|(k, _)| k.clone()).collect();
                     let field_provenance = field_order.iter().map(|name| (name.clone(), trail.clone())).collect();
                     landings.push(Binding::Node(Rc::new(RefCell::new(Node { fields, field_order, field_provenance, landed_on: None, edges: Vec::new() }))));
