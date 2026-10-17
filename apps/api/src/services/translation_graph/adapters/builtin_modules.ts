@@ -46,12 +46,14 @@ import { ownedFilesAdapter } from 'movement-engine/public/modules';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { GOOGLE_SHEETS_MANIFEST } from '@lf/google-sheets/manifest';
+import { GOOGLE_DRIVE_MANIFEST } from '@lf/google-drive/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { camelTokenPayloadShape, postgresSecrets, type PayloadShape } from '../../credentials/secrets_postgres';
 import { grantedItemsKv } from '../../credentials/granted_items';
+import { platformModuleFiles } from '../engine/files/module_files';
 import { googleIntegrationsApp } from '../../../adapters/google/authClient';
 import { credentialTypeOf } from './credential_type';
 
@@ -127,7 +129,24 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
         ? grantedItemsKv(install.credentialsId, { teamId: install.teamId })
         : refusingKv('Google Sheets: no credential is connected, so there are no granted spreadsheets. Connect Google Sheets.'),
   },
-  google_drive: { kind: 'adapter', line: 'legacy' },
+  google_drive: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: GOOGLE_DRIVE_MANIFEST,
+    load: () => {
+      const { googleDriveModule }: typeof import('@lf/google-drive') = require('@lf/google-drive');
+      return googleDriveModule;
+    },
+    // The connect flow stores `{ accessToken, refreshToken, expiresAt }`.
+    storedAs: camelTokenPayloadShape,
+    hostApp: googleIntegrationsApp,
+    harnessService: 'GOOGLE_DRIVE',
+    kv: (install) =>
+      install.credentialsId !== undefined
+        ? grantedItemsKv(install.credentialsId, { teamId: install.teamId })
+        : refusingKv('Google Drive: no credential is connected, so there are no granted items. Connect Google Drive.'),
+    files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/google-drive' }),
+  },
   dropbox: { kind: 'adapter', line: 'legacy' },
   gmail: { kind: 'adapter', line: 'legacy' },
   telegram: { kind: 'adapter', line: 'legacy' },

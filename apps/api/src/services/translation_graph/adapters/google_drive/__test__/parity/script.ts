@@ -51,6 +51,9 @@ function json(answer: unknown): unknown {
   return answer === undefined ? null : JSON.parse(JSON.stringify(answer));
 }
 
+const recordIdOf = (position: SourcePosition): string | undefined =>
+  position.identity.kind === 'stable' ? position.identity.recordId : undefined;
+
 const under = (folderId: string, edgeName: string): ParentLink[] => [{ recordType: 'Folder', externalId: folderId, edgeName }];
 
 const isFileRef = (value: unknown): value is FileRef =>
@@ -108,8 +111,8 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
   const deals: SourcePosition =
     folders?.[0]?.position ??
     makeStablePosition({ adapterType: ADAPTER, recordType: 'Folder', recordId: 'fold-deals', data: { id: 'fold-deals', name: 'Deals' } });
-  const grantedMemo = files?.find((f: RelatedResult) => f.position.identity.recordId === 'file-memo')?.position;
-  const goneFile = files?.find((f: RelatedResult) => f.position.identity.recordId === 'gone-file')?.position;
+  const grantedMemo = files?.find((f: RelatedResult) => recordIdOf(f.position) === 'file-memo')?.position;
+  const goneFile = files?.find((f: RelatedResult) => recordIdOf(f.position) === 'gone-file')?.position;
 
   // ── A folder's children and every field of a file ─────────────────────────
   await step('edgesFrom Deals', async (a) => (await a.edgesFrom?.(deals)) ?? null);
@@ -147,7 +150,7 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
   await bytes(`${REFUSED}bytes of a file with no handle`, { __brand: 'FileRef', name: 'loose.txt', contentType: 'text/plain' });
 
   // ── Entity resolution ─────────────────────────────────────────────────────
-  await step('resolveEntity Folder', (a) => a.resolveEntity({ recordType: 'Folder', record: { name: 'Deals' }, candidates: [] }));
+  await step('resolveEntity Folder', (a) => a.resolveEntity({ recordType: 'Folder', record: { name: 'Deals' }, candidates: [], constraints: { any: [{ all: [{ field: 'name' }] }] } }));
 
   // ── Every write kind ──────────────────────────────────────────────────────
   const write = (name: string, recordType: string, fields: Record<string, unknown>, parentLinks?: ParentLink[]) =>
@@ -188,7 +191,7 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
   // ── What the writes left ──────────────────────────────────────────────────
   await step('Deals / Folders after the writes', (a) => a.getRelated({ position: deals, fieldId: 'Folders', direction: 'outgoing' }));
   const after = await step('Deals / Files after the writes', (a) => a.getRelated({ position: deals, fieldId: 'Files', direction: 'outgoing' }));
-  const copy = after?.find((f: RelatedResult) => f.position.identity.recordId === copied?.externalId)?.position;
+  const copy = after?.find((f: RelatedResult) => recordIdOf(f.position) === copied?.externalId)?.position;
   if (copy !== undefined) {
     const answer = await step('memo copy.File', (a) => a.getFieldValue({ position: copy, fieldId: 'File' }));
     await bytes('memo copy bytes', isFileRef(answer) ? answer : undefined);
