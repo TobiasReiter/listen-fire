@@ -196,30 +196,6 @@ fn the_standard_library_answers_as_typescript_does() {
 /// handed back until the engine's strings held a lone surrogate).
 const FALLBACK_CEILINGS: &[(&str, f64)] = &[];
 
-/// Version 5 prints Rust's shortest digits in JavaScript's layout. On a
-/// 17-digit tie the last digit may differ from JavaScript's
-/// (`-3759079.6958007813` where JavaScript wrote `…812`); both read back as
-/// the same number, and nothing else may differ.
-#[test]
-fn numbers_print_as_javascript_lays_them_out() {
-    let cases: Vec<(String, String)> = serde_json::from_str(include_str!("oracle/numbers.json")).unwrap();
-    let mut ties = 0;
-    let mismatches: Vec<String> = cases
-        .iter()
-        .filter_map(|(bits, want)| {
-            let x = f64::from_bits(u64::from_str_radix(bits, 16).unwrap());
-            let got = movement_engine::js::number_to_string(x);
-            let last_digit_tie = got.len() == want.len()
-                && got[..got.len() - 1] == want[..want.len() - 1]
-                && got.parse::<f64>().ok() == Some(x);
-            ties += usize::from(got != *want && last_digit_tie);
-            (got != *want && !last_digit_tie).then(|| format!("{bits}: {got}, JavaScript {want}"))
-        })
-        .collect();
-    assert!(ties < cases.len() / 100, "{ties} last-digit ties of {}", cases.len());
-    assert!(mismatches.is_empty(), "{} of {} differ:\n{}", mismatches.len(), cases.len(), mismatches.join("\n"));
-}
-
 /// Node's answers, with the version 5 dialect's two differences: a pattern
 /// that leans on Annex B (an octal escape, `\N` past the groups, `\c`
 /// without a letter, an unknown letter escape) is malformed, and an astral

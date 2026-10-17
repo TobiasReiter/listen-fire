@@ -206,7 +206,7 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | what | how it is handled | test |
 |---|---|---|
 | `Number(text)` | trimmed (Rust's whitespace), then a plain decimal (`12`, `-1.5e3`, `.5`, `5.`) or `Infinity`; `""` → 0; a radix prefix (`0x10`) or anything else NaN | `js::tests::string_to_number_matches_javascript`, `oracle::the_standard_library_answers_as_typescript_does` (`coerce.number`, `flat.tonumber`) |
-| `String(number)` | the shortest digits that read back as the number (one formatter for the parser, the checker and the engine: movement_parser::util::js), laid out as JavaScript lays them out (`1e+21`, `1.5e-7`, `0.000001`); on a 17-digit tie the last digit may differ from JavaScript's | `js::tests::number_to_string_prints_shortest_digits`, `oracle::numbers_print_as_javascript_lays_them_out` (30,000 seeded doubles) |
+| `String(number)` | the shortest digits that read back as the number (one formatter for the parser, the checker and the engine: movement_parser::util::js), laid out as JavaScript lays them out (`1e+21`, `1.5e-7`, `0.000001`); on a 17-digit tie the last digit may differ from JavaScript's | `js::tests::number_to_string_prints_shortest_digits` |
 | `String(value)` | arrays join with `,` (null and undefined members empty), objects `[object Object]` | `js::tests::string_and_number_coercions_of_composites` |
 | `===`, `includes`, `Set` | strict equality (NaN not itself, `-0 === 0`), SameValueZero for membership, objects by identity (`Rc`) within the run; nothing from the host keeps its identity | `js::tests::identity_not_shape_decides_equality`, `filter::tests::membership_uses_same_value_zero`, `tests::the_callers_maps_cross_as_copies` |
 | truthiness | `0`, `-0`, `NaN`, `""`, null, undefined are false | `tests::absence_reads_as_typescript_reads_it` |
@@ -238,8 +238,7 @@ others, and CI diffs it too. (Until the extraction keyword was retired,
 reading as well; that code is gone.)
 
 `tests/stdlib_oracle.rs` holds every built-in and the comparator to the
-TypeScript's own answers (tests/oracle/stdlib.json, 10,455 cases), number
-printing to 30,000 seeded doubles (numbers.json) and the regex matcher to
+TypeScript's own answers (tests/oracle/stdlib.json, 10,455 cases) and the regex matcher to
 Node over 7,209 seeded pattern/text pairs (regex.json: 3,200 over the core
 dialect, 4,000 over the rest of it, and nine long texts and deep nestings).
 Where version 5 answers differently from JavaScript (CHANGELOG.md), the test

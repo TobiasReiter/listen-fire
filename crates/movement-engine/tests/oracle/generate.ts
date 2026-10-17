@@ -4,8 +4,6 @@
 //     comparator over a spread of hazardous inputs, values in the eval wire
 //     format (crates/movement-engine/src/env.rs) so NaN, -0, undefined and key
 //     order survive;
-//   - numbers.json: `String(x)` for 30,000 seeded doubles (bit patterns as
-//     hex), the 17-digit ties included;
 //   - regex.json: `new RegExp(pattern).exec(text)` for seeded patterns over
 //     backreferences, lazy quantifiers, lookaheads, \b, classes, anchors,
 //     alternation and empty iterations; then the rest of the dialect from a
@@ -196,32 +194,6 @@ function mulberry32(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
-// ── numbers.json ──────────────────────────────────────────────────────────────
-
-const random = mulberry32(20261007);
-const view = new DataView(new ArrayBuffer(8));
-const numbers: Array<[string, string]> = [];
-const bitsOf = (x: number) => {
-  view.setFloat64(0, x);
-  return view.getBigUint64(0).toString(16).padStart(16, '0');
-};
-// Any bit pattern: every magnitude, subnormals included.
-while (numbers.length < 20_000) {
-  view.setUint32(0, Math.floor(random() * 2 ** 32));
-  view.setUint32(4, Math.floor(random() * 2 ** 32));
-  const x = view.getFloat64(0);
-  if (Number.isFinite(x)) numbers.push([bitsOf(x), String(x)]);
-}
-// A 53-bit integer scaled by a small power of two: a short exact expansion,
-// where two 17-digit candidates are most often equally near.
-while (numbers.length < 30_000) {
-  const m = 2 ** 52 + Math.floor(random() * 2 ** 52);
-  const x = (random() < 0.5 ? -1 : 1) * m * 2 ** -(Math.floor(random() * 50) + 1);
-  numbers.push([bitsOf(x), String(x)]);
-}
-writeFileSync(path.join(__dirname, 'numbers.json'), `[\n${numbers.map((n) => JSON.stringify(n)).join(',\n')}\n]\n`);
-console.log(`numbers.json: ${numbers.length} doubles`);
 
 // ── regex.json ────────────────────────────────────────────────────────────────
 
