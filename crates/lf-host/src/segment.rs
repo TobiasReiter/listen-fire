@@ -84,6 +84,9 @@ const RUN_CHAT_MODELS: &[&str] = &[
     "claude-haiku-4-5-20251001",
 ];
 
+/// The trace entry kinds the engine appends (`traceEntry`).
+const TRACE_KINDS: &[&str] = &["gate", "warning", "block", "read", "ai", "extraction", "plugin", "chunks", "field_miss"];
+
 /// What a segment is entered as (`Resumption`).
 pub enum Entry {
     /// A fresh firing.
@@ -666,6 +669,14 @@ async fn route(host: &SegmentHost<'_>, label: &str, args: &Json) -> Result<Answe
                 Hv::List(items) => items.iter().map(Hv::js).collect::<Vec<_>>(),
                 _ => return Err(Fault("trace.append entries are a list".into())),
             };
+            // The kinds the engine appends (crates/movement-engine/src/trace.rs),
+            // each kept as the engine wrote it.
+            for entry in &entries {
+                let kind = entry.get("kind").and_then(Js::as_str).unwrap_or_default();
+                if !TRACE_KINDS.contains(&kind) {
+                    return Err(Fault(format!("the Rust engine appended a trace entry this host does not know: {kind}")));
+                }
+            }
             store.append_trace(run_id, &entries).map(|()| None).map_err(store_failure)
         }
         "log.write" => {

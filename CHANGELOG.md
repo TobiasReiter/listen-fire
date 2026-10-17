@@ -1243,6 +1243,18 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf check` reports a file that does not parse at the column the parser names. It reported column 1
   for every such file.
 
+### ev2-lfengine
+
+- `lf-host run --event <file> [--dry-run]`, `lf-host resume [<run>]` and `lf-host runs` run movements.
+  The Rust engine is linked into the binary and driven natively, not through WASM. A sleep or an await
+  parks into the same SQLite state file the TypeScript `lf` writes, and either binary resumes it.
+- Externals are processes reached over adapter protocol 2. Every answer is held to the protocol's
+  schemas, files cross as URLs, and the per-run call ceiling and dry-run capture behave as in `lf`.
+- On the example project, its fixtures and the reference fake CRM, both binaries print the same lines
+  and leave the same state file and the same writes in the external.
+- Not in `lf-host` yet: `serve` and the inbound doors, callbacks, `cancel`, model calls, credential
+  refresh, and `run --webhook`. The TypeScript `lf` is unchanged and still has them all.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

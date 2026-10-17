@@ -151,11 +151,11 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             let session = runs::open_session(project::load_project(&args.dir)?, false).await?;
             let outcomes = match args.rest.first() {
                 Some(run_id) => vec![session.resume_run(run_id).await?],
-                None => session.resume_all(&mut std::io::stderr()).await?,
+                // As the TypeScript lf: a work row that fails is retried later, unlogged.
+                None => session.resume_all(&mut std::io::sink()).await?,
             };
             if outcomes.is_empty() {
                 writeln!(out, "no parked runs").map_err(|e| e.to_string())?;
-                // As the TypeScript lf: an empty resume still says no listen matched.
             }
             runs::report(&outcomes, &mut out)
         }
