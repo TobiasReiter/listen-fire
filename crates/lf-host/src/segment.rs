@@ -99,6 +99,8 @@ pub struct SegmentInput<'a> {
     pub catalog: &'a Js,
     pub dry_run: bool,
     pub entry: Entry,
+    /// The run's cost cap in microdollars (lf.yaml's `maxRunCostUsd`); None: no cap.
+    pub cost_cap_microdollars: Option<f64>,
 }
 
 /// What a segment that ran came to.
@@ -261,7 +263,14 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
         })
         .unwrap_or_default();
     segment.insert("credentialIds".into(), Json::Object(credential_ids));
-    segment.insert("spend".into(), json!({ "priorMicrodollars": 0, "capBaselineMicrodollars": 0 }));
+    // What the run spent before this segment, against its cap: the engine
+    // refuses the priced call that would take it over.
+    let prior = host.store.run_spent(&host.run_id).map_err(|e| e.to_string())?;
+    let mut spend = json!({ "priorMicrodollars": prior, "capBaselineMicrodollars": 0 });
+    if let Some(cap) = input.cost_cap_microdollars {
+        spend["capMicrodollars"] = json!(cap);
+    }
+    segment.insert("spend".into(), spend);
     segment.insert("now".into(), json!(input.fired_at));
     segment.insert("serves".into(), json!(SERVES));
     segment.insert("extractionFileChars".into(), json!(knob("EXTRACTION_FILE_CHARS", 50_000.0)));
@@ -280,11 +289,16 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
 /// Run one segment to its result.
 pub async fn run_segment(host: &SegmentHost<'_>, input: SegmentInput<'_>) -> Result<Ran, Ended> {
     let text = input_text(host, &input).map_err(Ended::Failed)?;
-    let done = match drive(host, &text).await {
-        Ok(done) => done,
-        Err(Fault(message)) => return Err(Ended::Failed(message)),
-    };
-    read_result(host, &done)
+    let done = drive(host, &text).await;
+    // What it spent is the run's whatever the segment came to: the money is gone.
+    let spent: f64 = host.spent.borrow().values().sum();
+    if spent > 0.0 {
+        host.store.add_run_spend(&host.run_id, spent).map_err(|e| Ended::Failed(e.to_string()))?;
+    }
+    match done {
+        Ok(done) => read_result(host, &done),
+        Err(Fault(message)) => Err(Ended::Failed(message)),
+    }
 }
 
 type Served<'a> = Pin<Box<dyn Future<Output = (u32, Result<Json, Fault>)> + 'a>>;
@@ -471,8 +485,16 @@ fn thrown_message(error: &Json) -> String {
                 chain.len().saturating_sub(1)
             )
         }
-        // A priced call met the cap: lf-host makes none yet (G6).
-        Some("RunCostCapExceeded") => "Run cost cap reached: the run was stopped before its next priced call".into(),
+        // A priced call met the cap. lf serves no limit pause, so the run
+        // fails here where the platform would pause it.
+        Some("RunCostCapExceeded") => {
+            let dollars = |key: &str| error.get(key).and_then(Json::as_f64).map(|m| format!("${:.2}", m / 1_000_000.0)).unwrap_or_else(|| "?".into());
+            format!(
+                "Run cost cap reached: this run has spent {} on model calls and paid services, and lf.yaml's maxRunCostUsd is {}. The run was stopped before its next priced call in case something was looping. If this run legitimately needs more, raise maxRunCostUsd (or remove it for no cap).",
+                dollars("spentMicrodollars"),
+                dollars("capMicrodollars")
+            )
+        }
         _ => message.to_string(),
     }
 }

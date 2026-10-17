@@ -169,6 +169,12 @@ pub trait RunHostStore {
     /// The entries a segment appended to its run's trace (`segment_id`: the
     /// segment's, so a store that keeps one record per segment finds its own).
     fn append_trace(&self, run_id: &str, segment_id: &str, entries: &[Js]) -> Result<()>;
+    /// What the run has spent so far, in microdollars: the cost cap reads it.
+    fn run_spent(&self, run_id: &str) -> Result<f64>;
+    /// Add what one segment spent to the run's account.
+    fn add_run_spend(&self, run_id: &str, microdollars: f64) -> Result<()>;
+    /// The cap counts spend from here on: a run paused at its cap, resumed.
+    fn reset_spend_baseline(&self, run_id: &str) -> Result<()>;
     fn trace_len(&self, run_id: &str) -> Result<i64>;
 
     // ── Parks ───────────────────────────────────────────────────────────────
@@ -260,6 +266,15 @@ impl RunHostStore for Store {
     }
     fn trace_len(&self, run_id: &str) -> Result<i64> {
         Store::trace_len(self, run_id)
+    }
+    fn run_spent(&self, run_id: &str) -> Result<f64> {
+        Store::run_spent(self, run_id)
+    }
+    fn add_run_spend(&self, run_id: &str, microdollars: f64) -> Result<()> {
+        Store::add_run_spend(self, run_id, microdollars)
+    }
+    fn reset_spend_baseline(&self, run_id: &str) -> Result<()> {
+        Store::reset_spend_baseline(self, run_id)
     }
 
     fn put_leaf(&self, run_id: &str, address: &str, reason: &str, wake_at: Option<&str>, state: &Js, fence: Option<&str>) -> Result<()> {

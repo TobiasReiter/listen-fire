@@ -37,6 +37,10 @@ struct ProjectFile {
     /// Seconds a started external has to print `listening <port>`.
     #[serde(rename = "startTimeout")]
     start_timeout: Option<f64>,
+    /// The most one run may spend, in US dollars (the platform's
+    /// `MOVEMENT_MAX_RUN_COST_USD`).
+    #[serde(rename = "maxRunCostUsd")]
+    max_run_cost_usd: Option<f64>,
 }
 
 /// lf.yaml's `store:`: a spec written out, or where to read one, so a
@@ -88,6 +92,20 @@ pub struct Project {
     /// print `listening <port>`: lf.yaml's `startTimeout`, unless
     /// `--start-timeout` names another.
     pub start_timeout: Duration,
+    /// The most one run may spend on model calls and paid services, in
+    /// microdollars (lf.yaml's `maxRunCostUsd`); None: no cap.
+    pub cost_cap_microdollars: Option<f64>,
+}
+
+/// `maxRunCostUsd` as the platform reads `MOVEMENT_MAX_RUN_COST_USD`
+/// (`parseRunCostCap`): a positive number of US dollars, to microdollars.
+fn cost_cap_of(dollars: f64, at: &str) -> Result<f64, String> {
+    if !(dollars.is_finite() && dollars > 0.0) {
+        return Err(format!(
+            "{at}: maxRunCostUsd: a positive number of US dollars, the most one run may spend on model calls and paid services (e.g. 5); leave it out for no cap"
+        ));
+    }
+    Ok((dollars * 1_000_000.0).round())
 }
 
 /// Where lf.yaml says run state is kept.
@@ -216,6 +234,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         None => DEFAULT_START_TIMEOUT,
         Some(seconds) => start_timeout_of(seconds, &format!("{}: startTimeout", path.display()))?,
     };
+    let cost_cap_microdollars = file.max_run_cost_usd.map(|d| cost_cap_of(d, &path.display().to_string())).transpose()?;
     let store = file.store.map(|s| ProjectStore::of(s, &path.display().to_string())).transpose()?;
     let language_version = language_version_of_engine(&file.engine)?;
     refuse_below_lf(language_version, &path.display().to_string(), "run `lf upgrade`")?;
@@ -231,6 +250,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         store,
         public_url: file.public_url,
         start_timeout,
+        cost_cap_microdollars,
         root: dir,
     })
 }
@@ -255,6 +275,14 @@ mod tests {
         assert_eq!(of("{ env: LF_STORE_URL }").unwrap(), ProjectStore::Env("LF_STORE_URL".into()));
         assert_eq!(of("{ credential: db }").unwrap(), ProjectStore::Credential("db".into()));
         assert!(of("{ env: '' }").is_err());
+    }
+
+    #[test]
+    fn the_cost_cap_is_read_as_the_platform_reads_its_setting() {
+        assert_eq!(cost_cap_of(5.0, "lf.yaml"), Ok(5_000_000.0));
+        assert_eq!(cost_cap_of(0.25, "lf.yaml"), Ok(250_000.0));
+        assert!(cost_cap_of(0.0, "lf.yaml").unwrap_err().contains("maxRunCostUsd"));
+        assert!(cost_cap_of(-1.0, "lf.yaml").is_err());
     }
 
     #[test]

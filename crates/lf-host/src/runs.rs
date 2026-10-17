@@ -342,6 +342,7 @@ impl Session {
             catalog: &self.catalog,
             dry_run,
             entry,
+            cost_cap_microdollars: self.project.cost_cap_microdollars,
         };
         run_segment(&host, input).await
     }
@@ -395,7 +396,13 @@ impl Session {
             let Some(stepper) = self.parked_stepper(run_id, lease)? else { return Ok(None) };
             let lease_lost = match &drain {
                 Drain::EveryParkedLeaf => {
-                    let leaves: Vec<String> = self.store.leaves(run_id, true, None, None).map_err(|e| e.to_string())?.into_iter().map(|l| l.address).collect();
+                    let parked = self.store.leaves(run_id, true, None, None).map_err(|e| e.to_string())?;
+                    // Resuming a run paused at its cost cap resets its usage,
+                    // as the platform's explicit resume does (limit_resume.ts).
+                    if parked.iter().any(|l| l.reason == "limit") {
+                        self.store.reset_spend_baseline(run_id).map_err(|e| e.to_string())?;
+                    }
+                    let leaves: Vec<String> = parked.into_iter().map(|l| l.address).collect();
                     drain_run(&*self.store, run_id, &leaves, None, lease, &stepper).await?
                 }
                 Drain::DueTimers => drain_due_timers(&*self.store, run_id, &self.due_by(), lease, &stepper).await?,

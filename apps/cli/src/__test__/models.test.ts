@@ -115,3 +115,45 @@ test('lf run: a model call with no provider key fails naming the secrets entry',
   const run = await lfAsync(dir, 'run', '--event', 'events/company_created.json');
   assert.match(run.out, /a model call needs a provider key/);
 });
+
+// Rust lf only: the TypeScript lf is frozen and reads no cost cap. As on the
+// platform, a run that meets its cap pauses before the priced call that would
+// go over it, and an explicit resume carries on with its usage reset.
+test('lf run: lf.yaml maxRunCostUsd pauses a run at its cap; lf resume carries on', { skip: process.env.LF_BIN === undefined }, async () => {
+  const fake = await fakeAnthropic();
+  try {
+    const dir = project();
+    appendFileSync(join(dir, '.lf/secrets.yaml'), `\nanthropic:\n  external: anthropic\n  api_key: test-key\n  base_url: ${fake.url}\n`);
+    appendFileSync(join(dir, 'lf.yaml'), '\nmaxRunCostUsd: 0.000001\n');
+    writeFileSync(
+      join(dir, 'movements/named.mvt'),
+      [
+        'import { acme_crm } from adapters',
+        'import { acme } from credentials',
+        '',
+        'crm = connect acme_crm using acme',
+        '',
+        'function name_it(company: <crm-[:Company]->>) {',
+        '  line = ai("Write a welcome line for ${company.Name}")',
+        '  write crm-[:Company]-> { Name: ai("Shorten: ${line}") }',
+        '}',
+        '',
+        'listen to crm { events: ["company.created"] } fire name_it',
+        '',
+      ].join('\n'),
+    );
+    const run = await lfAsync(dir, 'run', '--event', 'events/company_created.json');
+    const paused = /^run (\S+) named:name_it parked/m.exec(run.out)?.[1];
+    assert.ok(paused !== undefined, run.out);
+    assert.equal(fake.received.length, 1, `the first call is made, the second waits:\n${run.out}`);
+    assert.ok(!companies(dir).includes(ANSWER), companies(dir).join(', '));
+
+    const resumed = await lfAsync(dir, 'resume', paused);
+    assert.match(resumed.out, new RegExp(`^run ${paused} named:name_it completed`, 'm'));
+    assert.equal(fake.received.length, 2, resumed.out);
+    assert.match(JSON.stringify(fake.received[1]?.body.messages), /Shorten:/);
+    assert.ok(companies(dir).includes(ANSWER), `${companies(dir).join(', ')}\n${resumed.out}`);
+  } finally {
+    fake.close();
+  }
+});

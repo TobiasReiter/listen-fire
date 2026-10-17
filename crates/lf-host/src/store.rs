@@ -245,6 +245,10 @@ pub struct Store {
     pub(crate) db: Connection,
 }
 
+/// What a run has spent, and what it had spent when last resumed from its
+/// cost cap, in microdollars (lf-host's cost cap reads the difference).
+const SPEND_COLUMNS: &[&str] = &["spent_microdollars", "cost_cap_baseline_microdollars"];
+
 impl Store {
     pub fn open(path: &Path) -> Result<Store> {
         let db = Connection::open(path)?;
@@ -259,6 +263,13 @@ impl Store {
         for column in ADDED_RUN_COLUMNS {
             if !columns.iter().any(|c| c == column) {
                 db.execute_batch(&format!("alter table run add column {column} text"))?;
+            }
+        }
+        // lf-host's own: the TypeScript lf keeps no run spend (it has no
+        // cost cap), and reads its rows by name, so the columns are invisible to it.
+        for column in SPEND_COLUMNS {
+            if !columns.iter().any(|c| c == column) {
+                db.execute_batch(&format!("alter table run add column {column} real not null default 0"))?;
             }
         }
         Ok(Store { db })
@@ -384,6 +395,20 @@ impl Store {
             }
             Ok(())
         })
+    }
+
+    pub fn run_spent(&self, run_id: &str) -> Result<f64> {
+        Ok(self.db.query_row("select spent_microdollars - cost_cap_baseline_microdollars from run where id = ?", params![run_id], |r| r.get(0)).optional()?.unwrap_or(0.0))
+    }
+
+    pub fn add_run_spend(&self, run_id: &str, microdollars: f64) -> Result<()> {
+        self.db.execute("update run set spent_microdollars = spent_microdollars + ? where id = ?", params![microdollars, run_id])?;
+        Ok(())
+    }
+
+    pub fn reset_spend_baseline(&self, run_id: &str) -> Result<()> {
+        self.db.execute("update run set cost_cap_baseline_microdollars = spent_microdollars where id = ?", params![run_id])?;
+        Ok(())
     }
 
     pub fn trace_len(&self, run_id: &str) -> Result<i64> {

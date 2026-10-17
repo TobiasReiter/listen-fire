@@ -480,6 +480,7 @@ mod tests {
             store: None,
             public_url: None,
             start_timeout: crate::project::DEFAULT_START_TIMEOUT,
+            cost_cap_microdollars: None,
         }
     }
 

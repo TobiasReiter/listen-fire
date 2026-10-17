@@ -400,6 +400,39 @@ impl RunHostStore for PgStore {
         Ok(())
     }
 
+    /// The hosted product's run total: `diagnostics.costMicrodollars`
+    /// (trigger_run.ts `runSpentMicrodollars`), less the cap's baseline.
+    fn run_spent(&self, run_id: &str) -> Result<f64> {
+        let row = self.query_opt(
+            "select (coalesce((diagnostics ->> 'costMicrodollars')::float8, (diagnostics ->> 'costUsd')::float8 * 1000000, 0)
+                     - cost_cap_baseline_microdollars)::float8
+             from automations.trigger_run where id = $1::text::uuid and team_id = $2::text::uuid",
+            &[&run_id, &self.tenant],
+        )?;
+        Ok(row.map_or(0.0, |r| r.get(0)))
+    }
+
+    fn add_run_spend(&self, run_id: &str, microdollars: f64) -> Result<()> {
+        self.execute(
+            "update automations.trigger_run set diagnostics = diagnostics
+               || jsonb_build_object('costMicrodollars', coalesce((diagnostics ->> 'costMicrodollars')::float8, 0) + $2::float8)
+               || jsonb_build_object('costUsd', (coalesce((diagnostics ->> 'costMicrodollars')::float8, 0) + $2::float8) / 1000000)
+             where id = $1::text::uuid and team_id = $3::text::uuid",
+            &[&run_id, &microdollars, &self.tenant],
+        )?;
+        Ok(())
+    }
+
+    /// `cost_cap_baseline_microdollars`, as limit_resume.ts sets it.
+    fn reset_spend_baseline(&self, run_id: &str) -> Result<()> {
+        self.execute(
+            "update automations.trigger_run set cost_cap_baseline_microdollars = round(coalesce((diagnostics ->> 'costMicrodollars')::float8, 0))::int8
+             where id = $1::text::uuid and team_id = $2::text::uuid",
+            &[&run_id, &self.tenant],
+        )?;
+        Ok(())
+    }
+
     fn trace_len(&self, run_id: &str) -> Result<i64> {
         let row = self.query_opt(
             "select coalesce(sum(jsonb_array_length(step -> 'diagnostics' -> 'trace')), 0)::int8
