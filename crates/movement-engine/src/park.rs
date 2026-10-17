@@ -459,6 +459,11 @@ fn serialize_binding(run: &Run<'_>, name: &str, binding: &Binding, park: &mut Pa
                 members.push(("landedOn", Js::str(edge.clone())));
             }
             members.push(("edges", Js::object(edges)));
+            // Only an extraction call's record has any, and the park keeps
+            // them as an extracted record's descriptor does.
+            if !node.resources.is_empty() {
+                members.push(("resources", Js::array(node.resources.clone())));
+            }
             object_of(members)
         }
         Binding::LazyWalk(walk) => object_of(vec![kind("lazyWalk"), ("walk", serialize_deferred_walk(run, walk, park)?)]),

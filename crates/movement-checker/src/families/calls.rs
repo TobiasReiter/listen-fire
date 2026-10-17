@@ -1028,6 +1028,25 @@ impl TreeAt<'_> {
 }
 
 /// `children` (expression/lower.ts): every sub-expression of a node.
+/// `KG_VALUE(…)` / `KG_EXISTS(…)` (version 5): a query text no engine runs.
+fn kg_query_retired_message(retired: &str) -> String {
+    format!(
+        "'{retired}(…)' is retired — it ran a query text against the knowledge graph, and no engine runs one from version 5. Walk the graph instead: connect it ('kg = connect graph'), then read along its edges ('kg-[c:Company WHERE …]->')"
+    )
+}
+
+/// Where an expression tree's visit is: inside a SORT key (each member read
+/// apart), inside a resource hop's WHERE, inside what a hop's landing scopes
+/// (its WHERE or ORDER BY), and whether a walk here may have no root (the walk
+/// of an EXISTS read inside a hop's scope).
+#[derive(Clone, Copy, Default)]
+struct Within {
+    per_member: bool,
+    in_resource_where: bool,
+    in_hop: bool,
+    rootless_ok: bool,
+}
+
 pub fn expression_children(e: &MExpr) -> Vec<&MExpr> {
     use movement_parser::tree::{ClosureBody, EntryValue, LiteralEntry};
     fn entry_values(entries: &[LiteralEntry]) -> impl Iterator<Item = &MExpr> {
@@ -1196,7 +1215,7 @@ impl Checker<'_> {
             let written = self.written_text(slot).to_string();
             self.check_walk_fields(&tree, (&written, &slot.raw), TreeAt::Slot(slot), scope);
         }
-        self.visit_expression_tree(&tree, false, false, (TreeAt::Slot(slot), None), scope, write_field);
+        self.visit_expression_tree(&tree, Within::default(), (TreeAt::Slot(slot), None), scope, write_field);
     }
 
     /// The calls in a block head's hops (version 3), read through the probe
@@ -1215,14 +1234,40 @@ impl Checker<'_> {
         if since(self.version, 5) {
             self.check_walk_fields(&tree, (probe, probe), at_, scope);
         }
-        self.visit_expression_tree(&tree, false, false, (at_, walk), scope, false);
+        self.visit_expression_tree(&tree, Within::default(), (at_, walk), scope, false);
     }
 
-    fn visit_expression_tree(&mut self, expr: &MExpr, per_member: bool, in_resource_where: bool, place: (TreeAt, Option<*const MExpr>), scope: ScopeId, write_field: bool) {
+    fn visit_expression_tree(&mut self, expr: &MExpr, within: Within, place: (TreeAt, Option<*const MExpr>), scope: ScopeId, write_field: bool) {
+        let Within { per_member, in_resource_where, in_hop, rootless_ok } = within;
         let (at_, head) = place;
         if let MExpr::Path { root, hops, at } = expr {
             self.check_walk_keeps_what_is_written(hops, at_.span_of(*at));
             self.check_resource_walk(root.as_deref(), hops, at_.span_of(*at), head == Some(expr as *const MExpr));
+            // A head's own root is the head's to say (`check_path_head`); a
+            // rootless `_resources` walk is MOV_RESOURCES_NOT_EXTRACTED.
+            if since(self.version, 5)
+                && root.is_none()
+                && !rootless_ok
+                && head != Some(expr as *const MExpr)
+                && !hops.last().is_some_and(crate::families::extraction::is_resource_hop)
+                && let Some(first) = hops.first()
+            {
+                self.report(codes::WALK_ROOTLESS, crate::families::walks::rootless_walk_message(&first.label.text), at_.span_of(*at));
+            }
+        }
+        if let MExpr::Path { root: Some(root), hops, at } = expr
+            && let MExpr::Name { name, .. } = root.as_ref()
+            && head != Some(expr as *const MExpr)
+            && let Some(first) = hops.first()
+        {
+            self.report_walk_off_json(&name.text, &format!("-[:{}]->", first.label.text), at_.span_of(*at), scope);
+        }
+        if since(self.version, 5)
+            && let MExpr::Call { callee, at, .. } = expr
+            && let MExpr::Name { name, .. } = callee.as_ref()
+            && let Some(retired) = ["KG_VALUE", "KG_EXISTS"].into_iter().find(|r| name.text.eq_ignore_ascii_case(r))
+        {
+            self.report(codes::KG_QUERY_RETIRED, kg_query_retired_message(retired), at_.span_of(*at));
         }
         if let MExpr::Special { text, at } = expr {
             self.check_special_record_read(text, at_.span_of(*at), at_.extent_of(*at), in_resource_where);
@@ -1264,10 +1309,28 @@ impl Checker<'_> {
             MExpr::Path { hops, .. } => hops.iter().filter(|h| crate::families::extraction::is_resource_hop(h)).filter_map(|h| h.where_.as_ref()).collect(),
             _ => Vec::new(),
         };
+        // What a hop's WHERE and ORDER BY read is scoped at the record the hop
+        // lands on, and so is an EXISTS's own WHERE; only there does a
+        // rootless EXISTS have a record to walk from.
+        let hop_scoped: Vec<&MExpr> = match expr {
+            MExpr::Path { hops, .. } => hops.iter().flat_map(|h| h.where_.iter().chain(h.order_by.as_ref().map(|o| &o.key))).collect(),
+            MExpr::Where { predicate, .. } => vec![predicate.as_ref()],
+            _ => Vec::new(),
+        };
+        let exists_walk: Option<&MExpr> = match expr {
+            MExpr::Call { callee, args, .. } if matches!(callee.as_ref(), MExpr::Name { name, .. } if name.text.eq_ignore_ascii_case("exists")) => {
+                args.first().map(|a| &a.value)
+            }
+            MExpr::Where { source, .. } if rootless_ok => Some(source.as_ref()),
+            _ => None,
+        };
         for child in expression_children(expr) {
             let keyed = key.is_some_and(|k| std::ptr::eq(k, child));
             let in_where = in_resource_where || resource_wheres.iter().any(|w| std::ptr::eq(*w, child));
-            self.visit_expression_tree(child, per_member || keyed, in_where, place, scope, write_field);
+            let scoped = in_hop || hop_scoped.iter().any(|w| std::ptr::eq(*w, child));
+            let walked = in_hop && exists_walk.is_some_and(|w| std::ptr::eq(w, child));
+            let within = Within { per_member: per_member || keyed, in_resource_where: in_where, in_hop: scoped, rootless_ok: walked };
+            self.visit_expression_tree(child, within, place, scope, write_field);
         }
     }
 

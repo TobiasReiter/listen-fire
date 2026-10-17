@@ -916,11 +916,15 @@ impl Run<'_> {
                 )));
             }
             Some(ParamTypeRef::Name(type_ref)) => type_ref,
+            // The host named a callee as the entry: no check can see which
+            // function a host will name, and a function taking a value is a
+            // legal callee, so this is the host's request, not a gap the
+            // checker left (as a function of two parameters is, above).
             Some(ParamTypeRef::Value(value)) => {
                 return Err(Stop::Thrown(Failure::engine(
                     "MOVENG_RUNTIME",
                     format!(
-                        "'{}' takes a value ('{}: <{}>'), and a dispatched movement takes the triggering event — the checker should have caught this",
+                        "'{}' takes a value ('{}: <{}>'), and a dispatched movement takes exactly one parameter, the triggering event; functions taking values run as callees",
                         movement.name,
                         param.name,
                         spell_value_type(value)
@@ -1840,7 +1844,9 @@ impl Run<'_> {
             Ask::ScopedAt { expr, subject } => self.scoped_at_record(&expr, &subject, scope, span.cloned()).await.map(Ok),
             // `case 'exists'` scoped: the landed record as a source position
             // with no read of its own (so walked through the run's source,
-            // `cursor.read ?? ctx.source`), or the extracted entity.
+            // `cursor.read ?? ctx.source`), the extracted entity, or the
+            // record a run-built node's edge holds (a node, a handle), walked
+            // as a rooted EXISTS walks it.
             Ask::ScopedExists { expr } => {
                 let Expression::Exists { steps, where_ } = &expr else { unreachable!("the evaluator asks for EXISTS only") };
                 let subject = match subject.expect("a scoped read is asked only of a scoped evaluation") {
@@ -1849,7 +1855,7 @@ impl Run<'_> {
                         Binding::Landed(Rc::new(crate::bindings::Landed::new(landed.position().clone(), None, source.read.clone())))
                     }
                     Scoped::Emission(emission) => Binding::Extracted { emission: emission.clone(), root: false, id: crate::bindings::Identity::new() },
-                    Scoped::Binding(_) => return Ok(Err(crate::eval::rootless_exists())),
+                    Scoped::Binding(binding) => binding.clone(),
                 };
                 let span = span.cloned().unwrap_or(Js::Undefined);
                 let found = self.exists(steps, where_.as_deref(), vec![subject], scope, &span).await?;

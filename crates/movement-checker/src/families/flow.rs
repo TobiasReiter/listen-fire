@@ -137,6 +137,28 @@ impl Checker<'_> {
         }
     }
 
+    /// `await` parks on one record, under one key (version 5): a name
+    /// holding a list of them has no one record to park on.
+    pub fn report_await_on_list(&mut self, head: &PathHead, scope: crate::scope::ScopeId) {
+        if self.version < 5 {
+            return;
+        }
+        let Some(PathRoot::Name { name }) = &head.root else { return };
+        let crate::scope::Resolution::Found(id) = self.scopes.resolve(scope, name) else { return };
+        let types = &self.scopes.symbol(id).types;
+        // A block's collected records (`plural`), or a value holding a list.
+        let list = types.plural.is_some() || crate::types::field::is_list(types.field.as_ref().map(crate::types::field::strip_absent));
+        if !list {
+            return;
+        }
+        let shown = crate::families::names::spell_name(name);
+        self.report(
+            codes::AWAIT_ON_LIST,
+            format!("'await' parks on one record, under one key, and '{shown}' holds a list of records — there is no one record to wait at. Await on one record a name holds: 'await first(rec{})'", head.hops_raw.trim()),
+            head.span,
+        );
+    }
+
     /// What an awaited walk lands on must resume the run: an edge whose
     /// resolution does (awaitable), and one that says when (watchable). An
     /// undescribed edge claims nothing.

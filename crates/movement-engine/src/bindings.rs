@@ -277,6 +277,10 @@ pub struct Node {
     /// own graph, updatable in place.
     pub landed_on: Option<String>,
     pub edges: Vec<(String, Edge)>,
+    /// What `-[f:_resources]->` walks off a record an extraction call found:
+    /// the content that call read (a FILE resource per file, a TEXT one per
+    /// text). Empty on every other node.
+    pub resources: Vec<crate::js::Js>,
 }
 
 impl Node {

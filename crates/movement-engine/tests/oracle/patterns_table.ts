@@ -320,7 +320,7 @@ export const PATTERNS: Pattern[] = [
   {
     name: 'movement_value_param@entry',
     ends: 'whole',
-    note: "a function taking a value, fired itself, fails the run before its body",
+    note: "a function taking a value, named as the run's entry, fails the run before its body: it is a callee, and an entry takes the triggering event",
     programs: [
       () => ({ file: `movement total(n: <number[]>) {\n  return SUM(n)\n}\n${m('  x = 1')}`, movementName: 'total' }),
       () => ({ file: `movement label(names: <text[]>) {\n  return COUNT(names)\n}\n${m('  x = 1')}`, movementName: 'label' }),
@@ -801,11 +801,11 @@ export const PATTERNS: Pattern[] = [
   {
     name: 'write_root_not_held',
     ends: 'whole',
-    note: "a linked write rooted at a declared shape writes an in-memory position of the shape's type; with a `unique by` it is refused as unsupported (a gap reachability lists)",
+    note: "a linked write rooted at a declared shape writes an in-memory position of the shape's type; with a `unique by` the checker refuses it (MOV_WRITE_SHAPE_UNIQUE)",
     programs: [
       () => ({ file: `node Note {\n  title: <text>\n}\nmovement persist(n: <Note>) {\n  write crm-[:notes]-> { body: n.\`title\` }\n}\n${m('  persist(n: write Note-[:item]-> { title: msg.`subject` })')}`, movementName: 'm' }),
       (pick) => ({ file: `node Note {\n  title: <text>\n}\nmovement persist(n: <Note>) {\n  write crm-[:notes]-> { body: n.\`title\` }\n}\n${m(`  persist(n: write Note-[:item]-> { title: "${pick(NAMES)}" })`)}`, movementName: 'm' }),
-      () => ({ file: `node Note {\n  title: <text>\n}\n${m('  n = write Note-[:item]-> { unique by (`title`), title: msg.`subject` }')}`, ends: 'unsupported' }),
+      () => ({ file: `node Note {\n  title: <text>\n}\n${m('  n = write Note-[:item]-> { unique by (`title`), title: msg.`subject` }')}`, ends: 'at_check' }),
     ],
   },
   {
@@ -819,17 +819,17 @@ export const PATTERNS: Pattern[] = [
   },
   {
     name: 'write_multi_hop',
-    ends: 'unsupported',
-    note: "a linked write walking more than one edge: refused as unsupported after the writes before it (a gap reachability lists)",
+    ends: 'at_check',
+    note: "a linked write walking more than one edge: the checker refuses it (MOV_WRITE_MULTI_HOP), inside a closure too",
     programs: [
       () => ({ body: '  write crm-[:companies]->-[:notes]-> { body: "x" }' }),
       () => ({ body: '  write crm-[:companies]->-[:notes]-> { body: msg.`subject`, title: "t" }' }),
-      () => ({ body: '  MAP([1, 2], { onError: "ignore" }, (n) => {\n    write crm-[:companies]->-[:notes]-> { body: "${n}" }\n  })\n  write crm-[:notes]-> { body: "after" }', ends: 'whole' }),
+      () => ({ body: '  MAP([1, 2], { onError: "ignore" }, (n) => {\n    write crm-[:companies]->-[:notes]-> { body: "${n}" }\n  })\n  write crm-[:notes]-> { body: "after" }' }),
     ],
   },
   {
     name: 'match_multi_hop',
-    ends: 'unsupported',
+    ends: 'at_check',
     note: "a linked match walking more than one edge: as write_multi_hop",
     programs: [
       () => ({ body: '  found = match crm-[:companies]->-[:notes]-> { unique by (`body`), body: "x" }' }),
@@ -998,8 +998,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     name: 'block_head_resources',
-    ends: 'at_check',
-    note: "a `_resources` head off an extraction call's result: the checker refuses it (MOV_RESOURCES_NOT_EXTRACTED), though version 5 reads `_resources` only off an extraction's result",
+    ends: 'whole',
+    note: "a `_resources` head off an extraction call's result walks the content that call read: a FILE resource per file, a TEXT one per text",
     programs: [
       () => ({
         body: '  d = extractOne([msg.`text`, msg.`deck`], node D: "the company" { name: <text> "a name" })\n  if d != null {\n    d-[f:_resources WHERE f.type == "FILE"]-> {\n      write crm-[:notes]-> { body: f.`name` }\n    }\n  }',
@@ -1110,28 +1110,28 @@ export const PATTERNS: Pattern[] = [
   {
     name: 'expression:<type>',
     ends: 'at_check',
-    note: "the retired KG_VALUE and KG_EXISTS pass the checker and are refused as unsupported (a gap reachability lists); `_resources`, @resource and @parent reads end at the check",
+    note: "the retired KG_VALUE and KG_EXISTS end at the check from version 5 (MOV_KG_QUERY_RETIRED), inside a closure too; `_resources`, @resource and @parent reads end at the check",
     programs: [
       () => ({ body: '  x = COLLECT(msg-[:_resources]->.`name`)' }),
       () => ({ body: '  found = extract from [msg.`text`] {\n    name: "a"\n  }\n  x = COLLECT(found-[:_resources]->.`name`)' }),
-      () => ({ body: '  x = KG_VALUE("MATCH (n) RETURN n")', ends: 'unsupported' }),
-      () => ({ body: '  if KG_EXISTS("MATCH (n) RETURN n") {\n    x = 1\n  }', ends: 'unsupported' }),
-      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  write crm-[:notes]-> { body: "\${KG_VALUE("MATCH (n) RETURN n", msg.\`subject\`)}" }`, ends: 'unsupported' }),
-      () => ({ body: '  xs = MAP([1, 2], { onError: "ignore" }, (n) => {\n    return KG_VALUE("MATCH (n) RETURN n")\n  })\n  write crm-[:notes]-> { body: "${COUNT(xs)}" }', ends: 'whole' }),
+      () => ({ body: '  x = KG_VALUE("MATCH (n) RETURN n")' }),
+      () => ({ body: '  if KG_EXISTS("MATCH (n) RETURN n") {\n    x = 1\n  }' }),
+      (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  write crm-[:notes]-> { body: "\${KG_VALUE("MATCH (n) RETURN n", msg.\`subject\`)}" }` }),
+      () => ({ body: '  xs = MAP([1, 2], { onError: "ignore" }, (n) => {\n    return KG_VALUE("MATCH (n) RETURN n")\n  })\n  write crm-[:notes]-> { body: "${COUNT(xs)}" }' }),
       () => ({ body: '  x = @resource.name' }),
       () => ({ body: '  x = @parent.name' }),
     ],
   },
   {
     name: 'expression:exists',
-    ends: 'unsupported',
-    note: "a rootless `EXISTS(-[…]->)` outside a WHERE is refused as unsupported (a gap reachability lists); inside a hop's WHERE it walks off the landed record",
+    ends: 'at_check',
+    note: "a rootless `EXISTS(-[…]->)` outside a hop's WHERE: the checker refuses it (MOV_WALK_ROOTLESS); inside one it walks off the landed record, an extracted one included",
     programs: [
       () => ({ body: '  x = EXISTS(-[:notes]->)' }),
       () => ({ body: '  if EXISTS(-[:deals]->) {\n    x = 1\n  }' }),
       (pick) => ({ body: `  write crm-[:notes]-> { body: "${pick(NAMES)}" }\n  y = EXISTS(-[:notes]-> WHERE \`body\` == "x")` }),
       () => ({ body: '  crm-[c:companies WHERE EXISTS(-[:deals]->)]-> {\n    write crm-[:notes]-> { body: c.`name` }\n  }', ends: 'whole' }),
-      () => ({ file: overFound('if EXISTS(found-[c:co]-> WHERE EXISTS(-[:round]->)) {\n  write crm-[:notes]-> { body: "rounds" }\n}'), replies: [{ record: { co: [{ name: said('Acme', 'Acme Corp'), round: [{ stage: said('Seed', 'seed') }] }, { name: said('Beta', 'Beta Ltd'), round: [] }] } }] }),
+      () => ({ file: overFound('if EXISTS(found-[c:co]-> WHERE EXISTS(-[:round]->)) {\n  write crm-[:notes]-> { body: "rounds" }\n}'), replies: [{ record: { co: [{ name: said('Acme', 'Acme Corp'), round: [{ stage: said('Seed', 'seed') }] }, { name: said('Beta', 'Beta Ltd'), round: [] }] } }], ends: 'whole' }),
     ],
   },
   {
@@ -1242,8 +1242,8 @@ export const PATTERNS: Pattern[] = [
   },
   {
     name: 'block_head_rootless',
-    ends: 'unsupported',
-    note: "a block head with no root passes the checker and is refused as unsupported, after the writes before it (a gap reachability lists)",
+    ends: 'at_check',
+    note: "a block head with no root: the checker refuses it (MOV_WALK_ROOTLESS)",
     programs: [
       () => ({ body: '  -[c:companies]-> {\n    x = 1\n  }' }),
       () => ({ body: '  -[n:notes]-> {\n    y = 1\n  }' }),

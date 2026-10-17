@@ -686,6 +686,31 @@ export const DiagnosticCodes = {
    *  value only — no call to a function or plugin, no write, no walk, no
    *  wait (`fileValueRefusal`). */
   FILE_VALUE_RUNS: 'MOV_FILE_VALUE_RUNS',
+  /** A walk with no root, outside the one place one reads a record (language
+   *  version 5): a block head, or a walk in an expression, must start at a
+   *  record it names. Only `EXISTS(-[…]->)` inside a hop's WHERE or ORDER BY
+   *  has a record to start from — the one that hop lands on. */
+  WALK_ROOTLESS: 'MOV_WALK_ROOTLESS',
+  /** A linked write or match whose target walks more than one hop (language
+   *  version 5): it creates or finds along exactly one edge, from the record
+   *  it writes off. */
+  WRITE_MULTI_HOP: 'MOV_WRITE_MULTI_HOP',
+  /** `unique by` on a write to a declared node (language version 5): the
+   *  record lands in memory, with no store to find an existing one in. */
+  WRITE_SHAPE_UNIQUE: 'MOV_WRITE_SHAPE_UNIQUE',
+  /** `KG_VALUE(…)` / `KG_EXISTS(…)` (language version 5): a query text
+   *  against the knowledge graph, which no engine runs. */
+  KG_QUERY_RETIRED: 'MOV_KG_QUERY_RETIRED',
+  /** `await` on a name that holds a list of records (language version 5):
+   *  an await parks on one record, under one key. */
+  AWAIT_ON_LIST: 'MOV_AWAIT_ON_LIST',
+  /** A record held by a name written as the value of a field that is a
+   *  relationship (language version 5): no engine hands a record to a system
+   *  as a value, so the connection is made structurally. */
+  WRITE_LINK_FIELD: 'MOV_WRITE_LINK_FIELD',
+  /** A walk off a name that holds a json value (language version 5): a json
+   *  map has no relationships, so the walk reaches nothing. */
+  JSON_HAS_NO_EDGES: 'MOV_JSON_HAS_NO_EDGES',
   // Listeners (trigger rows are derived from `listen` statements)
   LISTEN_FILE_LEVEL: 'MOV_LISTEN_FILE_LEVEL',
   LISTEN_NOT_INSTANCE: 'MOV_LISTEN_NOT_INSTANCE',
@@ -2171,6 +2196,36 @@ function repairAt(at: string | HeldHandle, repair: string): string {
 // ── Span helpers ──
 
 /** A path head as the author wrote it — diagnostics currency. */
+/** Where an expression tree's visit is: inside a SORT key (each member read
+ *  apart), inside a resource hop's WHERE, inside what a hop's landing scopes
+ *  (its WHERE or ORDER BY), and whether a walk here may have no root (the
+ *  walk of an EXISTS read inside a hop's scope). */
+interface TreeWithin {
+  perMember: boolean;
+  inResourceWhere: boolean;
+  inHop: boolean;
+  rootlessOk: boolean;
+}
+
+/** `KG_VALUE(…)` / `KG_EXISTS(…)` (version 5): a query text no engine runs. */
+function kgQueryRetiredMessage(retired: string): string {
+  return `'${retired}(…)' is retired — it ran a query text against the knowledge graph, and no engine runs one from version 5. Walk the graph instead: connect it ('kg = connect graph'), then read along its edges ('kg-[c:Company WHERE …]->')`;
+}
+
+/** A head with no root (version 5): the engine walks from a record a name
+ *  holds, and none says which. */
+function rootlessHeadMessage(hopsRaw: string): string {
+  const hops = hopsRaw.trim();
+  return `'${hops}' has no root, so nothing says which record it walks from — name the record it starts at: 'x${hops}'`;
+}
+
+/** A walk in an expression with no root, outside the one place it has a
+ *  record to start from: `EXISTS(-[…]->)` inside a hop's WHERE or ORDER BY
+ *  reads the record that hop lands on. */
+function rootlessWalkMessage(firstHop: string): string {
+  return `'-[:${firstHop}]->' has no root, so nothing says which record it walks from — name the record it starts at ('x-[:${firstHop}]->'). Only inside a hop's WHERE does 'EXISTS(-[:${firstHop}]->)' walk from a record: the one that hop lands on`;
+}
+
 function rawPath(path: PathHead): string {
   return spellPathHead(path);
 }
@@ -6984,8 +7039,26 @@ class Checker {
       head?: MExpr;
     },
   ): void {
-    const visit = (expr: MExpr, perMember: boolean, inResourceWhere: boolean): void => {
+    const visit = (expr: MExpr, within: TreeWithin): void => {
+      const { perMember, inResourceWhere, inHop, rootlessOk } = within;
       if (expr.kind === 'path') this.checkWalkKeepsWhatIsWritten(expr, at.spanOf(expr.at), expr === at.head);
+      // A head's own root is the head's to say (`checkPathHead`); a rootless
+      // `_resources` walk is MOV_RESOURCES_NOT_EXTRACTED.
+      if (since(this.languageVersion, 5) && expr.kind === 'path' && expr.root === undefined && !rootlessOk && expr !== at.head) {
+        const first = expr.hops[0];
+        const last = expr.hops[expr.hops.length - 1];
+        if (first !== undefined && (last === undefined || endingHop(last) !== 'resources')) {
+          this.report(DiagnosticCodes.WALK_ROOTLESS, rootlessWalkMessage(first.label.text), at.spanOf(expr.at));
+        }
+      }
+      if (expr.kind === 'path' && expr.root?.kind === 'name' && expr !== at.head && expr.hops[0] !== undefined) {
+        this.reportWalkOffJson(expr.root.name.text, `-[:${expr.hops[0].label.text}]->`, at.spanOf(expr.at), at.scope);
+      }
+      if (since(this.languageVersion, 5) && expr.kind === 'call' && expr.callee.kind === 'name') {
+        const written = expr.callee.name.text.toUpperCase();
+        const retired = ['KG_VALUE', 'KG_EXISTS'].find((r) => r === written);
+        if (retired !== undefined) this.report(DiagnosticCodes.KG_QUERY_RETIRED, kgQueryRetiredMessage(retired), at.spanOf(expr.at));
+      }
       if (expr.kind === 'special') this.checkSpecialRecordRead(expr, { ...at, inResourceWhere });
       if (expr.kind === 'if' && expr.else === undefined) {
         this.report(
@@ -7015,11 +7088,33 @@ class Checker {
           ? expr.hops.flatMap(hop => (hop.where !== undefined && endingHop(hop) === 'resources' ? [hop.where] : []))
           : [],
       );
+      // What a hop's WHERE and ORDER BY read is scoped at the record the hop
+      // lands on, and so is an EXISTS's own WHERE; only there does a rootless
+      // EXISTS have a record to walk from.
+      const hopScoped: ReadonlySet<MExpr> = new Set(
+        expr.kind === 'path'
+          ? expr.hops.flatMap(hop => [...(hop.where !== undefined ? [hop.where] : []), ...(hop.orderBy !== undefined ? [hop.orderBy.key] : [])])
+          : expr.kind === 'where'
+            ? [expr.predicate]
+            : [],
+      );
+      const existsWalk =
+        expr.kind === 'call' && expr.callee.kind === 'name' && expr.callee.name.text.toLowerCase() === 'exists'
+          ? expr.args[0]?.value
+          : expr.kind === 'where' && rootlessOk
+            ? expr.source
+            : undefined;
       for (const child of expressionChildren(expr)) {
-        visit(child, perMember || child === key, inResourceWhere || resourceWheres.has(child));
+        const scoped = inHop || hopScoped.has(child);
+        visit(child, {
+          perMember: perMember || child === key,
+          inResourceWhere: inResourceWhere || resourceWheres.has(child),
+          inHop: scoped,
+          rootlessOk: inHop && child === existsWalk,
+        });
       }
     };
-    visit(tree, false, false);
+    visit(tree, { perMember: false, inResourceWhere: false, inHop: false, rootlessOk: false });
   }
 
   /**
@@ -7729,6 +7824,7 @@ class Checker {
         source.head.span,
       );
     }
+    this.reportAwaitOnList(source.head, scope);
     const head = this.checkPathHead(source.head, scope);
     if (!head.steps || head.rootType === undefined) {
       record({
@@ -8143,6 +8239,41 @@ class Checker {
    * "write this instead" needs the schema. A record that itself holds a file
    * is pointed at its own file field.
    */
+  /** A walk off a name that holds a json value (version 5): a json map has
+   *  no relationships, so the walk reaches nothing. */
+  private reportWalkOffJson(name: string, hops: string, span: Span, scope: Scope): void {
+    if (before(this.languageVersion, 5)) return;
+    const resolution = scope.resolve(name);
+    if (resolution.kind !== 'found' || resolution.symbol.bindingPlane !== 'scalar') return;
+    const held = resolution.symbol.fieldType;
+    if (held === undefined || variantOf(stripAbsent(held)).kind !== 'json') return;
+    const shown = spellName(name);
+    this.report(
+      DiagnosticCodes.JSON_HAS_NO_EDGES,
+      `'${shown}' holds a json value, and a json value has no relationships — '${hops.trim()}' walks nothing. Read a key with a dot ('${shown}.key'), or walk the record the value came from`,
+      span,
+    );
+  }
+
+  /** `await` parks on one record, under one key (version 5): a name holding
+   *  a list of them has no one record to park on. */
+  private reportAwaitOnList(head: PathHead, scope: Scope): void {
+    if (before(this.languageVersion, 5)) return;
+    const name = pathRootName(head);
+    if (name === undefined) return;
+    const resolution = scope.resolve(name);
+    if (resolution.kind !== 'found') return;
+    // A block's collected records (`plural`), or a value holding a list.
+    const held = resolution.symbol.fieldType;
+    const list = this.pluralOrderOf(name, scope) !== undefined || (held !== undefined && isListType(stripAbsent(held)));
+    if (!list) return;
+    this.report(
+      DiagnosticCodes.AWAIT_ON_LIST,
+      `'await' parks on one record, under one key, and '${spellName(name)}' holds a list of records — there is no one record to wait at. Await on one record a name holds: 'await first(rec${head.hopsRaw.trim()})'`,
+      head.span,
+    );
+  }
+
   private checkResourcesOfExtraction(
     rootType: PositionTypeRef | undefined,
     rootName: string | undefined,
@@ -8161,10 +8292,12 @@ class Checker {
       return;
     }
     const type = unwrapMaybeEmpty(rootType);
-    if (type.kind === 'extract') return;
+    // The keyword's extracted node, or a record an extraction call found.
+    const extracted = (t: PositionTypeRef) => t.kind === 'extract' || (t.kind === 'local' && t.extracted !== undefined);
+    if (extracted(type)) return;
     // One of several records (an IF of extractions' results) is one when
     // every member is.
-    if (type.kind === 'oneOf' && type.members.every(member => unwrapMaybeEmpty(member).kind === 'extract')) return;
+    if (type.kind === 'oneOf' && type.members.every(member => extracted(unwrapMaybeEmpty(member)))) return;
     let instead = '';
     if (type.kind === 'position' || type.kind === 'handle' || type.kind === 'union') {
       const positions =
@@ -9931,6 +10064,17 @@ class Checker {
       `'${shapeRoot}' is a declared node — the structure a parameter is checked against, not a system that stores anything, so this write has nowhere to land. Synthesise the record instead: 'node { ${entries.length > 0 ? entries : '…'} }' — the same entries, and it can carry what a write to a declaration never could: a nested 'node { … }' for a related record, or a traversal off a position you hold ('files: lazy a-[f:…]->') to pass real records through untouched. Keep the declaration if the callee's parameter names it`,
       write.span,
     );
+    // A saved program's shape write still runs (the run gate lets the
+    // retirement through), but its `unique by` never could: the record lands
+    // in memory, with no store to find one in.
+    const clause = write.uniqueBy[0];
+    if (since(this.languageVersion, 5) && clause !== undefined) {
+      this.report(
+        DiagnosticCodes.WRITE_SHAPE_UNIQUE,
+        `'unique by' has no meaning on a write to the declared node '${shapeRoot}' — the record it makes lands in memory, so there is no store to find an existing one in. Drop the 'unique by' clause (or synthesise the record, 'node { ${entries.length > 0 ? entries : '…'} }')`,
+        clause.span,
+      );
+    }
     return true;
   }
 
@@ -10237,11 +10381,21 @@ class Checker {
       // idiomatic spelling is structural: nudge toward the link forms.
       const handleValue = this.bareHandleName(field.value, scope);
       if (writtenSchema?.edges[field.name] !== undefined && handleValue !== undefined) {
-        this.reportInfo(
-          DiagnosticCodes.WRITE_LINK_FIELD_NUDGE,
-          `'${field.name}' is a relationship of ${rootDescription} — rather than assigning the handle '${handleValue}' to a field, establish the connection structurally: put the parent in the write target (a linked or tuple-path write) or assert it afterwards with a link statement`,
-          field.span,
-        );
+        // From version 5 a record is never a field's value: no engine hands
+        // one to a system, so it is refused, with the structural spelling.
+        if (since(this.languageVersion, 5)) {
+          this.report(
+            DiagnosticCodes.WRITE_LINK_FIELD,
+            `'${field.name}' is a relationship of ${rootDescription}, and a record is not written into it as a value — connect '${handleValue}' structurally: write off it ('write ${handleValue}-[:…]-> { … }'), or link the two after the write ('link … -[:${field.name}]-> ${handleValue}')`,
+            field.span,
+          );
+        } else {
+          this.reportInfo(
+            DiagnosticCodes.WRITE_LINK_FIELD_NUDGE,
+            `'${field.name}' is a relationship of ${rootDescription} — rather than assigning the handle '${handleValue}' to a field, establish the connection structurally: put the parent in the write target (a linked or tuple-path write) or assert it afterwards with a link statement`,
+            field.span,
+          );
+        }
       }
       // The borrowable spelling of this target field — `crm.companies.stage`
       // — when the target graph is known (`rootDescription` is `graph.type`).
@@ -11102,6 +11256,20 @@ class Checker {
       return {};
     }
 
+    // The engine creates or finds along one edge, off the record the target
+    // starts at; the hops before it would have to be walked first, which is
+    // what a block says.
+    if (since(this.languageVersion, 5) && head.steps.length > 1) {
+      const word = input.purpose;
+      const last = head.steps[head.steps.length - 1];
+      this.report(
+        DiagnosticCodes.WRITE_MULTI_HOP,
+        `a ${word} target walks exactly one edge, from the record it starts at — '${rawPath(input.path)}' walks ${head.steps.length} hops. Walk to the parent in a block, then ${word} off its alias: 'parent-[p:…]-> { ${word} p-[:${last.type === 'edge' ? spellName(last.edgeTypeId) : '…'}]-> { … } }'`,
+        input.span,
+      );
+      return {};
+    }
+
     // A WHERE on a target says which existing records the find may take, and
     // those are the records the FINAL hop lands on. On any earlier hop it
     // would narrow a parent the target never walks from at run time.
@@ -11757,6 +11925,10 @@ class Checker {
   /** Validates the head path, resolves its references, returns its hop aliases and probe steps. */
   private checkPathHead(head: PathHead, scope: Scope): HeadInfo {
     const aliases = extractHopAliases(head.hopsRaw);
+    if (since(this.languageVersion, 5) && head.root === undefined) {
+      this.report(DiagnosticCodes.WALK_ROOTLESS, rootlessHeadMessage(head.hopsRaw), head.span);
+    }
+    if (head.root?.kind === 'name') this.reportWalkOffJson(head.root.name, head.hopsRaw, head.span, scope);
     const root = head.root;
     const rootName = pathRootName(head);
     let rootSymbol: ScopeSymbol | undefined;

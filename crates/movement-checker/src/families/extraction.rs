@@ -1009,13 +1009,15 @@ impl Checker<'_> {
             return;
         };
         let position = unwrap_maybe_empty(root_type);
-        if matches!(position, Position::Extract { .. }) {
+        // The keyword's extracted node, or a record an extraction call found.
+        let extracted = |p: &Position| matches!(p, Position::Extract { .. }) || matches!(p, Position::Local(local) if local.extracted.is_some());
+        if extracted(position) {
             return;
         }
         // One of several records (an IF of extractions' results) is one when
         // every member is.
         if let Position::OneOf(members) = position
-            && members.iter().all(|member| matches!(unwrap_maybe_empty(member), Position::Extract { .. }))
+            && members.iter().all(|member| extracted(unwrap_maybe_empty(member)))
         {
             return;
         }

@@ -16,14 +16,4 @@ export const reasonOf = (gap: string) => gap.replace(/'[^']*'/g, "'…'").slice(
  * line here, and a gap not listed fails that test. A listed gap no program
  * reaches any more fails it too, so the list stays the inventory.
  */
-export const KNOWN_GAPS: readonly string[] = [
-  // Engine ports: the language says these run.
-  "MOVENG_UNSUPPORTED: the expression kind '…' is not supported by the movement engine yet",
-  "MOVENG_UNSUPPORTED: handing a record held as a value (a write handle) to the host is not s",
-  // Checker refusals still to add: forms the engine does not run.
-  "MOVENG_UNSUPPORTED: await '…' over a list of records is not supported by the movement engi",
-  "MOVENG_UNSUPPORTED: multi-hop linked writes is not supported by the movement engine yet (a",
-  "MOVENG_UNSUPPORTED: rootless EXISTS() is not supported by the movement engine yet (root th",
-  "MOVENG_UNSUPPORTED: rootless block heads (relative traversal) is not supported by the move",
-  "MOVENG_UNSUPPORTED: unique by on a shape write is not supported by the movement engine yet",
-];
+export const KNOWN_GAPS: readonly string[] = [];

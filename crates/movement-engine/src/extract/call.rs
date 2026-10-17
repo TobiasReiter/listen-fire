@@ -47,6 +47,9 @@ struct ContentFile {
     text: Option<String>,
     origin: Option<u32>,
     traced: Js,
+    /// The file as a FILE resource (what `_resources` walks off a record
+    /// the call found): its whole text, never the prompt's bounded copy.
+    resource: Js,
 }
 
 type FileReading = Result<ContentFile, Failure>;
@@ -134,6 +137,8 @@ struct ContentItem {
     block: String,
     origin: Option<u32>,
     file: Option<Js>,
+    /// The item as a resource: a FILE one for a file, a TEXT one for text.
+    resource: Js,
 }
 
 /// The call's settings record as written (extract_config.ts
@@ -511,13 +516,13 @@ impl Run<'_> {
             if !matches!(detail, Js::Undefined) {
                 traced.push(("detail", detail));
             }
-            return Ok(ContentFile { text: None, origin: None, traced: env::object_of(traced) });
+            return Ok(ContentFile { text: None, origin: None, traced: env::object_of(traced), resource: file_resource(file, None) });
         }
         let text = member(&result, "text").to_js_string();
         if js::trim(&text).is_empty() {
             let mut traced = named;
             traced.push(("unreadable", Js::str("no_text")));
-            return Ok(ContentFile { text: None, origin: None, traced: env::object_of(traced) });
+            return Ok(ContentFile { text: None, origin: None, traced: env::object_of(traced), resource: file_resource(file, None) });
         }
         let ceiling = self.input.extraction_file_chars;
         let (content, chars, truncated_from) = bound_text(&text, ceiling);
@@ -532,6 +537,7 @@ impl Run<'_> {
         }
         let mut origin = vec![("kind", Js::str("file"))];
         let raw_text_id = member(&result, "rawTextId");
+        let resource = file_resource(file, Some((&text, &raw_text_id)));
         if !matches!(raw_text_id, Js::Undefined) {
             origin.push(("rawTextId", raw_text_id));
         }
@@ -545,7 +551,7 @@ impl Run<'_> {
         if let Some(from) = truncated_from {
             traced.push(("truncatedFrom", Js::Number(from as f64)));
         }
-        Ok(ContentFile { text: Some(content), origin: Some(origin), traced: env::object_of(traced) })
+        Ok(ContentFile { text: Some(content), origin: Some(origin), traced: env::object_of(traced), resource })
     }
 
     /// `contentItems`: one block per item, in order; an item's number is
@@ -580,6 +586,7 @@ impl Run<'_> {
                     block: format!("## Content item {index} ({label})\n{body}"),
                     origin: file.origin,
                     file: Some(file.traced),
+                    resource: file.resource,
                 });
                 continue;
             }
@@ -594,7 +601,8 @@ impl Run<'_> {
             if js::trim(&text).is_empty() {
                 continue;
             }
-            items.push(ContentItem { index, classification: format!("item {index} (text)"), block: format!("## Content item {index} (text)\n{text}"), origin: None, file: None });
+            let resource = text_resource(&text);
+            items.push(ContentItem { index, classification: format!("item {index} (text)"), block: format!("## Content item {index} (text)\n{text}"), origin: None, file: None, resource });
         }
         Ok(items)
     }
@@ -705,7 +713,8 @@ impl Run<'_> {
         let answered = records.iter().filter(|r| matches!(r, Js::Object(_))).count();
         let shown_set = shown;
         let mut tallies = Tallies::default();
-        let landings = self.build_records(&records, spec, &site, &shown_set, &mut tallies);
+        let resources = content_resources(&items);
+        let landings = self.build_records(&records, spec, &site, &shown_set, &resources, &mut tallies);
         let mut why: Vec<&str> = Vec::new();
         if answered == 0 {
             why.push("no_entities");
@@ -818,7 +827,7 @@ impl Run<'_> {
     /// call's site with the model's quote and the item it named (an item
     /// never shown is no citation), its nested nodes edges of their own; a
     /// record with nothing in it dropped and counted.
-    fn build_records(&self, raw: &[Js], spec: &NodeSpec, site: &Js, shown: &[usize], tallies: &mut Tallies) -> Vec<Binding> {
+    fn build_records(&self, raw: &[Js], spec: &NodeSpec, site: &Js, shown: &[usize], resources: &[Js], tallies: &mut Tallies) -> Vec<Binding> {
         let stage = spec.stages.first();
         let fields_of = stage.map_or(&[][..], |s| s.fields.as_slice());
         let children_of = stage.map_or(&[][..], |s| s.children.as_slice());
@@ -871,7 +880,7 @@ impl Run<'_> {
                     Js::Array(list) => list.items().clone(),
                     _ => Vec::new(),
                 };
-                let landings = self.build_records(&nested, child, site, shown, tallies);
+                let landings = self.build_records(&nested, child, site, shown, resources, tallies);
                 edges.push((child.name.clone(), Edge { landings, shape: Some(landing_shape_of(child)), deferred: None }));
             }
             let node = Node {
@@ -880,6 +889,7 @@ impl Run<'_> {
                 field_provenance: provenance,
                 landed_on: Some(spec.name.clone()),
                 edges,
+                resources: resources.to_vec(),
             };
             let blank_fields = !fields_of.is_empty() && fields_of.iter().all(|f| blank(node.fields.get(&f.name)));
             if blank_fields {
@@ -903,6 +913,73 @@ fn read_reply(spec: &NodeSpec, one: bool, reply: &Reply) -> Result<validate::Rea
 
 fn strings(lines: &[String]) -> Js {
     Js::array(lines.iter().map(|line| Js::str(line.clone())).collect())
+}
+
+/// The content a call read, as the resources each record it found carries:
+/// one per item in order, a file read twice once.
+fn content_resources(items: &[ContentItem]) -> Vec<Js> {
+    let mut handles: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for item in items {
+        if let Js::Object(resource) = &item.resource
+            && let Some(Js::String(handle)) = resource.get("externalId")
+        {
+            let handle = handle.to_string();
+            if handles.contains(&handle) {
+                continue;
+            }
+            handles.push(handle);
+        }
+        out.push(item.resource.clone());
+    }
+    out
+}
+
+/// `{...(x !== undefined ? { key: x } : {})}`.
+fn present(entries: &mut Vec<(&'static str, Js)>, key: &'static str, value: Js) {
+    if !matches!(value, Js::Undefined) {
+        entries.push((key, value));
+    }
+}
+
+/// `fileResourceForRef`: a content file as a FILE resource carrying the very
+/// file, its whole text (when it has one) inline.
+fn file_resource(file: &Js, read: Option<(&str, &Js)>) -> Js {
+    let member = |key: &str| crate::unique::get(file, key);
+    let mut entries = Vec::new();
+    if let Some(handle) = file_handle(file) {
+        entries.push(("externalId", Js::str(handle)));
+    }
+    entries.push(("type", Js::str("FILE")));
+    present(&mut entries, "name", member("name"));
+    entries.push(("url", Js::Null));
+    entries.push(("fileRef", file.clone()));
+    present(&mut entries, "contentType", member("contentType"));
+    if let Some((text, _)) = read
+        && !js::trim(text).is_empty()
+    {
+        entries.push(("content", Js::str(text)));
+    }
+    let mut data = vec![("file", file.clone())];
+    present(&mut data, "name", member("name"));
+    data.push(("type", Js::str("FILE")));
+    present(&mut data, "contentType", member("contentType"));
+    entries.push(("data", env::object_of(data)));
+    if let Some((_, raw_text_id)) = read
+        && !matches!(raw_text_id, Js::Undefined)
+    {
+        entries.push(("metadata", env::object_of(vec![("rawTextId", raw_text_id.clone())])));
+    }
+    env::object_of(entries)
+}
+
+/// `textResourceForDatum`: a text item as a TEXT resource.
+fn text_resource(text: &str) -> Js {
+    env::object_of(vec![
+        ("type", Js::str("TEXT")),
+        ("content", Js::str(text)),
+        ("data", env::object_of(vec![("content", Js::str(text)), ("type", Js::str("TEXT"))])),
+    ])
 }
 
 /// `answerOf`: `extract`'s list of records; `extractOne`'s record, or

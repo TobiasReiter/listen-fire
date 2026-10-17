@@ -4042,17 +4042,19 @@ describe('extract "tier" from […]', () => {
 // ── The handle-into-reference-field nudge ──
 
 describe('handle assigned to a reference-named field', () => {
-  it('info-severity nudge toward the link / tuple forms', () => {
+  // From version 5 a record is never a field's value: no engine hands one to
+  // a system, so the nudge became a refusal with the structural spelling.
+  it('a refusal toward the structural forms', () => {
     const source = inMovement(
       [
         '  co = write graph-[:companies]-> { unique by (`name`), name: msg.`subject` }',
         '  write graph-[:deals]-> { name: msg.`subject`, company: co }',
       ].join('\n'),
     );
-    expect(codes(source)).toEqual([]); // legal — `company` IS a writable field of deal
-    const found = infos(source).filter(d => d.code === C.WRITE_LINK_FIELD_NUDGE);
-    expect(found).toHaveLength(1);
+    const found = check(source).filter(d => d.code === C.WRITE_LINK_FIELD);
+    expect(codes(source)).toEqual([C.WRITE_LINK_FIELD]);
     expect(found[0].message).toContain("'company' is a relationship of graph.deal");
+    expect(infos(source).filter(d => d.code === C.WRITE_LINK_FIELD_NUDGE)).toEqual([]);
   });
 
   it('no nudge for a non-handle value in the same field', () => {

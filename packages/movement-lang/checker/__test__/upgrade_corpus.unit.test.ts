@@ -46,8 +46,11 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  Lowered at the wasm shrink: a file-level value is refused from 5
  *  (MOV_FILE_VALUE_RUNS, 3 programs) and more walks off records that may be
  *  absent are caught (MOV_ABSENT_REQUIRED, now 27): 4,958 of 5,881 (84.3%);
- *  re-harvested, 4,966 of 5,900 (84.2%). */
-const FLOOR = 0.841;
+ *  re-harvested, 4,966 of 5,900 (84.2%). Lowered again when version 5
+ *  refused the forms the engine does not run (MOV_WALK_ROOTLESS,
+ *  MOV_JSON_HAS_NO_EDGES, MOV_KG_QUERY_RETIRED and others, a few programs
+ *  each): 4,962 of 5,905 (84.0%). */
+const FLOOR = 0.84;
 
 interface Program {
   source: string;

@@ -246,10 +246,12 @@ describe('a bare-name binding of a node is an ALIAS (2026-08-05 ruling)', () => 
     ).toContain(C.UNKNOWN_PROPERTY);
   });
 
-  it('await through the chain reaches a real awaitable edge cleanly', () => {
+  // The chain types the walk; the await itself parks on one record, and a
+  // block's collected records are a list (version 5).
+  it('await through the chain reaches a real awaitable edge, and is refused as a wait on a list', () => {
     expect(
       codes('  x = e-[a:Attachments]-> {\n    btn = a\n    return btn\n  }\n  w = await first(x-[ans:Answer]->)'),
-    ).toEqual([]);
+    ).toEqual([C.AWAIT_ON_LIST]);
   });
 
   it('await through the chain onto a non-awaitable edge is now caught', () => {

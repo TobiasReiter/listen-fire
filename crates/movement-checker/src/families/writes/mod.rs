@@ -298,7 +298,22 @@ impl Checker<'_> {
                 );
             }
             let relationship = written_edges.as_ref().is_some_and(|edges| edges.contains(&field.name));
-            if relationship && let Some(handle_name) = self.bare_handle_name(&field.value, scope) {
+            if relationship
+                && let Some(handle_name) = self.bare_handle_name(&field.value, scope)
+                && self.version >= 5
+            {
+                // From version 5 a record is never a field's value: no engine
+                // hands one to a system, so it is refused, with the structural
+                // spelling.
+                self.report(
+                    codes::WRITE_LINK_FIELD,
+                    format!(
+                        "'{}' is a relationship of {root_description}, and a record is not written into it as a value — connect '{handle_name}' structurally: write off it ('write {handle_name}-[:…]-> {{ … }}'), or link the two after the write ('link … -[:{}]-> {handle_name}')",
+                        field.name, field.name
+                    ),
+                    field.span,
+                );
+            } else if relationship && let Some(handle_name) = self.bare_handle_name(&field.value, scope) {
                 self.report_with(
                     codes::WRITE_LINK_FIELD_NUDGE,
                     format!(
@@ -389,6 +404,18 @@ impl Checker<'_> {
             ),
             write.span,
         );
+        // A saved program's shape write still runs (the run gate lets the
+        // retirement through), but its `unique by` never could: the record
+        // lands in memory, with no store to find one in.
+        if self.version >= 5
+            && let Some(clause) = write.unique_by.first()
+        {
+            self.report(
+                codes::WRITE_SHAPE_UNIQUE,
+                format!("'unique by' has no meaning on a write to the declared node '{shape_root}' — the record it makes lands in memory, so there is no store to find an existing one in. Drop the 'unique by' clause (or synthesise the record, 'node {{ {entries} }}')"),
+                clause.span,
+            );
+        }
         true
     }
 
@@ -526,6 +553,27 @@ impl Checker<'_> {
                     movement_parser::surface::phrase::spell_if(&format!("EXISTS({root_name})"), self.version),
                     // From 5 a block's walk off it is refused too: it fails the run when the record is absent.
                     if self.version >= 5 { ".".to_string() } else { format!(", or gate on it with a traversal block ('{root_name}-[x:…]-> {{ … }}'), which runs zero times when it's empty.") }
+                ),
+                span,
+            );
+            return Landing::default();
+        }
+        // The engine creates or finds along one edge, off the record the
+        // target starts at; the hops before it would have to be walked first,
+        // which is what a block says.
+        if self.version >= 5 && steps.len() > 1 {
+            let word = purpose.word();
+            let last = match &steps[steps.len() - 1] {
+                TraversalStep::Edge(edge) => edge.edge_type_id.clone(),
+                _ => "…".to_string(),
+            };
+            self.report(
+                codes::WRITE_MULTI_HOP,
+                format!(
+                    "a {word} target walks exactly one edge, from the record it starts at — '{}' walks {} hops. Walk to the parent in a block, then {word} off its alias: 'parent-[p:…]-> {{ {word} p-[:{}]-> {{ … }} }}'",
+                    raw_path(path),
+                    steps.len(),
+                    spell_name(&last)
                 ),
                 span,
             );
