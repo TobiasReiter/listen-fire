@@ -98,7 +98,7 @@ import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public
 import { getAdapter } from '../../registry';
 import { BUILTIN_MODULES } from '../../builtin_modules';
 import { createGoogleSheetsAdapter } from '../index';
-import { recordingServer, replayingServer, type Exchange, type ExchangeRequest } from '../../dealroom/__test__/parity/exchange';
+import { recordingServer, replayingServer, type Exchange, type ExchangeRequest } from '../../__test__/parity/exchange';
 import { bootFakeChannels } from '../../__test__/parity/fake_channels';
 import {
   PARITY_ACCESS_TOKEN,
