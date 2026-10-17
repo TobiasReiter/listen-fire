@@ -14,9 +14,9 @@
 // (design §6.4 resolution 3); a group send anchors on the inbound message
 // that addressed the bot.
 
-import type { WriteResult } from 'movement-engine/services/translation_graph/adapter';
+import type { WriteResult } from 'movement-engine/public/adapter';
+import type { ModuleLog } from 'module-kit';
 
-import { logger } from 'movement-engine/services/logger';
 import { TELEGRAM_ADAPTER_TYPE } from './types';
 
 // ── Base-URL-aware Bot API client ───────────────────────────────────────────
@@ -85,7 +85,9 @@ export class TelegramClient {
 
   constructor(
     private readonly botToken: string,
-    baseUrl?: string,
+    baseUrl: string | undefined,
+    /** The host's fetch: every Bot API call and file download goes through it. */
+    readonly fetch: typeof globalThis.fetch,
   ) {
     this.base = (baseUrl ?? TELEGRAM_REAL_BASE_URL).replace(/\/+$/, '');
   }
@@ -103,7 +105,7 @@ export class TelegramClient {
   }
 
   private async call<T>(method: string, body: unknown): Promise<T> {
-    const res = await fetch(this.methodUrl(method), {
+    const res = await this.fetch(this.methodUrl(method), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -166,6 +168,7 @@ export type TelegramWriteAnchor =
  */
 export async function sendUnifiedTelegramMessage(input: {
   client: TelegramClient;
+  log: ModuleLog;
   anchor: TelegramWriteAnchor;
   text: string;
   replyMarkup?: unknown;
@@ -178,7 +181,7 @@ export async function sendUnifiedTelegramMessage(input: {
     ...(anchor.kind === 'reply' ? { reply_to_message_id: anchor.replyToMessageId } : {}),
     ...(replyMarkup !== undefined ? { reply_markup: replyMarkup } : {}),
   });
-  logger.info(
+  input.log.info(
     `[TelegramAdapter.write] sent message ${sent.message_id} to chat ${anchor.chatId}` +
       (anchor.kind === 'reply' ? ` (reply to ${anchor.replyToMessageId})` : ''),
   );

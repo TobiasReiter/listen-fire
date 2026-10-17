@@ -13,7 +13,7 @@
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-import type { TelegramUpdate } from '../types';
+import type { TelegramUpdate } from '@lf/telegram/types';
 import type { FileRef } from 'movement-engine/services/translation_graph/adapter';
 
 import { makeStablePosition, makeUnstablePosition } from 'movement-engine/services/translation_graph/types';
@@ -89,7 +89,7 @@ import {
   telegramEventToDiscriminable,
   type TelegramMessagePayload,
 } from '../index';
-import { TELEGRAM_LINKED_USER_TYPE_ID } from '../types';
+import { TELEGRAM_LINKED_USER_TYPE_ID } from '@lf/telegram/types';
 import { discriminateEvent } from 'movement-engine/services/translation_graph/engine/inbound/discriminate';
 import { webhookEventToDiscriminable } from '../../../../webhook_sync/event_conversion';
 

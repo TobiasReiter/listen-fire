@@ -4,9 +4,9 @@
 // `WebhookEvent` so `services/webhook_sync/handler.ts → dispatchToProviderTriggers`
 // fans it out to any movement-derived trigger of kind `TELEGRAM`.
 //
-// Parsing lives with the ADAPTER (`parseTelegramEvents` in
-// adapters/telegram/index.ts, consumed by its `preprocessInbound` and the
-// shared-bot classifier) — this provider carries only registration metadata.
+// Parsing lives with the module (`parseTelegramMessage` in @lf/telegram's
+// inbound.ts, consumed by its `preprocessInbound` and the shared-bot
+// classifier) — this provider carries only registration metadata.
 //
 // Verification (services/inbound/legacy_signature_headers.ts): Telegram doesn't
 // HMAC-sign webhooks, and a bring-your-own bot is registered without a secret

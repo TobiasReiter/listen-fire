@@ -18,6 +18,8 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 import type { HttpExchange } from '../../__test__/parity_http';
@@ -86,6 +88,10 @@ import { runTelegramParityScript } from './parity/script';
 import { recordingHttpServer, replayingHttpServer, requestOf } from '../../__test__/parity_http';
 import { bootFakeProvider } from '../../__test__/parity_fake';
 import { TelegramAdapter } from '../index';
+import { getAdapter } from '../../registry';
+import { BUILTIN_MODULES } from '../../builtin_modules';
+import { createMemoryVault, createSecretsFamily } from 'movement-engine/public/secrets';
+import { createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/public/modules';
 
 const FIXTURE = join(__dirname, '__fixtures__/telegram_parity.json');
 const TEAM = 'team-parity' as TeamId;
@@ -201,4 +207,103 @@ async function expectParity(name: InstallName, subjectAt: (baseUrl: string) => P
   it.each(INSTALLS)('the legacy line replays identically (%s)', async (name) => {
     await expectParity(name, (baseUrl) => legacySubject(name, baseUrl));
   });
+
+  it.each(INSTALLS)('the module in process, through the platform registry, replays identically (%s)', async (name) => {
+    expect(BUILTIN_MODULES.telegram?.line).toBe('module');
+    await expectParity(name, (baseUrl) => {
+      const install = seed(name, baseUrl);
+      const adapter = getAdapter({ adapterType: 'telegram', teamId: install.teamId, ...(install.credentialsId !== undefined ? { credentialsId: install.credentialsId } : {}) });
+      // The doors' two calls, on the module's own adapter.
+      const doors = adapter as unknown as TelegramParitySubject['doors'];
+      return { adapter, identities: install.hostHasDoors, ...(install.hostHasDoors ? { doors } : {}) };
+    });
+  });
+
+  // Over the process transport, a file's bytes cross only by URL and the kit
+  // hosts none (module-kit server.ts), so both download steps are refused
+  // there before the module sees them, and the download's two Bot API
+  // requests are not made. Everything else is the
+  // recording's.
+  it('the module served as a process, over protocol 2, replays identically but for file bytes (bare)', async () => {
+    const recorded = loadRecording().bare;
+    const DOWNLOADS = new Set(['resolveFileRef document', 'resolveFileRef without a handle']);
+    const served = await serveTelegram();
+    const server = await replayingHttpServer(recorded.exchanges);
+    const nodeFetch = globalThis.fetch;
+    globalThis.fetch = sameRealmFetch(nodeFetch);
+    try {
+      seed('bare', server.baseUrl);
+      const credentials = createMemoryVault({ 'cred-bare': { botToken: 'BYO-TOKEN', baseUrl: server.baseUrl } });
+      const config = { adapterType: 'telegram', teamId: TEAM, baseUrl: served.url, authStrategy: { kind: 'bearer' as const }, credentialsId: 'cred-bare' };
+      const remote = createRemoteAdapter({
+        config,
+        secret: '',
+        cacheScopeId: 'parity',
+        manifest: await fetchRemoteManifest(config, ''),
+        documents: { put: async () => ({}) } as never,
+        credential: { name: 'telegram', secrets: createSecretsFamily({ backend: credentials }), ref: 'cred-bare' },
+      });
+      const transcript = (await runTelegramParityScript({ adapter: remote, identities: false })).map(unwrapRemoteError);
+      for (const download of transcript.filter((entry) => DOWNLOADS.has(entry.step))) {
+        expect(JSON.stringify(download.answer)).toContain('serve bytes only by URL');
+      }
+      const rest = (entries: TranscriptEntry[]) => entries.filter((entry) => !DOWNLOADS.has(entry.step));
+      expect(rest(transcript)).toEqual(rest(recorded.transcript));
+      const fileLegs = (path: string) => path.endsWith('/getFile') || path.includes('/file/bot');
+      expect(server.requests()).toEqual(recorded.exchanges.map(requestOf).filter((request) => !fileLegs(request.path)));
+    } finally {
+      globalThis.fetch = nodeFetch;
+      await server.close();
+      served.stop();
+    }
+  });
 });
+
+/** A refusal as the module raised it: the client wraps every error the wire
+ *  carries in its method and code, which says nothing about the module. */
+function unwrapRemoteError(entry: TranscriptEntry): TranscriptEntry {
+  const answer = entry.answer;
+  if (answer === null || typeof answer !== 'object' || !('error' in answer) || typeof answer.error !== 'string') return entry;
+  const match = /^Remote adapter error for method "[^"]+": adapter_error — (.*)$/s.exec(answer.error);
+  return match?.[1] === undefined ? entry : { ...entry, answer: { error: match[1] } };
+}
+
+/**
+ * Jest runs this file in a realm of its own, and `fetch` answers in Node's:
+ * the objects of a parsed answer then fail the engine's plain-object check,
+ * which compares prototypes (engine-contracts `isPlainObject`), so a file the
+ * remote answered would never be named as this install's. Production has one
+ * realm. Parse each answer here instead.
+ */
+function sameRealmFetch(nodeFetch: typeof fetch): typeof fetch {
+  return async (input, init) => {
+    const res = await nodeFetch(input, init);
+    const body = await res.text();
+    return Object.assign(new Response(body, { status: res.status, headers: res.headers }), {
+      json: async (): Promise<unknown> => JSON.parse(body),
+    });
+  };
+}
+
+/** `serve-module @lf/telegram` as a child process. */
+async function serveTelegram(): Promise<{ url: string; stop(): void }> {
+  const repo = join(__dirname, '../../../../../../../..');
+  const child = spawn(process.execPath, [join(repo, 'packages/module-kit/bin/serve-module.cjs'), '.'], {
+    cwd: join(repo, 'modules/telegram'),
+    env: { ...process.env, PORT: '0' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('serve-module printed no port within 30s')), 30_000);
+    child.once('exit', (code) => reject(new Error(`serve-module exited (${code})`)));
+    if (child.stdout === null) return;
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      const match = /^listening (\d+)$/.exec(line);
+      if (match?.[1] !== undefined) {
+        clearTimeout(timer);
+        resolve(Number(match[1]));
+      }
+    });
+  });
+  return { url: `http://127.0.0.1:${port}/`, stop: () => child.kill() };
+}

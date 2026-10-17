@@ -176,6 +176,8 @@ export async function runTelegramParityScript(subject: TelegramParitySubject): P
   await step('meta other edge', () => adapter.getRelated({ position: meta, fieldId: 'Message', direction: 'outgoing' }));
 
   // ── Sends ──
+  // Every write carries what caused it (the engine always sends one).
+  const mutationContext = { source: { kind: 'parity' }, occurredAt: '2026-10-17T00:00:00.000Z' };
   const dmParent = linkedUser ?? makeStablePosition({ adapterType: 'telegram', recordType: 'Linked User', recordId: LINKED_SENDER, data: { chat_id: LINKED_SENDER } });
   const parentOf = (position: SourcePosition, edgeName: string) => ({
     adapterType: 'telegram',
@@ -185,37 +187,39 @@ export async function runTelegramParityScript(subject: TelegramParitySubject): P
     data: (position.identity.data ?? {}) as Record<string, unknown>,
   });
   await step('createRecord DM', () =>
-    adapter.createRecord({ recordType: 'Message', fields: { Text: 'Hello Ada' }, parentLinks: [parentOf(dmParent, 'Messages')] } as never),
+    adapter.createRecord({ mutationContext, recordType: 'Message', fields: { Text: 'Hello Ada' }, parentLinks: [parentOf(dmParent, 'Messages')] } as never),
   );
   await step('createRecord reply with keyboard', () =>
     adapter.createRecord({
+      mutationContext,
       recordType: 'Message',
       fields: { Text: 'Approve?', 'Reply Markup': { inline_keyboard: [[{ text: 'Yes', callback_data: 'cb_1' }]] } },
       parentLinks: [parentOf(linkedSender, 'Replies')],
     } as never),
   );
   await step('createRecord reply, empty markup', () =>
-    adapter.createRecord({ recordType: 'Message', fields: { Text: 'plain', 'Reply Markup': {} }, parentLinks: [parentOf(linkedSender, 'Replies')] } as never),
+    adapter.createRecord({ mutationContext, recordType: 'Message', fields: { Text: 'plain', 'Reply Markup': {} }, parentLinks: [parentOf(linkedSender, 'Replies')] } as never),
   );
-  await step('createRecord no parent', () => adapter.createRecord({ recordType: 'Message', fields: { Text: 'x' } } as never));
+  await step('createRecord no parent', () => adapter.createRecord({ mutationContext, recordType: 'Message', fields: { Text: 'x' } } as never));
   await step('createRecord empty text', () =>
-    adapter.createRecord({ recordType: 'Message', fields: { Text: '' }, parentLinks: [parentOf(dmParent, 'Messages')] } as never),
+    adapter.createRecord({ mutationContext, recordType: 'Message', fields: { Text: '' }, parentLinks: [parentOf(dmParent, 'Messages')] } as never),
   );
   await step('createRecord markup list', () =>
-    adapter.createRecord({ recordType: 'Message', fields: { Text: 'x', 'Reply Markup': [[1]] }, parentLinks: [parentOf(linkedSender, 'Replies')] } as never),
+    adapter.createRecord({ mutationContext, recordType: 'Message', fields: { Text: 'x', 'Reply Markup': [[1]] }, parentLinks: [parentOf(linkedSender, 'Replies')] } as never),
   );
   await step('createRecord reply without chat', () =>
     adapter.createRecord({
+      mutationContext,
       recordType: 'Message',
       fields: { Text: 'x' },
       parentLinks: [{ adapterType: 'telegram', recordType: 'Message', externalId: '42', edgeName: 'Replies', data: {} }],
     } as never),
   );
   await step('createRecord wrong edge', () =>
-    adapter.createRecord({ recordType: 'Message', fields: { Text: 'x' }, parentLinks: [parentOf(dmParent, 'Replies')] } as never),
+    adapter.createRecord({ mutationContext, recordType: 'Message', fields: { Text: 'x' }, parentLinks: [parentOf(dmParent, 'Replies')] } as never),
   );
-  await step('updateRecord', () => adapter.updateRecord({ recordType: 'Message', externalId: '1', fields: {} } as never));
-  await step('deleteRecord', () => adapter.deleteRecord({ recordType: 'Message', externalId: '1' } as never));
+  await step('updateRecord', () => adapter.updateRecord({ mutationContext, recordType: 'Message', externalId: '1', fields: {} } as never));
+  await step('deleteRecord', () => adapter.deleteRecord({ mutationContext, recordType: 'Message', externalId: '1' } as never));
 
   // ── As the bot, for the doors ──
   if (subject.doors !== undefined) {

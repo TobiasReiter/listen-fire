@@ -34,6 +34,7 @@ COPY packages/file-text/package.json packages/file-text/
 COPY packages/model-providers/package.json packages/model-providers/
 COPY packages/module-kit/package.json packages/module-kit/
 COPY modules/dealroom/package.json modules/dealroom/
+COPY modules/telegram/package.json modules/telegram/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/

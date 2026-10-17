@@ -17,7 +17,8 @@ import {
   createNativeValuationsAdapter,
 } from './native_valuations';
 import { SLACK_ADAPTER_TYPE, SLACK_MANIFEST, createSlackAdapter } from './slack';
-import { TELEGRAM_ADAPTER_TYPE, TELEGRAM_MANIFEST, createTelegramAdapter } from './telegram';
+import { TELEGRAM_ADAPTER_TYPE } from '@lf/telegram/types';
+import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
 import { EMAIL_ADAPTER_TYPE, EMAIL_MANIFEST, createEmailAdapter } from './email';
 import { WHATSAPP_ADAPTER_TYPE, WHATSAPP_MANIFEST, createWhatsappAdapter } from './whatsapp';
 import { AIRTABLE_ADAPTER_TYPE, AIRTABLE_MANIFEST, createAirtableAdapter } from './airtable';
@@ -90,8 +91,11 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // message). Bot-token credential; inbound arrives by webhook
   // (preprocessInbound); outbound is the unified telegram:message, created
   // along Linked User.messages / msg.replies.
-  [TELEGRAM_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createTelegramAdapter({ teamId, credentialsId }),
+  // A module (@lf/telegram); its BUILTIN_MODULES line picks module or legacy.
+  [TELEGRAM_ADAPTER_TYPE]: builtinAdapterFactory(TELEGRAM_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createTelegramAdapter }: typeof import('./telegram') = require('./telegram');
+    return createTelegramAdapter({ teamId, credentialsId });
+  }),
   // Email adapter — source-only inbound email (body + attachments as
   // Resources). R4b landed unregistered so the wave-1a sub-wave could
   // touch the registry without collisions; G1 wires it in.

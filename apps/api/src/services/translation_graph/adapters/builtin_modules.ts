@@ -22,30 +22,57 @@ import {
   refusingFiles,
   refusingKv,
   type AdapterModuleDefinition,
+  type CredentialFields,
   type InProcessAdapterModule,
   type InProcessPluginModule,
   type ModuleCredential,
   type ModuleDefinition,
+  type ModuleIdentities,
   type PluginModuleDefinition,
 } from 'module-kit';
 import { createSecretsFamily, type SecretsFamily } from 'movement-engine/public/secrets';
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { TELEGRAM_MANIFEST } from '@lf/telegram/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { postgresSecrets } from '../../credentials/secrets_postgres';
 import { credentialTypeOf } from './credential_type';
+import { builtInBotToken } from './telegram/shared_bot';
+import { telegramIdentities } from './telegram/identities';
 
 export type BuiltinLine = 'legacy' | 'module';
+
+/**
+ * What the platform hands a built-in beyond the common context, where its
+ * product has more than a team's credential: a shared bot or app the
+ * platform runs for every team that connects it, and the record its own
+ * handshake keeps of who linked. Each is the platform's, never the module's:
+ * the module sees an ordinary credential and an ordinary identities reader.
+ */
+export interface PlatformSupplies {
+  /** The platform's shared credential's fields. They stand in for an
+   *  install with no credential, and fill each field an install's credential
+   *  leaves blank (a team that connected the shared bot stores no token). */
+  sharedCredential?: () => CredentialFields | undefined;
+  /** Who linked their provider account to a user of the team. */
+  identities?: (teamId: TeamId) => ModuleIdentities;
+}
 
 /** One built-in's line. A module line names how to load the module, and the
  *  manifest the host lists it by without loading it. */
 export type BuiltinModuleLine =
   | { kind: 'adapter' | 'plugin'; line: 'legacy' }
-  | { kind: 'adapter'; line: 'module'; manifest: AdapterManifest; load: () => AdapterModuleDefinition }
+  | {
+      kind: 'adapter';
+      line: 'module';
+      manifest: AdapterManifest;
+      load: () => AdapterModuleDefinition;
+      supplies?: PlatformSupplies;
+    }
   | { kind: 'plugin'; line: 'module'; load: () => PluginModuleDefinition };
 
 /** The table a lookup reads: `BUILTIN_MODULES`, or a test's own. */
@@ -75,7 +102,24 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
   google_drive: { kind: 'adapter', line: 'legacy' },
   dropbox: { kind: 'adapter', line: 'legacy' },
   gmail: { kind: 'adapter', line: 'legacy' },
-  telegram: { kind: 'adapter', line: 'legacy' },
+  telegram: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: TELEGRAM_MANIFEST,
+    load: () => {
+      const { telegramModule }: typeof import('@lf/telegram') = require('@lf/telegram');
+      return telegramModule;
+    },
+    supplies: {
+      // The platform's shared bot, for a team that connected it (an empty
+      // credential) or connected nothing.
+      sharedCredential: () => {
+        const botToken = builtInBotToken();
+        return botToken === null ? undefined : { botToken };
+      },
+      identities: telegramIdentities,
+    },
+  },
   slack: { kind: 'adapter', line: 'legacy' },
   // The bundled plugins (Henry 2026-10-17: plugins are modules too).
   'fetch-url': { kind: 'plugin', line: 'legacy' },
@@ -107,21 +151,44 @@ export interface BuiltinInstall {
 
 /** The install's credential, read and written back through the encrypted
  *  store (cipher and payload exactly as the connect flow stored them). */
-function storedCredential(definition: ModuleDefinition, install: BuiltinInstall, secrets: SecretsFamily): ModuleCredential {
+function storedCredential(
+  definition: ModuleDefinition,
+  install: BuiltinInstall,
+  secrets: SecretsFamily,
+  shared?: PlatformSupplies['sharedCredential'],
+): ModuleCredential {
   const declared = definition.credentials[0];
   const displayName = definition.kind === 'adapter' ? definition.manifest.displayName : definition.name;
   if (declared === undefined) return noCredential(`module ${definition.name} declares no credential`);
   const ref = install.credentialsId;
   if (ref === undefined) {
+    const sharedFields = shared?.();
+    if (sharedFields !== undefined) {
+      return {
+        name: declared.name,
+        fields: async () => sharedFields,
+        update: async () => {
+          throw new Error(`${displayName}: the platform's shared credential is not written back from a module`);
+        },
+      };
+    }
     return noCredential(`${displayName}: no credential is connected for team ${install.teamId} (credentialsId unset). Connect ${displayName}.`);
   }
   return {
     name: declared.name,
-    fields: async () => (await secrets.resolve(ref)).fields,
+    fields: async () => filledFrom((await secrets.resolve(ref)).fields, shared?.()),
     update: async (fields) => {
       await secrets.update(ref, fields);
     },
   };
+}
+
+/** `stored`, with each field it leaves blank taken from `shared`. The same
+ *  object when nothing is filled, so a module's per-credential cache holds. */
+function filledFrom(stored: CredentialFields, shared: CredentialFields | undefined): CredentialFields {
+  if (shared === undefined) return stored;
+  const blanks = Object.entries(shared).filter(([name]) => (stored[name] ?? '').trim() === '');
+  return blanks.length === 0 ? stored : { ...stored, ...Object.fromEntries(blanks) };
 }
 
 /** The dev loop's fake for the test-harness team, by the credential type the
@@ -134,7 +201,11 @@ function harnessBaseUrl(definition: AdapterModuleDefinition, teamId: TeamId): st
 }
 
 /** A module line's adapter module, loaded in process for one install. */
-export function loadBuiltinModule(definition: AdapterModuleDefinition, install: BuiltinInstall): InProcessAdapterModule {
+export function loadBuiltinModule(
+  definition: AdapterModuleDefinition,
+  install: BuiltinInstall,
+  supplies: PlatformSupplies = {},
+): InProcessAdapterModule {
   const secrets = createSecretsFamily({
     backend: postgresSecrets({ teamId: install.teamId }),
     warn: (message) => logger.warn(message),
@@ -144,12 +215,14 @@ export function loadBuiltinModule(definition: AdapterModuleDefinition, install: 
   const baseUrlOverride = harnessBaseUrl(definition, install.teamId);
   return adapterInProcess(definition, {
     tenant: install.teamId,
-    credential: storedCredential(definition, install, secrets),
+    credential: storedCredential(definition, install, secrets, supplies.sharedCredential),
     log: logger,
     files: refusingFiles(unavailable('ctx.files')),
     kv: refusingKv(unavailable('ctx.kv')),
+    ...(supplies.identities !== undefined ? { identities: supplies.identities(install.teamId) } : {}),
     ...(baseUrlOverride !== undefined ? { baseUrlOverride } : {}),
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
+    ...(install.credentialsId !== undefined ? { credentialRef: install.credentialsId } : {}),
     validateResults: inProcessValidationDefault(process.env),
   });
 }
@@ -167,7 +240,7 @@ export function builtinAdapterFactory(
 ): (input: BuiltinInstall) => Adapter {
   const entry = moduleLineOf(adapterType);
   if (entry === undefined) return legacy;
-  return (install) => loadBuiltinModule(entry.load(), install).adapter;
+  return (install) => loadBuiltinModule(entry.load(), install, entry.supplies).adapter;
 }
 
 /** A registry poll source for a built-in: the module's declared poll when its
@@ -181,7 +254,7 @@ export function builtinPollSourceFactory(
   return (install) => {
     const definition = entry.load();
     const declared = definition.poll;
-    const loaded = loadBuiltinModule(definition, install);
+    const loaded = loadBuiltinModule(definition, install, entry.supplies);
     const poll = loaded.poll;
     if (declared === undefined || poll === undefined) {
       throw new Error(`module ${definition.name} declares no poll; it is not a polled source`);

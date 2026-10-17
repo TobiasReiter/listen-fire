@@ -50,6 +50,25 @@ export interface ModuleFiles {
   read(ref: FileRef): Promise<Uint8Array>;
 }
 
+/** Someone who linked their account on the provider to a user of the host
+ *  (the platform's Telegram `/start` handshake): the provider's id for them,
+ *  the host user's email as linked, and when. */
+export interface LinkedIdentity {
+  externalId: string;
+  email: string;
+  /** ISO-8601. */
+  linkedAt?: string;
+}
+
+/** The host's record of who linked, for this install's tenant. The host
+ *  writes it (a handshake is the host's own door); a module only reads it. */
+export interface ModuleIdentities {
+  /** Everyone linked, in the order they linked. */
+  list(): Promise<LinkedIdentity[]>;
+  /** One person by their provider id; null when they never linked. */
+  find(externalId: string): Promise<LinkedIdentity | null>;
+}
+
 /** Small durable state of the module's own, per install (a dedup mark, a
  *  cursor nothing else holds). Values are JSON. */
 export interface ModuleKv {
@@ -67,6 +86,11 @@ export interface ModuleConfig {
   /** Non-credential construction arguments (an entry position such as a
    *  spreadsheet). */
   readonly constructionArgs: Readonly<Record<string, string>>;
+  /** The host's name for the install's credential. A file the module owns
+   *  names it in its source, so the host redeems the file on this same
+   *  install. Absent where the host names it itself (the process transport's
+   *  client rewrites every owned file). */
+  readonly credentialRef?: string;
 }
 
 export interface ModuleContext {
@@ -75,6 +99,7 @@ export interface ModuleContext {
   log: ModuleLog;
   files: ModuleFiles;
   kv: ModuleKv;
+  identities: ModuleIdentities;
   config: ModuleConfig;
 }
 
