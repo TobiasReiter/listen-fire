@@ -14,9 +14,9 @@ name: movement-wasm
 #    checker corpus makes as the TypeScript one does; and the engine's
 #    TypeScript shim, against a double and through the committed artifact;
 #    the Rust engine's oracle regenerated from the TypeScript and diffed;
-#    and both conformance corpora run with MOVEMENT_ENGINE=rust; and the
-#    corpora's recorded engine runs replay on the TypeScript engine, the
-#    Rust engine and over the HTTP host double.
+#    the version 1 and 2 conformance corpora (which run on the TypeScript
+#    engine by their pin); and those corpora's recorded engine runs replay
+#    on the TypeScript engine in process and over the HTTP host double.
 #
 # The committed artifact was built on macOS; the path remapping and pinned
 # toolchain in scripts/build-movement-wasm.sh are meant to make Linux produce the
@@ -42,8 +42,6 @@ on:
       - "apps/api/src/services/translation_graph/engine/batched_extraction/model_choice.ts"
       - "apps/api/src/services/translation_graph/engine/files/resources.ts"
       - "apps/api/src/__conformance__/**"
-      - "apps/api/src/test/rust_eval_stats*"
-      - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
       - "apps/api/src/test/conformance_pin.setup.ts"
       # The host-conformance kit's format and replay rules.
@@ -71,8 +69,6 @@ on:
       - "apps/api/src/services/translation_graph/engine/batched_extraction/model_choice.ts"
       - "apps/api/src/services/translation_graph/engine/files/resources.ts"
       - "apps/api/src/__conformance__/**"
-      - "apps/api/src/test/rust_eval_stats*"
-      - "apps/api/src/test/__test__/rust_eval_stats*"
       - "apps/api/src/test/jest-conformance-v*.config.ts"
       - "apps/api/src/test/conformance_pin.setup.ts"
       # The host-conformance kit's format and replay rules.
@@ -152,7 +148,7 @@ jobs:
         run: pnpm run test --testPathPattern 'catalog_differential'
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
-        run: pnpm run test:unit --testPathPattern '(movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_write|rust_traverse|rust_verbs|rust_extract|rust_language_changes|program_check|seam_guard)|test/__test__/rust_eval_stats_teardown)\.unit\.test\.ts$'
+        run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_write|rust_traverse|rust_verbs|rust_extract|program_check|seam_guard)\.unit\.test\.ts$'
       # The oracle the crate tests hold the Rust engine to is the TypeScript's
       # own answers: a TypeScript change that moves one must move the oracle.
       - name: The Rust engine's oracle is current
@@ -176,19 +172,17 @@ jobs:
           }
       # The corpora's suites import the generated Prisma client's types.
       - run: pnpm prisma generate
-      # Everything the allow-list admits runs in Rust; the teardown fails a
-      # run in which Rust answered nothing.
-      - name: Conformance corpora through the Rust evaluator
+      # Versions 1 and 2 run on the TypeScript engine by their pin; which
+      # engine runs a run is the pin alone, so there is no engine setting.
+      - name: Conformance corpora, versions 1 and 2
         working-directory: apps/api
-        env:
-          MOVEMENT_ENGINE: rust
         run: |
           pnpm run test:conformance:v1
           pnpm run test:conformance:v2
       # Review Focus 3: every recorded run of both corpora replays identically
-      # against the TypeScript engine in process, the Rust engine through its
-      # shim, and the TypeScript engine against the HTTP host double.
-      - name: Host conformance, recorded engine runs on three targets
+      # against the TypeScript engine in process and against the HTTP host
+      # double (the Rust engine runs no version below 5).
+      - name: Host conformance, recorded engine runs on two targets
         working-directory: apps/api
         run: pnpm run test:unit --testPathPattern 'movement_engine/conformance/__test__/'
       # Each artifact's download size in view: the parser's ships to every
