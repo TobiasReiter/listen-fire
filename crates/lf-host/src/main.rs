@@ -22,9 +22,9 @@
 //!   lf-host --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!
 //! `run`, `resume`, `runs`, `drain`, `serve`, `call` and `cancel` keep run
-//! state where `--store <spec>` (or lf.yaml's `store:`) says: a SQLite file,
-//! `.lf/state.db` by default, or a Postgres database (`postgres://…`) with the
-//! hosted product's schema.
+//! state in the store slot's module (lf.yaml `core: { store: … }`, src/core.rs):
+//! @lf/sqlite-store, `.lf/state.db` by default, or @lf/postgres-store, its own
+//! `lf` schema; `--store <spec>` names a SQLite file or `postgres://…` outright.
 //!   lf-host --project-schema                 one schema projection, stdin to stdout (a parity probe)
 //!
 //! Single-threaded: one tokio thread, every wait an await.
@@ -39,6 +39,7 @@ mod connect;
 mod contract_doors;
 mod contract_secrets;
 mod contract_store;
+mod core;
 mod credential_calls;
 mod credential_cmd;
 mod doors;
@@ -103,7 +104,7 @@ const USAGE: &str = "usage: lf-host <init|check|catalog|run|resume|runs|drain|se
   serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
   call      call a callback, as its url's POST does (the values: a JSON object)
   cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
-  --store   where run state is kept: a SQLite file (default .lf/state.db, or lf.yaml's `store:`) or a Postgres database with the hosted schema
+  --store   where run state is kept: a SQLite file or a Postgres database (set up by `lf connect @lf/postgres-store`), instead of lf.yaml's `core: { store: … }`
   --team    the tenant (a uuid) of a Postgres store's rows
   --start-timeout  seconds a started external has to print `listening <port>` (default 30, or lf.yaml's `startTimeout`)
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
@@ -329,13 +330,9 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
     }
 }
 
-/// Where a command keeps its run state: `--store`, else lf.yaml's `store:`, else `.lf/state.db`.
+/// Where a command keeps its run state: `--store`, else the store slot's module.
 fn store_of(args: &Args, project: &project::Project) -> Result<backend::StoreSpec, String> {
-    let named = match args.store {
-        Some(_) => None,
-        None => backend::StoreSpec::of_project(project, &connect::process_env())?,
-    };
-    backend::StoreSpec::of_command(args.store.as_deref(), named.as_deref(), &project.root, &project.lf_dir, args.team.as_deref())
+    backend::StoreSpec::of_command(args.store.as_deref(), project, args.team.as_deref(), &connect::process_env())
 }
 
 fn main() {

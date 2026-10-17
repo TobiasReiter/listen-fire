@@ -81,6 +81,15 @@ pub fn known_modules(project: &Project) -> Result<Vec<String>, String> {
         let users = if users.is_empty() { "none".to_string() } else { users.join(", ") };
         lines.push(format!("{name}  installed ({how}); {install}; credentials: {users}"));
     }
+    for module in crate::core::BUILTIN {
+        let needs_setup = module.settings.iter().any(|s| !s.optional);
+        let set_up = match (install_of(&credentials, module.name).is_some(), needs_setup) {
+            (true, _) => "set up",
+            (false, false) => "ready with its defaults",
+            (false, true) => "not set up",
+        };
+        lines.push(format!("{}  built-in {} module; {set_up} (lf connect {})", module.name, module.slot.name(), module.name));
+    }
     let installed_modules: BTreeSet<&str> = installed.iter().filter_map(|e| e.manifest.module.as_deref()).collect();
     for name in module_packages(&project.root) {
         if !installed_modules.contains(name.as_str()) {
@@ -146,6 +155,9 @@ pub fn spread(mut stored: Vec<(String, String)>, next: Vec<(String, String)>) ->
 }
 
 pub async fn connect_module(project: &Project, reference: &str, prompter: &mut Prompter, url: Option<&str>) -> Result<(), String> {
+    if let Some(module) = crate::core::builtin(reference) {
+        return connect_core(project, module, prompter).await;
+    }
     let env = process_env();
     let credentials = load_secrets(project, &env)?;
     let (external, created) = match find_external(project, reference)? {
@@ -256,6 +268,64 @@ async fn set_up(project: &Project, external: &External, credentials: &Credential
         prompter.print(&format!("next, a user credential: lf credential add --module {name} <name>"));
     }
     Ok(())
+}
+
+/// A built-in core module (crate::core): its settings asked for and written
+/// to its install entry, then its setup run (a store's schema created).
+async fn connect_core(project: &Project, module: &crate::core::CoreModule, prompter: &mut Prompter) -> Result<(), String> {
+    let env = process_env();
+    let credentials = load_secrets(project, &env)?;
+    let existing = install_of(&credentials, module.name);
+    // Settings the environment supplies (a deployed lf) are not lf's to
+    // write: the setup alone runs, over them.
+    if let Some(existing) = existing
+        && (existing.origin.file.is_none() || !existing.origin.env_fields.is_empty())
+    {
+        let settings = crate::core::settings_of(&credentials, module);
+        for line in crate::core::set_up(project, module, &settings)? {
+            prompter.print(&line);
+        }
+        prompter.print(&format!("{} is set up; its settings (\"{}\") come from the environment", module.name, existing.name));
+        return Ok(());
+    }
+    let mut fields: Vec<(String, String)> = Vec::new();
+    for setting in module.settings {
+        let now = existing.and_then(|e| e.fields.get(setting.name)).filter(|v| !v.is_empty()).cloned();
+        let answer = prompter
+            .ask(&format!("{} (setting \"{}\")", setting.label, setting.name), Ask { secret: setting.secret, optional: setting.optional, default: now.as_deref() })
+            .await?;
+        if !answer.is_empty() {
+            fields.push((setting.name.to_string(), answer));
+        }
+    }
+    let settings = fields.iter().cloned().collect();
+    for line in crate::core::set_up(project, module, &settings)? {
+        prompter.print(&line);
+    }
+    let install_name = match existing {
+        Some(existing) => existing.name.clone(),
+        None => core_entry_name(module.name),
+    };
+    let file = match existing.and_then(|e| e.origin.file.clone()) {
+        Some(file) => file,
+        None => secrets_file_for_writes(project, &env)?,
+    };
+    let content = entry_content(module.name, &Binding::Install, &fields);
+    change_entry(&file, &install_name, EntryChange::Replace(&|_| Ok(content.clone()))).await?;
+    prompter.print(&format!("connected {}: its settings are \"{install_name}\" in {}", module.name, file.path.display()));
+    if project.core.store.name != module.name && module.slot == crate::core::Slot::Store
+        || project.core.models.name != module.name && module.slot == crate::core::Slot::Models
+    {
+        prompter.print(&format!("to use it, name it in lf.yaml: core: {{ {}: \"{}\" }}", module.slot.name(), module.name));
+    }
+    Ok(())
+}
+
+/// The entry a core module's settings are kept under: its package name
+/// without the scope (`@lf/postgres-store` → `postgres_store`), so
+/// `LF_SECRET__POSTGRES_STORE__URL` reaches it.
+pub fn core_entry_name(module: &str) -> String {
+    external_name_of(module)
 }
 
 /// Install `reference`: a module package the project has, else a module run

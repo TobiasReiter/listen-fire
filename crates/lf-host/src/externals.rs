@@ -505,7 +505,7 @@ mod tests {
             movements_dir: root.join("movements"),
             externals_dir: root.join("externals"),
             user: (None, None),
-            store: None,
+            core: crate::core::CoreChoice::default(),
             public_url: None,
             start_timeout: crate::project::DEFAULT_START_TIMEOUT,
             cost_cap_microdollars: None,

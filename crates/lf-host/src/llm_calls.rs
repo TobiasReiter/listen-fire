@@ -47,11 +47,12 @@ pub async fn serve(label: &str, args: &Json, credentials: &Credentials) -> Resul
             }
         }
         // The engine decides what its rules can before it asks; a question
-        // only a judge can answer is declined, and says why, the answer a
-        // hosted run gives when its judge call fails.
+        // only a judge can answer goes to the judge slot's module. lf's
+        // built-in one (@lf/judge, crate::core) declines and says why, the
+        // answer a hosted run gives when its judge call fails.
         "llm.arbitrateEntities" => Ok(Js::Obj(obj! {
             "index" => Js::Null,
-            "judgeUnavailable" => Js::str("lf has no identity judge yet: an ambiguous match creates a new record"),
+            "judgeUnavailable" => Js::str("lf's judge (@lf/judge) declines every question yet: an ambiguous match creates a new record"),
             "cost" => Js::Arr(Vec::new()),
         })),
         other => Err(Failed::Fault(format!("the host has no route for {other}"))),

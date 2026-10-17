@@ -114,6 +114,7 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
     } else {
         (open_store(store)?, None)
     };
+    // The files slot's module: @lf/local-files, the one lf has (crate::core).
     let documents = Documents::new(&project.lf_dir);
     let mut schemas = IndexMap::new();
     for r in running.iter().filter(|r| !r.is_plugin()) {

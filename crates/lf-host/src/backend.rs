@@ -4,9 +4,11 @@
 //! was given: the TypeScript lf's SQLite state file (crate::store) or the
 //! hosted product's Postgres tables (crate::pg_store).
 //!
-//! Which one is the store spec's: `--store <spec>`, else lf.yaml's `store:`,
-//! else `.lf/state.db`. A spec that starts `postgres://` or `postgresql://`
-//! is a Postgres connection; anything else is a SQLite file.
+//! Which one is the store slot's (crate::core): `--store <spec>` names one
+//! outright (a spec that starts `postgres://` or `postgresql://` is a
+//! Postgres connection; anything else is a SQLite file); else the module
+//! lf.yaml's `core: { store: … }` names, by its settings — @lf/sqlite-store
+//! (the default; `.lf/state.db`) or @lf/postgres-store (its `url`).
 //!
 //! Every method blocks until its backend answers, as rusqlite does. The
 //! Postgres store serves the same blocking calls from its own connection
@@ -17,7 +19,8 @@ use std::path::{Path, PathBuf};
 
 use crate::json::Js;
 use crate::pg_store::PgStore;
-use crate::project::{Project, ProjectStore};
+use crate::core;
+use crate::project::Project;
 use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, Store};
 
 /// The tenant a SQLite state file's rows belong to (`LOCAL_TENANT`).
@@ -53,34 +56,19 @@ impl StoreSpec {
         Ok(StoreSpec::Sqlite(relative_to.join(spec)))
     }
 
-    /// The store a command opens: `--store`, else lf.yaml's `store:`, else
-    /// the project's state file.
-    pub fn of_command(flag: Option<&str>, project_store: Option<&str>, root: &Path, lf_dir: &Path, team: Option<&str>) -> std::result::Result<StoreSpec, String> {
-        match flag.or(project_store) {
-            Some(spec) => StoreSpec::parse(spec, root, team),
-            None if team.is_some() => Err("--team names a Postgres store's tenant; pass --store postgres://…".into()),
-            None => Ok(StoreSpec::Sqlite(lf_dir.join("state.db"))),
+    /// The store a command opens: `--store`, else the store slot's module by
+    /// its settings.
+    pub fn of_command(flag: Option<&str>, project: &Project, team: Option<&str>, env: &[(String, String)]) -> std::result::Result<StoreSpec, String> {
+        if let Some(spec) = flag {
+            return StoreSpec::parse(spec, &project.root, team);
         }
-    }
-
-    /// lf.yaml's `store:` as a spec: written out, or read from the
-    /// environment variable or the secrets entry (its `url` field) it names.
-    pub fn of_project(project: &Project, env: &[(String, String)]) -> std::result::Result<Option<String>, String> {
-        Ok(Some(match &project.store {
-            None => return Ok(None),
-            Some(ProjectStore::Spec(spec)) => spec.clone(),
-            Some(ProjectStore::Env(name)) => env
-                .iter()
-                .find(|(k, _)| k == name)
-                .map(|(_, v)| v.clone())
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| format!("lf.yaml's store reads the environment variable {name}, which is not set"))?,
-            Some(ProjectStore::Credential(name)) => {
-                let credentials = crate::secrets::load_secrets(project, env)?;
-                let credential = credentials.iter().find(|c| &c.name == name).ok_or_else(|| format!("lf.yaml's store reads the secrets entry \"{name}\", which the secrets file does not have"))?;
-                credential.fields.get("url").filter(|v| !v.is_empty()).cloned().ok_or_else(|| format!("the secrets entry \"{name}\" has no `url` field, which lf.yaml's store reads"))?
-            }
-        }))
+        let module = project.core.store;
+        let settings = core::settings_of(&crate::secrets::load_secrets(project, env)?, module);
+        match module.name {
+            core::POSTGRES_STORE => StoreSpec::parse(core::required(&settings, module, "url")?, &project.root, team),
+            _ if team.is_some() => Err("--team names a Postgres store's tenant; a SQLite state file has one tenant".into()),
+            _ => Ok(StoreSpec::Sqlite(core::sqlite_path(project, &settings))),
+        }
     }
 
     /// How the store is named in a message: a Postgres URL without its password.
@@ -406,8 +394,6 @@ mod tests {
         assert_eq!(StoreSpec::parse("state/other.db", root, None).unwrap(), StoreSpec::Sqlite(PathBuf::from("/p/state/other.db")));
         assert!(StoreSpec::parse("postgresql://h/db", root, Some("not-a-uuid")).unwrap_err().contains("uuid"));
         assert!(StoreSpec::parse("x.db", root, Some(POSTGRES_TENANT)).is_err());
-        assert_eq!(StoreSpec::of_command(None, None, root, Path::new("/p/.lf"), None).unwrap(), StoreSpec::Sqlite(PathBuf::from("/p/.lf/state.db")));
-        assert!(matches!(StoreSpec::of_command(None, Some("postgres://h/db"), root, root, None).unwrap(), StoreSpec::Postgres { .. }));
     }
 
     #[test]

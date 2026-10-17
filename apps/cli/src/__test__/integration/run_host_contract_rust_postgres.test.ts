@@ -1,6 +1,6 @@
 // The run host's contract suite (packages/movement-engine/services/run_host/
-// contract.ts) against the Rust lf-host's Postgres backend — the hosted
-// product's automations tables — driven over its stdio JSON-RPC bridge
+// contract.ts) against the Rust lf-host's Postgres store (@lf/postgres-store,
+// in its own `lf` schema), driven over its stdio JSON-RPC bridge
 // (`lf-host --contract-store postgres://… --team <uuid>`) by
 // `RpcStoreBackend`: the same cases the hosted Postgres backend and both
 // SQLite backends are held to, the callback and cancel cases included.

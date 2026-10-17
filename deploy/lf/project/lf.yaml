@@ -2,6 +2,9 @@
 engine: 0.11.0
 movements: movements
 externals: externals
-# Where run state is kept: a Postgres URL from the environment (add
-# ?sslmode=verify-full for a verified TLS connection), never written here.
-store: { env: LF_STORE_URL }
+# Run state is kept by the Postgres store module. Its settings (the URL)
+# come from the environment, never this file:
+#   LF_SECRET__POSTGRES_STORE__EXTERNAL=@lf/postgres-store
+#   LF_SECRET__POSTGRES_STORE__URL=postgres://…?sslmode=verify-full
+core:
+  store: "@lf/postgres-store"

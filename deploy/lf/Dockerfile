@@ -36,6 +36,6 @@ COPY deploy/lf/project /srv/lf/project
 ENV LF_BIND=0.0.0.0 PORT=8080
 EXPOSE 8080
 WORKDIR /srv/lf/project
-# Run state is in Postgres (LF_STORE_URL), so the container keeps nothing: it
+# Run state is in Postgres (the @lf/postgres-store module), so the container keeps nothing: it
 # can be stopped and replaced at any time.
 CMD ["sh", "-c", "exec lf-host serve --port ${PORT}"]
