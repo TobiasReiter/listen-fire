@@ -40,7 +40,9 @@ declare const process: { env: Record<string, string | undefined> };
 declare function require(id: string): unknown;
 declare const console: { warn(...args: unknown[]): void };
 
-const KNOWN_VERSIONS = [1, 2, 3, 4, 5];
+// 99 is the future version the language-version tests check programs under; no
+// real version reaches it, and the pin holds those programs on purpose.
+const KNOWN_VERSIONS = [1, 2, 3, 4, 5, 99];
 
 let pinned: PinnedCheck[] | undefined;
 const pin = (): PinnedCheck[] => (pinned ??= readPin());

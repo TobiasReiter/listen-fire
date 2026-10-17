@@ -646,6 +646,13 @@ values are shown by their last characters only). `--fail-next` makes the next
 n token calls fail without spending the refresh token. Control routes:
 `POST /oauth/control/{config,mint,expire}`, `GET /oauth/control/state`.
 
+The provider's tokens live in the fake-channels store (a file under
+`apps/fake-channels/test-harness-data/`), so they survive a stack restart. The
+credential lives in the dev database, which outlives any one store (a new
+worktree, `dev:inspect --reset`); `pnpm dev:oauth setup` therefore signs an
+existing credential in again, in place, when the provider no longer knows its
+refresh token (it prints `resignedIn: true`).
+
 ### `pnpm dev:link <subcommand>`
 
 **`dev:link`** manages `knowledge.linked_object` rows — the **legacy
