@@ -1,0 +1,17 @@
+import { acme_crm } from adapters
+import { acme } from credentials
+
+crm = connect acme_crm using acme
+
+# A company created in the CRM asks for a note through a callback, records the
+# note in the callback's body, and once the call lands records it again.
+function approve(company: <crm-[:Company]->>) {
+  ask = callback((note: <text>) => {
+    write crm-[:Company]-> { Name: "Body ${note}" }
+  })
+  write crm-[:Company]-> { Name: "Asked ${ask.id} at ${ask.url}" }
+  c = await first(ask-[:Called]->)
+  write crm-[:Company]-> { Name: "Approved ${c.note}" }
+}
+
+listen to crm {} fire approve

@@ -20,6 +20,9 @@ const ProjectFile = z.object({
   externals: z.string().default('externals'),
   /** Who events act as on this machine (`@user_*`); LF_USER / LF_USER_EMAIL override it. */
   user: z.object({ name: z.string().min(1).optional(), email: z.string().min(1).optional() }).default({}),
+  /** Where this lf is reached from outside (a tunnel, a deployed host): a
+   *  callback's url is under it. Unset: where `lf serve` listens. */
+  publicUrl: z.url({ protocol: /^https?$/, error: 'publicUrl: an http(s) URL, e.g. https://lf.example.com' }).optional(),
 });
 
 export interface Project {
@@ -33,6 +36,8 @@ export interface Project {
   externalsDir: string;
   /** The local acting identity lf.yaml names; unset parts fall back to the OS user. */
   user: { name?: string; email?: string };
+  /** lf.yaml's `publicUrl`, when it names one. */
+  publicUrl?: string;
 }
 
 /**
@@ -101,6 +106,7 @@ export function loadProject(from: string): Project {
       ...(parsed.data.user.name !== undefined ? { name: parsed.data.user.name } : {}),
       ...(parsed.data.user.email !== undefined ? { email: parsed.data.user.email } : {}),
     },
+    ...(parsed.data.publicUrl !== undefined ? { publicUrl: parsed.data.publicUrl } : {}),
   };
 }
 
@@ -115,7 +121,10 @@ export function initProject(dir: string): string[] {
       stringify({ engine: CURRENT_ENGINE_VERSION, movements: 'movements', externals: 'externals' }) +
         '# Who events act as on this machine (@user_name, @user_email). Defaults to the OS user;\n' +
         '# LF_USER and LF_USER_EMAIL override.\n' +
-        '# user: { name: Your Name, email: you@example.com }\n',
+        '# user: { name: Your Name, email: you@example.com }\n' +
+        '# Where this lf is reached from outside; a callback\'s url is under it. Defaults to\n' +
+        '# where `lf serve` listens.\n' +
+        '# publicUrl: https://lf.example.com\n',
     );
     made.push(PROJECT_FILE);
   }

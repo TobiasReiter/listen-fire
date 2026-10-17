@@ -8,6 +8,8 @@
 //   lf resume [<run-id>]
 //   lf serve [--port N]
 //   lf runs
+//   lf call <callback-id> [--body <values.json>]
+//   lf cancel <run-id> [--reason <text>]
 //
 // Every command takes --ephemeral (state in a temporary file) and --dir <project>.
 
@@ -15,13 +17,26 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import type { DiscriminableEvent } from 'movement-engine/services/translation_graph/adapter';
 import { initProject, loadProject } from './project';
-import { EventFile, fireEvent, openSession, receiveWebhook, resumeAll, resumeRun, type RunOutcome, type Session } from './runs';
+import {
+  callCallback,
+  cancelRun,
+  DEFAULT_PORT,
+  EventFile,
+  fireEvent,
+  openSession,
+  receiveWebhook,
+  resumeAll,
+  resumeRun,
+  type RunOutcome,
+  type Session,
+} from './runs';
 import { serve } from './serve';
 import { MissingCredentialsError } from './secrets';
 import { checkFile } from './sources';
 import { upgradeProject } from './upgrade';
+import { neverAsAny } from 'movement-engine/lib/utils/types';
 
-const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs> [options]
+const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs|call|cancel> [options]
   lf init [dir]
   lf check
   lf upgrade [--check] [--all]   rewrite the movement files into the current language version by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
@@ -30,10 +45,12 @@ const USAGE = `usage: lf <init|check|upgrade|run|resume|serve|runs> [options]
   lf resume [<run-id>]
   lf serve [--port N]
   lf runs
+  lf call <callback-id> [--body <values.json>]   call a callback, as its url's POST does (the values: a JSON object)
+  lf cancel <run-id> [--reason <text>]           cancel a run: settled failed now, or at its next statement if another lf is stepping it
 options: --dir <project folder>  --ephemeral (state in a temporary file)`;
 
 async function main(argv: string[]): Promise<number> {
-  const { values, positionals } = parseArgs({
+  const { values: values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     options: {
@@ -47,7 +64,8 @@ async function main(argv: string[]): Promise<number> {
       body: { type: 'string' },
       install: { type: 'string' },
       header: { type: 'string', multiple: true, default: [] },
-      port: { type: 'string', default: '4400' },
+      port: { type: 'string', default: String(DEFAULT_PORT) },
+      reason: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -146,6 +164,69 @@ async function main(argv: string[]): Promise<number> {
       process.once('SIGTERM', stop);
       return new Promise<number>(() => {});
     }
+    case 'call': {
+      const id = rest[0];
+      if (id === undefined) {
+        process.stderr.write('lf call needs a callback id\n');
+        return 2;
+      }
+      const supplied: unknown = values.body !== undefined ? JSON.parse(readFileSync(values.body, 'utf8')) : {};
+      if (typeof supplied !== 'object' || supplied === null || Array.isArray(supplied)) {
+        process.stderr.write('lf call --body: the file must hold a JSON object of values\n');
+        return 2;
+      }
+      const project = loadProject(values.dir);
+      const session = await openSession(project, { ephemeral: false, start: true });
+      try {
+        const called = await callCallback(session, { id, values: { ...supplied } });
+        switch (called.call.kind) {
+          case 'recorded':
+            process.stdout.write(
+              called.queued
+                ? `callback ${id}: recorded; its run is being stepped by another lf process, which runs the body next\n`
+                : `callback ${id}: recorded\n`,
+            );
+            return report(called.outcomes, { quietWhenEmpty: true });
+          case 'mismatch':
+            process.stdout.write(`callback ${id}: refused — ${called.call.message}\n`);
+            return 1;
+          case 'not_found':
+            process.stdout.write(`callback ${id}: no such callback\n`);
+            return 1;
+          case 'closed':
+            process.stdout.write(`callback ${id}: closed — it was already used, or its run has finished\n`);
+            return 1;
+          case 'expired':
+            process.stdout.write(`callback ${id}: expired\n`);
+            return 1;
+          default:
+            return neverAsAny(called.call);
+        }
+      } finally {
+        session.close();
+      }
+    }
+    case 'cancel': {
+      const runId = rest[0];
+      if (runId === undefined) {
+        process.stderr.write('lf cancel needs a run id\n');
+        return 2;
+      }
+      const project = loadProject(values.dir);
+      // Settling a run starts no segment: no externals.
+      const session = await openSession(project, { ephemeral: false, start: false });
+      try {
+        const cancelled = await cancelRun(session, { runId, reason: values.reason ?? null });
+        process.stdout.write(
+          cancelled.kind === 'cancelled'
+            ? `run ${runId} cancelled\n`
+            : `run ${runId}: cancel requested; another lf process is stepping it, and it stops at its next statement\n`,
+        );
+        return 0;
+      } finally {
+        session.close();
+      }
+    }
     case 'runs': {
       const project = loadProject(values.dir);
       const session = await openSession(project, { ephemeral: false, start: false });
@@ -189,11 +270,11 @@ function headersOf(pairs: string[]): Record<string, string> {
   return headers;
 }
 
-function report(outcomes: RunOutcome[]): number {
-  if (outcomes.length === 0) process.stdout.write('no listen matched\n');
+function report(outcomes: RunOutcome[], options: { quietWhenEmpty?: boolean } = {}): number {
+  if (outcomes.length === 0 && options.quietWhenEmpty !== true) process.stdout.write('no listen matched\n');
   for (const o of outcomes) {
     process.stdout.write(
-      `run ${o.runId} ${o.file}:${o.movement} ${o.status} — ${o.writes} write(s), ${o.traceEntries} trace entr${o.traceEntries === 1 ? 'y' : 'ies'}${o.error ? `\n  ${o.error}` : ''}\n`,
+      `${o.entry === 'called' ? 'called' : 'run'} ${o.runId} ${o.file}:${o.movement} ${o.status} — ${o.writes} write(s), ${o.traceEntries} trace entr${o.traceEntries === 1 ? 'y' : 'ies'}${o.error ? `\n  ${o.error}` : ''}\n`,
     );
     for (const w of o.captured ?? []) {
       process.stdout.write(`  dry run, not written: ${JSON.stringify(w)}\n`);
