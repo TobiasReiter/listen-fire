@@ -18,3 +18,5 @@ dist
 .obsidian
 .claude
 /tmp
+target
+**/target
