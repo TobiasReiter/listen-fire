@@ -1243,6 +1243,19 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf check` reports a file that does not parse at the column the parser names. It reported column 1
   for every such file.
 
+### ev2-inbound
+
+- Every inbound webhook now goes through one shared inbound core in the engine package (signature
+  schemes, the capture-queue-ack pipeline, the emit and wake push doors, and an HTTP contract suite),
+  so `lf` can serve the same doors next. Webhook URLs, signature headers and keys are unchanged for
+  every provider.
+- Fixed: a built-in provider's delivery is no longer refused 401 because an `x-listen-fire-signature`
+  header beside its own good signature was wrong. That header now verifies remote installs only.
+- Fixed: a webhook delivery whose receipt could not be queued was acked 200 and the receipt never
+  ran. It now answers 500, so the provider retries and the stored receipt is queued again.
+- Fixed: a webhook body over 100 KB is answered 413 with `{"error":"payload_too_large"}`, the doors'
+  JSON error shape, instead of an HTML page.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
