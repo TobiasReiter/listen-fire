@@ -53,6 +53,30 @@ export interface WalkOptions {
   skipCollections?: readonly string[];
   /** At most this many root collections are walked into. */
   maxCollections?: number;
+  /** How many hops out from each root record (default 2). */
+  depth?: number;
+}
+
+/** Read every field of the record at `position` and walk each of its edges
+ *  (three members each), then the same from each edge's first member, `depth`
+ *  hops deep. The node's own surface is `edgesFrom(position)`. */
+export async function walkFrom(t: Transcript, adapter: Adapter, position: SourcePosition, label: string, depth: number): Promise<void> {
+  const hop = await t.step(`edgesFrom ${label}`, async () => (await adapter.edgesFrom?.(position)) ?? null);
+  const descriptor = hop?.descriptor;
+  // Fields are addressed as an author writes them: by display name.
+  for (const field of descriptor?.fields ?? []) {
+    if (field.readable === false || field.kind === 'reference' || field.kind === 'file') continue;
+    await t.step(`${label}.${field.displayName}`, () => adapter.getFieldValue({ position, fieldId: field.displayName }));
+  }
+  for (const reference of descriptor?.references ?? []) {
+    // …and edges by their name.
+    const edge = reference.name ?? reference.fieldId;
+    const members = await t.step(`${label} -[${edge}]-> LIMIT 3`, () =>
+      adapter.getRelated({ position, fieldId: edge, direction: reference.direction ?? 'outgoing', limit: 3 }),
+    );
+    const next = firstPosition(members);
+    if (depth > 1 && next !== undefined) await walkFrom(t, adapter, next, `${label}-[${edge}]->[0]`, depth - 1);
+  }
 }
 
 /** Read the adapter's surface; returns the first record of each root
@@ -86,20 +110,7 @@ export async function walkSurface(
     const position = firstPosition(found);
     if (position === undefined) continue;
     firsts.set(collection, position);
-    const descriptor = described.get(entry.typeId) ?? (await adapter.describe(position.recordType ?? entry.typeId));
-    await t.step(`edgesFrom ${collection}[0]`, async () => (await adapter.edgesFrom?.(position)) ?? null);
-    // Fields are addressed as an author writes them: by display name.
-    for (const field of descriptor?.fields ?? []) {
-      if (field.readable === false || field.kind === 'reference' || field.kind === 'file') continue;
-      await t.step(`${collection}[0].${field.displayName}`, () => adapter.getFieldValue({ position, fieldId: field.displayName }));
-    }
-    for (const reference of descriptor?.references ?? []) {
-      // Addressed as an author writes it: by the edge's name.
-      const edge = reference.name ?? reference.fieldId;
-      await t.step(`${collection}[0] -[${edge}]-> LIMIT 3`, () =>
-        adapter.getRelated({ position, fieldId: edge, direction: reference.direction ?? 'outgoing', limit: 3 }),
-      );
-    }
+    await walkFrom(t, adapter, position, `${collection}[0]`, options.depth ?? 2);
   }
   return firsts;
 }

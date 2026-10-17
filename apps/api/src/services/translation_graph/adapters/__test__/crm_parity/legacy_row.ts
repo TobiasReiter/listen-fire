@@ -2,9 +2,13 @@
 // credential row it reads and decrypts. A test mocks `lib/kysely` and
 // `lib/credentials` with these, and seeds `legacyRow.payload` with the
 // credential pointed at the recording (or replaying) server; everything from
-// the row onward is the legacy code as it runs.
+// the row onward is the legacy code as it runs. A fresh `id` per subject keeps
+// a client cached by credential id from carrying one server's URL into the
+// next subject.
 
-export const legacyRow: { payload?: Record<string, unknown> } = {};
+export const legacyRow: { payload?: Record<string, unknown>; id?: string } = {};
+
+const rowId = (): string => legacyRow.id ?? 'cred-parity';
 
 /** A query builder that answers every chain with the seeded row. */
 export function rowQueryBuilder(): unknown {
@@ -13,9 +17,9 @@ export function rowQueryBuilder(): unknown {
     {
       get(_target, property) {
         if (property === 'executeTakeFirst' || property === 'executeTakeFirstOrThrow') {
-          return async () => ({ id: 'cred-parity', credentials: Buffer.from('sealed') });
+          return async () => ({ id: rowId(), credentials: Buffer.from('sealed') });
         }
-        if (property === 'execute') return async () => [{ id: 'cred-parity', credentials: Buffer.from('sealed') }];
+        if (property === 'execute') return async () => [{ id: rowId(), credentials: Buffer.from('sealed') }];
         if (property === 'then') return undefined;
         return () => chain;
       },

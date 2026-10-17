@@ -96,9 +96,12 @@ async function expectAffinityParity(subjectAt: (baseUrl: string) => Promise<Adap
       const answer = entry.answer;
       return answer !== null && typeof answer === 'object' && 'error' in answer;
     });
-    // The one refusal is the legacy adapter's own: a list's person-reference
-    // field is published as an edge but is not walkable (it is written by link).
-    expect(errors.map((entry) => entry.step)).toEqual(['List Entry — Pipeline[0] -[Owners]-> LIMIT 3']);
+    // The one refusal is the legacy adapter's own, reached twice: a list's
+    // person-reference field is published as an edge but is not walkable (it
+    // is written by link).
+    expect(new Set(errors.map((entry) => (entry.answer as { error: string }).error))).toEqual(
+      new Set(['AffinityAdapter.getRelated: field "Owners" is not a reference on List Entry — Pipeline.']),
+    );
     expect(exchanges.length).toBeGreaterThan(30);
     expect(exchanges.some((e) => e.method === 'POST')).toBe(true);
     expect(calls.length).toBeGreaterThan(0);
