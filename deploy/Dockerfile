@@ -41,6 +41,9 @@ COPY modules/google-sheets/package.json modules/google-sheets/
 COPY modules/google-drive/package.json modules/google-drive/
 COPY modules/gmail/package.json modules/gmail/
 COPY modules/web/package.json modules/web/
+COPY modules/affinity/package.json modules/affinity/
+COPY modules/airtable/package.json modules/airtable/
+COPY modules/attio/package.json modules/attio/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/

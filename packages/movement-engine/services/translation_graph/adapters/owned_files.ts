@@ -16,6 +16,9 @@ import { fileDescriptorOf, ownedFileSource, RESOURCES_REFERENCE_FIELD_ID } from 
 export interface FileOwnerInstance {
   adapterType: string;
   credentialsId?: string;
+  /** The install's construction arguments (an entry position), which
+   *  constructing the owner again needs. */
+  constructionArgs?: Record<string, string>;
 }
 
 /** The handle a file's `source` carries, in either spelling. */
@@ -93,7 +96,12 @@ export class FileOwnership {
       ? rest
       : {
           ...rest,
-          source: ownedFileSource({ adapterType: this.owner.adapterType, credentialsId: this.owner.credentialsId, handle }),
+          source: ownedFileSource({
+            adapterType: this.owner.adapterType,
+            credentialsId: this.owner.credentialsId,
+            ...(this.owner.constructionArgs !== undefined ? { constructionArgs: this.owner.constructionArgs } : {}),
+            handle,
+          }),
         };
   }
 
@@ -123,7 +131,7 @@ export class OwnedFileDescribeFailed extends Error {
  * and `getRelated` answers rewritten as the remote adapter rewrites them.
  * Every other member is the adapter's own, so a member it lacks stays absent.
  */
-export function ownedFilesAdapter(adapter: Adapter, owner: FileOwnerInstance): Adapter {
+export function ownedFilesAdapter<A extends Adapter>(adapter: A, owner: FileOwnerInstance): A {
   const ownership = new FileOwnership(owner, {
     describe: (typeRef) => adapter.describe(typeRef),
     describeFailed: (recordType, fieldId, error) => new OwnedFileDescribeFailed(owner.adapterType, recordType, fieldId, error),

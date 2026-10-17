@@ -18,7 +18,7 @@ jest.mock('../../resolve', () => ({
   loadResources: jest.fn(async () => null),
 }));
 
-import type { AffinityOperations } from '../../../../../adapters/affinity/operations';
+import type { AffinityOperations } from '@lf/affinity/operations';
 
 import { createAffinityV3Adapter } from '../affinity';
 import { resolveFieldMapping } from '../../resolve';

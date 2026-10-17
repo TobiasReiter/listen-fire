@@ -219,6 +219,21 @@ export function airtableRoutes(store: EntityStore): Router {
     res.json({ id: req.params.recordId, fields });
   });
 
+  // Read one record
+  r.get('/v0/:baseId/:tableId/:recordId', (req, res) => {
+    const record = store.get(SVC, `record:${req.params.baseId}:${req.params.tableId}`, req.params.recordId);
+    if (!record) return res.status(404).json({ error: { type: 'MODEL_ID_NOT_FOUND', message: 'Could not find a record with that id' } });
+    res.json(record.data);
+  });
+
+  // Delete one record
+  r.delete('/v0/:baseId/:tableId/:recordId', (req, res) => {
+    const key = `record:${req.params.baseId}:${req.params.tableId}`;
+    if (!store.get(SVC, key, req.params.recordId)) return res.status(404).json({ error: 'Not found' });
+    store.delete(SVC, key, req.params.recordId);
+    res.json({ id: req.params.recordId, deleted: true });
+  });
+
   // List records
   r.get('/v0/:baseId/:tableId', (req, res) => {
     const key = `record:${req.params.baseId}:${req.params.tableId}`;

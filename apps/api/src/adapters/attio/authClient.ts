@@ -1,14 +1,11 @@
 import { z } from 'zod';
 import { logger } from 'movement-engine/services/logger';
-import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector, type OAuth2Declaration } from 'movement-engine/public/secrets';
+import { createOAuth2Connector, OAuth2ExchangeFailed, type OAuth2Connector } from 'movement-engine/public/secrets';
+import { attioOAuth2 } from '@lf/attio/oauth';
 
-/** How an Attio credential is connected: what Attio's module manifest will
- *  declare. Attio takes the client in the form body and wants no PKCE. */
-export const attioOAuth2: OAuth2Declaration = {
-  authorizeUrl: 'https://app.attio.com/authorize',
-  tokenUrl: 'https://app.attio.com/oauth/token',
-  clientAuth: 'body',
-};
+/** How an Attio credential is connected: the declaration Attio's module
+ *  manifest makes. */
+export { attioOAuth2 } from '@lf/attio/oauth';
 
 const attioTokenResponseSchema = z.object({
   access_token: z.string(),

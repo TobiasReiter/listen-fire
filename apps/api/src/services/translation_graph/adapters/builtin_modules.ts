@@ -27,6 +27,7 @@ import {
   refusingFiles,
   refusingKv,
   type AdapterModuleDefinition,
+  type CredentialFields,
   type InProcessAdapterModule,
   type InProcessPluginModule,
   type ModuleCredential,
@@ -52,17 +53,22 @@ import { DROPBOX_MANIFEST } from '@lf/dropbox/manifest';
 import { GOOGLE_SHEETS_MANIFEST } from '@lf/google-sheets/manifest';
 import { GOOGLE_DRIVE_MANIFEST } from '@lf/google-drive/manifest';
 import { GMAIL_MANIFEST } from '@lf/gmail/manifest';
+import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
+import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
+import { ATTIO_MANIFEST } from '@lf/attio/manifest';
 import { pluginDeclarationNamed, pluginProgramName } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
 import { services } from '../../../adapters/registry';
-import { camelTokenPayloadShape, postgresSecrets, type PayloadShape } from '../../credentials/secrets_postgres';
+import { camelTokenPayloadShape, postgresSecrets, renamedPayloadShape, type PayloadShape } from '../../credentials/secrets_postgres';
 import { grantedItemsKv } from '../../credentials/granted_items';
 import { platformModuleFiles } from '../engine/files/module_files';
 import { googleIntegrationsApp } from '../../../adapters/google/authClient';
 import { gmailModuleCredential } from '../../../adapters/gmail/module_credential';
 import { credentialTypeOf } from './credential_type';
+import { hostedModels } from './module_host';
+import { oauthAppFromEnv } from './module_credentials';
 
 export type BuiltinLine = 'legacy' | 'module';
 
@@ -159,9 +165,43 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
       return evertraceModule;
     },
   },
-  affinity: { kind: 'adapter', line: 'legacy' },
-  airtable: { kind: 'adapter', line: 'legacy' },
-  attio: { kind: 'adapter', line: 'legacy' },
+  affinity: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: AFFINITY_MANIFEST,
+    load: () => {
+      require('./affinity/write_failure_alerts');
+      const { affinityModule }: typeof import('@lf/affinity') = require('@lf/affinity');
+      return affinityModule;
+    },
+    files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/affinity' }),
+  },
+  airtable: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: AIRTABLE_MANIFEST,
+    load: () => {
+      const { airtableModule }: typeof import('@lf/airtable') = require('@lf/airtable');
+      return airtableModule;
+    },
+    // The connect flow stores `{ accessToken, refreshToken, accessTokenExpiresAt }`.
+    storedAs: renamedPayloadShape({ accessToken: 'access_token', refreshToken: 'refresh_token', accessTokenExpiresAt: 'expires_at' }),
+    hostApp: () => oauthAppFromEnv({ clientId: 'AIRTABLE_CLIENT_ID', clientSecret: 'AIRTABLE_CLIENT_SECRET' }),
+    files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/airtable' }),
+  },
+  attio: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: ATTIO_MANIFEST,
+    load: () => {
+      require('./attio_field_rejection_alerts');
+      const { attioModule }: typeof import('@lf/attio') = require('@lf/attio');
+      return attioModule;
+    },
+    storedAs: renamedPayloadShape({ accessToken: 'access_token' }),
+    hostApp: () => oauthAppFromEnv({ clientId: 'ATTIO_CLIENT_ID', clientSecret: 'ATTIO_CLIENT_SECRET' }),
+    files: (install) => platformModuleFiles({ teamId: install.teamId, module: '@lf/attio' }),
+  },
   google_sheets: {
     kind: 'adapter',
     line: 'module',
@@ -248,6 +288,11 @@ function adapterModuleLines(): AdapterModuleLine[] {
   return Object.values(BUILTIN_MODULES).flatMap((entry) => (entry.kind === 'adapter' && entry.line === 'module' ? [entry] : []));
 }
 
+/** Every adapter module line's definition, loaded. */
+export function adapterModuleDefinitions(): AdapterModuleDefinition[] {
+  return adapterModuleLines().map((entry) => entry.load());
+}
+
 /** What an install of a built-in is constructed for. */
 export interface BuiltinInstall {
   teamId: TeamId;
@@ -282,31 +327,38 @@ function storedCredential(
     return noCredential(`${displayName}: no credential is connected for team ${install.teamId} (credentialsId unset). Connect ${displayName}.`);
   }
   const refreshes = declared.kind === 'oauth2' && hostApp !== undefined;
+  /** The platform app's refresh of this credential, failing with only the
+   *  credential's name (the family's message, logged, names the credential
+   *  and the provider's answer with every secret value taken out). */
+  const refreshed = async (seenVersion: string): Promise<CredentialFields> => {
+    const app = hostApp?.();
+    if (app === undefined) {
+      throw new Error(`${displayName}: the token has expired and the platform has no ${displayName} OAuth app configured to refresh it.`);
+    }
+    const { tokenUrl, ...client } = app;
+    const at = declared.kind === 'oauth2' && tokenUrl !== undefined ? { ...declared, oauth2: { ...declared.oauth2, tokenUrl } } : declared;
+    const refresher = declaredRefresher(at, { client });
+    if (refresher === undefined) return (await secrets.resolve(ref)).fields;
+    try {
+      return (await secrets.refresh(ref, { seenVersion, refresher })).fields;
+    } catch (error) {
+      logger.error(`[${displayName}] token refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`${displayName} token refresh failed`);
+    }
+  };
   return {
     name: declared.name,
     fields: async () => {
       const record = await secrets.resolve(ref);
       if (!refreshes || !expiresWithin(record.fields, HOST_REFRESH_WINDOW_MS)) return record.fields;
-      const app = hostApp();
-      if (app === undefined) {
-        throw new Error(`${displayName}: the token has expired and the platform has no ${displayName} OAuth app configured to refresh it.`);
-      }
-      const { tokenUrl, ...client } = app;
-      const at = declared.kind === 'oauth2' && tokenUrl !== undefined ? { ...declared, oauth2: { ...declared.oauth2, tokenUrl } } : declared;
-      const refresher = declaredRefresher(at, { client });
-      if (refresher === undefined) return record.fields;
-      try {
-        return (await secrets.refresh(ref, { seenVersion: record.version, refresher })).fields;
-      } catch (error) {
-        // The family's message names the credential and the provider's answer
-        // with every secret value taken out; the caller is told only which.
-        logger.error(`[${displayName}] token refresh failed: ${error instanceof Error ? error.message : String(error)}`);
-        throw new Error(`${displayName} token refresh failed`);
-      }
+      return refreshed(record.version);
     },
     update: async (fields) => {
       await secrets.update(ref, fields);
     },
+    // The provider refused a token before its expiry: refreshed with the same
+    // app (one refresh at a time, however many calls ask).
+    ...(refreshes ? { refresh: async () => refreshed((await secrets.resolve(ref)).version) } : {}),
   };
 }
 
@@ -349,12 +401,17 @@ export function loadBuiltinModule(entry: AdapterModuleLine, install: BuiltinInst
     tenant: install.teamId,
     ...platformHost(entry, definition, install),
     log: logger,
+    models: hostedModels,
     ...(baseUrlOverride !== undefined ? { baseUrlOverride } : {}),
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
     validateResults: inProcessValidationDefault(process.env),
   });
   // The files it reads out name this install, as a served module's do.
-  const owner = { adapterType: definition.manifest.adapterType, ...(install.credentialsId !== undefined ? { credentialsId: install.credentialsId } : {}) };
+  const owner = {
+    adapterType: definition.manifest.adapterType,
+    ...(install.credentialsId !== undefined ? { credentialsId: install.credentialsId } : {}),
+    ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
+  };
   return { ...loaded, adapter: ownedFilesAdapter(loaded.adapter, owner) };
 }
 

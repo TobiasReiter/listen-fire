@@ -12,7 +12,7 @@ import { ADAPTER_TEAM_HEADER } from 'movement-engine/public/adapter';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import { METHODS, type MethodName, type RpcResponseShape, type WireCredentialShape } from 'engine-contracts';
 
-import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog } from './define';
+import type { CredentialFields, ModuleCredential, ModuleDefinition, ModuleFiles, ModuleKv, ModuleLog, ModuleModels } from './define';
 
 import { moduleContext, noCredential } from './in_process';
 import { servedFiles, type ServedFile, type ServedFiles } from './served_files';
@@ -36,6 +36,8 @@ export interface ModuleServerOptions {
   files: ModuleFiles;
   /** The kv of the tenant a request names. */
   kvFor: (tenant: string) => ModuleKv;
+  /** The models the serving host lends; default: refused by name. */
+  models?: ModuleModels;
   baseUrlOverride?: string;
   /** The install's construction arguments (an entry position), the same for
    *  every request: protocol 2 carries none, so a served module is one
@@ -145,6 +147,7 @@ async function answer(
         log: options.log,
         files: options.files,
         kv: options.kvFor(tenant),
+        ...(options.models !== undefined ? { models: options.models } : {}),
         ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
         ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
         validateResults: false,

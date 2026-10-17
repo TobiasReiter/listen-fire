@@ -7,10 +7,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { resolve as resolvePath } from 'node:path';
 
-import type { ModuleDefinition, ModuleFiles, ModuleLog } from './define';
+import type { ModuleDefinition, ModuleLog, ModuleModels } from './define';
 
 import { fileKv } from './file_kv';
-import { refusingFiles, refusingKv } from './in_process';
+import { refusingFiles, refusingKv, refusingModels } from './in_process';
 import { createModuleProtocolHandler } from './module_server';
 
 /** A log that writes one JSON line per entry to `write`. */
@@ -20,24 +20,6 @@ export function jsonLineLog(module: string, write: (line: string) => void): Modu
     (message: string, meta?: Record<string, unknown>): void =>
       write(`${JSON.stringify({ level, module, message, ...(meta !== undefined ? { meta } : {}) })}\n`);
   return { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
-}
-
-/** The files of a served module: a file value the host handed in carries a URL
- *  (protocol 2 moves bytes by URL), which is where its bytes are read; nothing
- *  is kept for the module. */
-function urlFiles(module: string): ModuleFiles {
-  const refuse = (what: string) => new Error(`module ${module}: ${what} is not available when the module is served as a process (protocol 2 keeps no module files)`);
-  return {
-    read: async (ref) => {
-      if (typeof ref.url !== 'string' || ref.url === '') throw new Error(`module ${module}: the file${ref.name !== undefined ? ` '${ref.name}'` : ''} carries no URL to read its bytes from`);
-      const response = await fetch(ref.url);
-      if (!response.ok) throw new Error(`module ${module}: reading the file${ref.name !== undefined ? ` '${ref.name}'` : ''} answered HTTP ${response.status}`);
-      return new Uint8Array(await response.arrayBuffer());
-    },
-    put: async () => {
-      throw refuse('ctx.files.put');
-    },
-  };
 }
 
 /** The host part of this server's own URL: a wildcard bind is reached at
@@ -65,6 +47,9 @@ export interface ServeModuleOptions {
   /** Where callers reach this server (behind a proxy), for file URLs.
    *  Default: the address it binds. */
   publicUrl?: string;
+  /** Models to lend the module (an embedder's). The command line lends none,
+   *  so a module call that asks one is refused by name there. */
+  models?: ModuleModels;
 }
 
 export async function serveModule(options: ServeModuleOptions): Promise<{ port: number; server: Server }> {
@@ -98,6 +83,7 @@ export async function serveModule(options: ServeModuleOptions): Promise<{ port: 
     log,
     files: refusingFiles(unavailable('ctx.files')),
     kvFor: stateDir !== undefined ? (tenant) => fileKv(stateDir, tenant) : () => noKv,
+    models: options.models ?? refusingModels(`module ${definition.name}: ctx.models is lent by no host when the module is served by the serve-module command line`),
     ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
     ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
     publicUrl,

@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { UserId } from '../../generated/kysely/core/User';
 
-import { forgetAffinityWorkspace } from '../../adapters/affinity/apiClient';
+import { forgetAffinityWorkspace } from '@lf/affinity/api_client';
 import { encryptToken } from '../../lib/credentials';
 import { getAutomationsQb } from '../../lib/kysely';
 import { credentialLifecycle } from './credential_lifecycle';

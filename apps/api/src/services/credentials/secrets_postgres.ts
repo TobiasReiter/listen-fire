@@ -50,6 +50,25 @@ export const flatPayloadShape: PayloadShape = {
   },
 };
 
+/** A payload whose keys are the module's fields under other names (`table`:
+ *  stored name to field name). A key not named passes through as itself; a
+ *  write-back is stored under the row's own names. */
+export function renamedPayloadShape(table: Readonly<Record<string, string>>): PayloadShape {
+  const storedName = Object.fromEntries(Object.entries(table).map(([stored, field]) => [field, stored]));
+  return {
+    toFields(payload) {
+      const fields: Record<string, string> = {};
+      for (const [key, value] of Object.entries(flatPayloadShape.toFields(payload))) fields[table[key] ?? key] = value;
+      return fields;
+    },
+    withFields(payload, changed) {
+      const next: StoredPayload = { ...payload };
+      for (const [key, value] of Object.entries(changed)) next[storedName[key] ?? key] = value;
+      return next;
+    },
+  };
+}
+
 /**
  * The OAuth payload the Dropbox, Google and Gmail connect flows store:
  * `{ accessToken, refreshToken, expiresAt }` with `expiresAt` in epoch

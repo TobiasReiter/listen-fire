@@ -4,8 +4,9 @@ import type { V3Adapter } from './types';
 
 import { attioCredsParser, getAttioClient } from '../../../../adapters/attio/apiClient';
 import { AttioOperations } from '../../../../adapters/attio/operations';
-import { affinityCredsParser, getAffinityClient } from '../../../../adapters/affinity/apiClient';
-import { AffinityOperations } from '../../../../adapters/affinity/operations';
+import { affinityCredsParser, getAffinityClient } from '@lf/affinity/api_client';
+import { AffinityOperations } from '@lf/affinity/operations';
+import { hostedModels } from '../../../translation_graph/adapters/module_host';
 import { airtableCredsParser, getAirtableClient } from '../../../../adapters/airtable/apiClient';
 import { getSlackClient, slackCredsParser } from '../../../../adapters/slack/webApi/apiClient';
 import { googleCredsParser } from '../../../../adapters/google/authClient';
@@ -88,7 +89,7 @@ async function initializeV3Adapter(output: {
       return null;
     }
     const client = getAffinityClient(credsParsed.data.apiKey, credsParsed.data.baseUrl);
-    return createAffinityV3Adapter(new AffinityOperations(client));
+    return createAffinityV3Adapter(new AffinityOperations(client, hostedModels));
   }
 
   if (adapterType === 'AIRTABLE') {

@@ -1,0 +1,966 @@
+{
+  "transcript": [
+    {
+      "step": "createRecord Companies",
+      "answer": {
+        "adapterType": "airtable",
+        "externalId": "rec1",
+        "data": {
+          "url": "https://airtable.com/appTEST001/tblCOMPANIES/rec1"
+        }
+      }
+    },
+    {
+      "step": "createRecord Contacts linked to the company",
+      "answer": {
+        "adapterType": "airtable",
+        "externalId": "rec1",
+        "data": {
+          "url": "https://airtable.com/appTEST001/tblCONTACTS/rec1"
+        }
+      }
+    },
+    {
+      "step": "listEntryPoints",
+      "answer": [
+        {
+          "typeId": "airtable:record_change",
+          "displayName": "Record Change",
+          "writable": false,
+          "readable": false,
+          "fires": true
+        },
+        {
+          "typeId": "Base",
+          "displayName": "Base",
+          "writable": false,
+          "readable": true
+        }
+      ]
+    },
+    {
+      "step": "edgesFrom meta",
+      "answer": {
+        "descriptor": {
+          "typeId": "meta",
+          "displayName": "meta",
+          "fields": [],
+          "references": [
+            {
+              "fieldId": "airtable:record_change",
+              "name": "Record Change",
+              "targetTypeId": "airtable:record_change",
+              "cardinality": "many",
+              "readable": false,
+              "writable": false,
+              "fires": true
+            },
+            {
+              "fieldId": "Base",
+              "name": "Base",
+              "targetTypeId": "Base",
+              "cardinality": "many",
+              "writable": false
+            }
+          ]
+        },
+        "targetPositions": {
+          "appTEST001": {
+            "adapterType": "airtable",
+            "recordType": "Base",
+            "identity": {
+              "kind": "stable",
+              "recordId": "appTEST001",
+              "data": {
+                "Name": "Pipeline Tracker",
+                "Id": "appTEST001"
+              }
+            }
+          },
+          "appTEST002": {
+            "adapterType": "airtable",
+            "recordType": "Base",
+            "identity": {
+              "kind": "stable",
+              "recordId": "appTEST002",
+              "data": {
+                "Name": "Ops",
+                "Id": "appTEST002"
+              }
+            }
+          }
+        },
+        "targetNodes": {
+          "airtable:record_change": {
+            "typeId": "airtable:record_change",
+            "displayName": "Record Change",
+            "fields": [
+              {
+                "fieldId": "action",
+                "displayName": "action",
+                "kind": "enum",
+                "enumValues": [
+                  "record.created",
+                  "record.updated",
+                  "record.deleted"
+                ],
+                "writable": false,
+                "required": false,
+                "description": "Which kind of change this event is — the same values a listen's `events:` names."
+              },
+              {
+                "fieldId": "base",
+                "displayName": "base",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The base the change happened in — the id a `listen` names."
+              },
+              {
+                "fieldId": "table",
+                "displayName": "table",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The table the change happened in — the id a `listen` names."
+              },
+              {
+                "fieldId": "record",
+                "displayName": "record",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The changed row’s id."
+              }
+            ]
+          },
+          "Base": {
+            "stub": true,
+            "typeId": "Base",
+            "displayName": "Base"
+          }
+        }
+      }
+    },
+    {
+      "step": "describe airtable:record_change",
+      "answer": {
+        "typeId": "airtable:record_change",
+        "displayName": "Record Change",
+        "fields": [
+          {
+            "fieldId": "action",
+            "displayName": "action",
+            "kind": "enum",
+            "enumValues": [
+              "record.created",
+              "record.updated",
+              "record.deleted"
+            ],
+            "writable": false,
+            "required": false,
+            "description": "Which kind of change this event is — the same values a listen's `events:` names."
+          },
+          {
+            "fieldId": "base",
+            "displayName": "base",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The base the change happened in — the id a `listen` names."
+          },
+          {
+            "fieldId": "table",
+            "displayName": "table",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The table the change happened in — the id a `listen` names."
+          },
+          {
+            "fieldId": "record",
+            "displayName": "record",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The changed row’s id."
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "record",
+            "name": "Record",
+            "targetTypeId": "Table",
+            "cardinality": "one",
+            "description": "The row that changed.",
+            "subject": true,
+            "writable": false
+          }
+        ]
+      }
+    },
+    {
+      "step": "describe Base",
+      "answer": {
+        "typeId": "Base",
+        "displayName": "Base",
+        "description": "One of this workspace's bases. Which tables it holds depends on WHICH base — narrow to one (`-[b:Base WHERE `Name` == \"CRM\"]->`, or the `base:` construction arg) and its tables become the edges.",
+        "fields": [
+          {
+            "fieldId": "Name",
+            "displayName": "Name",
+            "kind": "string",
+            "writable": false,
+            "required": false
+          }
+        ],
+        "references": []
+      }
+    },
+    {
+      "step": "describe Table",
+      "answer": {
+        "typeId": "Table",
+        "displayName": "Table",
+        "description": "A table in one of this workspace's bases. Its fields depend on WHICH (base, table) — a listen's `base:`/`table:` pins narrow it, as does walking into a base — so the unnarrowed node carries none.",
+        "fields": [],
+        "references": []
+      }
+    },
+    {
+      "step": "describe Companies",
+      "answer": {
+        "typeId": "Companies",
+        "displayName": "Companies",
+        "labelTemplate": "{fldName}",
+        "fields": [
+          {
+            "fieldId": "fldName",
+            "displayName": "Name",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          },
+          {
+            "fieldId": "fldStage",
+            "displayName": "Stage",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          },
+          {
+            "fieldId": "fldNotes",
+            "displayName": "Notes",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          }
+        ],
+        "references": [],
+        "deletable": true
+      }
+    },
+    {
+      "step": "describe Contacts",
+      "answer": {
+        "typeId": "Contacts",
+        "displayName": "Contacts",
+        "labelTemplate": "{fldFullName}",
+        "fields": [
+          {
+            "fieldId": "fldFullName",
+            "displayName": "Full Name",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          },
+          {
+            "fieldId": "fldEmail",
+            "displayName": "Email",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          },
+          {
+            "fieldId": "fldCompany",
+            "displayName": "Company",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          }
+        ],
+        "references": [],
+        "deletable": true
+      }
+    },
+    {
+      "step": "describe Vendors",
+      "answer": {
+        "typeId": "Vendors",
+        "displayName": "Vendors",
+        "labelTemplate": "{fldVendor}",
+        "fields": [
+          {
+            "fieldId": "fldVendor",
+            "displayName": "Vendor",
+            "kind": "string",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          },
+          {
+            "fieldId": "fldSpend",
+            "displayName": "Spend",
+            "kind": "number",
+            "cardinality": "one",
+            "writable": true,
+            "required": false
+          }
+        ],
+        "references": [],
+        "deletable": true
+      }
+    },
+    {
+      "step": "describe Nonexistent",
+      "answer": null
+    },
+    {
+      "step": "root Base LIMIT 3",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Base",
+            "identity": {
+              "kind": "stable",
+              "recordId": "appTEST001",
+              "data": {
+                "Name": "Pipeline Tracker"
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Base",
+            "identity": {
+              "kind": "stable",
+              "recordId": "appTEST002",
+              "data": {
+                "Name": "Ops"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "edgesFrom Base[0]",
+      "answer": {
+        "descriptor": {
+          "typeId": "Pipeline Tracker",
+          "displayName": "Pipeline Tracker",
+          "fields": [],
+          "references": [
+            {
+              "fieldId": "tblCOMPANIES",
+              "name": "Companies",
+              "targetTypeId": "Companies",
+              "cardinality": "many",
+              "writable": true
+            },
+            {
+              "fieldId": "tblCONTACTS",
+              "name": "Contacts",
+              "targetTypeId": "Contacts",
+              "cardinality": "many",
+              "writable": true
+            }
+          ]
+        },
+        "targetPositions": {
+          "tblCOMPANIES": {
+            "adapterType": "airtable",
+            "recordType": "Table",
+            "identity": {
+              "kind": "stable",
+              "recordId": "tblCOMPANIES",
+              "data": {
+                "baseId": "appTEST001",
+                "Id": "tblCOMPANIES",
+                "Name": "Companies"
+              }
+            }
+          },
+          "tblCONTACTS": {
+            "adapterType": "airtable",
+            "recordType": "Table",
+            "identity": {
+              "kind": "stable",
+              "recordId": "tblCONTACTS",
+              "data": {
+                "baseId": "appTEST001",
+                "Id": "tblCONTACTS",
+                "Name": "Contacts"
+              }
+            }
+          }
+        },
+        "targetNodes": {
+          "tblCOMPANIES": {
+            "stub": true,
+            "typeId": "Companies",
+            "displayName": "Companies"
+          },
+          "tblCONTACTS": {
+            "stub": true,
+            "typeId": "Contacts",
+            "displayName": "Contacts"
+          }
+        }
+      }
+    },
+    {
+      "step": "Base[0] -[Companies]-> LIMIT 3",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Companies",
+            "identity": {
+              "kind": "stable",
+              "recordId": "rec1",
+              "data": {
+                "fldName": "Parity Labs",
+                "fldStage": "Seed",
+                "fldNotes": "Made by recorded parity"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "edgesFrom Base[0]-[Companies]->[0]",
+      "answer": null
+    },
+    {
+      "step": "Base[0] -[Contacts]-> LIMIT 3",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Contacts",
+            "identity": {
+              "kind": "stable",
+              "recordId": "rec1",
+              "data": {
+                "fldFullName": "Paula Parity",
+                "fldEmail": "paula@paritylabs.example",
+                "fldCompany": [
+                  "rec1"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "edgesFrom Base[0]-[Contacts]->[0]",
+      "answer": null
+    },
+    {
+      "step": "scoped listEntryPoints",
+      "answer": [
+        {
+          "typeId": "airtable:record_change",
+          "displayName": "Record Change",
+          "writable": false,
+          "readable": false,
+          "fires": true
+        },
+        {
+          "typeId": "Companies",
+          "displayName": "Companies",
+          "externalId": "tblCOMPANIES",
+          "writable": true,
+          "readable": true,
+          "labelTemplate": "{fldName}"
+        },
+        {
+          "typeId": "Contacts",
+          "displayName": "Contacts",
+          "externalId": "tblCONTACTS",
+          "writable": true,
+          "readable": true,
+          "labelTemplate": "{fldFullName}"
+        }
+      ]
+    },
+    {
+      "step": "scoped root Companies",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Companies",
+            "identity": {
+              "kind": "stable",
+              "recordId": "rec1",
+              "data": {
+                "fldName": "Parity Labs",
+                "fldStage": "Seed",
+                "fldNotes": "Made by recorded parity"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Companies[0].Name",
+      "answer": null
+    },
+    {
+      "step": "Companies[0].Stage",
+      "answer": null
+    },
+    {
+      "step": "Companies[0].Notes",
+      "answer": null
+    },
+    {
+      "step": "scoped root Contacts",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Contacts",
+            "identity": {
+              "kind": "stable",
+              "recordId": "rec1",
+              "data": {
+                "fldFullName": "Paula Parity",
+                "fldEmail": "paula@paritylabs.example",
+                "fldCompany": [
+                  "rec1"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Contacts[0].Email",
+      "answer": null
+    },
+    {
+      "step": "Contacts[0] -[Company]->",
+      "answer": []
+    },
+    {
+      "step": "readRecord Companies",
+      "answer": {
+        "fldName": "Parity Labs",
+        "fldStage": "Seed",
+        "fldNotes": "Made by recorded parity"
+      }
+    },
+    {
+      "step": "updateRecord Companies",
+      "answer": {
+        "adapterType": "airtable",
+        "externalId": "rec1",
+        "data": {
+          "url": "https://airtable.com/appTEST001/tblCOMPANIES/rec1",
+          "name": "Parity Labs"
+        },
+        "association": "none"
+      }
+    },
+    {
+      "step": "resolveEntity Companies by Name",
+      "answer": {
+        "candidates": []
+      }
+    },
+    {
+      "step": "scoped root Companies WHERE Name",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "airtable",
+            "recordType": "Companies",
+            "identity": {
+              "kind": "stable",
+              "recordId": "rec1",
+              "data": {
+                "fldName": "Parity Labs",
+                "fldStage": "Series A",
+                "fldNotes": "Made by recorded parity"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "deleteRecord Companies",
+      "answer": {}
+    },
+    {
+      "step": "listEventTypes",
+      "answer": [
+        {
+          "tag": "record.created",
+          "positionType": "airtable:record_change",
+          "match": {
+            "path": "eventType",
+            "equals": "record.created"
+          }
+        },
+        {
+          "tag": "record.updated",
+          "positionType": "airtable:record_change",
+          "match": {
+            "path": "eventType",
+            "equals": "record.updated"
+          }
+        },
+        {
+          "tag": "record.deleted",
+          "positionType": "airtable:record_change",
+          "match": {
+            "path": "eventType",
+            "equals": "record.deleted"
+          }
+        }
+      ]
+    },
+    {
+      "step": "ensureEventSubscription create",
+      "answer": {
+        "externalId": "ach1",
+        "secret": "/tm2CTtiBIyE5/fjoNSTNjG2jYhwFEPRLLgHeBewEtg="
+      }
+    },
+    {
+      "step": "preprocessInbound ping",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "action": "record.created",
+              "record": "recPARITY1",
+              "table": "tblCOMPANIES",
+              "tableName": "Companies",
+              "base": "appTEST001",
+              "fields": {
+                "Name": "Pinged Co",
+                "Stage": "Seed"
+              }
+            },
+            "externalId": "recPARITY1",
+            "recordType": "tblCOMPANIES",
+            "eventType": "record.created",
+            "tag": "record.created",
+            "changeType": "create",
+            "occurredAt": "2026-10-17T13:13:33.524Z"
+          },
+          {
+            "payload": {
+              "action": "record.updated",
+              "record": "recPARITY1",
+              "table": "tblCOMPANIES",
+              "tableName": "Companies",
+              "base": "appTEST001",
+              "fields": {
+                "Stage": "Series A"
+              }
+            },
+            "externalId": "recPARITY1",
+            "recordType": "tblCOMPANIES",
+            "eventType": "record.updated",
+            "tag": "record.updated",
+            "changeType": "update",
+            "occurredAt": "2026-10-17T13:13:33.528Z"
+          }
+        ],
+        "checkpoint": 3
+      }
+    },
+    {
+      "step": "preprocessInbound ping from the checkpoint",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "action": "record.updated",
+              "record": "recPARITY1",
+              "table": "tblCOMPANIES",
+              "tableName": "Companies",
+              "base": "appTEST001",
+              "fields": {
+                "Stage": "Series A"
+              }
+            },
+            "externalId": "recPARITY1",
+            "recordType": "tblCOMPANIES",
+            "eventType": "record.updated",
+            "tag": "record.updated",
+            "changeType": "update",
+            "occurredAt": "2026-10-17T13:13:33.528Z"
+          }
+        ],
+        "checkpoint": 3
+      }
+    },
+    {
+      "step": "preprocessInbound not a ping",
+      "answer": {
+        "events": []
+      }
+    },
+    {
+      "step": "ensureEventSubscription unchanged",
+      "answer": null
+    },
+    {
+      "step": "ensureEventSubscription widened (recreated)",
+      "answer": {
+        "externalId": "ach2",
+        "secret": "TrghbwKI3Fa2BUfMagvUeOeCZmLpFQnBmyFzZ74z7V4="
+      }
+    },
+    {
+      "step": "removeEventSubscription",
+      "answer": null
+    },
+    {
+      "step": "ensureEventSubscription without a table scope",
+      "answer": null
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v0/meta/bases",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"bases\":[{\"id\":\"appTEST001\",\"name\":\"Pipeline Tracker\"},{\"id\":\"appTEST002\",\"name\":\"Ops\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/meta/bases/appTEST001/tables",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"tables\":[{\"id\":\"tblCOMPANIES\",\"name\":\"Companies\",\"primaryFieldId\":\"fldName\",\"fields\":[{\"id\":\"fldName\",\"name\":\"Name\",\"type\":\"singleLineText\"},{\"id\":\"fldStage\",\"name\":\"Stage\",\"type\":\"singleSelect\"},{\"id\":\"fldNotes\",\"name\":\"Notes\",\"type\":\"multilineText\"}]},{\"id\":\"tblCONTACTS\",\"name\":\"Contacts\",\"primaryFieldId\":\"fldFullName\",\"fields\":[{\"id\":\"fldFullName\",\"name\":\"Full Name\",\"type\":\"singleLineText\"},{\"id\":\"fldEmail\",\"name\":\"Email\",\"type\":\"email\"},{\"id\":\"fldCompany\",\"name\":\"Company\",\"type\":\"multipleRecordLinks\"}]}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/meta/bases/appTEST002/tables",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"tables\":[{\"id\":\"tblVENDORS\",\"name\":\"Vendors\",\"primaryFieldId\":\"fldVendor\",\"fields\":[{\"id\":\"fldVendor\",\"name\":\"Vendor\",\"type\":\"singleLineText\"},{\"id\":\"fldSpend\",\"name\":\"Spend\",\"type\":\"currency\"}]}]}"
+    },
+    {
+      "method": "POST",
+      "path": "/v0/appTEST001/tblCOMPANIES",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": {
+        "fields": {
+          "fldName": "Parity Labs",
+          "fldStage": "Seed",
+          "fldNotes": "Made by recorded parity"
+        }
+      },
+      "status": 200,
+      "response": "{\"id\":\"rec1\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/v0/appTEST001/tblCONTACTS",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": {
+        "fields": {
+          "fldFullName": "Paula Parity",
+          "fldEmail": "paula@paritylabs.example",
+          "fldCompany": [
+            "rec1"
+          ]
+        }
+      },
+      "status": 200,
+      "response": "{\"id\":\"rec1\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/meta/bases",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"bases\":[{\"id\":\"appTEST001\",\"name\":\"Pipeline Tracker\"},{\"id\":\"appTEST002\",\"name\":\"Ops\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/appTEST001/tblCOMPANIES",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"records\":[{\"id\":\"rec1\",\"fields\":{\"fldName\":\"Parity Labs\",\"fldStage\":\"Seed\",\"fldNotes\":\"Made by recorded parity\"},\"createdTime\":\"2026-10-17T13:13:33.394Z\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/appTEST001/tblCONTACTS",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"records\":[{\"id\":\"rec1\",\"fields\":{\"fldFullName\":\"Paula Parity\",\"fldEmail\":\"paula@paritylabs.example\",\"fldCompany\":[\"rec1\"]},\"createdTime\":\"2026-10-17T13:13:33.405Z\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/appTEST001/tblCOMPANIES",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"records\":[{\"id\":\"rec1\",\"fields\":{\"fldName\":\"Parity Labs\",\"fldStage\":\"Seed\",\"fldNotes\":\"Made by recorded parity\"},\"createdTime\":\"2026-10-17T13:13:33.394Z\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/appTEST001/tblCONTACTS",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"records\":[{\"id\":\"rec1\",\"fields\":{\"fldFullName\":\"Paula Parity\",\"fldEmail\":\"paula@paritylabs.example\",\"fldCompany\":[\"rec1\"]},\"createdTime\":\"2026-10-17T13:13:33.405Z\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/appTEST001/tblCOMPANIES/rec1",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"rec1\",\"fields\":{\"fldName\":\"Parity Labs\",\"fldStage\":\"Seed\",\"fldNotes\":\"Made by recorded parity\"},\"createdTime\":\"2026-10-17T13:13:33.394Z\"}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v0/appTEST001/tblCOMPANIES/rec1",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": {
+        "fields": {
+          "fldStage": "Series A"
+        }
+      },
+      "status": 200,
+      "response": "{\"id\":\"rec1\",\"fields\":{\"fldName\":\"Parity Labs\",\"fldStage\":\"Series A\",\"fldNotes\":\"Made by recorded parity\"}}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/appTEST001/tblCOMPANIES",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"records\":[{\"id\":\"rec1\",\"fields\":{\"fldName\":\"Parity Labs\",\"fldStage\":\"Series A\",\"fldNotes\":\"Made by recorded parity\"},\"createdTime\":\"2026-10-17T13:13:33.394Z\"}]}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v0/appTEST001/tblCOMPANIES/rec1",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"rec1\",\"deleted\":true}"
+    },
+    {
+      "method": "POST",
+      "path": "/v0/bases/appTEST001/webhooks",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": {
+        "notificationUrl": "https://example.test/api/public/webhook-sync/airtable/sub-1",
+        "specification": {
+          "options": {
+            "filters": {
+              "dataTypes": [
+                "tableData"
+              ],
+              "changeTypes": [
+                "add",
+                "update"
+              ],
+              "recordChangeScope": "tblCOMPANIES"
+            }
+          }
+        }
+      },
+      "status": 200,
+      "response": "{\"id\":\"ach1\",\"macSecretBase64\":\"/tm2CTtiBIyE5/fjoNSTNjG2jYhwFEPRLLgHeBewEtg=\",\"expirationTime\":\"2026-10-24T13:13:33.520Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/bases/appTEST001/webhooks/ach1/payloads?cursor=1",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"payloads\":[{\"timestamp\":\"2026-10-17T13:13:33.524Z\",\"baseTransactionNumber\":\"1\",\"changedTablesById\":{\"tblCOMPANIES\":{\"createdRecordsById\":{\"recPARITY1\":{\"cellValuesByFieldId\":{\"fldName\":\"Pinged Co\",\"fldStage\":\"Seed\"}}}}}},{\"timestamp\":\"2026-10-17T13:13:33.528Z\",\"baseTransactionNumber\":\"2\",\"changedTablesById\":{\"tblCOMPANIES\":{\"changedRecordsById\":{\"recPARITY1\":{\"current\":{\"cellValuesByFieldId\":{\"fldStage\":\"Series A\"}}}}}}}],\"cursor\":3,\"mightHaveMore\":false}"
+    },
+    {
+      "method": "GET",
+      "path": "/v0/bases/appTEST001/webhooks/ach1/payloads?cursor=2",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"payloads\":[{\"timestamp\":\"2026-10-17T13:13:33.528Z\",\"baseTransactionNumber\":\"2\",\"changedTablesById\":{\"tblCOMPANIES\":{\"changedRecordsById\":{\"recPARITY1\":{\"current\":{\"cellValuesByFieldId\":{\"fldStage\":\"Series A\"}}}}}}}],\"cursor\":3,\"mightHaveMore\":false}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v0/bases/appTEST001/webhooks/ach1",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"ok\":true}"
+    },
+    {
+      "method": "POST",
+      "path": "/v0/bases/appTEST001/webhooks",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": {
+        "notificationUrl": "https://example.test/x",
+        "specification": {
+          "options": {
+            "filters": {
+              "dataTypes": [
+                "tableData"
+              ],
+              "changeTypes": [
+                "add",
+                "remove"
+              ],
+              "recordChangeScope": "tblCOMPANIES"
+            }
+          }
+        }
+      },
+      "status": 200,
+      "response": "{\"id\":\"ach2\",\"macSecretBase64\":\"TrghbwKI3Fa2BUfMagvUeOeCZmLpFQnBmyFzZ74z7V4=\",\"expirationTime\":\"2026-10-24T13:13:33.570Z\"}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v0/bases/appTEST001/webhooks/ach2",
+      "authorization": "Bearer dev-loop-airtable-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"ok\":true}"
+    }
+  ]
+}

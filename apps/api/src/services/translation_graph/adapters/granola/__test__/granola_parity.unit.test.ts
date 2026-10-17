@@ -18,6 +18,7 @@ jest.mock('../../../../../lib/credentials', () => ({
 // reads its credential through the secrets family exactly as in production.
 const vault: { current?: ReturnType<typeof import('movement-engine/public/secrets').createMemoryVault> } = {};
 jest.mock('../../../../credentials/secrets_postgres', () => ({
+  ...jest.requireActual('../../../../credentials/secrets_postgres'),
   postgresSecrets: () => {
     if (vault.current === undefined) throw new Error('no vault seeded');
     return vault.current;

@@ -67,7 +67,8 @@ jest.mock('../../../adapters/slack/webApi/apiClient', () => ({
 
 // ── Attio `client.fetch` mock ────────────────────────────────────────────
 const attioFetch = jest.fn();
-jest.mock('../../../adapters/attio/apiClient', () => ({
+jest.mock('@lf/attio/api_client', () => ({
+  ...jest.requireActual<object>('@lf/attio/api_client'),
   getAttioClient: () => ({ fetch: attioFetch }),
   attioCredsParser: { safeParse: (v: unknown) => ({ success: true, data: v }) },
 }));
@@ -76,7 +77,7 @@ import type { ActingUserTriggerContext } from '../adapters/acting_user_shared';
 import type { ActorCandidate } from 'movement-engine/services/translation_graph/adapter';
 
 import { SlackAdapter } from '../adapters/slack';
-import { AttioAdapter } from '../adapters/attio';
+import { createAttioAdapter } from '../adapters/attio';
 import { resolveActingUser } from '../adapters/acting_user/resolve';
 
 const TEAM_ID = 'team-1' as TeamId;
@@ -311,7 +312,7 @@ describe('SlackAdapter.extractActor', () => {
 
 describe('AttioAdapter acting-user', () => {
   it('rejects without creator fallback and no email match', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     attioFetch.mockResolvedValue({ data: { email_address: 'someone@external.com' } });
     setDbRow(ATTIO_CRED_ROW); // getApiClient credential lookup
     setDbRow(null); // email-match exact-lookup misses
@@ -324,7 +325,7 @@ describe('AttioAdapter acting-user', () => {
   });
 
   it('authenticates as creator when fallback enabled and no email match', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     attioFetch.mockResolvedValue({ data: { email_address: 'someone@external.com' } });
     setDbRow(ATTIO_CRED_ROW); // getApiClient credential lookup
     setDbRow(null); // email-match exact-lookup misses
@@ -344,7 +345,7 @@ describe('AttioAdapter acting-user', () => {
 
   // ── T6 — runtime email auto-match ──────────────────────────────────────
   it('auto-matches the workspace-member email to a Listen-Fire user', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     attioFetch.mockResolvedValue({ data: { email_address: 'Ada@Example.com' } });
     setDbRow(ATTIO_CRED_ROW); // getApiClient credential lookup
     setDbRow({ id: 'user-h', email: 'ada@example.com', username: 'ada' });
@@ -360,7 +361,7 @@ describe('AttioAdapter acting-user', () => {
   });
 
   it('does not call the API for api-token actors (no human email)', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     const user = await identify({
       adapter,
       event: makeEvent({}, { id: 'tok-1', type: 'api-token' }),
@@ -371,7 +372,7 @@ describe('AttioAdapter acting-user', () => {
   });
 
   it('falls through to null when the member lookup throws (API error)', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     setDbRow(ATTIO_CRED_ROW); // getApiClient credential lookup
     attioFetch.mockRejectedValue(new Error('403'));
     const user = await identify({
@@ -384,7 +385,7 @@ describe('AttioAdapter acting-user', () => {
 
   // ── T6 — creator override ──────────────────────────────────────────────
   it('overrides to creator when overrideActingUserToCreator is set (skips email match)', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     setDbRow({ id: 'creator-2', email: 'creator2@example.com', username: 'c2' });
     const user = await identify({
       adapter,
@@ -401,7 +402,7 @@ describe('AttioAdapter acting-user', () => {
   });
 
   it('rejects when override is on but the trigger has no creator', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     const user = await identify({
       adapter,
       event: makeEvent({}, { id: 'wm-1', type: 'workspace-member' }),
@@ -419,7 +420,7 @@ describe('AttioAdapter acting-user', () => {
 
 describe('AttioAdapter.extractActor', () => {
   it('reads actor.id from the event envelope', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     const actor = await adapter.extractActor({
       event: makeEvent({}, { id: 'wm-789', type: 'workspace-member' }),
     });
@@ -427,13 +428,13 @@ describe('AttioAdapter.extractActor', () => {
   });
 
   it('falls back to payload.actor.id when event.actor is absent', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     const actor = await adapter.extractActor({ event: makeEvent({ actor: { id: 'wm-from-payload' } }) });
     expect(actor?.identifier).toBe('wm-from-payload');
   });
 
   it('returns null when nothing carries an actor id', async () => {
-    const adapter = new AttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
+    const adapter = createAttioAdapter({ teamId: TEAM_ID, credentialsId: 'cred-1' });
     const actor = await adapter.extractActor({ event: makeEvent({}) });
     expect(actor).toBeNull();
   });

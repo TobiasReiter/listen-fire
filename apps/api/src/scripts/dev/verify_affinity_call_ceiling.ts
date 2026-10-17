@@ -26,8 +26,10 @@ import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
 import { runMovement } from 'movement-engine/services/movement_engine/run';
-import { AffinityAPIClient } from '../../adapters/affinity/apiClient';
-import { AffinityAdapter, AFFINITY_MANIFEST } from '../../services/translation_graph/adapters/affinity';
+import { AffinityAPIClient } from '@lf/affinity/api_client';
+import { AffinityAdapter, AFFINITY_MANIFEST } from '@lf/affinity';
+import { hostedModels } from '../../services/translation_graph/adapters/module_host';
+import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
 import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
 import { makeMetaPosition } from 'movement-engine/services/translation_graph/types';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
@@ -41,8 +43,13 @@ const requests: string[] = [];
 
 function adapterOnFake(): AffinityAdapter {
   const adapter = new AffinityAdapter({
-    teamId: TEAM_ID,
-    credentialsId: 'creds-verify' as ExternalServiceCredentialsId,
+    tenant: TEAM_ID,
+    client: async () => {
+      throw new Error('this script supplies its own client');
+    },
+    models: hostedModels,
+    files: platformModuleFiles({ teamId: TEAM_ID, module: '@lf/affinity' }),
+    fetch,
   });
   // A client of its own per adapter, so the counting chokepoint is the real
   // one but the fixture's calls stay separable from the run's.
