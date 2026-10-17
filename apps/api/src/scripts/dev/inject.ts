@@ -16,6 +16,8 @@
  *                          mailgun-email   - Mailgun inbound email payload
  *                          resend-email    - Resend inbound email (seed + signed webhook)
  *                          gmail-message   - a message into the fake Gmail mailbox, then its poll
+ *                          oauth-expire    - make the dev-loop Dropbox token stale (stored expiry + provider refusal)
+ *                          oauth-config    - [--expires-in s] [--rotate true|false] [--fail-next n] [--fail-with invalid_grant|server_error]
  *                          crm-company     - a company created in the fake CRM, which pushes `emit`
  *                          crm-comment     - a comment on a fake-CRM company, which pushes `wake`
  *
@@ -73,6 +75,7 @@ import { ensureDevLoopTeam } from './_lib';
 import { fakeCrmBaseUrl } from './fake_crm_adapter';
 import { signMailgunPayload } from './lib/mailgun-sign';
 import { signResendWebhook } from './lib/resend-sign';
+import { expireDevLoopDropboxCredential, fakeOAuthControl } from './lib/dev_oauth';
 import { userPrincipal } from '../../services/principal';
 
 /**
@@ -2728,6 +2731,25 @@ async function main() {
     return;
   }
 
+  if (subcommand === 'oauth-expire') {
+    const seed = await ensureDevLoopTeam();
+    printResult(await expireDevLoopDropboxCredential(seed.teamId), PRETTY);
+    return;
+  }
+
+  if (subcommand === 'oauth-config') {
+    printResult(
+      await fakeOAuthControl('config', {
+        ...(flags['expires-in'] !== undefined ? { expiresIn: Number(flags['expires-in']) } : {}),
+        ...(flags.rotate !== undefined ? { rotate: flags.rotate === 'true' } : {}),
+        ...(flags['fail-next'] !== undefined ? { failNext: Number(flags['fail-next']) } : {}),
+        ...(flags['fail-with'] !== undefined ? { failWith: flags['fail-with'] } : {}),
+      }),
+      PRETTY,
+    );
+    return;
+  }
+
   if (subcommand === 'callback' || subcommand === 'cb') {
     if (!flags['cb-id']) {
       console.error(
@@ -2796,7 +2818,7 @@ async function main() {
 
   console.error(`Unknown subcommand: ${subcommand}`);
   console.error(
-    'Available: raw, attio-webhook, airtable-webhook, slack-event, slack-interactivity, mailgun-email, resend-email, telegram-event, telegram-builtin, telegram-callback, telegram-start, whatsapp, cron, granola, evertrace, evertrace-list-entry, dealroom, gmail-message, kg-mutation, callback, crm-company, crm-comment',
+    'Available: raw, attio-webhook, airtable-webhook, slack-event, slack-interactivity, mailgun-email, resend-email, telegram-event, telegram-builtin, telegram-callback, telegram-start, whatsapp, cron, granola, evertrace, evertrace-list-entry, dealroom, gmail-message, oauth-expire, oauth-config, kg-mutation, callback, crm-company, crm-comment',
   );
   process.exit(2);
 }

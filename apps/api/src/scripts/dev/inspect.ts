@@ -12,6 +12,7 @@
  *   pnpm dev:inspect evertrace             → seeded signals/lists/searches + the evertrace poll trigger
  *   pnpm dev:inspect dealroom              → fake Dealroom entity counts, recent API requests + the dealroom poll trigger
  *   pnpm dev:inspect dealroom --clear-requests → wipe the Dealroom request log first (isolate one run's calls)
+ *   pnpm dev:inspect oauth                 → the fake OAuth provider's token calls + tokens, and the stored Dropbox credential
  *   pnpm dev:inspect gmail                 → the fake mailbox's change marker, its outbox, + the gmail poll trigger's checkpoint
  *   pnpm dev:inspect crm                   → the fake CRM's companies, comments, subscriptions + parks on it
  *   pnpm dev:inspect callbacks             → minted callbacks + their call ledgers
@@ -40,6 +41,7 @@ import { getQb, getAutomationsQb, getValuationsQb } from '../../lib/kysely';
 import type { TeamId } from '../../generated/kysely/core/Team';
 
 import { ensureDevLoopTeam } from './_lib';
+import { fakeOAuthState, readDevLoopDropboxCredential } from './lib/dev_oauth';
 import { FAKE_CRM_ADAPTER_TYPE, fakeCrmBaseUrl } from './fake_crm_adapter';
 import { listAsksForTeam } from '../../services/translation_graph/adapters/ask/store';
 import {
@@ -64,6 +66,7 @@ type Domain =
   | 'evertrace'
   | 'dealroom'
   | 'gmail'
+  | 'oauth'
   | 'affinity'
   | 'valuations'
   | 'asks'
@@ -85,6 +88,7 @@ const ALL_DOMAINS: Exclude<Domain, 'all'>[] = [
   'evertrace',
   'dealroom',
   'gmail',
+  'oauth',
   'affinity',
   'valuations',
   'asks',
@@ -609,6 +613,26 @@ async function inspectDealroom(options: { clearRequests?: boolean } = {}) {
 }
 
 /**
+ * The fake OAuth provider's view: its config, every token call it served (the
+ * refresh_token calls are the evidence a refresh happened, and how many), the
+ * tokens it holds, and what the dev-loop team's Dropbox credential stores now.
+ * A rotated refresh token shows as the stored suffix changing between reads.
+ */
+async function inspectOAuth() {
+  const seed = await ensureDevLoopTeam();
+  const state = await fakeOAuthState();
+  return {
+    service: 'oauth',
+    teamId: seed.teamId,
+    config: state.config,
+    tokenCalls: state.calls,
+    refreshTokens: state.refresh,
+    accessTokens: state.access,
+    storedCredential: await readDevLoopDropboxCredential(seed.teamId),
+  };
+}
+
+/**
  * Gmail-specific view: what the fake mailbox holds (its change marker and how
  * far back history still reaches), what it has SENT, and the dev-loop team's
  * gmail POLL trigger rows with their `poll_checkpoint` / `poll_last_at`.
@@ -781,6 +805,8 @@ async function main() {
     results.push(await inspectDealroom({ clearRequests: CLEAR_REQUESTS }));
   } else if (domain === 'gmail') {
     results.push(await inspectGmail());
+  } else if (domain === 'oauth') {
+    results.push(await inspectOAuth());
   } else if (['sheets', 'affinity'].includes(domain)) {
     results.push(await inspectGeneric(domain as any));
   } else {

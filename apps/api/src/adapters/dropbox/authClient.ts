@@ -7,6 +7,7 @@ import { createSecretsFamily, expiresWithin, oauth2Refresher, type SecretFields 
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
 const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token';
+const DROPBOX_AUTHORIZE_URL = 'https://www.dropbox.com/oauth2/authorize';
 const REFRESH_WINDOW_MS = 60_000;
 
 function dropboxSecrets() {
@@ -36,11 +37,23 @@ export class DropboxAuthClient {
   private authCache: Record<string, string> = {};
   private clientId: string;
   private clientSecret: string;
+  private tokenUrl: string;
+  private authorizeUrl: string;
   readonly callbackUrl: string;
 
-  constructor({ clientId, clientSecret, redirectBaseUrl }: { clientId: string; clientSecret: string; redirectBaseUrl: string }) {
+  /** `fakeBaseUrl` points both OAuth endpoints at the dev loop's fake OAuth
+   *  provider, so the real exchange and refresh run with nothing mocked. */
+  constructor({ clientId, clientSecret, redirectBaseUrl, fakeBaseUrl }: {
+    clientId: string;
+    clientSecret: string;
+    redirectBaseUrl: string;
+    fakeBaseUrl?: string;
+  }) {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
+    const fakeBase = fakeBaseUrl?.replace(/\/$/, '');
+    this.tokenUrl = fakeBase === undefined ? DROPBOX_TOKEN_URL : `${fakeBase}/oauth/token`;
+    this.authorizeUrl = fakeBase === undefined ? DROPBOX_AUTHORIZE_URL : `${fakeBase}/oauth/authorize`;
     this.callbackUrl = `${redirectBaseUrl}/dropbox/callback`;
   }
 
@@ -60,7 +73,7 @@ export class DropboxAuthClient {
       const refreshed = await secrets.refresh(credentialsId, {
         seenVersion: stored.version,
         refresher: oauth2Refresher({
-          tokenUrl: DROPBOX_TOKEN_URL,
+          tokenUrl: this.tokenUrl,
           clientAuth: 'body',
           client: { clientId: this.clientId, clientSecret: this.clientSecret },
         }),
@@ -89,7 +102,7 @@ export class DropboxAuthClient {
     }
     delete this.authCache[state];
 
-    const response = await fetch('https://api.dropboxapi.com/oauth2/token', {
+    const response = await fetch(this.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -133,6 +146,6 @@ export class DropboxAuthClient {
       state,
     });
 
-    return `https://www.dropbox.com/oauth2/authorize?${params}`;
+    return `${this.authorizeUrl}?${params}`;
   }
 }

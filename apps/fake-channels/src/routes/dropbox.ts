@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import express from 'express';
 import type { EntityStore } from '../store';
+import { bearerOf, isRefusedBearer } from './oauth';
 
 const SVC = 'dropbox';
 
@@ -27,6 +28,15 @@ function toApiEntry(data: Record<string, unknown>): Record<string, unknown> {
 
 export function dropboxRoutes(store: EntityStore): Router {
   const r = Router();
+
+  // Like the real API, refuse an access token the fake OAuth provider has
+  // expired; a token it never issued is a fixture credential and passes.
+  r.use((req, res, next) => {
+    if (isRefusedBearer(store, bearerOf(req))) {
+      return res.status(401).json({ error_summary: 'expired_access_token/' });
+    }
+    next();
+  });
 
   r.post('/2/files/list_folder', (req, res) => {
     const path = String(req.body.path ?? '');
