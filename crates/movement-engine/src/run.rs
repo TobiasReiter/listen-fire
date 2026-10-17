@@ -288,6 +288,18 @@ impl Failure {
         Failure::Engine { class: ErrorClass::Engine(code), message }
     }
 
+    /// A host answer that is not the shape the host contract gives it: the
+    /// run ends coded MOVENG_RUNTIME, naming the host call and what was wrong,
+    /// never as the JavaScript TypeError reading it would have thrown.
+    pub(crate) fn host_answer(call: &str, wanted: &str, got: &Js) -> Failure {
+        let got = match got {
+            Js::Undefined => "nothing".to_string(),
+            Js::Null => "null".to_string(),
+            other => format!("{} ({})", other.type_of(), crate::js::json_stringify(other, 0).chars().take(80).collect::<String>()),
+        };
+        Failure::engine("MOVENG_RUNTIME", format!("the host's {call} answered something malformed: expected {wanted}, got {got}"))
+    }
+
     /// `unsupported(construct, detail?)`: an empty detail is none.
     pub(crate) fn unsupported(construct: &str, detail: &str) -> Failure {
         Failure::engine("MOVENG_UNSUPPORTED", unsupported_message(construct, detail))
@@ -1963,16 +1975,12 @@ impl Run<'_> {
                 if !acting.truthy() {
                     return Ok(Js::Null);
                 }
-                // `acting.principal.display`: a principal the host left out
-                // throws JavaScript's TypeError (forgivable, as any).
-                let principal = |field: &str| {
-                    let principal = event_get(&acting, "principal");
-                    crate::record::get(&principal, field).map_err(|error| Failure::of_eval(error, ""))
-                };
+                // The answer was validated when it came (`acting_user_answer`).
+                let principal = event_get(&acting, "principal");
                 Ok(match key {
                     "user_email" => nullish(event_get(&acting, "email")),
-                    "user_name" => nullish(principal("display")?),
-                    _ => principal("id")?,
+                    "user_name" => nullish(event_get(&principal, "display")),
+                    _ => event_get(&principal, "id"),
                 })
             }
             _ => {
@@ -2015,7 +2023,11 @@ impl Run<'_> {
                 let trigger_id = trigger.truthy().then(|| trigger.to_js_string());
                 let request = host::lookup::resolve_acting_user(self.segment(), trigger_id.as_deref(), &source.instance, self.encode(&self.event)?);
                 match self.ask(request).await {
-                    Ok(Some(user)) => self.wire.decode(&user).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?,
+                    Ok(Some(user)) => {
+                        let user = self.wire.decode(&user).map_err(|e| Failure::engine("MOVENG_RUNTIME", e))?;
+                        acting_user_answer(&user)?;
+                        user
+                    }
                     Ok(None) | Err(Failure::Host(_)) => Js::Null,
                     Err(other) => return Err(other),
                 }
@@ -2284,6 +2296,32 @@ impl Run<'_> {
     async fn ask_bool(&self, request: host::Request) -> Result<bool, Failure> {
         Ok(self.ask(request).await?.is_some_and(|v| v.as_bool() == Some(true)))
     }
+}
+
+/// `lookup.resolveActingUser`'s answer, which the contract
+/// (`ActingPrincipal`) gives as `{principal: {id, display?}, email?}` or
+/// nothing: anything else ends the run, coded, where the answer is read.
+fn acting_user_answer(user: &Js) -> Result<(), Failure> {
+    const CALL: &str = "lookup.resolveActingUser";
+    if user.is_nullish() {
+        return Ok(());
+    }
+    let Js::Object(_) = user else { return Err(Failure::host_answer(CALL, "{principal: {id}, email?} or nothing", user)) };
+    let principal = event_get(user, "principal");
+    if !matches!(principal, Js::Object(_)) {
+        return Err(Failure::host_answer(CALL, "a principal object ({id, display?}) under `principal`", &principal));
+    }
+    let text_or_absent = |value: &Js| value.is_nullish() || matches!(value, Js::String(_));
+    let id = event_get(&principal, "id");
+    if !matches!(id, Js::String(_)) {
+        return Err(Failure::host_answer(CALL, "the principal's `id` as text", &id));
+    }
+    for (what, value) in [("the principal's `display` as text or absent", event_get(&principal, "display")), ("`email` as text or absent", event_get(user, "email"))] {
+        if !text_or_absent(&value) {
+            return Err(Failure::host_answer(CALL, what, &value));
+        }
+    }
+    Ok(())
 }
 
 /// A write record with every citation of a write by number the ledger
@@ -2807,6 +2845,77 @@ mod tests {
         let (done, seen) = drive_input(input, plain_host(json!({ "subject": "Hi" })));
         assert!(done.get("result").is_some(), "{done}");
         assert!(seen.iter().any(|r| r.family == "adapters" && r.method == "call"));
+    }
+
+    /// A host answer that is not the shape its contract gives ends the run
+    /// coded MOVENG_RUNTIME, naming the host call and what was wrong, never
+    /// as the JavaScript TypeError that reading it would have thrown.
+    #[test]
+    fn a_malformed_host_answer_ends_the_run_coded_and_names_the_call() {
+        let source = "import { email } from adapters\nimport { findFiles } from plugins\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  found = findFiles(q: \"x\")\n  n = COUNT(found)\n}";
+        let run = |answer: Json| {
+            let mut catalog = serde_json::from_str::<Json>(CATALOG).unwrap();
+            catalog["plugins"] = json!({ "find_files": {
+                "args": ["q"], "requiredArgs": ["q"], "priced": true, "output": { "kind": "records", "fields": { "url": "text" } },
+            } });
+            let mut input = segment_input(source, json!(["o", []]), &[]);
+            input["catalog"] = catalog;
+            let host = |request: &PendingRequest| match (request.family, request.method.as_str()) {
+                ("llm.transforms", "invoke") => json!({ "value": wire(answer.clone()) }),
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                _ => plain_host(json!({}))(request),
+            };
+            drive_input(input, host).0
+        };
+        let ended = |done: &Json| (done["failed"]["error"]["code"].clone(), done["failed"]["error"]["message"].as_str().unwrap_or_default().to_string());
+        for (answer, wanted) in [
+            (json!({ "records": { "url": "u" } }), "expected `records` as a list or absent, got object ({\"url\":\"u\"})"),
+            (json!({ "records": [{ "url": "u" }, null] }), "expected every entry of `records` as an object, got null"),
+            (json!({ "records": ["ab"] }), "expected every entry of `records` as an object, got string (\"ab\")"),
+            (json!({ "text": 5 }), "expected `text` as text or absent, got number (5)"),
+            (json!({ "data": [1] }), "expected `data` as an object or absent, got object ([1])"),
+            (json!(5), "expected an object with text, data, records and outcome members, got number (5)"),
+        ] {
+            let done = run(answer.clone());
+            let (code, message) = ended(&done);
+            assert_eq!(code, json!("MOVENG_RUNTIME"), "{answer}: {done}");
+            assert_eq!(message, format!("the host's llm.transforms.invoke answered something malformed: {wanted}"), "{answer}");
+        }
+        assert!(run(json!({ "records": [{ "url": "u" }] })).get("result").is_some());
+    }
+
+    /// The acting user the host answers is `{principal: {id, display?},
+    /// email?}`: one that is not ends the run coded where `@user_*` reads it.
+    #[test]
+    fn a_malformed_acting_user_ends_the_run_coded() {
+        let source = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  who = @user_name\n}";
+        let run = |user: Json| {
+            let host = |request: &PendingRequest| match (request.family, request.method.as_str()) {
+                ("adapters", "resolve") => json!({ "value": { "instance": "i1", "adapterType": "email", "methods": ["getActorCandidates"] } }),
+                ("lookup", "resolveActingUser") => json!({ "value": wire(user.clone()) }),
+                ("clock", "now") => json!({ "value": { "nowIso": "2026-10-07T12:00:00.000Z" } }),
+                _ => plain_host(json!({}))(request),
+            };
+            drive_input(segment_input(source, json!(["o", []]), &[]), host).0
+        };
+        for (user, wanted) in [
+            (json!({ "email": "ada@acme.example" }), "a principal object ({id, display?}) under `principal`, got nothing"),
+            (json!({ "principal": { "display": "Ada" } }), "the principal's `id` as text, got nothing"),
+            (json!({ "principal": { "id": "u1", "display": 5 } }), "the principal's `display` as text or absent, got number (5)"),
+            (json!({ "principal": { "id": "u1" }, "email": ["a"] }), "`email` as text or absent, got object ([\"a\"])"),
+            (json!("ada"), "{principal: {id}, email?} or nothing, got string (\"ada\")"),
+        ] {
+            let done = run(user.clone());
+            assert_eq!(done["failed"]["error"]["code"], json!("MOVENG_RUNTIME"), "{user}: {done}");
+            assert_eq!(
+                done["failed"]["error"]["message"],
+                json!(format!("the host's lookup.resolveActingUser answered something malformed: expected {wanted}")),
+                "{user}"
+            );
+        }
+        for user in [json!({ "principal": { "id": "u1" } }), json!({ "principal": { "id": "u1", "display": "Ada" }, "email": "a@b.c" }), Json::Null] {
+            assert!(run(user.clone()).get("result").is_some(), "{user}");
+        }
     }
 
     /// A segment pinned below version 5 is refused by name before anything

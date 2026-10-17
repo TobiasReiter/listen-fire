@@ -115,33 +115,44 @@ pub(crate) struct PluginResult {
     /// An object, or absent.
     pub(crate) data: Option<Js>,
     pub(crate) records: Vec<Js>,
-    /// `records` answered as something other than a list (or nothing),
-    /// which a records output cannot map.
-    pub(crate) records_not_a_list: bool,
     pub(crate) outcome: Option<String>,
 }
 
 impl PluginResult {
-    fn of(answer: &Js) -> PluginResult {
+    /// What `llm.transforms.invoke` answered, which the contract
+    /// (`TransformInvocationResult`) gives as `{text?, data?, records?,
+    /// outcome?}`: a member of another shape ends the run, coded.
+    fn of(answer: &Js) -> Result<PluginResult, Failure> {
+        const CALL: &str = "llm.transforms.invoke";
+        let Js::Object(_) = answer else { return Err(Failure::host_answer(CALL, "an object with text, data, records and outcome members", answer)) };
         let member = |key: &str| crate::unique::get(answer, key);
         let text = match member("text") {
             Js::String(text) => Some(text.into_string()),
-            _ => None,
+            absent if absent.is_nullish() => None,
+            other => return Err(Failure::host_answer(CALL, "`text` as text or absent", &other)),
         };
         let data = match member("data") {
             data @ Js::Object(_) => Some(data),
-            _ => None,
+            absent if absent.is_nullish() => None,
+            other => return Err(Failure::host_answer(CALL, "`data` as an object or absent", &other)),
         };
-        let (records, records_not_a_list) = match member("records") {
-            Js::Array(list) => (list.items().clone(), false),
-            nullish if nullish.is_nullish() => (Vec::new(), false),
-            _ => (Vec::new(), true),
+        let records = match member("records") {
+            Js::Array(list) => {
+                if let Some(bad) = list.items().iter().find(|record| !matches!(record, Js::Object(_))) {
+                    return Err(Failure::host_answer(CALL, "every entry of `records` as an object", bad));
+                }
+                list.items().clone()
+            }
+            absent if absent.is_nullish() => Vec::new(),
+            other => return Err(Failure::host_answer(CALL, "`records` as a list or absent", &other)),
         };
         let outcome = match member("outcome") {
             Js::String(outcome) if !outcome.is_empty() => Some(outcome.into_string()),
-            _ => None,
+            Js::String(_) => None,
+            absent if absent.is_nullish() => None,
+            other => return Err(Failure::host_answer(CALL, "`outcome` as text or absent", &other)),
         };
-        PluginResult { text, data, records, records_not_a_list, outcome }
+        Ok(PluginResult { text, data, records, outcome })
     }
 
     /// `Object.keys(result.data ?? {})`.
@@ -326,7 +337,7 @@ impl Run<'_> {
         let answer = self.priced(request).await?;
         // The host made the files the plugin's output declares (the shim's
         // `withDeclaredFiles`): they arrive as files, and nothing else does.
-        Ok(PluginResult::of(&answer))
+        PluginResult::of(&answer)
     }
 }
 

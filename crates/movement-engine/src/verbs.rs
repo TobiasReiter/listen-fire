@@ -300,6 +300,9 @@ impl Run<'_> {
         if instance.has("readRecord") {
             let args = env::object_of(vec![("recordType", record_type.clone()), ("externalId", external_id.clone())]);
             let fresh = self.call_adapter(instance, "readRecord", args).await.map_err(thrown)?;
+            if !matches!(fresh, Js::Null | Js::Object(_)) {
+                return Err(thrown(Failure::host_answer("adapters.call readRecord", "the record's data as an object, or null once deleted", &fresh)));
+            }
             if matches!(fresh, Js::Null) {
                 let id = external_id.to_text().unwrap_or_default();
                 return Err(thrown(Failure::engine(
