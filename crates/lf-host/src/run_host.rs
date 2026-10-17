@@ -17,7 +17,8 @@ use sha2::{Digest, Sha256};
 
 use crate::json::Js;
 use crate::obj;
-use crate::store::{Store, StoreError};
+use crate::backend::RunHostStore;
+use crate::store::StoreError;
 
 /// A minute of silence is a dead process, not a slow one (`RUN_LEASE_TTL_MS`).
 pub const RUN_LEASE_TTL_MS: i64 = 60_000;
@@ -54,7 +55,7 @@ impl Lease {
         self.lost.get()
     }
 
-    async fn renew_forever(&self, store: &Store) {
+    async fn renew_forever(&self, store: &dyn RunHostStore) {
         let ttl = RUN_LEASE_TTL_MS;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis((ttl / 3) as u64)).await;
@@ -78,7 +79,7 @@ impl Lease {
 
 /// `withRunLease`: `body` under the run's lease, renewed while it runs and
 /// released however it ends; None when the lease is held elsewhere.
-pub async fn with_run_lease<T>(store: &Store, run_id: &str, body: impl AsyncFnOnce(&Lease) -> T) -> Result<Option<T>> {
+pub async fn with_run_lease<T>(store: &dyn RunHostStore, run_id: &str, body: impl AsyncFnOnce(&Lease) -> T) -> Result<Option<T>> {
     let deadline = now_ms() + RUN_LEASE_TTL_MS;
     let Some(token) = store.claim_lease(run_id, RUN_LEASE_TTL_MS).map_err(|e| e.to_string())? else { return Ok(None) };
     let lease = Lease { run_id: run_id.to_string(), token, deadline: Cell::new(deadline), lost: Cell::new(false) };
@@ -95,7 +96,7 @@ pub async fn with_run_lease<T>(store: &Store, run_id: &str, body: impl AsyncFnOn
 // ── Library texts a park pins ───────────────────────────────────────────────
 
 /// `parkSources.save`: a text named by the sha-256 of its UTF-8 bytes.
-pub fn save_source(store_: &Store, team_id: &str, source: &str) -> Result<String> {
+pub fn save_source(store_: &dyn RunHostStore, team_id: &str, source: &str) -> Result<String> {
     let digest = Sha256::digest(source.as_bytes());
     let hash = format!("sha256:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>());
     store(store_.put_source(team_id, &hash, source))?;
@@ -108,34 +109,34 @@ pub fn timer_work_key(run_id: &str) -> String {
     format!("resume_timer:{run_id}")
 }
 
-pub fn arm_timer_wake(store_: &Store, run_id: &str, wake_at: &str) -> Result<()> {
-    store(store_.enqueue("resume_timer", &timer_work_key(run_id), &Js::Obj(obj! { "runId" => Js::str(run_id) }), Some(wake_at)))
+pub fn arm_timer_wake(store_: &dyn RunHostStore, run_id: &str, wake_at: &str) -> Result<()> {
+    store(store_.enqueue("resume_timer", &timer_work_key(run_id), &Js::Obj(obj! { "runId" => Js::str(run_id) }), Some(wake_at), None))
 }
 
 /// The wake for one adapter identity, never coalesced.
-pub fn queue_await_wake(store_: &Store, adapter_type: &str, team_id: &str, correlation_key: &str) -> Result<()> {
+pub fn queue_await_wake(store_: &dyn RunHostStore, adapter_type: &str, team_id: &str, correlation_key: &str) -> Result<()> {
     let payload = Js::Obj(obj! { "adapterType" => Js::str(adapter_type), "teamId" => Js::str(team_id), "correlationKey" => Js::str(correlation_key) });
-    store(store_.enqueue("wake_await", &format!("wake_await:{}", uuid::Uuid::new_v4()), &payload, None))
+    store(store_.enqueue("wake_await", &format!("wake_await:{}", uuid::Uuid::new_v4()), &payload, None, Some(team_id)))
 }
 
 // ── Completion ──────────────────────────────────────────────────────────────
 
 /// `runCompleteWithout`: no join waits and no OTHER leaf is parked.
-pub fn run_complete_without(store_: &Store, run_id: &str, leaf_address: &str) -> Result<bool> {
+pub fn run_complete_without(store_: &dyn RunHostStore, run_id: &str, leaf_address: &str) -> Result<bool> {
     if store(store_.has_pending_joins(run_id))? {
         return Ok(false);
     }
     Ok(store(store_.leaves(run_id, true, None, None))?.iter().all(|l| l.address == leaf_address))
 }
 
-pub fn run_quiescent(store_: &Store, run_id: &str) -> Result<bool> {
+pub fn run_quiescent(store_: &dyn RunHostStore, run_id: &str) -> Result<bool> {
     if store(store_.has_pending_joins(run_id))? {
         return Ok(false);
     }
     Ok(store(store_.leaves(run_id, true, None, None))?.is_empty())
 }
 
-pub fn clear_if_quiescent(store_: &Store, run_id: &str, fence: Option<&str>) -> Result<bool> {
+pub fn clear_if_quiescent(store_: &dyn RunHostStore, run_id: &str, fence: Option<&str>) -> Result<bool> {
     if !run_quiescent(store_, run_id)? {
         return Ok(false);
     }
@@ -145,7 +146,7 @@ pub fn clear_if_quiescent(store_: &Store, run_id: &str, fence: Option<&str>) -> 
 
 // ── A run that ends without completing ──────────────────────────────────────
 
-pub fn abandon_run(store_: &Store, run_id: &str, fence: Option<&str>) -> Result<bool> {
+pub fn abandon_run(store_: &dyn RunHostStore, run_id: &str, fence: Option<&str>) -> Result<bool> {
     if !store(store_.drop_run_state(run_id, fence))? {
         return Ok(false);
     }
@@ -154,12 +155,12 @@ pub fn abandon_run(store_: &Store, run_id: &str, fence: Option<&str>) -> Result<
     Ok(true)
 }
 
-pub fn fail_run(store_: &Store, run_id: &str, message: &str, fence: Option<&str>) -> Result<bool> {
+pub fn fail_run(store_: &dyn RunHostStore, run_id: &str, message: &str, fence: Option<&str>) -> Result<bool> {
     store(store_.mark_failed(run_id, message))?;
     abandon_run(store_, run_id, fence)
 }
 
-pub fn settle_if_cancel_requested(store_: &Store, run_id: &str, fence: Option<&str>) -> Result<bool> {
+pub fn settle_if_cancel_requested(store_: &dyn RunHostStore, run_id: &str, fence: Option<&str>) -> Result<bool> {
     let Some(reason) = store(store_.cancel_request(run_id))? else { return Ok(false) };
     fail_run(store_, run_id, reason.as_deref().unwrap_or(CANCELLED_BY_OPERATOR), fence)?;
     Ok(true)
@@ -176,7 +177,7 @@ fn is_ancestor_or_self(prefix: &str, address: &str) -> bool {
 }
 
 /// `cancelSubtrees`.
-pub fn cancel_subtrees(store_: &Store, run_id: &str, subtrees: &[String], exclude_leaf: Option<&str>) -> Result<()> {
+pub fn cancel_subtrees(store_: &dyn RunHostStore, run_id: &str, subtrees: &[String], exclude_leaf: Option<&str>) -> Result<()> {
     if subtrees.is_empty() {
         return Ok(());
     }
@@ -244,7 +245,7 @@ pub enum Settled {
 
 /// `afterStep`: a failure or a cancel tears the run down and ends the
 /// drain; a lost lease ends it leaving every row.
-pub fn after_step(store_: &Store, run_id: &str, fence: Option<&str>, outcome: &StepOutcome) -> Result<Settled> {
+pub fn after_step(store_: &dyn RunHostStore, run_id: &str, fence: Option<&str>, outcome: &StepOutcome) -> Result<Settled> {
     Ok(match outcome {
         StepOutcome::LeaseLost => Settled::LeaseLost,
         StepOutcome::Failed(_) => {
@@ -261,7 +262,7 @@ pub fn after_step(store_: &Store, run_id: &str, fence: Option<&str>, outcome: &S
 
 /// `drainRun`: step the chosen leaves of one run under the caller's lease.
 /// True when the lease went mid-drain (every row is left as it is).
-pub async fn drain_run(store_: &Store, run_id: &str, addresses: &[String], reason: Option<&str>, lease: &Lease, stepper: &impl Stepper) -> Result<bool> {
+pub async fn drain_run(store_: &dyn RunHostStore, run_id: &str, addresses: &[String], reason: Option<&str>, lease: &Lease, stepper: &impl Stepper) -> Result<bool> {
     let fence = Some(lease.token.as_str());
     if settle_if_cancel_requested(store_, run_id, fence)? {
         return Ok(false);
@@ -314,13 +315,13 @@ pub async fn drain_run(store_: &Store, run_id: &str, addresses: &[String], reaso
 }
 
 /// `drainDueTimers`.
-pub async fn drain_due_timers(store_: &Store, run_id: &str, due_by: &str, lease: &Lease, stepper: &impl Stepper) -> Result<bool> {
+pub async fn drain_due_timers(store_: &dyn RunHostStore, run_id: &str, due_by: &str, lease: &Lease, stepper: &impl Stepper) -> Result<bool> {
     let due: Vec<String> = store(store_.leaves(run_id, true, Some("timer"), Some(due_by)))?.into_iter().map(|l| l.address).collect();
     drain_run(store_, run_id, &due, Some("timer"), lease, stepper).await
 }
 
 /// `nextTimerWake`: the earliest wake of the run's still-parked timers.
-pub fn next_timer_wake(store_: &Store, run_id: &str) -> Result<Option<String>> {
+pub fn next_timer_wake(store_: &dyn RunHostStore, run_id: &str) -> Result<Option<String>> {
     let mut wakes: Vec<String> = store(store_.leaves(run_id, true, Some("timer"), None))?.into_iter().filter_map(|l| l.wake_at).collect();
     wakes.sort();
     Ok(wakes.into_iter().next())
@@ -342,7 +343,7 @@ mod tests {
     fn a_library_text_is_named_by_its_sha256() {
         let dir = std::env::temp_dir().join(format!("lf-rules-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let store_ = Store::open(&dir.join("state.db")).unwrap();
+        let store_ = crate::store::Store::open(&dir.join("state.db")).unwrap();
         // sha256("abc")
         assert_eq!(save_source(&store_, "local", "abc").unwrap(), "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(store_.get_source("local", "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad").unwrap().as_deref(), Some("abc"));

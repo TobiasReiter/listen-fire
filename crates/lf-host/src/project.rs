@@ -29,6 +29,8 @@ struct ProjectFile {
     externals: String,
     #[serde(default)]
     user: UserFile,
+    /// Where run state is kept, when not `.lf/state.db` (crate::backend::StoreSpec).
+    store: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -58,6 +60,8 @@ pub struct Project {
     pub externals_dir: PathBuf,
     /// The local acting identity lf.yaml names.
     pub user: (Option<String>, Option<String>),
+    /// lf.yaml's `store:`, unless `--store` names another.
+    pub store: Option<String>,
 }
 
 /// The language version an engine version runs. Every engine this release
@@ -127,6 +131,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
         engine: file.engine,
         language_version,
         user: (file.user.name, file.user.email),
+        store: file.store,
         root: dir,
     })
 }

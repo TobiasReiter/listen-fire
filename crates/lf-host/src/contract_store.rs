@@ -1,5 +1,5 @@
-//! `lf-host --contract-store <state.db>`: the run host's backend families
-//! (crate::store) served over stdin/stdout, one JSON-RPC 2.0 message per
+//! `lf-host --contract-store <state.db|postgres://…>`: the run host's backend
+//! families (crate::backend) served over stdin/stdout, one JSON-RPC 2.0 message per
 //! line, so the TypeScript contract suite drives this store through its
 //! `RpcStoreBackend` (movement-engine `services/run_host/rpc_store.ts`) and
 //! holds it to the meaning every backend has.
@@ -7,18 +7,21 @@
 //! A method is `<family>.<method>` as `RunHostStore` names it
 //! (`parks.putLeaf`, `work.claimDue`, …), its params the TypeScript method's
 //! one input object, its result the TypeScript method's answer (`null` for
-//! none). `runs.start` adds a run row, the contract's `newRun`. A fenced write
+//! none). The callback family is `callbacks.<method>` as `CallbackStore`
+//! names it, and the run records `records.<method>` as `RunRecords` does.
+//! `runs.start` adds a run row, the contract's `newRun`; `runs.requestCancel`,
+//! `runs.status` and `runs.complete` are the records backend's
+//! `requestCancel`, `runStatus` and `completeRun`. A fenced write
 //! refused because the lease is gone answers the error `RunLeaseLost`
 //! (code -32001, `data: { name, runId }`), which the client rethrows as the
 //! core's `RunLeaseLost`. Requests are answered one at a time, in order.
 
-use std::path::Path;
-
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore, StoreSpec, open_store};
 use crate::json::{Js, Obj};
 use crate::obj;
-use crate::store::{Store, StoreError};
+use crate::store::{StoreError, iso};
 
 const LEASE_LOST: i64 = -32001;
 const INVALID_PARAMS: i64 = -32602;
@@ -26,22 +29,22 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const PARSE_ERROR: i64 = -32700;
 const STORE_FAILED: i64 = -32000;
 
-pub async fn serve(path: &Path) -> Result<(), String> {
-    let store = Store::open(path).map_err(|e| format!("{}: {}", path.display(), describe(&e)))?;
+pub async fn serve(spec: &StoreSpec) -> Result<(), String> {
+    let store = open_store(spec)?;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
     while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
         if line.trim().is_empty() {
             continue;
         }
-        let reply = answer(&store, &line);
+        let reply = answer(&*store, &line);
         stdout.write_all(format!("{}\n", reply.to_json()).as_bytes()).await.map_err(|e| e.to_string())?;
         stdout.flush().await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-fn answer(store: &Store, line: &str) -> Js {
+fn answer(store: &dyn RunHostStore, line: &str) -> Js {
     let request = match Js::parse(line.as_bytes()) {
         Ok(request) => request,
         Err(e) => return error_reply(Js::Null, PARSE_ERROR, format!("not JSON: {e}"), None),
@@ -79,6 +82,7 @@ fn describe(error: &StoreError) -> String {
         StoreError::LeaseLost { run_id } => format!("run lease lost: {run_id}"),
         StoreError::Invalid(message) => message.clone(),
         StoreError::Db(error) => error.to_string(),
+        StoreError::Backend(message) => message.clone(),
     }
 }
 
@@ -145,11 +149,81 @@ fn correlated_await(c: &crate::store::CorrelatedAwait) -> Obj {
     obj! { "runId" => Js::str(&c.run_id), "teamId" => Js::str(&c.team_id), "address" => Js::str(&c.address) }
 }
 
-fn dispatch(store: &Store, method: &str, p: &Params) -> Result<Js, Failure> {
+fn callback_record(c: &CallbackRecord) -> Js {
+    Js::from(obj! {
+        "id" => Js::str(&c.id),
+        "teamId" => Js::str(&c.team_id),
+        "runId" => Js::str(&c.run_id),
+        "address" => Js::str(&c.address),
+        "params" => c.params.clone(),
+        "state" => c.state.clone(),
+        "calls" => c.calls.clone(),
+        "singleUse" => Js::Bool(c.single_use),
+        "expiresAt" => opt(c.expires_at.as_deref()),
+        "status" => Js::str(&c.status),
+    })
+}
+
+fn callback_claim(claim: &CallbackClaim) -> Js {
+    Js::from(match claim {
+        CallbackClaim::Recorded { callback, call_index } => {
+            obj! { "kind" => Js::str("recorded"), "callback" => callback_record(callback), "callIndex" => Js::Num((*call_index).into()) }
+        }
+        CallbackClaim::NotFound => obj! { "kind" => Js::str("not_found") },
+        CallbackClaim::Closed(callback) => obj! { "kind" => Js::str("closed"), "callback" => callback_record(callback) },
+        CallbackClaim::Expired(callback) => obj! { "kind" => Js::str("expired"), "callback" => callback_record(callback) },
+    })
+}
+
+fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Failure> {
     let none = Ok(Js::Null);
     match method {
         "runs.start" => {
             store.start_run(p.str("id")?, p.str("file")?, p.str("movement")?, p.str("startedAt")?, p.str("input")?)?;
+            none
+        }
+        "runs.requestCancel" => {
+            store.request_cancel(p.str("runId")?, p.opt_str("reason")?)?;
+            none
+        }
+        "runs.status" => Ok(store.run(p.str("runId")?)?.map(|r| Js::str(r.status)).unwrap_or(Js::str("missing"))),
+        "runs.complete" => {
+            store.settle_run(p.str("runId")?, "completed", &Js::Null, &iso(0))?;
+            none
+        }
+
+        "records.cancelRequest" => Ok(match store.cancel_request(p.str("runId")?)? {
+            None => Js::Null,
+            Some(reason) => Js::from(obj! { "reason" => opt(reason.as_deref()) }),
+        }),
+        "records.markFailed" => {
+            store.mark_failed(p.str("runId")?, p.str("message")?)?;
+            none
+        }
+        "records.closeRun" => {
+            store.revoke_run_callbacks(p.str("runId")?)?;
+            none
+        }
+
+        "callbacks.mint" => {
+            let (params, state) = (p.value("params"), p.value("state"));
+            let id = store.mint_callback(MintCallback {
+                team_id: p.str("teamId")?,
+                run_id: p.str("runId")?,
+                address: p.str("address")?,
+                params: &params,
+                state: &state,
+                single_use: p.flag("singleUse"),
+                expires_at: p.opt_str("expiresAt")?,
+            })?;
+            Ok(Js::from(obj! { "id" => Js::str(id) }))
+        }
+        "callbacks.get" => Ok(store.callback(p.str("id")?)?.as_ref().map(callback_record).unwrap_or(Js::Null)),
+        "callbacks.record" => Ok(callback_claim(&store.record_callback_call(p.str("id")?, &p.value("values"), p.str("bodyDueAt")?)?)),
+        "callbacks.markBodyStarted" => Ok(Js::Bool(store.mark_callback_body_started(p.str("id")?, p.int("callIndex")?, p.opt_str("fence")?)?)),
+        "callbacks.landed" => Ok(Js::strings(store.landed_callbacks(&p.strings("ids")?)?)),
+        "callbacks.revokeRun" => {
+            store.revoke_run_callbacks(p.str("runId")?)?;
             none
         }
 
@@ -260,7 +334,7 @@ fn dispatch(store: &Store, method: &str, p: &Params) -> Result<Js, Failure> {
         "leases.dropRunState" => Ok(Js::Bool(store.drop_run_state(p.str("runId")?, p.opt_str("fence")?)?)),
 
         "work.enqueue" => {
-            store.enqueue(p.str("kind")?, p.str("key")?, &p.value("payload"), p.opt_str("dueAt")?)?;
+            store.enqueue(p.str("kind")?, p.str("key")?, &p.value("payload"), p.opt_str("dueAt")?, p.opt_str("teamId")?)?;
             none
         }
         "work.claimDue" => Ok(Js::Arr(
