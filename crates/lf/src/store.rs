@@ -107,6 +107,12 @@ create table if not exists inbound_checkpoint (
   subscription_id text primary key,
   checkpoint text not null
 );
+create table if not exists event_receipt (
+  listen text not null,
+  key text not null,
+  received_at text not null,
+  primary key (listen, key)
+);
 create table if not exists work (
   id integer primary key autoincrement,
   kind text not null,
@@ -740,6 +746,12 @@ impl Store {
     pub fn get_source(&self, team_id: &str, hash: &str) -> Result<Option<String>> {
         Ok(self.db.query_row("select source from park_library_source where team_id = ? and hash = ?", params![team_id, hash], |r| r.get(0)).optional()?)
     }
+
+    /// crate::backend::RunHostStore::claim_event.
+    pub fn claim_event(&self, listen: &str, key: &str) -> Result<bool> {
+        let inserted = self.db.execute("insert into event_receipt (listen, key, received_at) values (?, ?, ?) on conflict do nothing", params![listen, key, iso(0)])?;
+        Ok(inserted == 1)
+    }
 }
 
 /// `Number(work.id)`: the row id a claim names.
@@ -772,6 +784,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("state.db");
         (Store::open(&path).unwrap(), path)
+    }
+
+    #[test]
+    fn an_event_key_is_received_once_per_listen() {
+        let (store, path) = state_file();
+        assert!(store.claim_event("listen:a:welcome", "delivery-1").unwrap());
+        assert!(!store.claim_event("listen:a:welcome", "delivery-1").unwrap());
+        assert!(store.claim_event("listen:a:other", "delivery-1").unwrap());
+        // Kept in the state file: another handle sees the receipt.
+        assert!(!Store::open(&path).unwrap().claim_event("listen:a:welcome", "delivery-1").unwrap());
     }
 
     fn work_row(store: &Store, key: &str) -> (String, Option<String>) {

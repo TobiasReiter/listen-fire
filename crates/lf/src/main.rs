@@ -16,6 +16,7 @@
 //!   lf credential add|update|delete|list   user credentials (src/credential_cmd.rs)
 //!   lf completion <bash|zsh|fish>       the shell's tab completion
 //!   lf --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
+//!   lf --contract-store-slot [--dir <project>]                   the same, over the project's store slot
 //!   lf --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
 //!   lf --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!
@@ -73,6 +74,8 @@ mod segment;
 mod serve;
 mod sources;
 mod store;
+mod store_module;
+mod store_wire;
 mod upgrade;
 mod wire;
 mod wire_results;
@@ -89,6 +92,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
        lf call <callback-id> [--body <values.json>]
        lf cancel <run-id> [--reason <text>]
        lf --contract-store <state.db|postgres://…> [--team <uuid>]
+       lf --contract-store-slot [--dir <project>]
        lf --contract-secrets <secrets file | env>
        lf --contract-doors
        lf --project-schema
@@ -108,6 +112,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   --team    the tenant (a uuid) of a Postgres store's rows
   --start-timeout  seconds a started external has to print `listening <port>` (default 30, or lf.yaml's `startTimeout`)
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
+  --contract-store-slot  the same, over the store module the project's store slot names
   --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
   --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
@@ -131,6 +136,7 @@ struct Args {
     port: Option<String>,
     reason: Option<String>,
     contract_store: Option<String>,
+    contract_store_slot: bool,
     contract_doors: bool,
     store: Option<String>,
     team: Option<String>,
@@ -159,6 +165,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         port: None,
         reason: None,
         contract_store: None,
+        contract_store_slot: false,
         contract_doors: false,
         store: None,
         team: None,
@@ -187,6 +194,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--ephemeral" => args.ephemeral = true,
             "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(value("--contract-store")?),
+            "--contract-store-slot" => args.contract_store_slot = true,
             "--store" => args.store = Some(value("--store")?),
             "--team" => args.team = Some(value("--team")?),
             "--until-idle" => args.until_idle = true,
@@ -224,6 +232,11 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
     if let Some(spec) = &args.contract_store {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         return contract_store::serve(&backend::StoreSpec::parse(spec, &cwd, args.team.as_deref())?).await.map(|()| 0);
+    }
+    if args.contract_store_slot {
+        let project = project::load_project(&args.dir)?;
+        let env: Vec<(String, String)> = std::env::vars().collect();
+        return contract_store::serve(&backend::StoreSpec::of_command(None, &project, args.team.as_deref(), &env)?).await.map(|()| 0);
     }
     if args.contract_doors {
         return contract_doors::serve().await.map(|()| 0);
@@ -286,8 +299,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             }
             let session = runs::open_session(project, args.ephemeral, &store).await?;
             let (external, event) = runs::read_event_file(event_file)?;
-            let outcomes = session.fire_event(&external, &event, args.dry_run).await?;
-            runs::report(&outcomes, &mut out)
+            session.fire_event(&external, &event, args.dry_run).await?.report(&mut out)
         }
         "resume" => {
             let project = load()?;

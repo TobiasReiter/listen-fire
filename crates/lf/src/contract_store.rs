@@ -1,8 +1,10 @@
 //! `lf --contract-store <state.db|postgres://…>`: the run host's backend
-//! families (crate::backend) served over stdin/stdout, one JSON-RPC 2.0 message per
-//! line, so the TypeScript contract suite drives this store through its
+//! families (crate::backend) served over stdin/stdout as the store slot's
+//! wire (docs/contracts/store-slot.md), one JSON-RPC 2.0 message per line,
+//! so the TypeScript contract suite drives this store through its
 //! `RpcStoreBackend` (movement-engine `services/run_host/rpc_store.ts`) and
-//! holds it to the meaning every backend has.
+//! holds it to the meaning every backend has. `--contract-store-slot` serves
+//! the project's store slot instead, a store module's process included.
 //!
 //! A method is `<family>.<method>` as `RunHostStore` names it
 //! (`parks.putLeaf`, `work.claimDue`, …), its params the TypeScript method's
@@ -20,10 +22,11 @@
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore, StoreSpec, open_store};
+use crate::backend::{MintCallback, RunHostStore, StoreSpec, open_store};
 use crate::json::{Js, Obj};
 use crate::obj;
 use crate::store::{StoreError, iso};
+use crate::store_wire::{Wire, num, opt, to_rows};
 
 const LEASE_LOST: i64 = -32001;
 const INVALID_PARAMS: i64 = -32602;
@@ -123,11 +126,15 @@ impl Params<'_> {
     }
 
     fn int(&self, key: &str) -> Result<i64, Failure> {
+        self.0.get(key).and_then(crate::store_wire::int).ok_or_else(|| Failure::Params(format!("{key}: expected an integer")))
+    }
+
+    fn number(&self, key: &str) -> Result<f64, Failure> {
         match self.0.get(key) {
-            Some(Js::Num(n)) => n.as_i64().or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
+            Some(Js::Num(n)) => n.as_f64(),
             _ => None,
         }
-        .ok_or_else(|| Failure::Params(format!("{key}: expected an integer")))
+        .ok_or_else(|| Failure::Params(format!("{key}: expected a number")))
     }
 
     fn flag(&self, key: &str) -> bool {
@@ -148,43 +155,13 @@ impl Params<'_> {
     }
 }
 
-fn opt(value: Option<&str>) -> Js {
-    value.map(Js::str).unwrap_or(Js::Null)
-}
-
-fn correlated_await(c: &crate::store::CorrelatedAwait) -> Obj {
-    obj! { "runId" => Js::str(&c.run_id), "teamId" => Js::str(&c.team_id), "address" => Js::str(&c.address) }
-}
-
-fn callback_record(c: &CallbackRecord) -> Js {
-    Js::from(obj! {
-        "id" => Js::str(&c.id),
-        "teamId" => Js::str(&c.team_id),
-        "runId" => Js::str(&c.run_id),
-        "address" => Js::str(&c.address),
-        "params" => c.params.clone(),
-        "state" => c.state.clone(),
-        "calls" => c.calls.clone(),
-        "singleUse" => Js::Bool(c.single_use),
-        "expiresAt" => opt(c.expires_at.as_deref()),
-        "status" => Js::str(&c.status),
-    })
-}
-
-fn callback_claim(claim: &CallbackClaim) -> Js {
-    Js::from(match claim {
-        CallbackClaim::Recorded { callback, call_index } => {
-            obj! { "kind" => Js::str("recorded"), "callback" => callback_record(callback), "callIndex" => Js::Num((*call_index).into()) }
-        }
-        CallbackClaim::NotFound => obj! { "kind" => Js::str("not_found") },
-        CallbackClaim::Closed(callback) => obj! { "kind" => Js::str("closed"), "callback" => callback_record(callback) },
-        CallbackClaim::Expired(callback) => obj! { "kind" => Js::str("expired"), "callback" => callback_record(callback) },
-    })
-}
-
 fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Failure> {
     let none = Ok(Js::Null);
     match method {
+        // The store wire's opening request: a store module reads its
+        // settings from it; this bridge's store is named on its command line.
+        "store.open" => Ok(Js::from(obj! { "tenant" => Js::str(store.tenant()) })),
+
         "runs.start" => {
             store.start_run(p.str("id")?, p.str("file")?, p.str("movement")?, p.str("startedAt")?, p.str("input")?)?;
             none
@@ -196,6 +173,32 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
         "runs.status" => Ok(store.run(p.str("runId")?)?.map(|r| Js::str(r.status)).unwrap_or(Js::str("missing"))),
         "runs.complete" => {
             store.settle_run(p.str("runId")?, "completed", &Js::Null, &iso(0))?;
+            none
+        }
+        "runs.settle" => {
+            store.settle_run(p.str("runId")?, p.str("status")?, &p.value("outcome"), p.str("at")?)?;
+            none
+        }
+        "runs.markParked" => {
+            store.mark_parked(p.str("runId")?)?;
+            none
+        }
+        "runs.get" => Ok(store.run(p.str("runId")?)?.as_ref().map(Wire::to_wire).unwrap_or(Js::Null)),
+        "runs.list" => Ok(to_rows(&store.runs(p.int("limit")?)?)),
+        "runs.appendTrace" => {
+            let entries = p.value("entries");
+            let entries = entries.as_array().ok_or_else(|| Failure::Params("entries: expected an array".into()))?;
+            store.append_trace(p.str("runId")?, p.str("segmentId")?, entries)?;
+            none
+        }
+        "runs.traceLength" => Ok(Js::Num(store.trace_len(p.str("runId")?)?.into())),
+        "runs.spent" => Ok(num(store.run_spent(p.str("runId")?)?)),
+        "runs.addSpend" => {
+            store.add_run_spend(p.str("runId")?, p.number("microdollars")?)?;
+            none
+        }
+        "runs.resetSpendBaseline" => {
+            store.reset_spend_baseline(p.str("runId")?)?;
             none
         }
 
@@ -225,8 +228,8 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             })?;
             Ok(Js::from(obj! { "id" => Js::str(id) }))
         }
-        "callbacks.get" => Ok(store.callback(p.str("id")?)?.as_ref().map(callback_record).unwrap_or(Js::Null)),
-        "callbacks.record" => Ok(callback_claim(&store.record_callback_call(p.str("id")?, &p.value("values"), p.str("bodyDueAt")?)?)),
+        "callbacks.get" => Ok(store.callback(p.str("id")?)?.as_ref().map(Wire::to_wire).unwrap_or(Js::Null)),
+        "callbacks.record" => Ok(store.record_callback_call(p.str("id")?, &p.value("values"), p.str("bodyDueAt")?)?.to_wire()),
         "callbacks.markBodyStarted" => Ok(Js::Bool(store.mark_callback_body_started(p.str("id")?, p.int("callIndex")?, p.opt_str("fence")?)?)),
         "callbacks.landed" => Ok(Js::strings(store.landed_callbacks(&p.strings("ids")?)?)),
         "callbacks.revokeRun" => {
@@ -246,21 +249,7 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             store.finish_leaf(p.str("runId")?, p.str("address")?, p.opt_str("fence")?)?;
             none
         }
-        "parks.leaves" => {
-            let rows = store.leaves(p.str("runId")?, p.flag("parkedOnly"), p.opt_str("reason")?, p.opt_str("dueBy")?)?;
-            Ok(Js::Arr(
-                rows.into_iter()
-                    .map(|r| {
-                        Js::from(obj! {
-                            "address" => Js::str(r.address),
-                            "reason" => Js::str(r.reason),
-                            "status" => Js::str(r.status),
-                            "wakeAt" => opt(r.wake_at.as_deref()),
-                        })
-                    })
-                    .collect(),
-            ))
-        }
+        "parks.leaves" => Ok(to_rows(&store.leaves(p.str("runId")?, p.flag("parkedOnly"), p.opt_str("reason")?, p.opt_str("dueBy")?)?)),
         "parks.deleteLeaves" => {
             store.delete_leaves(p.str("runId")?, &p.strings("addresses")?)?;
             none
@@ -278,19 +267,7 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             store.persist_branch_export(p.str("runId")?, p.str("frameAddress")?, p.str("branchAddress")?, p.int("branchIndex")?, &p.value("exports"))?;
             none
         }
-        "joins.collectBranchExports" => Ok(Js::Arr(
-            store
-                .collect_branch_exports(p.str("runId")?, p.str("frameAddress")?)?
-                .into_iter()
-                .map(|e| {
-                    Js::from(obj! {
-                        "branchAddress" => Js::str(e.branch_address),
-                        "branchIndex" => Js::Num(e.branch_index.into()),
-                        "exports" => e.exports,
-                    })
-                })
-                .collect(),
-        )),
+        "joins.collectBranchExports" => Ok(to_rows(&store.collect_branch_exports(p.str("runId")?, p.str("frameAddress")?)?)),
         "joins.hasPendingJoins" => Ok(Js::Bool(store.has_pending_joins(p.str("runId")?)?)),
         "joins.frames" => Ok(Js::strings(store.frames(p.str("runId")?)?)),
         "joins.deleteFrames" => {
@@ -302,24 +279,8 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             store.correlate(p.str("runId")?, p.str("teamId")?, p.str("address")?, p.str("adapterType")?, p.str("correlationKey")?)?;
             none
         }
-        "correlations.correlated" => Ok(Js::Arr(
-            store
-                .correlated(p.str("adapterType")?, p.str("teamId")?, p.str("correlationKey")?)?
-                .iter()
-                .map(|c| Js::from(correlated_await(c)))
-                .collect(),
-        )),
-        "correlations.ofRun" => Ok(Js::Arr(
-            store
-                .of_run(p.str("runId")?, p.str("adapterType")?)?
-                .iter()
-                .map(|(c, key)| {
-                    let mut row = correlated_await(c);
-                    row.insert("correlationKey".into(), Js::str(key));
-                    Js::from(row)
-                })
-                .collect(),
-        )),
+        "correlations.correlated" => Ok(to_rows(&store.correlated(p.str("adapterType")?, p.str("teamId")?, p.str("correlationKey")?)?)),
+        "correlations.ofRun" => Ok(to_rows(&store.of_run(p.str("runId")?, p.str("adapterType")?)?)),
         "correlations.drop" => {
             store.drop_correlation(p.str("runId")?, p.str("address")?)?;
             none
@@ -344,21 +305,7 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             store.enqueue(p.str("kind")?, p.str("key")?, &p.value("payload"), p.opt_str("dueAt")?, p.opt_str("teamId")?)?;
             none
         }
-        "work.claimDue" => Ok(Js::Arr(
-            store
-                .claim_due(p.int("limit")?, p.int("leaseMs")?, p.opt_str("dueBy")?)?
-                .into_iter()
-                .map(|w| {
-                    Js::from(obj! {
-                        "id" => Js::str(w.id),
-                        "kind" => Js::str(w.kind),
-                        "key" => Js::str(w.key),
-                        "payload" => w.payload,
-                        "claim" => Js::str(w.claim),
-                    })
-                })
-                .collect(),
-        )),
+        "work.claimDue" => Ok(to_rows(&store.claim_due(p.int("limit")?, p.int("leaseMs")?, p.opt_str("dueBy")?)?)),
         "work.complete" => {
             store.complete(p.str("id")?, p.str("claim")?)?;
             none
@@ -373,6 +320,17 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             none
         }
         "sources.get" => Ok(opt(store.get_source(p.str("teamId")?, p.str("hash")?)?.as_deref())),
+
+        "inbound.checkpoint" => Ok(match store.inbound_checkpoint(p.str("subscriptionId")?)? {
+            None => Js::Null,
+            Some(checkpoint) => Js::from(obj! { "checkpoint" => checkpoint }),
+        }),
+        "inbound.saveCheckpoint" => {
+            store.save_inbound_checkpoint(p.str("subscriptionId")?, &p.value("checkpoint"))?;
+            none
+        }
+
+        "events.claim" => Ok(Js::Bool(store.claim_event(p.str("listen")?, p.str("key")?)?)),
 
         _ => Err(Failure::Unknown),
     }

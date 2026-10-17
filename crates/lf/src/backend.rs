@@ -1,14 +1,15 @@
 //! The run host's backend as one trait (movement-engine
 //! `services/run_host/store.ts` `RunHostStore`, with lf's run records and
 //! its callbacks beside it), so every command runs over whichever store it
-//! was given: the TypeScript lf's SQLite state file (crate::store) or the
-//! hosted product's Postgres tables (crate::pg_store).
+//! was given: a SQLite state file (crate::store), the hosted product's
+//! Postgres tables (crate::pg_store), or a store module's process.
 //!
 //! Which one is the store slot's (crate::core): `--store <spec>` names one
 //! outright (a spec that starts `postgres://` or `postgresql://` is a
 //! Postgres connection; anything else is a SQLite file); else the module
 //! lf.yaml's `core: { store: … }` names, by its settings — @lf/sqlite-store
-//! (the default; `.lf/state.db`) or @lf/postgres-store (its `url`).
+//! (the default; `.lf/state.db`), @lf/postgres-store (its `url`), or a
+//! store module run as a process (crate::store_module).
 //!
 //! Every method blocks until its backend answers, as rusqlite does. The
 //! Postgres store serves the same blocking calls from its own connection
@@ -37,6 +38,9 @@ pub const POSTGRES_TENANT: &str = "6c66206c-6f63-4061-8c00-000000000001";
 pub enum StoreSpec {
     Sqlite(PathBuf),
     Postgres { url: String, tenant: String },
+    /// A third-party store module, started and driven over the store wire
+    /// (crate::store_module) with its settings.
+    Module { name: String, process: core::ProcessModule, settings: std::collections::BTreeMap<String, String> },
 }
 
 impl StoreSpec {
@@ -62,9 +66,15 @@ impl StoreSpec {
         if let Some(spec) = flag {
             return StoreSpec::parse(spec, &project.root, team);
         }
-        let module = project.core.store;
+        let module = &project.core.store;
         let settings = core::settings_of(&crate::secrets::load_secrets(project, env)?, module);
-        match module.name {
+        if let Some(process) = &module.process {
+            if team.is_some() {
+                return Err(format!("--team names a Postgres store's tenant; {} names its own", module.name));
+            }
+            return Ok(StoreSpec::Module { name: module.name.to_string(), process: process.clone(), settings });
+        }
+        match module.name.as_ref() {
             core::POSTGRES_STORE => StoreSpec::parse(core::required(&settings, module, "url")?, &project.root, team),
             _ if team.is_some() => Err("--team names a Postgres store's tenant; a SQLite state file has one tenant".into()),
             _ => Ok(StoreSpec::Sqlite(core::sqlite_path(project, &settings)?)),
@@ -76,6 +86,7 @@ impl StoreSpec {
         match self {
             StoreSpec::Sqlite(path) => path.display().to_string(),
             StoreSpec::Postgres { url, .. } => redact_password(url),
+            StoreSpec::Module { name, .. } => format!("the store module {name}"),
         }
     }
 }
@@ -94,6 +105,9 @@ pub fn open_store(spec: &StoreSpec) -> std::result::Result<Box<dyn RunHostStore>
     let opened: Result<Box<dyn RunHostStore>> = match spec {
         StoreSpec::Sqlite(path) => Store::open(path).map(|s| Box::new(s) as Box<dyn RunHostStore>),
         StoreSpec::Postgres { url, tenant } => PgStore::connect(url, tenant).map(|s| Box::new(s) as Box<dyn RunHostStore>),
+        StoreSpec::Module { name, process, settings } => {
+            crate::store_module::ProcessStore::start(name, process, settings).map(|s| Box::new(s) as Box<dyn RunHostStore>)
+        }
     };
     opened.map_err(|e| format!("{}: {e}", spec.display()))
 }
@@ -218,6 +232,13 @@ pub trait RunHostStore {
     /// An install's saved pull cursor (a notify-then-pull source's), or None.
     fn inbound_checkpoint(&self, subscription_id: &str) -> Result<Option<Js>>;
     fn save_inbound_checkpoint(&self, subscription_id: &str, checkpoint: &Js) -> Result<()>;
+
+    // ── Event receipts ──────────────────────────────────────────────────────
+    /// Note one delivery of an event to a listen by the event's
+    /// `idempotencyKey` (the provider's own id for the occurrence): true the
+    /// first time, false for a redelivery, which runs nothing (the
+    /// platform's `trigger_event` unique on trigger and external event id).
+    fn claim_event(&self, listen: &str, key: &str) -> Result<bool>;
 }
 
 impl RunHostStore for Store {
@@ -377,6 +398,10 @@ impl RunHostStore for Store {
     }
     fn save_inbound_checkpoint(&self, subscription_id: &str, checkpoint: &Js) -> Result<()> {
         Store::save_inbound_checkpoint(self, subscription_id, checkpoint)
+    }
+
+    fn claim_event(&self, listen: &str, key: &str) -> Result<bool> {
+        Store::claim_event(self, listen, key)
     }
 }
 

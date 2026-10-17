@@ -913,6 +913,9 @@ page = web.fetchUrl(u)
   services and names it in `"slot"`: `models`, `judge`, `store` or `files`.
   The host names one module per slot (lf.yaml's `core:`); a slot's contract
   is its family's contract suite (the run host's store cases for `store`).
+  A `store` module may be a process the host speaks to over the
+  [store slot's wire](store-slot.md) (JSON-RPC on its stdin and stdout)
+  rather than over HTTP.
   Without `kind`, a module is an adapter, or a plugin package when it
   declares `plugins`.
 - **Settings.** Construction arguments the install supplies (an Airtable
@@ -1233,4 +1236,5 @@ from the root, so no automation can walk the collection.
   `idempotencyKey`. All additive: an older server sends and declares none of
   them and is unchanged, and an older host ignores them. See
   [Kinds, settings, spend and the host's models](#kinds-settings-spend-and-the-hosts-models).
+  A store module may be a process speaking [the store slot's wire](store-slot.md).
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.

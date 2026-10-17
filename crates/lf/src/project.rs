@@ -187,14 +187,20 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
             path.display()
         ));
     }
-    let core = crate::core::CoreChoice::of(&file.core, &path.display().to_string())?;
+    let externals_dir = dir.join(&file.externals);
+    // The externals folder is read only when `core:` names a module lf does not build in.
+    let installed = match file.core.values().all(|name| crate::core::builtin(name).is_some()) {
+        true => Vec::new(),
+        false => crate::externals::core_modules_in(&externals_dir)?,
+    };
+    let core = crate::core::CoreChoice::of(&file.core, &installed, &path.display().to_string())?;
     let language_version = language_version_of_engine(&file.engine)?;
     refuse_below_lf(language_version, &path.display().to_string(), "run `lf upgrade`")?;
     let lf_dir = dir.join(".lf");
     fs::create_dir_all(&lf_dir).map_err(|e| format!("{}: {e}", lf_dir.display()))?;
     Ok(Project {
         movements_dir: dir.join(&file.movements),
-        externals_dir: dir.join(&file.externals),
+        externals_dir,
         lf_dir,
         engine: file.engine,
         language_version,

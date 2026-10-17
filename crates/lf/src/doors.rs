@@ -141,8 +141,11 @@ impl<R: Reader> LfDoors<'_, R> {
                 self.store.enqueue("fire_event", &format!("fire_event:{}", uuid::Uuid::new_v4()), &payload, None, None).map_err(|e| e.to_string())
             }
             EventSink::Inline { session, outcomes } => {
-                let ran = session.fire_event(external, &event, false).await?;
-                outcomes.borrow_mut().extend(ran);
+                let fired = session.fire_event(external, &event, false).await?;
+                for line in &fired.redelivered {
+                    eprintln!("lf: {line}");
+                }
+                outcomes.borrow_mut().extend(fired.outcomes);
                 Ok(())
             }
         }

@@ -133,6 +133,27 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
     Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, public_url, ephemeral_dir })
 }
 
+/// What firing one event came to: the runs it started, and a line per
+/// listen it was a redelivery to (its `idempotencyKey` seen there before).
+#[derive(Default)]
+pub struct Fired {
+    pub outcomes: Vec<RunOutcome>,
+    pub redelivered: Vec<String>,
+}
+
+impl Fired {
+    /// The redeliveries' lines, then the runs as `report` writes them.
+    pub fn report(&self, out: &mut impl Write) -> Result<i32, String> {
+        for line in &self.redelivered {
+            writeln!(out, "{line}").map_err(|e| e.to_string())?;
+        }
+        if self.outcomes.is_empty() && !self.redelivered.is_empty() {
+            return Ok(0);
+        }
+        report(&self.outcomes, out)
+    }
+}
+
 /// What one entry into a run came to (`RunOutcome`).
 pub struct RunOutcome {
     pub run_id: String,
@@ -215,17 +236,28 @@ impl Session {
     }
 
     /// Route one event to every listen it matches, and run each (`fireEvent`).
-    pub async fn fire_event(&self, external: &str, event: &Js, dry_run: bool) -> Result<Vec<RunOutcome>, String> {
+    /// An event with an `idempotencyKey` runs a listen once: a redelivery
+    /// runs nothing. A dry run notes no receipt, so the real delivery after
+    /// it still runs.
+    pub async fn fire_event(&self, external: &str, event: &Js, dry_run: bool) -> Result<Fired, String> {
         let event_types = self.event_types_of(external).await?;
-        let mut outcomes = Vec::new();
+        let key = event.get("idempotencyKey").and_then(Js::as_str).filter(|k| !k.is_empty());
+        let mut fired = Fired::default();
         for listen in self.listens.iter().filter(|l| l.adapter == external && event_matches_trigger_scope(event, &l.config)) {
             let run_id = uuid::Uuid::new_v4().to_string();
             let file = &self.files[listen.file];
             let pipeline = format!("listen:{}:{}", file.name, listen.movement_name);
+            if let Some(key) = key
+                && !dry_run
+                && !self.store.claim_event(&pipeline, key).map_err(|e| e.to_string())?
+            {
+                fired.redelivered.push(format!("{}:{} has run the event {key} before: this delivery runs nothing", file.name, listen.movement_name));
+                continue;
+            }
             let trigger = trigger_event_of(&pipeline, external, event, &event_types, &iso(0));
-            outcomes.push(self.run_listen(&run_id, listen, trigger, dry_run).await?);
+            fired.outcomes.push(self.run_listen(&run_id, listen, trigger, dry_run).await?);
         }
-        Ok(outcomes)
+        Ok(fired)
     }
 
     async fn event_types_of(&self, external: &str) -> Result<Vec<Js>, String> {
@@ -491,7 +523,11 @@ impl Session {
         match kind {
             "fire_event" => {
                 let event = payload.get("event").cloned().ok_or("a fire_event row has no event")?;
-                Ok((false, self.fire_event(&text("external")?, &event, false).await?))
+                let fired = self.fire_event(&text("external")?, &event, false).await?;
+                for line in &fired.redelivered {
+                    eprintln!("lf: {line}");
+                }
+                Ok((false, fired.outcomes))
             }
             "resume_timer" => {
                 let run_id = text("runId")?;

@@ -12,6 +12,7 @@ The movement core speaks six contracts. Each is written down here with an intege
 | system-caller | [system-caller.md](system-caller.md) | 1 | 1 | none | none: an in-process interface |
 
 - **Not a contract of its own:** [run-limits.md](run-limits.md) says what one segment may consume, and what holds a movement away from the network.
+- **Part of the adapter protocol:** [store-slot.md](store-slot.md) is the wire a store module run as a process speaks (within adapter protocol 2).
 - **This table is this release's.** A release states, contract by contract, the version it writes, the versions it reads, and the ones it will stop reading.
 - **The table is held equal to the code.** `CONTRACTS` (`packages/engine-contracts/versions.ts`) is test-held equal to this table, and each document's version line to its constant (`CATALOG_SNAPSHOT_VERSION`, `PARK_STATE_VERSION`, `HOST_FAMILIES_VERSION`, `MANIFEST_PROTOCOL_VERSION`, `CURRENT_LANGUAGE_VERSION`, `SYSTEM_CALLER_VERSION`).
 
