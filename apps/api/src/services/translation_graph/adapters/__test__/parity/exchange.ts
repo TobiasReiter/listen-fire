@@ -11,6 +11,10 @@
 // what two implementations must agree on. A body or response that is not
 // UTF-8 is kept as base64. A response that is not JSON keeps its content type
 // (a file's bytes), and is answered with it again on replay.
+//
+// A caller may normalize each request before it is kept and matched (a
+// message's random MIME boundary, a header stamped with the time): what is
+// forwarded upstream is always the request as sent.
 
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -139,17 +143,24 @@ async function received(req: IncomingMessage): Promise<Received> {
 
 const isJson = (contentType: string | null): boolean => contentType === null || /json/i.test(contentType);
 
+export interface ExchangeOptions {
+  /** Applied to each request before it is kept and matched. */
+  normalize?: (request: ExchangeRequest) => ExchangeRequest;
+}
+
 /** Forward to `upstream` and keep each exchange. */
-export async function recordingServer(upstream: string): Promise<ExchangeServer> {
+export async function recordingServer(upstream: string, options: ExchangeOptions = {}): Promise<ExchangeServer> {
+  const normalize = options.normalize ?? ((request: ExchangeRequest) => request);
   const exchanges: Exchange[] = [];
   const server = createServer((req, res) => {
     void (async () => {
-      const { request, raw, contentType } = await received(req);
+      const { request: sent, raw, contentType } = await received(req);
+      const request = normalize(sent);
       const headers: Record<string, string> = { accept: 'application/json' };
-      if (request.authorization !== null) headers.authorization = request.authorization;
+      if (sent.authorization !== null) headers.authorization = sent.authorization;
       if (raw.length > 0) headers['content-type'] = contentType ?? 'application/json';
-      const answer = await fetch(upstream.replace(/\/+$/, '') + request.path, {
-        method: request.method,
+      const answer = await fetch(upstream.replace(/\/+$/, '') + sent.path, {
+        method: sent.method,
         headers,
         ...(raw.length > 0 ? { body: raw } : {}),
       });
@@ -181,7 +192,8 @@ export async function recordingServer(upstream: string): Promise<ExchangeServer>
  * and body); a request the recording does not have answers 599, so the
  * implementation under test fails where it diverged rather than later.
  */
-export async function replayingServer(recorded: readonly Exchange[]): Promise<ExchangeServer> {
+export async function replayingServer(recorded: readonly Exchange[], options: ExchangeOptions = {}): Promise<ExchangeServer> {
+  const normalize = options.normalize ?? ((request: ExchangeRequest) => request);
   const answers = new Map<string, Exchange[]>();
   for (const exchange of recorded) {
     const key = requestKey(exchange);
@@ -190,7 +202,7 @@ export async function replayingServer(recorded: readonly Exchange[]): Promise<Ex
   const requests: ExchangeRequest[] = [];
   const server = createServer((req, res) => {
     void (async () => {
-      const { request } = await received(req);
+      const request = normalize((await received(req)).request);
       requests.push(request);
       const queue = answers.get(requestKey(request)) ?? [];
       const answer = queue.shift();

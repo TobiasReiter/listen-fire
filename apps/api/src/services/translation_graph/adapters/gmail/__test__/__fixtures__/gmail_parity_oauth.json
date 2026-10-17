@@ -1,0 +1,3335 @@
+{
+  "transcript": [
+    {
+      "step": "listEntryPoints",
+      "answer": [
+        {
+          "typeId": "gmail:message",
+          "displayName": "Message",
+          "writable": true,
+          "readable": true,
+          "collectionName": "Messages",
+          "description": "Messages in the connected mailbox, newest first. A WHERE on `Subject`, `From`, `To`, `Cc`, `Labels`, `Date` or `Body` becomes a Gmail search, so a narrow walk costs one search rather than a scan; anything else is applied after the fetch. A walk stops at 100 messages — narrow it or give it a LIMIT rather than expecting the whole mailbox. Every message is its own request, so `ORDER BY Date DESC LIMIT n` — the order Gmail already answers in — costs n requests; any other ORDER BY fetches up to 100 and sorts them here."
+        },
+        {
+          "typeId": "gmail:message",
+          "displayName": "Message",
+          "writable": false,
+          "readable": false,
+          "fires": true,
+          "firesOn": [
+            "message_received"
+          ],
+          "description": "Delivered when a message arrives in the mailbox that was not there at the last look. Read its fields straight off, or walk `Attachments`."
+        },
+        {
+          "typeId": "gmail:attachment",
+          "displayName": "Attachment",
+          "writable": false,
+          "readable": false
+        }
+      ]
+    },
+    {
+      "step": "describe Gmail",
+      "answer": null
+    },
+    {
+      "step": "describe Message",
+      "answer": {
+        "typeId": "gmail:message",
+        "displayName": "Message",
+        "description": "One message in the mailbox — who sent it, what it says, and what came attached. Read `Body` for what it says without caring which format arrived. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. A send sets `To`, `Subject`, `Body` (and `HTML Body` / `Files` when they apply); a reply needs nothing but a body.",
+        "fields": [
+          {
+            "fieldId": "id",
+            "displayName": "Message Id",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "Gmail's own id for the message."
+          },
+          {
+            "fieldId": "threadId",
+            "displayName": "Thread Id",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The conversation this message belongs to. Read-only: a reply joins a conversation by being written along that message’s `Replies` edge, never by naming its thread."
+          },
+          {
+            "fieldId": "subject",
+            "displayName": "Subject",
+            "kind": "string",
+            "writable": true,
+            "required": false,
+            "description": "On a read, the subject line; a WHERE reaches Gmail as a `subject:` search — `=` and `contains` alike, since Gmail matches words rather than whole strings, and the engine then narrows `=` to an exact match. On a send, the subject to use; a reply that leaves it unset gets the parent’s subject with `Re:` in front.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "from",
+            "displayName": "From",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The \"From\" header whole, display name included (\"Rita Okoye\" <rita@…>). Read-only on a send too: mail always leaves as the connected mailbox, which is the only address this deployment is allowed to be. A WHERE reaches Gmail as a `from:` search.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "to",
+            "displayName": "To",
+            "kind": "string",
+            "cardinality": "many",
+            "writable": true,
+            "required": false,
+            "description": "The addresses on the \"To\" header — a list, each either a bare address or `\"Name\" <address>`. Required on a new message; a reply that leaves it unset answers whoever sent the parent. A WHERE reaches Gmail as a `to:` search.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "in",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "cc",
+            "displayName": "Cc",
+            "kind": "string",
+            "cardinality": "many",
+            "writable": true,
+            "required": false,
+            "description": "The addresses on the \"Cc\" header, written the same way as `To`. A reply does NOT inherit the parent’s Cc — copy people in deliberately. A WHERE reaches Gmail as a `cc:` search.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "in",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "date",
+            "displayName": "Date",
+            "kind": "date",
+            "writable": false,
+            "required": false,
+            "description": "When Gmail received the message. Bounds reach the search as `after:` / `before:`, which are whole-second and inclusive over there — the engine narrows the edges.",
+            "capability": {
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte"
+              ],
+              "orderable": true
+            }
+          },
+          {
+            "fieldId": "snippet",
+            "displayName": "Snippet",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "Gmail's own short preview."
+          },
+          {
+            "fieldId": "body",
+            "displayName": "Body",
+            "kind": "string",
+            "writable": true,
+            "uiHint": "textarea",
+            "required": false,
+            "description": "On a read, the normalised body — plain text, derived from the HTML when only HTML arrived; use this for \"what it says\", and a `contains` reaches Gmail as a word search. On a send, the plain-text body. Every send needs a `Body` or an `HTML Body`.",
+            "capability": {
+              "filterOperators": [
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "bodyText",
+            "displayName": "Plain Body",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The plain-text alternative exactly as it arrived, or nothing when the message was HTML only. Read-only — `Body` is what a send sets."
+          },
+          {
+            "fieldId": "bodyHtml",
+            "displayName": "HTML Body",
+            "kind": "string",
+            "writable": true,
+            "required": false,
+            "description": "The HTML alternative. Set it alongside `Body` on a send and the message goes out as both, so a reader that cannot show HTML still sees the text."
+          },
+          {
+            "fieldId": "files",
+            "displayName": "Files",
+            "kind": "file",
+            "cardinality": "many",
+            "writable": true,
+            "readable": false,
+            "required": false,
+            "description": "Files to attach to a message being sent — a list of file values the run already holds (an attachment read off another message, a document a movement produced). Send-side only: the files on a RECEIVED message are on its `Attachments` edge."
+          },
+          {
+            "fieldId": "labels",
+            "displayName": "Labels",
+            "kind": "string",
+            "cardinality": "many",
+            "writable": false,
+            "required": false,
+            "description": "Gmail label ids — the system ones (INBOX, UNREAD, IMPORTANT) in capitals, and a user label by its own name. A WHERE reaches the search as `label:`. This connection can read them and can never set one.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "in",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "hasAttachments",
+            "displayName": "Has Attachments",
+            "kind": "boolean",
+            "writable": false,
+            "required": false,
+            "description": "Whether walking `Attachments` would find anything — true without fetching a single byte."
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "message_attachments",
+            "targetTypeId": "gmail:attachment",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Attachments",
+            "writable": false,
+            "sequenced": "document",
+            "description": "Files attached to the message (zero or more). Listing them is free — the bytes are fetched only when `File` is read."
+          },
+          {
+            "fieldId": "message_replies",
+            "targetTypeId": "gmail:message",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Replies",
+            "writable": true,
+            "readable": false,
+            "linkable": false,
+            "description": "Write here to reply to this message inside its conversation. The thread, the `Re:` subject and the `In-Reply-To` / `References` headers all come from this parent — a reply names only what it says (`Body`), and may override `Subject`, `To` or `Cc`. Not readable: this connection sends into a conversation, it does not read one back."
+          }
+        ]
+      }
+    },
+    {
+      "step": "describe Attachment",
+      "answer": {
+        "typeId": "gmail:attachment",
+        "displayName": "Attachment",
+        "description": "One file on a message. Gmail serves the bytes from their own endpoint, so the name, type and size cost nothing and only `File` costs a fetch.",
+        "fields": [
+          {
+            "fieldId": "filename",
+            "displayName": "Name",
+            "kind": "string",
+            "writable": false,
+            "required": true
+          },
+          {
+            "fieldId": "contentType",
+            "displayName": "Content Type",
+            "kind": "string",
+            "writable": false,
+            "required": true
+          },
+          {
+            "fieldId": "size",
+            "displayName": "Size",
+            "kind": "number",
+            "writable": false,
+            "required": false,
+            "description": "Bytes, as Gmail reports them."
+          },
+          {
+            "fieldId": "data",
+            "displayName": "File",
+            "kind": "file",
+            "writable": false,
+            "required": false,
+            "description": "The bytes themselves — fetched when read, so a message whose files nobody opens costs nothing."
+          }
+        ],
+        "references": []
+      }
+    },
+    {
+      "step": "describe gmail:message",
+      "answer": {
+        "typeId": "gmail:message",
+        "displayName": "Message",
+        "description": "One message in the mailbox — who sent it, what it says, and what came attached. Read `Body` for what it says without caring which format arrived. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. A send sets `To`, `Subject`, `Body` (and `HTML Body` / `Files` when they apply); a reply needs nothing but a body.",
+        "fields": [
+          {
+            "fieldId": "id",
+            "displayName": "Message Id",
+            "kind": "string",
+            "writable": false,
+            "required": true,
+            "description": "Gmail's own id for the message."
+          },
+          {
+            "fieldId": "threadId",
+            "displayName": "Thread Id",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The conversation this message belongs to. Read-only: a reply joins a conversation by being written along that message’s `Replies` edge, never by naming its thread."
+          },
+          {
+            "fieldId": "subject",
+            "displayName": "Subject",
+            "kind": "string",
+            "writable": true,
+            "required": false,
+            "description": "On a read, the subject line; a WHERE reaches Gmail as a `subject:` search — `=` and `contains` alike, since Gmail matches words rather than whole strings, and the engine then narrows `=` to an exact match. On a send, the subject to use; a reply that leaves it unset gets the parent’s subject with `Re:` in front.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "from",
+            "displayName": "From",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The \"From\" header whole, display name included (\"Rita Okoye\" <rita@…>). Read-only on a send too: mail always leaves as the connected mailbox, which is the only address this deployment is allowed to be. A WHERE reaches Gmail as a `from:` search.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "to",
+            "displayName": "To",
+            "kind": "string",
+            "cardinality": "many",
+            "writable": true,
+            "required": false,
+            "description": "The addresses on the \"To\" header — a list, each either a bare address or `\"Name\" <address>`. Required on a new message; a reply that leaves it unset answers whoever sent the parent. A WHERE reaches Gmail as a `to:` search.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "in",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "cc",
+            "displayName": "Cc",
+            "kind": "string",
+            "cardinality": "many",
+            "writable": true,
+            "required": false,
+            "description": "The addresses on the \"Cc\" header, written the same way as `To`. A reply does NOT inherit the parent’s Cc — copy people in deliberately. A WHERE reaches Gmail as a `cc:` search.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "in",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "date",
+            "displayName": "Date",
+            "kind": "date",
+            "writable": false,
+            "required": false,
+            "description": "When Gmail received the message. Bounds reach the search as `after:` / `before:`, which are whole-second and inclusive over there — the engine narrows the edges.",
+            "capability": {
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte"
+              ],
+              "orderable": true
+            }
+          },
+          {
+            "fieldId": "snippet",
+            "displayName": "Snippet",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "Gmail's own short preview."
+          },
+          {
+            "fieldId": "body",
+            "displayName": "Body",
+            "kind": "string",
+            "writable": true,
+            "uiHint": "textarea",
+            "required": false,
+            "description": "On a read, the normalised body — plain text, derived from the HTML when only HTML arrived; use this for \"what it says\", and a `contains` reaches Gmail as a word search. On a send, the plain-text body. Every send needs a `Body` or an `HTML Body`.",
+            "capability": {
+              "filterOperators": [
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "bodyText",
+            "displayName": "Plain Body",
+            "kind": "string",
+            "writable": false,
+            "required": false,
+            "description": "The plain-text alternative exactly as it arrived, or nothing when the message was HTML only. Read-only — `Body` is what a send sets."
+          },
+          {
+            "fieldId": "bodyHtml",
+            "displayName": "HTML Body",
+            "kind": "string",
+            "writable": true,
+            "required": false,
+            "description": "The HTML alternative. Set it alongside `Body` on a send and the message goes out as both, so a reader that cannot show HTML still sees the text."
+          },
+          {
+            "fieldId": "files",
+            "displayName": "Files",
+            "kind": "file",
+            "cardinality": "many",
+            "writable": true,
+            "readable": false,
+            "required": false,
+            "description": "Files to attach to a message being sent — a list of file values the run already holds (an attachment read off another message, a document a movement produced). Send-side only: the files on a RECEIVED message are on its `Attachments` edge."
+          },
+          {
+            "fieldId": "labels",
+            "displayName": "Labels",
+            "kind": "string",
+            "cardinality": "many",
+            "writable": false,
+            "required": false,
+            "description": "Gmail label ids — the system ones (INBOX, UNREAD, IMPORTANT) in capitals, and a user label by its own name. A WHERE reaches the search as `label:`. This connection can read them and can never set one.",
+            "capability": {
+              "filterOperators": [
+                "eq",
+                "in",
+                "contains"
+              ]
+            }
+          },
+          {
+            "fieldId": "hasAttachments",
+            "displayName": "Has Attachments",
+            "kind": "boolean",
+            "writable": false,
+            "required": false,
+            "description": "Whether walking `Attachments` would find anything — true without fetching a single byte."
+          }
+        ],
+        "references": [
+          {
+            "fieldId": "message_attachments",
+            "targetTypeId": "gmail:attachment",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Attachments",
+            "writable": false,
+            "sequenced": "document",
+            "description": "Files attached to the message (zero or more). Listing them is free — the bytes are fetched only when `File` is read."
+          },
+          {
+            "fieldId": "message_replies",
+            "targetTypeId": "gmail:message",
+            "cardinality": "many",
+            "direction": "outgoing",
+            "name": "Replies",
+            "writable": true,
+            "readable": false,
+            "linkable": false,
+            "description": "Write here to reply to this message inside its conversation. The thread, the `Re:` subject and the `In-Reply-To` / `References` headers all come from this parent — a reply names only what it says (`Body`), and may override `Subject`, `To` or `Cc`. Not readable: this connection sends into a conversation, it does not read one back."
+          }
+        ]
+      }
+    },
+    {
+      "step": "describe Nonexistent",
+      "answer": null
+    },
+    {
+      "step": "edgesFrom meta",
+      "answer": {
+        "descriptor": {
+          "typeId": "meta",
+          "displayName": "Gmail",
+          "description": "One Google Workspace mailbox. Walk `Messages` to search it, write along `Messages` to send as the mailbox, or listen on `Message` to run when mail arrives. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. Reading and sending are the whole of what this connection can do: no labelling, no archiving, no deleting, no drafts.",
+          "fields": [],
+          "references": [
+            {
+              "fieldId": "Messages",
+              "targetTypeId": "gmail:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Messages",
+              "description": "Messages in the connected mailbox, newest first. A WHERE on `Subject`, `From`, `To`, `Cc`, `Labels`, `Date` or `Body` becomes a Gmail search, so a narrow walk costs one search rather than a scan; anything else is applied after the fetch. A walk stops at 100 messages — narrow it or give it a LIMIT rather than expecting the whole mailbox. Every message is its own request, so `ORDER BY Date DESC LIMIT n` — the order Gmail already answers in — costs n requests; any other ORDER BY fetches up to 100 and sorts them here. Writing along this edge SENDS a new message as the mailbox.",
+              "sequenced": "chronological",
+              "writable": true,
+              "linkable": false,
+              "capability": {
+                "filter": "native",
+                "order": "bounded",
+                "supportsLimit": true,
+                "naturalOrder": {
+                  "field": "Date",
+                  "direction": "desc"
+                }
+              }
+            },
+            {
+              "fieldId": "fires:gmail:message",
+              "targetTypeId": "gmail:message",
+              "cardinality": "one",
+              "direction": "outgoing",
+              "name": "Message",
+              "fires": true,
+              "firesOn": [
+                "message_received"
+              ],
+              "readable": false,
+              "description": "A message that has just arrived — what a listen delivers."
+            }
+          ]
+        },
+        "targetPositions": {
+          "Messages": {
+            "adapterType": "gmail",
+            "recordType": "gmail:message",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          },
+          "fires:gmail:message": {
+            "adapterType": "gmail",
+            "recordType": "gmail:message",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          }
+        },
+        "targetNodes": {
+          "Messages": {
+            "typeId": "gmail:message",
+            "displayName": "Message",
+            "description": "One message in the mailbox — who sent it, what it says, and what came attached. Read `Body` for what it says without caring which format arrived. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. A send sets `To`, `Subject`, `Body` (and `HTML Body` / `Files` when they apply); a reply needs nothing but a body.",
+            "fields": [
+              {
+                "fieldId": "id",
+                "displayName": "Message Id",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "Gmail's own id for the message."
+              },
+              {
+                "fieldId": "threadId",
+                "displayName": "Thread Id",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The conversation this message belongs to. Read-only: a reply joins a conversation by being written along that message’s `Replies` edge, never by naming its thread."
+              },
+              {
+                "fieldId": "subject",
+                "displayName": "Subject",
+                "kind": "string",
+                "writable": true,
+                "required": false,
+                "description": "On a read, the subject line; a WHERE reaches Gmail as a `subject:` search — `=` and `contains` alike, since Gmail matches words rather than whole strings, and the engine then narrows `=` to an exact match. On a send, the subject to use; a reply that leaves it unset gets the parent’s subject with `Re:` in front.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "from",
+                "displayName": "From",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The \"From\" header whole, display name included (\"Rita Okoye\" <rita@…>). Read-only on a send too: mail always leaves as the connected mailbox, which is the only address this deployment is allowed to be. A WHERE reaches Gmail as a `from:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "to",
+                "displayName": "To",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": true,
+                "required": false,
+                "description": "The addresses on the \"To\" header — a list, each either a bare address or `\"Name\" <address>`. Required on a new message; a reply that leaves it unset answers whoever sent the parent. A WHERE reaches Gmail as a `to:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "cc",
+                "displayName": "Cc",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": true,
+                "required": false,
+                "description": "The addresses on the \"Cc\" header, written the same way as `To`. A reply does NOT inherit the parent’s Cc — copy people in deliberately. A WHERE reaches Gmail as a `cc:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "date",
+                "displayName": "Date",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When Gmail received the message. Bounds reach the search as `after:` / `before:`, which are whole-second and inclusive over there — the engine narrows the edges.",
+                "capability": {
+                  "filterOperators": [
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte"
+                  ],
+                  "orderable": true
+                }
+              },
+              {
+                "fieldId": "snippet",
+                "displayName": "Snippet",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "Gmail's own short preview."
+              },
+              {
+                "fieldId": "body",
+                "displayName": "Body",
+                "kind": "string",
+                "writable": true,
+                "uiHint": "textarea",
+                "required": false,
+                "description": "On a read, the normalised body — plain text, derived from the HTML when only HTML arrived; use this for \"what it says\", and a `contains` reaches Gmail as a word search. On a send, the plain-text body. Every send needs a `Body` or an `HTML Body`.",
+                "capability": {
+                  "filterOperators": [
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "bodyText",
+                "displayName": "Plain Body",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The plain-text alternative exactly as it arrived, or nothing when the message was HTML only. Read-only — `Body` is what a send sets."
+              },
+              {
+                "fieldId": "bodyHtml",
+                "displayName": "HTML Body",
+                "kind": "string",
+                "writable": true,
+                "required": false,
+                "description": "The HTML alternative. Set it alongside `Body` on a send and the message goes out as both, so a reader that cannot show HTML still sees the text."
+              },
+              {
+                "fieldId": "files",
+                "displayName": "Files",
+                "kind": "file",
+                "cardinality": "many",
+                "writable": true,
+                "readable": false,
+                "required": false,
+                "description": "Files to attach to a message being sent — a list of file values the run already holds (an attachment read off another message, a document a movement produced). Send-side only: the files on a RECEIVED message are on its `Attachments` edge."
+              },
+              {
+                "fieldId": "labels",
+                "displayName": "Labels",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": false,
+                "required": false,
+                "description": "Gmail label ids — the system ones (INBOX, UNREAD, IMPORTANT) in capitals, and a user label by its own name. A WHERE reaches the search as `label:`. This connection can read them and can never set one.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "hasAttachments",
+                "displayName": "Has Attachments",
+                "kind": "boolean",
+                "writable": false,
+                "required": false,
+                "description": "Whether walking `Attachments` would find anything — true without fetching a single byte."
+              }
+            ]
+          },
+          "fires:gmail:message": {
+            "typeId": "gmail:message",
+            "displayName": "Message",
+            "description": "One message in the mailbox — who sent it, what it says, and what came attached. Read `Body` for what it says without caring which format arrived. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. A send sets `To`, `Subject`, `Body` (and `HTML Body` / `Files` when they apply); a reply needs nothing but a body.",
+            "fields": [
+              {
+                "fieldId": "id",
+                "displayName": "Message Id",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "Gmail's own id for the message."
+              },
+              {
+                "fieldId": "threadId",
+                "displayName": "Thread Id",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The conversation this message belongs to. Read-only: a reply joins a conversation by being written along that message’s `Replies` edge, never by naming its thread."
+              },
+              {
+                "fieldId": "subject",
+                "displayName": "Subject",
+                "kind": "string",
+                "writable": true,
+                "required": false,
+                "description": "On a read, the subject line; a WHERE reaches Gmail as a `subject:` search — `=` and `contains` alike, since Gmail matches words rather than whole strings, and the engine then narrows `=` to an exact match. On a send, the subject to use; a reply that leaves it unset gets the parent’s subject with `Re:` in front.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "from",
+                "displayName": "From",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The \"From\" header whole, display name included (\"Rita Okoye\" <rita@…>). Read-only on a send too: mail always leaves as the connected mailbox, which is the only address this deployment is allowed to be. A WHERE reaches Gmail as a `from:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "to",
+                "displayName": "To",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": true,
+                "required": false,
+                "description": "The addresses on the \"To\" header — a list, each either a bare address or `\"Name\" <address>`. Required on a new message; a reply that leaves it unset answers whoever sent the parent. A WHERE reaches Gmail as a `to:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "cc",
+                "displayName": "Cc",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": true,
+                "required": false,
+                "description": "The addresses on the \"Cc\" header, written the same way as `To`. A reply does NOT inherit the parent’s Cc — copy people in deliberately. A WHERE reaches Gmail as a `cc:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "date",
+                "displayName": "Date",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When Gmail received the message. Bounds reach the search as `after:` / `before:`, which are whole-second and inclusive over there — the engine narrows the edges.",
+                "capability": {
+                  "filterOperators": [
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte"
+                  ],
+                  "orderable": true
+                }
+              },
+              {
+                "fieldId": "snippet",
+                "displayName": "Snippet",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "Gmail's own short preview."
+              },
+              {
+                "fieldId": "body",
+                "displayName": "Body",
+                "kind": "string",
+                "writable": true,
+                "uiHint": "textarea",
+                "required": false,
+                "description": "On a read, the normalised body — plain text, derived from the HTML when only HTML arrived; use this for \"what it says\", and a `contains` reaches Gmail as a word search. On a send, the plain-text body. Every send needs a `Body` or an `HTML Body`.",
+                "capability": {
+                  "filterOperators": [
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "bodyText",
+                "displayName": "Plain Body",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The plain-text alternative exactly as it arrived, or nothing when the message was HTML only. Read-only — `Body` is what a send sets."
+              },
+              {
+                "fieldId": "bodyHtml",
+                "displayName": "HTML Body",
+                "kind": "string",
+                "writable": true,
+                "required": false,
+                "description": "The HTML alternative. Set it alongside `Body` on a send and the message goes out as both, so a reader that cannot show HTML still sees the text."
+              },
+              {
+                "fieldId": "files",
+                "displayName": "Files",
+                "kind": "file",
+                "cardinality": "many",
+                "writable": true,
+                "readable": false,
+                "required": false,
+                "description": "Files to attach to a message being sent — a list of file values the run already holds (an attachment read off another message, a document a movement produced). Send-side only: the files on a RECEIVED message are on its `Attachments` edge."
+              },
+              {
+                "fieldId": "labels",
+                "displayName": "Labels",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": false,
+                "required": false,
+                "description": "Gmail label ids — the system ones (INBOX, UNREAD, IMPORTANT) in capitals, and a user label by its own name. A WHERE reaches the search as `label:`. This connection can read them and can never set one.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "hasAttachments",
+                "displayName": "Has Attachments",
+                "kind": "boolean",
+                "writable": false,
+                "required": false,
+                "description": "Whether walking `Attachments` would find anything — true without fetching a single byte."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": "listEventTypes",
+      "answer": [
+        {
+          "tag": "gmail:message_received",
+          "positionType": "gmail:message",
+          "match": {
+            "path": "id",
+            "equals": []
+          }
+        }
+      ]
+    },
+    {
+      "step": "Messages",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme-2",
+              "data": {
+                "id": "msg-acme-2",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Re: Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-13T11:00:00.000Z",
+                "snippet": "One correction to the figures.",
+                "bodyText": "One correction to the figures.",
+                "bodyHtml": null,
+                "body": "One correction to the figures.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-spam",
+              "data": {
+                "id": "msg-spam",
+                "threadId": "msg-spam",
+                "rfcMessageId": "<msg-spam@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Cold outreach",
+                "from": "cold@outreach.example",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-12T08:00:00.000Z",
+                "snippet": "Would you like to buy leads?",
+                "bodyText": "Would you like to buy leads?",
+                "bodyHtml": null,
+                "body": "Would you like to buy leads?",
+                "labels": [
+                  "SPAM"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-beta",
+              "data": {
+                "id": "msg-beta",
+                "threadId": "msg-beta",
+                "rfcMessageId": "<msg-beta@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Intro: Beta Labs",
+                "from": "sam@beta.io",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-11T10:30:00.000Z",
+                "snippet": "",
+                "bodyText": null,
+                "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+                "body": "Meet Beta Labs, building ledgers.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme",
+              "data": {
+                "id": "msg-acme",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [
+                  "ops@acme.com"
+                ],
+                "date": "2026-10-10T09:00:00.000Z",
+                "snippet": "Figures attached, as promised.",
+                "bodyText": "Figures attached, as promised.",
+                "bodyHtml": null,
+                "body": "Figures attached, as promised.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": true,
+                "attachments": [
+                  {
+                    "attachmentId": "msg-acme-att-1",
+                    "filename": "figures.csv",
+                    "contentType": "text/csv",
+                    "size": 24,
+                    "messageId": "msg-acme"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Messages LIMIT 1",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme-2",
+              "data": {
+                "id": "msg-acme-2",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Re: Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-13T11:00:00.000Z",
+                "snippet": "One correction to the figures.",
+                "bodyText": "One correction to the figures.",
+                "bodyHtml": null,
+                "body": "One correction to the figures.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Messages WHERE From CONTAINS acme.com",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme-2",
+              "data": {
+                "id": "msg-acme-2",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Re: Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-13T11:00:00.000Z",
+                "snippet": "One correction to the figures.",
+                "bodyText": "One correction to the figures.",
+                "bodyHtml": null,
+                "body": "One correction to the figures.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme",
+              "data": {
+                "id": "msg-acme",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [
+                  "ops@acme.com"
+                ],
+                "date": "2026-10-10T09:00:00.000Z",
+                "snippet": "Figures attached, as promised.",
+                "bodyText": "Figures attached, as promised.",
+                "bodyHtml": null,
+                "body": "Figures attached, as promised.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": true,
+                "attachments": [
+                  {
+                    "attachmentId": "msg-acme-att-1",
+                    "filename": "figures.csv",
+                    "contentType": "text/csv",
+                    "size": 24,
+                    "messageId": "msg-acme"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Messages WHERE Subject = Intro: Beta Labs",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme-2",
+              "data": {
+                "id": "msg-acme-2",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Re: Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-13T11:00:00.000Z",
+                "snippet": "One correction to the figures.",
+                "bodyText": "One correction to the figures.",
+                "bodyHtml": null,
+                "body": "One correction to the figures.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-spam",
+              "data": {
+                "id": "msg-spam",
+                "threadId": "msg-spam",
+                "rfcMessageId": "<msg-spam@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Cold outreach",
+                "from": "cold@outreach.example",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-12T08:00:00.000Z",
+                "snippet": "Would you like to buy leads?",
+                "bodyText": "Would you like to buy leads?",
+                "bodyHtml": null,
+                "body": "Would you like to buy leads?",
+                "labels": [
+                  "SPAM"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-beta",
+              "data": {
+                "id": "msg-beta",
+                "threadId": "msg-beta",
+                "rfcMessageId": "<msg-beta@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Intro: Beta Labs",
+                "from": "sam@beta.io",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-11T10:30:00.000Z",
+                "snippet": "",
+                "bodyText": null,
+                "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+                "body": "Meet Beta Labs, building ledgers.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme",
+              "data": {
+                "id": "msg-acme",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [
+                  "ops@acme.com"
+                ],
+                "date": "2026-10-10T09:00:00.000Z",
+                "snippet": "Figures attached, as promised.",
+                "bodyText": "Figures attached, as promised.",
+                "bodyHtml": null,
+                "body": "Figures attached, as promised.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": true,
+                "attachments": [
+                  {
+                    "attachmentId": "msg-acme-att-1",
+                    "filename": "figures.csv",
+                    "contentType": "text/csv",
+                    "size": 24,
+                    "messageId": "msg-acme"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Messages ORDER BY Date DESC LIMIT 2",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme-2",
+              "data": {
+                "id": "msg-acme-2",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Re: Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-13T11:00:00.000Z",
+                "snippet": "One correction to the figures.",
+                "bodyText": "One correction to the figures.",
+                "bodyHtml": null,
+                "body": "One correction to the figures.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-spam",
+              "data": {
+                "id": "msg-spam",
+                "threadId": "msg-spam",
+                "rfcMessageId": "<msg-spam@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Cold outreach",
+                "from": "cold@outreach.example",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-12T08:00:00.000Z",
+                "snippet": "Would you like to buy leads?",
+                "bodyText": "Would you like to buy leads?",
+                "bodyHtml": null,
+                "body": "Would you like to buy leads?",
+                "labels": [
+                  "SPAM"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "Messages ORDER BY Date ASC LIMIT 1",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme-2",
+              "data": {
+                "id": "msg-acme-2",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Re: Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-13T11:00:00.000Z",
+                "snippet": "One correction to the figures.",
+                "bodyText": "One correction to the figures.",
+                "bodyHtml": null,
+                "body": "One correction to the figures.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-spam",
+              "data": {
+                "id": "msg-spam",
+                "threadId": "msg-spam",
+                "rfcMessageId": "<msg-spam@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Cold outreach",
+                "from": "cold@outreach.example",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-12T08:00:00.000Z",
+                "snippet": "Would you like to buy leads?",
+                "bodyText": "Would you like to buy leads?",
+                "bodyHtml": null,
+                "body": "Would you like to buy leads?",
+                "labels": [
+                  "SPAM"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-beta",
+              "data": {
+                "id": "msg-beta",
+                "threadId": "msg-beta",
+                "rfcMessageId": "<msg-beta@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Intro: Beta Labs",
+                "from": "sam@beta.io",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [],
+                "date": "2026-10-11T10:30:00.000Z",
+                "snippet": "",
+                "bodyText": null,
+                "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+                "body": "Meet Beta Labs, building ledgers.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": false,
+                "attachments": []
+              }
+            }
+          }
+        },
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Message",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme",
+              "data": {
+                "id": "msg-acme",
+                "threadId": "msg-acme",
+                "rfcMessageId": "<msg-acme@fake-gmail.local>",
+                "rfcReferences": [],
+                "subject": "Q3 figures",
+                "from": "Rita Okoye <rita@acme.com>",
+                "to": [
+                  "dev-loop@listen-fire.local"
+                ],
+                "cc": [
+                  "ops@acme.com"
+                ],
+                "date": "2026-10-10T09:00:00.000Z",
+                "snippet": "Figures attached, as promised.",
+                "bodyText": "Figures attached, as promised.",
+                "bodyHtml": null,
+                "body": "Figures attached, as promised.",
+                "labels": [
+                  "INBOX",
+                  "UNREAD"
+                ],
+                "hasAttachments": true,
+                "attachments": [
+                  {
+                    "attachmentId": "msg-acme-att-1",
+                    "filename": "figures.csv",
+                    "contentType": "text/csv",
+                    "size": 24,
+                    "messageId": "msg-acme"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "unknown collection",
+      "answer": []
+    },
+    {
+      "step": "incoming direction",
+      "answer": []
+    },
+    {
+      "step": "edgesFrom acme",
+      "answer": {
+        "descriptor": {
+          "typeId": "gmail:message",
+          "displayName": "Message",
+          "description": "One message in the mailbox — who sent it, what it says, and what came attached. Read `Body` for what it says without caring which format arrived. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. A send sets `To`, `Subject`, `Body` (and `HTML Body` / `Files` when they apply); a reply needs nothing but a body.",
+          "fields": [
+            {
+              "fieldId": "id",
+              "displayName": "Message Id",
+              "kind": "string",
+              "writable": false,
+              "required": true,
+              "description": "Gmail's own id for the message."
+            },
+            {
+              "fieldId": "threadId",
+              "displayName": "Thread Id",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The conversation this message belongs to. Read-only: a reply joins a conversation by being written along that message’s `Replies` edge, never by naming its thread."
+            },
+            {
+              "fieldId": "subject",
+              "displayName": "Subject",
+              "kind": "string",
+              "writable": true,
+              "required": false,
+              "description": "On a read, the subject line; a WHERE reaches Gmail as a `subject:` search — `=` and `contains` alike, since Gmail matches words rather than whole strings, and the engine then narrows `=` to an exact match. On a send, the subject to use; a reply that leaves it unset gets the parent’s subject with `Re:` in front.",
+              "capability": {
+                "filterOperators": [
+                  "eq",
+                  "contains"
+                ]
+              }
+            },
+            {
+              "fieldId": "from",
+              "displayName": "From",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The \"From\" header whole, display name included (\"Rita Okoye\" <rita@…>). Read-only on a send too: mail always leaves as the connected mailbox, which is the only address this deployment is allowed to be. A WHERE reaches Gmail as a `from:` search.",
+              "capability": {
+                "filterOperators": [
+                  "eq",
+                  "contains"
+                ]
+              }
+            },
+            {
+              "fieldId": "to",
+              "displayName": "To",
+              "kind": "string",
+              "cardinality": "many",
+              "writable": true,
+              "required": false,
+              "description": "The addresses on the \"To\" header — a list, each either a bare address or `\"Name\" <address>`. Required on a new message; a reply that leaves it unset answers whoever sent the parent. A WHERE reaches Gmail as a `to:` search.",
+              "capability": {
+                "filterOperators": [
+                  "eq",
+                  "in",
+                  "contains"
+                ]
+              }
+            },
+            {
+              "fieldId": "cc",
+              "displayName": "Cc",
+              "kind": "string",
+              "cardinality": "many",
+              "writable": true,
+              "required": false,
+              "description": "The addresses on the \"Cc\" header, written the same way as `To`. A reply does NOT inherit the parent’s Cc — copy people in deliberately. A WHERE reaches Gmail as a `cc:` search.",
+              "capability": {
+                "filterOperators": [
+                  "eq",
+                  "in",
+                  "contains"
+                ]
+              }
+            },
+            {
+              "fieldId": "date",
+              "displayName": "Date",
+              "kind": "date",
+              "writable": false,
+              "required": false,
+              "description": "When Gmail received the message. Bounds reach the search as `after:` / `before:`, which are whole-second and inclusive over there — the engine narrows the edges.",
+              "capability": {
+                "filterOperators": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "orderable": true
+              }
+            },
+            {
+              "fieldId": "snippet",
+              "displayName": "Snippet",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "Gmail's own short preview."
+            },
+            {
+              "fieldId": "body",
+              "displayName": "Body",
+              "kind": "string",
+              "writable": true,
+              "uiHint": "textarea",
+              "required": false,
+              "description": "On a read, the normalised body — plain text, derived from the HTML when only HTML arrived; use this for \"what it says\", and a `contains` reaches Gmail as a word search. On a send, the plain-text body. Every send needs a `Body` or an `HTML Body`.",
+              "capability": {
+                "filterOperators": [
+                  "contains"
+                ]
+              }
+            },
+            {
+              "fieldId": "bodyText",
+              "displayName": "Plain Body",
+              "kind": "string",
+              "writable": false,
+              "required": false,
+              "description": "The plain-text alternative exactly as it arrived, or nothing when the message was HTML only. Read-only — `Body` is what a send sets."
+            },
+            {
+              "fieldId": "bodyHtml",
+              "displayName": "HTML Body",
+              "kind": "string",
+              "writable": true,
+              "required": false,
+              "description": "The HTML alternative. Set it alongside `Body` on a send and the message goes out as both, so a reader that cannot show HTML still sees the text."
+            },
+            {
+              "fieldId": "files",
+              "displayName": "Files",
+              "kind": "file",
+              "cardinality": "many",
+              "writable": true,
+              "readable": false,
+              "required": false,
+              "description": "Files to attach to a message being sent — a list of file values the run already holds (an attachment read off another message, a document a movement produced). Send-side only: the files on a RECEIVED message are on its `Attachments` edge."
+            },
+            {
+              "fieldId": "labels",
+              "displayName": "Labels",
+              "kind": "string",
+              "cardinality": "many",
+              "writable": false,
+              "required": false,
+              "description": "Gmail label ids — the system ones (INBOX, UNREAD, IMPORTANT) in capitals, and a user label by its own name. A WHERE reaches the search as `label:`. This connection can read them and can never set one.",
+              "capability": {
+                "filterOperators": [
+                  "eq",
+                  "in",
+                  "contains"
+                ]
+              }
+            },
+            {
+              "fieldId": "hasAttachments",
+              "displayName": "Has Attachments",
+              "kind": "boolean",
+              "writable": false,
+              "required": false,
+              "description": "Whether walking `Attachments` would find anything — true without fetching a single byte."
+            }
+          ],
+          "references": [
+            {
+              "fieldId": "message_attachments",
+              "targetTypeId": "gmail:attachment",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Attachments",
+              "writable": false,
+              "sequenced": "document",
+              "description": "Files attached to the message (zero or more). Listing them is free — the bytes are fetched only when `File` is read."
+            },
+            {
+              "fieldId": "message_replies",
+              "targetTypeId": "gmail:message",
+              "cardinality": "many",
+              "direction": "outgoing",
+              "name": "Replies",
+              "writable": true,
+              "readable": false,
+              "linkable": false,
+              "description": "Write here to reply to this message inside its conversation. The thread, the `Re:` subject and the `In-Reply-To` / `References` headers all come from this parent — a reply names only what it says (`Body`), and may override `Subject`, `To` or `Cc`. Not readable: this connection sends into a conversation, it does not read one back."
+            }
+          ]
+        },
+        "targetPositions": {
+          "message_attachments": {
+            "adapterType": "gmail",
+            "recordType": "gmail:attachment",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          },
+          "message_replies": {
+            "adapterType": "gmail",
+            "recordType": "gmail:message",
+            "identity": {
+              "kind": "unstable",
+              "data": {}
+            }
+          }
+        },
+        "targetNodes": {
+          "message_attachments": {
+            "typeId": "gmail:attachment",
+            "displayName": "Attachment",
+            "description": "One file on a message. Gmail serves the bytes from their own endpoint, so the name, type and size cost nothing and only `File` costs a fetch.",
+            "fields": [
+              {
+                "fieldId": "filename",
+                "displayName": "Name",
+                "kind": "string",
+                "writable": false,
+                "required": true
+              },
+              {
+                "fieldId": "contentType",
+                "displayName": "Content Type",
+                "kind": "string",
+                "writable": false,
+                "required": true
+              },
+              {
+                "fieldId": "size",
+                "displayName": "Size",
+                "kind": "number",
+                "writable": false,
+                "required": false,
+                "description": "Bytes, as Gmail reports them."
+              },
+              {
+                "fieldId": "data",
+                "displayName": "File",
+                "kind": "file",
+                "writable": false,
+                "required": false,
+                "description": "The bytes themselves — fetched when read, so a message whose files nobody opens costs nothing."
+              }
+            ]
+          },
+          "message_replies": {
+            "typeId": "gmail:message",
+            "displayName": "Message",
+            "description": "One message in the mailbox — who sent it, what it says, and what came attached. Read `Body` for what it says without caring which format arrived. A Message written along the mailbox’s `Messages` edge is a NEW message; a Message written along another message’s `Replies` edge is a reply, and its thread, its `Re:` subject and its reply headers all come from that parent rather than from fields. A send sets `To`, `Subject`, `Body` (and `HTML Body` / `Files` when they apply); a reply needs nothing but a body.",
+            "fields": [
+              {
+                "fieldId": "id",
+                "displayName": "Message Id",
+                "kind": "string",
+                "writable": false,
+                "required": true,
+                "description": "Gmail's own id for the message."
+              },
+              {
+                "fieldId": "threadId",
+                "displayName": "Thread Id",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The conversation this message belongs to. Read-only: a reply joins a conversation by being written along that message’s `Replies` edge, never by naming its thread."
+              },
+              {
+                "fieldId": "subject",
+                "displayName": "Subject",
+                "kind": "string",
+                "writable": true,
+                "required": false,
+                "description": "On a read, the subject line; a WHERE reaches Gmail as a `subject:` search — `=` and `contains` alike, since Gmail matches words rather than whole strings, and the engine then narrows `=` to an exact match. On a send, the subject to use; a reply that leaves it unset gets the parent’s subject with `Re:` in front.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "from",
+                "displayName": "From",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The \"From\" header whole, display name included (\"Rita Okoye\" <rita@…>). Read-only on a send too: mail always leaves as the connected mailbox, which is the only address this deployment is allowed to be. A WHERE reaches Gmail as a `from:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "to",
+                "displayName": "To",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": true,
+                "required": false,
+                "description": "The addresses on the \"To\" header — a list, each either a bare address or `\"Name\" <address>`. Required on a new message; a reply that leaves it unset answers whoever sent the parent. A WHERE reaches Gmail as a `to:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "cc",
+                "displayName": "Cc",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": true,
+                "required": false,
+                "description": "The addresses on the \"Cc\" header, written the same way as `To`. A reply does NOT inherit the parent’s Cc — copy people in deliberately. A WHERE reaches Gmail as a `cc:` search.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "date",
+                "displayName": "Date",
+                "kind": "date",
+                "writable": false,
+                "required": false,
+                "description": "When Gmail received the message. Bounds reach the search as `after:` / `before:`, which are whole-second and inclusive over there — the engine narrows the edges.",
+                "capability": {
+                  "filterOperators": [
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte"
+                  ],
+                  "orderable": true
+                }
+              },
+              {
+                "fieldId": "snippet",
+                "displayName": "Snippet",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "Gmail's own short preview."
+              },
+              {
+                "fieldId": "body",
+                "displayName": "Body",
+                "kind": "string",
+                "writable": true,
+                "uiHint": "textarea",
+                "required": false,
+                "description": "On a read, the normalised body — plain text, derived from the HTML when only HTML arrived; use this for \"what it says\", and a `contains` reaches Gmail as a word search. On a send, the plain-text body. Every send needs a `Body` or an `HTML Body`.",
+                "capability": {
+                  "filterOperators": [
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "bodyText",
+                "displayName": "Plain Body",
+                "kind": "string",
+                "writable": false,
+                "required": false,
+                "description": "The plain-text alternative exactly as it arrived, or nothing when the message was HTML only. Read-only — `Body` is what a send sets."
+              },
+              {
+                "fieldId": "bodyHtml",
+                "displayName": "HTML Body",
+                "kind": "string",
+                "writable": true,
+                "required": false,
+                "description": "The HTML alternative. Set it alongside `Body` on a send and the message goes out as both, so a reader that cannot show HTML still sees the text."
+              },
+              {
+                "fieldId": "files",
+                "displayName": "Files",
+                "kind": "file",
+                "cardinality": "many",
+                "writable": true,
+                "readable": false,
+                "required": false,
+                "description": "Files to attach to a message being sent — a list of file values the run already holds (an attachment read off another message, a document a movement produced). Send-side only: the files on a RECEIVED message are on its `Attachments` edge."
+              },
+              {
+                "fieldId": "labels",
+                "displayName": "Labels",
+                "kind": "string",
+                "cardinality": "many",
+                "writable": false,
+                "required": false,
+                "description": "Gmail label ids — the system ones (INBOX, UNREAD, IMPORTANT) in capitals, and a user label by its own name. A WHERE reaches the search as `label:`. This connection can read them and can never set one.",
+                "capability": {
+                  "filterOperators": [
+                    "eq",
+                    "in",
+                    "contains"
+                  ]
+                }
+              },
+              {
+                "fieldId": "hasAttachments",
+                "displayName": "Has Attachments",
+                "kind": "boolean",
+                "writable": false,
+                "required": false,
+                "description": "Whether walking `Attachments` would find anything — true without fetching a single byte."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": "acme.Message Id",
+      "answer": "msg-acme"
+    },
+    {
+      "step": "acme.Thread Id",
+      "answer": "msg-acme"
+    },
+    {
+      "step": "acme.Subject",
+      "answer": "Q3 figures"
+    },
+    {
+      "step": "acme.From",
+      "answer": "Rita Okoye <rita@acme.com>"
+    },
+    {
+      "step": "acme.To",
+      "answer": [
+        "dev-loop@listen-fire.local"
+      ]
+    },
+    {
+      "step": "acme.Cc",
+      "answer": [
+        "ops@acme.com"
+      ]
+    },
+    {
+      "step": "acme.Date",
+      "answer": "2026-10-10T09:00:00.000Z"
+    },
+    {
+      "step": "acme.Body",
+      "answer": "Figures attached, as promised."
+    },
+    {
+      "step": "acme.Plain Body",
+      "answer": "Figures attached, as promised."
+    },
+    {
+      "step": "acme.HTML Body",
+      "answer": null
+    },
+    {
+      "step": "acme.Labels",
+      "answer": [
+        "INBOX",
+        "UNREAD"
+      ]
+    },
+    {
+      "step": "acme.Snippet",
+      "answer": "Figures attached, as promised."
+    },
+    {
+      "step": "acme.Has Attachments",
+      "answer": true
+    },
+    {
+      "step": "refused: acme.Missing",
+      "answer": {
+        "error": "'Missing' is not a known field of 'Message' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "beta.Body",
+      "answer": "Meet Beta Labs, building ledgers."
+    },
+    {
+      "step": "beta.HTML Body",
+      "answer": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>"
+    },
+    {
+      "step": "beta.Has Attachments",
+      "answer": false
+    },
+    {
+      "step": "acme / Attachments",
+      "answer": [
+        {
+          "position": {
+            "adapterType": "gmail",
+            "recordType": "Attachment",
+            "identity": {
+              "kind": "stable",
+              "recordId": "msg-acme:msg-acme-att-1",
+              "data": {
+                "attachmentId": "msg-acme-att-1",
+                "filename": "figures.csv",
+                "contentType": "text/csv",
+                "size": 24,
+                "messageId": "msg-acme"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "acme / Attachments LIMIT 0",
+      "answer": []
+    },
+    {
+      "step": "acme / Replies (write only)",
+      "answer": []
+    },
+    {
+      "step": "edgesFrom figures",
+      "answer": {
+        "descriptor": {
+          "typeId": "gmail:attachment",
+          "displayName": "Attachment",
+          "description": "One file on a message. Gmail serves the bytes from their own endpoint, so the name, type and size cost nothing and only `File` costs a fetch.",
+          "fields": [
+            {
+              "fieldId": "filename",
+              "displayName": "Name",
+              "kind": "string",
+              "writable": false,
+              "required": true
+            },
+            {
+              "fieldId": "contentType",
+              "displayName": "Content Type",
+              "kind": "string",
+              "writable": false,
+              "required": true
+            },
+            {
+              "fieldId": "size",
+              "displayName": "Size",
+              "kind": "number",
+              "writable": false,
+              "required": false,
+              "description": "Bytes, as Gmail reports them."
+            },
+            {
+              "fieldId": "data",
+              "displayName": "File",
+              "kind": "file",
+              "writable": false,
+              "required": false,
+              "description": "The bytes themselves — fetched when read, so a message whose files nobody opens costs nothing."
+            }
+          ],
+          "references": []
+        }
+      }
+    },
+    {
+      "step": "figures.Name",
+      "answer": "figures.csv"
+    },
+    {
+      "step": "figures.Content Type",
+      "answer": "text/csv"
+    },
+    {
+      "step": "figures.Size",
+      "answer": 24
+    },
+    {
+      "step": "figures.File",
+      "answer": {
+        "__brand": "FileRef",
+        "name": "figures.csv",
+        "contentType": "text/csv",
+        "size": 24,
+        "source": {
+          "adapterType": "gmail",
+          "credentialId": "cred-parity",
+          "handle": "msg-acme:msg-acme-att-1"
+        }
+      }
+    },
+    {
+      "step": "refused: figures.Missing",
+      "answer": {
+        "error": "'Missing' is not a known field of 'Attachment' in this connection — its schema has changed (drift). Re-open the movement so it picks up the current fields, or rename in the source system."
+      }
+    },
+    {
+      "step": "figures bytes",
+      "answer": {
+        "contentType": "text/csv",
+        "size": 24,
+        "base64": "cXVhcnRlcixyZXZlbnVlClEzLDEyMDAK"
+      }
+    },
+    {
+      "step": "refused: bytes of a file with no handle",
+      "answer": {
+        "error": "gmail.resolveFileRef: FileRef has no message/attachment handle to resolve."
+      }
+    },
+    {
+      "step": "readRecord Message msg-beta",
+      "answer": {
+        "id": "msg-beta",
+        "threadId": "msg-beta",
+        "rfcMessageId": "<msg-beta@fake-gmail.local>",
+        "rfcReferences": [],
+        "subject": "Intro: Beta Labs",
+        "from": "sam@beta.io",
+        "to": [
+          "dev-loop@listen-fire.local"
+        ],
+        "cc": [],
+        "date": "2026-10-11T10:30:00.000Z",
+        "snippet": "",
+        "bodyText": null,
+        "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+        "body": "Meet Beta Labs, building ledgers.",
+        "labels": [
+          "INBOX",
+          "UNREAD"
+        ],
+        "hasAttachments": false,
+        "attachments": []
+      }
+    },
+    {
+      "step": "readRecord Message (missing)",
+      "answer": null
+    },
+    {
+      "step": "readRecord Attachment",
+      "answer": null
+    },
+    {
+      "step": "send a new message",
+      "answer": {
+        "adapterType": "gmail",
+        "externalId": "sent-1",
+        "recordType": "Message",
+        "data": {
+          "id": "sent-1",
+          "threadId": "sent-1",
+          "from": "dev-loop@listen-fire.local",
+          "to": [
+            "rita@acme.com"
+          ],
+          "subject": "Your Q3 figures"
+        }
+      }
+    },
+    {
+      "step": "send with HTML and Cc",
+      "answer": {
+        "adapterType": "gmail",
+        "externalId": "sent-2",
+        "recordType": "Message",
+        "data": {
+          "id": "sent-2",
+          "threadId": "sent-2",
+          "from": "dev-loop@listen-fire.local",
+          "to": [
+            "Rita Okoye <rita@acme.com>",
+            "sam@beta.io"
+          ],
+          "cc": [
+            "ops@acme.com"
+          ],
+          "subject": "Both of you"
+        }
+      }
+    },
+    {
+      "step": "send with an inline file",
+      "answer": {
+        "adapterType": "gmail",
+        "externalId": "sent-3",
+        "recordType": "Message",
+        "data": {
+          "id": "sent-3",
+          "threadId": "sent-3",
+          "from": "dev-loop@listen-fire.local",
+          "to": [
+            "rita@acme.com"
+          ],
+          "subject": "Notes"
+        }
+      }
+    },
+    {
+      "step": "send carrying the figures file",
+      "answer": {
+        "adapterType": "gmail",
+        "externalId": "sent-4",
+        "recordType": "Message",
+        "data": {
+          "id": "sent-4",
+          "threadId": "sent-4",
+          "from": "dev-loop@listen-fire.local",
+          "to": [
+            "sam@beta.io"
+          ],
+          "subject": "Fwd: Q3 figures"
+        }
+      }
+    },
+    {
+      "step": "reply along Replies",
+      "answer": {
+        "adapterType": "gmail",
+        "externalId": "sent-5",
+        "recordType": "Message",
+        "data": {
+          "id": "sent-5",
+          "threadId": "msg-acme",
+          "from": "dev-loop@listen-fire.local",
+          "to": [
+            "Rita Okoye <rita@acme.com>"
+          ],
+          "subject": "Re: Q3 figures"
+        }
+      }
+    },
+    {
+      "step": "reply overriding To and Subject",
+      "answer": {
+        "adapterType": "gmail",
+        "externalId": "sent-6",
+        "recordType": "Message",
+        "data": {
+          "id": "sent-6",
+          "threadId": "msg-acme",
+          "from": "dev-loop@listen-fire.local",
+          "to": [
+            "sam@beta.io"
+          ],
+          "subject": "Q3 (for Sam)"
+        }
+      }
+    },
+    {
+      "step": "refused: send with no To",
+      "answer": {
+        "error": "GmailAdapter.createRecord: a new message needs at least one `To` address."
+      }
+    },
+    {
+      "step": "refused: send with no body",
+      "answer": {
+        "error": "GmailAdapter.createRecord: a message needs a `Body` (plain text) or an `HTML Body` — Gmail will not send an empty one."
+      }
+    },
+    {
+      "step": "refused: reply to a message with no thread",
+      "answer": {
+        "error": "GmailAdapter.createRecord: the message this reply is written along carries no `Thread Id`, so Gmail has no conversation to file it in. Reply along a message a listener delivered or a `Messages` walk read."
+      }
+    },
+    {
+      "step": "refused: reply to a message with no sender",
+      "answer": {
+        "error": "GmailAdapter.createRecord: this reply has no address to answer — the message it replies to carries no `From`, so set `To` on the reply."
+      }
+    },
+    {
+      "step": "refused: create along the wrong edge",
+      "answer": {
+        "error": "GmailAdapter.createRecord: a Gmail Message cannot be created along 'Message'-[:Attachments]->. Send along the mailbox’s `Messages` edge, or reply along a message’s `Replies` edge."
+      }
+    },
+    {
+      "step": "refused: create an Attachment",
+      "answer": {
+        "error": "GmailAdapter.createRecord: 'Attachment' is not something this mailbox can create — a Gmail write is a Message, sent or replied."
+      }
+    },
+    {
+      "step": "refused: send a file with no bytes",
+      "answer": {
+        "error": "GmailAdapter.createRecord: could not read the bytes of the attached file \"nothing.bin\", so the message was not sent."
+      }
+    },
+    {
+      "step": "refused: updateRecord",
+      "answer": {
+        "error": "gmail is not configured as a write target — updateRecord called"
+      }
+    },
+    {
+      "step": "refused: deleteRecord",
+      "answer": {
+        "error": "gmail is not configured as a write target — deleteRecord called"
+      }
+    },
+    {
+      "step": "refused: bytes of a handle that is not a pair",
+      "answer": {
+        "error": "gmail.resolveFileRef: FileRef has no message/attachment handle to resolve."
+      }
+    },
+    {
+      "step": "first poll sets the mark",
+      "answer": {
+        "events": [],
+        "checkpoint": {
+          "historyId": "1010",
+          "lastSeenAt": "<now>"
+        }
+      }
+    },
+    {
+      "step": "poll from the mark",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "id": "msg-acme",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [
+                "ops@acme.com"
+              ],
+              "date": "2026-10-10T09:00:00.000Z",
+              "snippet": "Figures attached, as promised.",
+              "bodyText": "Figures attached, as promised.",
+              "bodyHtml": null,
+              "body": "Figures attached, as promised.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": true,
+              "attachments": [
+                {
+                  "attachmentId": "msg-acme-att-1",
+                  "filename": "figures.csv",
+                  "contentType": "text/csv",
+                  "size": 24,
+                  "messageId": "msg-acme"
+                }
+              ]
+            },
+            "externalId": "msg-acme",
+            "idempotencyKey": "gmail:msg-acme",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-10T09:00:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-beta",
+              "threadId": "msg-beta",
+              "rfcMessageId": "<msg-beta@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Intro: Beta Labs",
+              "from": "sam@beta.io",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-11T10:30:00.000Z",
+              "snippet": "",
+              "bodyText": null,
+              "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+              "body": "Meet Beta Labs, building ledgers.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-beta",
+            "idempotencyKey": "gmail:msg-beta",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-11T10:30:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-acme-2",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Re: Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-13T11:00:00.000Z",
+              "snippet": "One correction to the figures.",
+              "bodyText": "One correction to the figures.",
+              "bodyHtml": null,
+              "body": "One correction to the figures.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-acme-2",
+            "idempotencyKey": "gmail:msg-acme-2",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-13T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "historyId": "1010",
+          "lastSeenAt": "<now>"
+        }
+      }
+    },
+    {
+      "step": "poll narrowed by its query",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "id": "msg-acme",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [
+                "ops@acme.com"
+              ],
+              "date": "2026-10-10T09:00:00.000Z",
+              "snippet": "Figures attached, as promised.",
+              "bodyText": "Figures attached, as promised.",
+              "bodyHtml": null,
+              "body": "Figures attached, as promised.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": true,
+              "attachments": [
+                {
+                  "attachmentId": "msg-acme-att-1",
+                  "filename": "figures.csv",
+                  "contentType": "text/csv",
+                  "size": 24,
+                  "messageId": "msg-acme"
+                }
+              ]
+            },
+            "externalId": "msg-acme",
+            "idempotencyKey": "gmail:msg-acme",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-10T09:00:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-acme-2",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Re: Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-13T11:00:00.000Z",
+              "snippet": "One correction to the figures.",
+              "bodyText": "One correction to the figures.",
+              "bodyHtml": null,
+              "body": "One correction to the figures.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-acme-2",
+            "idempotencyKey": "gmail:msg-acme-2",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-13T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "historyId": "1010",
+          "lastSeenAt": "<now>",
+          "pending": [
+            {
+              "id": "msg-beta",
+              "firstSeenAt": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "poll with Spam widened in",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "id": "msg-acme",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [
+                "ops@acme.com"
+              ],
+              "date": "2026-10-10T09:00:00.000Z",
+              "snippet": "Figures attached, as promised.",
+              "bodyText": "Figures attached, as promised.",
+              "bodyHtml": null,
+              "body": "Figures attached, as promised.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": true,
+              "attachments": [
+                {
+                  "attachmentId": "msg-acme-att-1",
+                  "filename": "figures.csv",
+                  "contentType": "text/csv",
+                  "size": 24,
+                  "messageId": "msg-acme"
+                }
+              ]
+            },
+            "externalId": "msg-acme",
+            "idempotencyKey": "gmail:msg-acme",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-10T09:00:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-beta",
+              "threadId": "msg-beta",
+              "rfcMessageId": "<msg-beta@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Intro: Beta Labs",
+              "from": "sam@beta.io",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-11T10:30:00.000Z",
+              "snippet": "",
+              "bodyText": null,
+              "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+              "body": "Meet Beta Labs, building ledgers.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-beta",
+            "idempotencyKey": "gmail:msg-beta",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-11T10:30:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-spam",
+              "threadId": "msg-spam",
+              "rfcMessageId": "<msg-spam@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Cold outreach",
+              "from": "cold@outreach.example",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-12T08:00:00.000Z",
+              "snippet": "Would you like to buy leads?",
+              "bodyText": "Would you like to buy leads?",
+              "bodyHtml": null,
+              "body": "Would you like to buy leads?",
+              "labels": [
+                "SPAM"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-spam",
+            "idempotencyKey": "gmail:msg-spam",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-12T08:00:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-acme-2",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Re: Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-13T11:00:00.000Z",
+              "snippet": "One correction to the figures.",
+              "bodyText": "One correction to the figures.",
+              "bodyHtml": null,
+              "body": "One correction to the figures.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-acme-2",
+            "idempotencyKey": "gmail:msg-acme-2",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-13T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "historyId": "1010",
+          "lastSeenAt": "<now>"
+        }
+      }
+    },
+    {
+      "step": "poll carrying a pending arrival past its grace",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "id": "msg-acme",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [
+                "ops@acme.com"
+              ],
+              "date": "2026-10-10T09:00:00.000Z",
+              "snippet": "Figures attached, as promised.",
+              "bodyText": "Figures attached, as promised.",
+              "bodyHtml": null,
+              "body": "Figures attached, as promised.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": true,
+              "attachments": [
+                {
+                  "attachmentId": "msg-acme-att-1",
+                  "filename": "figures.csv",
+                  "contentType": "text/csv",
+                  "size": 24,
+                  "messageId": "msg-acme"
+                }
+              ]
+            },
+            "externalId": "msg-acme",
+            "idempotencyKey": "gmail:msg-acme",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-10T09:00:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-acme-2",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Re: Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-13T11:00:00.000Z",
+              "snippet": "One correction to the figures.",
+              "bodyText": "One correction to the figures.",
+              "bodyHtml": null,
+              "body": "One correction to the figures.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": []
+            },
+            "externalId": "msg-acme-2",
+            "idempotencyKey": "gmail:msg-acme-2",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-13T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "historyId": "1010",
+          "lastSeenAt": "<now>",
+          "pending": [
+            {
+              "id": "msg-beta",
+              "firstSeenAt": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "poll from an expired mark resyncs",
+      "answer": {
+        "events": [
+          {
+            "payload": {
+              "id": "msg-beta",
+              "threadId": "msg-beta",
+              "rfcMessageId": "<msg-beta@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Intro: Beta Labs",
+              "from": "sam@beta.io",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-11T10:30:00.000Z",
+              "snippet": "",
+              "bodyText": null,
+              "bodyHtml": "<p>Meet <b>Beta Labs</b>, building ledgers.</p>",
+              "body": "Meet Beta Labs, building ledgers.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": [],
+              "resynced": true
+            },
+            "externalId": "msg-beta",
+            "idempotencyKey": "gmail:msg-beta",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-11T10:30:00.000Z"
+          },
+          {
+            "payload": {
+              "id": "msg-acme-2",
+              "threadId": "msg-acme",
+              "rfcMessageId": "<msg-acme-2@fake-gmail.local>",
+              "rfcReferences": [],
+              "subject": "Re: Q3 figures",
+              "from": "Rita Okoye <rita@acme.com>",
+              "to": [
+                "dev-loop@listen-fire.local"
+              ],
+              "cc": [],
+              "date": "2026-10-13T11:00:00.000Z",
+              "snippet": "One correction to the figures.",
+              "bodyText": "One correction to the figures.",
+              "bodyHtml": null,
+              "body": "One correction to the figures.",
+              "labels": [
+                "INBOX",
+                "UNREAD"
+              ],
+              "hasAttachments": false,
+              "attachments": [],
+              "resynced": true
+            },
+            "externalId": "msg-acme-2",
+            "idempotencyKey": "gmail:msg-acme-2",
+            "tag": "gmail:message_received",
+            "occurredAt": "2026-10-13T11:00:00.000Z"
+          }
+        ],
+        "checkpoint": {
+          "historyId": "1010",
+          "lastSeenAt": "<now>"
+        }
+      }
+    },
+    {
+      "step": "refused: poll with labels that are not a list",
+      "answer": {
+        "error": "a Gmail listener's 'labels' must be a non-empty list of Gmail label ids — e.g. labels: [\"INBOX\", \"SPAM\"]"
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\"},{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"},{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":4}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-spam?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\",\"labelIds\":[\"SPAM\"],\"snippet\":\"Would you like to buy leads?\",\"historyId\":\"1003\",\"internalDate\":\"1791792000000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Cold outreach\"},{\"name\":\"From\",\"value\":\"cold@outreach.example\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Mon, 12 Oct 2026 08:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-spam@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":28,\"data\":\"V291bGQgeW91IGxpa2UgdG8gYnV5IGxlYWRzPw\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?maxResults=1",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":1}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?q=from%3Aacme.com&maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":2}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\"},{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"},{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":4}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-spam?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\",\"labelIds\":[\"SPAM\"],\"snippet\":\"Would you like to buy leads?\",\"historyId\":\"1003\",\"internalDate\":\"1791792000000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Cold outreach\"},{\"name\":\"From\",\"value\":\"cold@outreach.example\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Mon, 12 Oct 2026 08:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-spam@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":28,\"data\":\"V291bGQgeW91IGxpa2UgdG8gYnV5IGxlYWRzPw\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?maxResults=2",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\"}],\"resultSizeEstimate\":2}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-spam?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\",\"labelIds\":[\"SPAM\"],\"snippet\":\"Would you like to buy leads?\",\"historyId\":\"1003\",\"internalDate\":\"1791792000000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Cold outreach\"},{\"name\":\"From\",\"value\":\"cold@outreach.example\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Mon, 12 Oct 2026 08:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-spam@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":28,\"data\":\"V291bGQgeW91IGxpa2UgdG8gYnV5IGxlYWRzPw\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\"},{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"},{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":4}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-spam?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\",\"labelIds\":[\"SPAM\"],\"snippet\":\"Would you like to buy leads?\",\"historyId\":\"1003\",\"internalDate\":\"1791792000000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Cold outreach\"},{\"name\":\"From\",\"value\":\"cold@outreach.example\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Mon, 12 Oct 2026 08:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-spam@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":28,\"data\":\"V291bGQgeW91IGxpa2UgdG8gYnV5IGxlYWRzPw\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme/attachments/msg-acme-att-1",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"size\":24,\"data\":\"cXVhcnRlcixyZXZlbnVlClEzLDEyMDAK\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-nope?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 404,
+      "response": "{\"error\":{\"code\":404,\"message\":\"Not Found\"}}"
+    },
+    {
+      "method": "POST",
+      "path": "/gmail/v1/users/me/messages/send",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": {
+        "raw": "From: dev-loop@listen-fire.local\r\nTo: rita@acme.com\r\nSubject: Your Q3 figures\r\nDate: <date>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nVGhhbmtzIOKAlCByZWFkaW5nIG5vdy4="
+      },
+      "status": 200,
+      "response": "{\"id\":\"sent-1\",\"threadId\":\"sent-1\",\"labelIds\":[\"SENT\"]}"
+    },
+    {
+      "method": "POST",
+      "path": "/gmail/v1/users/me/messages/send",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": {
+        "raw": "From: dev-loop@listen-fire.local\r\nTo: Rita Okoye <rita@acme.com>, sam@beta.io\r\nCc: ops@acme.com\r\nSubject: Both of you\r\nDate: <date>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"=_boundary_1\"\r\n\r\n--=_boundary_1\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nUGxhaW4gd29yZHMu\r\n--=_boundary_1\r\nContent-Type: text/html; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nPHA+UGxhaW4gPGk+d29yZHM8L2k+LjwvcD4=\r\n--=_boundary_1--"
+      },
+      "status": 200,
+      "response": "{\"id\":\"sent-2\",\"threadId\":\"sent-2\",\"labelIds\":[\"SENT\"]}"
+    },
+    {
+      "method": "POST",
+      "path": "/gmail/v1/users/me/messages/send",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": {
+        "raw": "From: dev-loop@listen-fire.local\r\nTo: rita@acme.com\r\nSubject: Notes\r\nDate: <date>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"=_boundary_1\"\r\n\r\n--=_boundary_1\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nU2VlIHRoZSBub3Rlcy4=\r\n--=_boundary_1\r\nContent-Type: text/markdown; name=\"notes.md\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"notes.md\"\r\n\r\nIyBOb3RlcwpBbGwgZ29vZC4=\r\n--=_boundary_1--"
+      },
+      "status": 200,
+      "response": "{\"id\":\"sent-3\",\"threadId\":\"sent-3\",\"labelIds\":[\"SENT\"]}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme/attachments/msg-acme-att-1",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"size\":24,\"data\":\"cXVhcnRlcixyZXZlbnVlClEzLDEyMDAK\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/gmail/v1/users/me/messages/send",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": {
+        "raw": "From: dev-loop@listen-fire.local\r\nTo: sam@beta.io\r\nSubject: Fwd: Q3 figures\r\nDate: <date>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"=_boundary_1\"\r\n\r\n--=_boundary_1\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nRm9yd2FyZGluZy4=\r\n--=_boundary_1\r\nContent-Type: text/csv; name=\"figures.csv\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"figures.csv\"\r\n\r\ncXVhcnRlcixyZXZlbnVlClEzLDEyMDAK\r\n--=_boundary_1--"
+      },
+      "status": 200,
+      "response": "{\"id\":\"sent-4\",\"threadId\":\"sent-4\",\"labelIds\":[\"SENT\"]}"
+    },
+    {
+      "method": "POST",
+      "path": "/gmail/v1/users/me/messages/send",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": {
+        "raw": "From: dev-loop@listen-fire.local\r\nTo: Rita Okoye <rita@acme.com>\r\nSubject: Re: Q3 figures\r\nDate: <date>\r\nIn-Reply-To: <msg-acme@fake-gmail.local>\r\nReferences: <msg-acme@fake-gmail.local>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nR290IGl0IOKAlCBsb29raW5nIG5vdy4=",
+        "threadId": "msg-acme"
+      },
+      "status": 200,
+      "response": "{\"id\":\"sent-5\",\"threadId\":\"msg-acme\",\"labelIds\":[\"SENT\"]}"
+    },
+    {
+      "method": "POST",
+      "path": "/gmail/v1/users/me/messages/send",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": {
+        "raw": "From: dev-loop@listen-fire.local\r\nTo: sam@beta.io\r\nSubject: Q3 (for Sam)\r\nDate: <date>\r\nIn-Reply-To: <msg-acme@fake-gmail.local>\r\nReferences: <msg-acme@fake-gmail.local>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nTG9vcGluZyBpbiBTYW0u",
+        "threadId": "msg-acme"
+      },
+      "status": 200,
+      "response": "{\"id\":\"sent-6\",\"threadId\":\"msg-acme\",\"labelIds\":[\"SENT\"]}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/profile",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"emailAddress\":\"dev-loop@listen-fire.local\",\"messagesTotal\":10,\"threadsTotal\":10,\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/history?startHistoryId=1000&historyTypes=messageAdded&labelId=INBOX",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"history\":[{\"id\":\"1001\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}}]},{\"id\":\"1002\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"}}]},{\"id\":\"1004\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"}}]}],\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/history?startHistoryId=1000&historyTypes=messageAdded&labelId=INBOX",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"history\":[{\"id\":\"1001\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}}]},{\"id\":\"1002\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"}}]},{\"id\":\"1004\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"}}]}],\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?q=label%3AINBOX%20from%3Aacme.com&maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":2}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/history?startHistoryId=1000&historyTypes=messageAdded&labelId=INBOX",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"history\":[{\"id\":\"1001\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}}]},{\"id\":\"1002\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"}}]},{\"id\":\"1004\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"}}]}],\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/history?startHistoryId=1000&historyTypes=messageAdded&labelId=SPAM",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"history\":[{\"id\":\"1003\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\"}}]}],\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-spam?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-spam\",\"threadId\":\"msg-spam\",\"labelIds\":[\"SPAM\"],\"snippet\":\"Would you like to buy leads?\",\"historyId\":\"1003\",\"internalDate\":\"1791792000000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Cold outreach\"},{\"name\":\"From\",\"value\":\"cold@outreach.example\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Mon, 12 Oct 2026 08:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-spam@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":28,\"data\":\"V291bGQgeW91IGxpa2UgdG8gYnV5IGxlYWRzPw\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/history?startHistoryId=1000&historyTypes=messageAdded&labelId=INBOX",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"history\":[{\"id\":\"1001\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}}]},{\"id\":\"1002\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"}}]},{\"id\":\"1004\",\"messagesAdded\":[{\"message\":{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"}}]}],\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?q=label%3AINBOX%20from%3Aacme.com&maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\"}],\"resultSizeEstimate\":2}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"Figures attached, as promised.\",\"historyId\":\"1001\",\"internalDate\":\"1791622800000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Cc\",\"value\":\"ops@acme.com\"},{\"name\":\"Date\",\"value\":\"Sat, 10 Oct 2026 09:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"RmlndXJlcyBhdHRhY2hlZCwgYXMgcHJvbWlzZWQu\"}}]},{\"partId\":\"1\",\"mimeType\":\"text/csv\",\"filename\":\"figures.csv\",\"headers\":[{\"name\":\"Content-Disposition\",\"value\":\"attachment; filename=\\\"figures.csv\\\"\"}],\"body\":{\"attachmentId\":\"msg-acme-att-1\",\"size\":24}}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/history?startHistoryId=0&historyTypes=messageAdded&labelId=INBOX",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 404,
+      "response": "{\"error\":{\"code\":404,\"message\":\"Requested entity was not found.\",\"status\":\"NOT_FOUND\"}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/profile",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"emailAddress\":\"dev-loop@listen-fire.local\",\"messagesTotal\":10,\"threadsTotal\":10,\"historyId\":\"1010\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages?q=label%3AINBOX%20after%3A1791676800&maxResults=100",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"messages\":[{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\"},{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\"}],\"resultSizeEstimate\":2}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-acme-2?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-acme-2\",\"threadId\":\"msg-acme\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"One correction to the figures.\",\"historyId\":\"1004\",\"internalDate\":\"1791889200000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Re: Q3 figures\"},{\"name\":\"From\",\"value\":\"Rita Okoye <rita@acme.com>\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Tue, 13 Oct 2026 11:00:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-acme-2@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.0\",\"mimeType\":\"text/plain\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=UTF-8\"}],\"body\":{\"size\":30,\"data\":\"T25lIGNvcnJlY3Rpb24gdG8gdGhlIGZpZ3VyZXMu\"}}]}]}}"
+    },
+    {
+      "method": "GET",
+      "path": "/gmail/v1/users/me/messages/msg-beta?format=full",
+      "authorization": "Bearer parity-gmail-access-token",
+      "body": null,
+      "status": 200,
+      "response": "{\"id\":\"msg-beta\",\"threadId\":\"msg-beta\",\"labelIds\":[\"INBOX\",\"UNREAD\"],\"snippet\":\"\",\"historyId\":\"1002\",\"internalDate\":\"1791714600000\",\"sizeEstimate\":1024,\"payload\":{\"partId\":\"\",\"mimeType\":\"multipart/mixed\",\"filename\":\"\",\"headers\":[{\"name\":\"Subject\",\"value\":\"Intro: Beta Labs\"},{\"name\":\"From\",\"value\":\"sam@beta.io\"},{\"name\":\"To\",\"value\":\"dev-loop@listen-fire.local\"},{\"name\":\"Date\",\"value\":\"Sun, 11 Oct 2026 10:30:00 GMT\"},{\"name\":\"Message-Id\",\"value\":\"<msg-beta@fake-gmail.local>\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0\",\"mimeType\":\"multipart/alternative\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"multipart/alternative\"}],\"body\":{\"size\":0},\"parts\":[{\"partId\":\"0.1\",\"mimeType\":\"text/html\",\"filename\":\"\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/html; charset=UTF-8\"}],\"body\":{\"size\":47,\"data\":\"PHA-TWVldCA8Yj5CZXRhIExhYnM8L2I-LCBidWlsZGluZyBsZWRnZXJzLjwvcD4\"}}]}]}}"
+    }
+  ]
+}
