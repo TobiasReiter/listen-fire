@@ -32,6 +32,7 @@ import { createSecretsFamily, type SecretsFamily } from 'movement-engine/public/
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
+import { GRANOLA_MANIFEST } from '@lf/granola/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -66,7 +67,15 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
       return dealroomModule;
     },
   },
-  granola: { kind: 'adapter', line: 'legacy' },
+  granola: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: GRANOLA_MANIFEST,
+    load: () => {
+      const { granolaModule }: typeof import('@lf/granola') = require('@lf/granola');
+      return granolaModule;
+    },
+  },
   evertrace: { kind: 'adapter', line: 'legacy' },
   affinity: { kind: 'adapter', line: 'legacy' },
   airtable: { kind: 'adapter', line: 'legacy' },

@@ -1,28 +1,18 @@
-// Granola adapter + PollSource — pure helpers + mocked client. Covers note
+// Granola adapter + poll — pure helpers + mocked client. Covers note
 // normalisation, the attendees edge + TEXT resources, field reads, actor
-// extraction, and getEvents (paging / checkpoint / folder filter / empty-skip /
+// extraction, and the poll (paging / checkpoint / folder filter / empty-skip /
 // ordering). No network; the API client is faked.
 
-jest.mock('../../../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-jest.mock('movement-engine/services/logger', () => ({
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
+import type { TriggerEvent } from 'engine-contracts';
 
-import type { TeamId } from '../../../../../generated/kysely/core/Team';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
-
-import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/services/translation_graph/adapter';
+import { RESOURCES_REFERENCE_FIELD_ID } from 'movement-engine/public/adapter';
 import {
   ADAPTER_META_TYPE_ID,
   makeMetaPosition,
   makeStablePosition,
   positionData,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import {
-  createGranolaAdapter,
   GranolaAdapter,
   GRANOLA_ATTENDEE_TYPE_ID,
   GRANOLA_ATTENDEE_DISPLAY_NAME,
@@ -31,16 +21,22 @@ import {
   GRANOLA_NOTE_DISPLAY_NAME,
   GRANOLA_WORKSPACE_TYPE_ID,
 } from '../index';
-import { GranolaPollSource } from '../poll';
+import { pollGranola } from '../poll';
 import {
   GranolaClient,
   noteHasContent,
   normalizeNote,
   transcriptText,
   type GranolaNote,
-} from '../client';
+} from '../api_client';
 
-const TEAM = 'team-1' as TeamId;
+/** An adapter that is never asked for a client (the reads here are off inline
+ *  position data), and one over a fake client. */
+const withoutClient = () =>
+  new GranolaAdapter(async () => {
+    throw new Error('no client in this test');
+  });
+const withClient = (client: GranolaClient) => new GranolaAdapter(async () => client);
 
 function note(over: Partial<GranolaNote> = {}): GranolaNote {
   return {
@@ -131,7 +127,7 @@ describe('normalizeNote', () => {
 // ── adapter: describe / fields / edge / resources / actor ───────────────────
 
 describe('GranolaAdapter', () => {
-  const adapter = createGranolaAdapter({ teamId: TEAM });
+  const adapter = withoutClient();
 
   it('describes the note type with summary + transcript fields and an attendees reference (no input-side #resources)', async () => {
     const d = await adapter.describe(GRANOLA_NOTE_TYPE_ID);
@@ -226,7 +222,7 @@ describe('GranolaAdapter', () => {
 // ── adapter: the `meetings` meta-collection (pulling PAST meetings) ──────────
 
 describe('GranolaAdapter — meetings meta-collection', () => {
-  const adapter = createGranolaAdapter({ teamId: TEAM });
+  const adapter = withoutClient();
 
   it('lists the Meeting Note entry with a distinct `meetings` collection name', async () => {
     const entries = await adapter.listEntryPoints();
@@ -262,7 +258,7 @@ describe('GranolaAdapter — meetings meta-collection', () => {
   });
 
   it('resolves the `meetings` collection off the meta root into Meeting Note positions', async () => {
-    const a = new GranolaAdapter(TEAM, 'cred-1', fakeClient([note({ id: 'a' }), note({ id: 'b' })]));
+    const a = withClient(fakeClient([note({ id: 'a' }), note({ id: 'b' })]));
     const related = await a.getRelated({
       position: makeMetaPosition('granola'),
       fieldId: GRANOLA_MEETINGS_COLLECTION,
@@ -287,7 +283,7 @@ describe('GranolaAdapter — meetings meta-collection', () => {
   it('pulls the whole archive when the hop places no date bound (no arbitrary lookback)', async () => {
     const client = fakeClient([note()]);
     const spy = jest.spyOn(client, 'listAllNotes');
-    const a = new GranolaAdapter(TEAM, 'cred-1', client);
+    const a = withClient(client);
     await a.getRelated({
       position: makeMetaPosition('granola'),
       fieldId: GRANOLA_MEETINGS_COLLECTION,
@@ -300,7 +296,7 @@ describe('GranolaAdapter — meetings meta-collection', () => {
   it('pushes a date lower bound from the hop WHERE down to updated_after', async () => {
     const client = fakeClient([note()]);
     const spy = jest.spyOn(client, 'listAllNotes');
-    const a = new GranolaAdapter(TEAM, 'cred-1', client);
+    const a = withClient(client);
     await a.getRelated({
       position: makeMetaPosition('granola'),
       fieldId: GRANOLA_MEETINGS_COLLECTION,
@@ -318,7 +314,7 @@ describe('GranolaAdapter — meetings meta-collection', () => {
 
   it('ignores the hop LIMIT when an ORDER BY came with it (Granola cannot sort)', async () => {
     const client = fakeClient([note({ id: 'a' }), note({ id: 'b' })]);
-    const a = new GranolaAdapter(TEAM, 'cred-1', client);
+    const a = withClient(client);
     // The contract on `GetRelatedInput.limit`: n arbitrary rows sorted
     // afterwards answers a different question, so the whole set comes back and
     // the engine orders and cuts it.
@@ -333,7 +329,7 @@ describe('GranolaAdapter — meetings meta-collection', () => {
   });
 
   it('honours the hop LIMIT when the hop asked for no ordering', async () => {
-    const a = new GranolaAdapter(TEAM, 'cred-1', fakeClient([note({ id: 'a' }), note({ id: 'b' })]));
+    const a = withClient(fakeClient([note({ id: 'a' }), note({ id: 'b' })]));
     const related = await a.getRelated({
       position: makeMetaPosition('granola'),
       fieldId: GRANOLA_MEETINGS_COLLECTION,
@@ -344,7 +340,7 @@ describe('GranolaAdapter — meetings meta-collection', () => {
   });
 
   it('returns nothing for an unknown collection on the meta root', async () => {
-    const a = new GranolaAdapter(TEAM, 'cred-1', fakeClient([note()]));
+    const a = withClient(fakeClient([note()]));
     expect(
       await a.getRelated({
         position: makeMetaPosition('granola'),
@@ -357,9 +353,9 @@ describe('GranolaAdapter — meetings meta-collection', () => {
 
 // ── PollSource: getEvents ───────────────────────────────────────────────────
 
-describe('GranolaPollSource.getEvents', () => {
+describe('pollGranola', () => {
   function source(notes: GranolaNote[]) {
-    return new GranolaPollSource(TEAM, 'cred-1', fakeClient(notes));
+    return { getEvents: (input: { config: unknown; checkpoint?: unknown }) => pollGranola(fakeClient(notes), input) };
   }
 
   it('first poll sets the checkpoint and emits nothing (no backfill)', async () => {
@@ -416,11 +412,5 @@ describe('GranolaPollSource.getEvents', () => {
       config: {},
     });
     expect(events).toHaveLength(0);
-  });
-
-  it('throws a clear error when no credential resolves', async () => {
-    await expect(
-      new GranolaPollSource(TEAM, undefined).getEvents({ config: {} }),
-    ).rejects.toThrow(/Connect Granola/);
   });
 });

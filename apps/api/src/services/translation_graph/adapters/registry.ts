@@ -39,8 +39,8 @@ import {
 } from './dropbox';
 import { CRON_ADAPTER_TYPE, CRON_MANIFEST, createCronAdapter } from './cron';
 import { MANUAL_ADAPTER_TYPE, MANUAL_MANIFEST, createManualAdapter } from './manual';
-import { GRANOLA_ADAPTER_TYPE, GRANOLA_MANIFEST, createGranolaAdapter } from './granola';
-import { createGranolaPollSource } from './granola/poll';
+import { GRANOLA_ADAPTER_TYPE } from '@lf/granola/types';
+import { GRANOLA_MANIFEST } from '@lf/granola/manifest';
 import {
   EVERTRACE_ADAPTER_TYPE,
   EVERTRACE_MANIFEST,
@@ -140,10 +140,13 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   // Manual adapter — on-demand runs. Credential-free intrinsic; "Run now"
   // injects an invocation event on the channel (movement/run_now.ts).
   [MANUAL_ADAPTER_TYPE]: ({ teamId }) => createManualAdapter({ teamId }),
-  // Granola — polled source (meeting notes). The read-side Adapter; event
-  // production lives on its PollSource (POLL_SOURCE_FACTORIES below).
-  [GRANOLA_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createGranolaAdapter({ teamId, credentialsId }),
+  // Granola — polled source (meeting notes). A module (@lf/granola); its poll
+  // is the module's declared one (POLL_SOURCE_FACTORIES below). Its line in
+  // BUILTIN_MODULES says module or legacy; either is loaded on first use.
+  [GRANOLA_ADAPTER_TYPE]: builtinAdapterFactory(GRANOLA_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createGranolaAdapter }: typeof import('./granola') = require('./granola');
+    return createGranolaAdapter({ teamId, credentialsId });
+  }),
   // Evertrace — polled source (signals) AND write target (saved searches,
   // lists, list memberships, and the screened/viewed facts on a signal). Event
   // production lives on its PollSource (POLL_SOURCE_FACTORIES below).
@@ -183,8 +186,10 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
  *
  */
 const POLL_SOURCE_FACTORIES: Record<string, PollSourceFactory> = {
-  [GRANOLA_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createGranolaPollSource({ teamId, credentialsId }),
+  [GRANOLA_ADAPTER_TYPE]: builtinPollSourceFactory(GRANOLA_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createGranolaPollSource }: typeof import('./granola') = require('./granola');
+    return createGranolaPollSource({ teamId, credentialsId });
+  }),
   [EVERTRACE_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
     createEvertracePollSource({ teamId, credentialsId }),
   [DEALROOM_ADAPTER_TYPE]: builtinPollSourceFactory(DEALROOM_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
