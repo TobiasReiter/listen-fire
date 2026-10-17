@@ -17,7 +17,7 @@ import type { FileRef } from 'movement-engine/public/adapter';
 import { defineModule, type AdapterModuleDefinition, type ModuleContext } from 'module-kit';
 
 import { SlackAdapter, type SlackSources } from './adapter';
-import { getSlackClient, slackCredsParser } from './api_client';
+import { getSlackClient, slackCredsParser, type SlackAPIClient } from './api_client';
 import { composeSlackMessage, type SlackComposeChat } from './compose';
 import { SLACK_MANIFEST } from './manifest';
 
@@ -45,6 +45,9 @@ async function readFileFromContext(ref: FileRef, ctx: ModuleContext): Promise<{ 
 export function slackSourcesFrom(ctx: ModuleContext, hosted: SlackHosted = {}): SlackSources {
   const { chat } = hosted;
   const readFile = hosted.readFile ?? readFileFromContext;
+  // The client for the fields last read: a host hands back the same fields
+  // until the credential changes, so one parse serves until then.
+  let last: { fields: unknown; client: SlackAPIClient | null } | undefined;
   return {
     client: async () => {
       let fields: unknown;
@@ -55,9 +58,11 @@ export function slackSourcesFrom(ctx: ModuleContext, hosted: SlackHosted = {}): 
         // nothing, and a send refuses by name.
         return null;
       }
+      if (last?.fields === fields) return last.client;
       const parsed = slackCredsParser.safeParse(fields);
-      if (!parsed.success) return null;
-      return getSlackClient(parsed.data.accessToken, ctx.config.baseUrlOverride ?? parsed.data.baseUrl);
+      const client = parsed.success ? getSlackClient(parsed.data.accessToken, ctx.config.baseUrlOverride ?? parsed.data.baseUrl) : null;
+      last = { fields, client };
+      return client;
     },
     missingClient: (op) => {
       const which = `no usable Slack credential for team ${ctx.config.tenant} (credentialsId=${ctx.config.credentialRef ?? 'unset'}).`;
