@@ -480,6 +480,19 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - The bundled store's credential is a new file in the config volume, `objectstore_password`;
   `minio_password` is left where it is for option (a) and the copy.
 
+### lfr-llm
+
+- **The Rust `lf` calls models.** `lf-host` serves the engine's `ai(...)` and extraction model
+  requests on the `anthropic` credential in the secrets file (`api_key`, and `base_url` for another
+  endpoint speaking the Messages API; `https://` endpoints work, so the default `api.anthropic.com`
+  is reached directly). Each call is priced from the same table the TypeScript `lf` reads
+  (`packages/movement-engine/lib/models/prices.json`) and charged to its run under `model:<name>`,
+  to the microdollar the TypeScript `lf` charges; a model with no price warns once and counts as
+  free. A reply cut off at the output ceiling is continued, one that spent the ceiling thinking is
+  asked again one effort lower, and a failed request is retried with the TypeScript `lf`'s backoff,
+  except that a 4xx other than 408, 409 and 429 is not retried. The identity judge is still
+  declined, as in the TypeScript `lf`.
+
 ### Security
 
 - WhatsApp deliveries to a subscription's own webhook address (`/api/public/webhook-sync/inbound_whatsapp/...`)

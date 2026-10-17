@@ -14,6 +14,7 @@
 //!
 //! Single-threaded: one tokio thread, every wait an await.
 
+mod anthropic;
 mod catalog;
 mod check;
 mod contract_store;
@@ -21,6 +22,8 @@ mod documents;
 mod externals;
 mod file_ref;
 mod json;
+mod llm_calls;
+mod models;
 mod park_files;
 mod project;
 mod protocol;
