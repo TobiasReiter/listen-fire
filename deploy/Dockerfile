@@ -33,6 +33,7 @@ COPY packages/principal/package.json packages/principal/
 COPY packages/file-text/package.json packages/file-text/
 COPY packages/model-providers/package.json packages/model-providers/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
+COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/
 COPY packages/movement-lang/package.json packages/movement-lang/
 COPY packages/story-view/package.json packages/story-view/
