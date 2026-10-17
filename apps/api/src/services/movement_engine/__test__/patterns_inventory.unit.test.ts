@@ -1,41 +1,43 @@
 // The committed patterns oracle (crates/movement-engine/tests/oracle/
-// patterns.json) read against the README's port list, without regenerating
-// it: the generator holds each program to the README as it writes the file,
-// but a row marked Closed later would leave the committed file's programs
-// still `refused` for it until someone reran generate.ts. This fails first.
+// patterns.json) read without regenerating it: the generator holds each
+// program to the reachability test's list of open gaps as it writes the
+// file, but a gap closed later (its line removed from reachability_gaps.ts)
+// would leave the committed file's programs still `unsupported` for it until
+// someone reran generate.ts. This fails first.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { BY_CONTRACT, UNRECORDABLE, type Routes } from '../../../../../../crates/movement-engine/tests/oracle/patterns_table';
-import { portListStatus, retiredReasons } from '../../../../../../crates/movement-engine/tests/oracle/port_list';
+import { PATTERNS_PRELUDE, type CaseRecord } from '../../../../../../crates/movement-engine/tests/oracle/patterns_oracle';
+import { PATTERNS, type Ends } from '../../../../../../crates/movement-engine/tests/oracle/patterns_table';
+import { KNOWN_GAPS } from './reachability_gaps';
 
-const ENGINE = path.resolve(__dirname, '../../../../../../crates/movement-engine');
+const ORACLE = path.resolve(__dirname, '../../../../../../crates/movement-engine/tests/oracle/patterns.json');
 
 interface Committed {
-  patterns: Array<{ reason: string; routes: Routes }>;
-  cases: Array<{ pattern: string; routes: Routes; reasons: string[] }>;
+  prelude: string;
+  patterns: Array<{ name: string; ends: Ends; programs: number }>;
+  cases: CaseRecord[];
 }
 
-const committed: Committed = JSON.parse(readFileSync(path.join(ENGINE, 'tests/oracle/patterns.json'), 'utf8'));
-const status = portListStatus(readFileSync(path.join(ENGINE, 'README.md'), 'utf8'));
+const committed: Committed = JSON.parse(readFileSync(ORACLE, 'utf8'));
 
-describe('the committed patterns oracle, against the README port list', () => {
-  it('refuses or declines no program for a reason the port list has retired, and holds each contract category to its reasons', () => {
-    const wrong = committed.cases.flatMap((c) => retiredReasons(c.routes, c.reasons, status).map((why) => `${c.pattern}: ${why}`));
+describe('the committed patterns oracle', () => {
+  it('records a program unsupported only for a gap the reachability test still lists as open', () => {
+    const wrong = committed.cases.filter((c) => c.ends === 'unsupported' && !KNOWN_GAPS.includes(c.reason ?? '')).map((c) => `${c.pattern}: ${c.reason ?? '(no reason)'}`);
     expect(wrong).toEqual([]);
   });
 
-  it('labels a pattern by_contract only where the port list marks it Closed, and unrecordable only for the wire refusal', () => {
-    const wrong = committed.patterns.flatMap(({ reason, routes }) => {
-      if (routes === 'by_contract' && (!BY_CONTRACT.includes(reason) || status.get(reason) !== 'Closed')) return [`${reason}: by_contract, not a Closed contract refusal`];
-      if (routes === 'unrecordable' && !UNRECORDABLE.includes(reason)) return [`${reason}: unrecordable, not the shim's wire refusal`];
-      if ((routes === 'refused' || routes === 'declined') && status.get(reason) === 'Closed') return [`${reason}: ${routes}, which the port list marks Closed`];
-      return [];
-    });
-    expect(wrong).toEqual([]);
-    // Every contract reason is labelled as such.
-    expect(committed.patterns.filter((p) => BY_CONTRACT.includes(p.reason)).map((p) => p.routes)).toEqual(BY_CONTRACT.map(() => 'by_contract'));
-    expect(committed.patterns.filter((p) => UNRECORDABLE.includes(p.reason)).map((p) => p.routes)).toEqual(UNRECORDABLE.map(() => 'unrecordable'));
+  it('is the table as it stands: every pattern, its programs counted, each run at version 5 after the prelude', () => {
+    expect(committed.prelude).toBe(PATTERNS_PRELUDE);
+    expect(committed.patterns.map((p) => p.name)).toEqual(PATTERNS.map((p) => p.name));
+    expect(committed.patterns.map((p) => p.ends)).toEqual(PATTERNS.map((p) => p.ends));
+    expect(committed.patterns.map((p) => p.programs)).toEqual(committed.patterns.map((p) => committed.cases.filter((c) => c.pattern === p.name).length));
+    expect(committed.cases.filter((c) => (c.program.version ?? 5) < 5 || c.program.file === undefined).map((c) => c.pattern)).toEqual([]);
+  });
+
+  it('proves each pattern where it says it ends with a program that ends there', () => {
+    const unproved = committed.patterns.filter((p) => !committed.cases.some((c) => c.pattern === p.name && c.ends === p.ends)).map((p) => p.name);
+    expect(unproved).toEqual([]);
   });
 });

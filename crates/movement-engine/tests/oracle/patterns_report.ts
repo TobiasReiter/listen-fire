@@ -1,73 +1,62 @@
-// The retirement report: every admission pattern the Rust engine's port list
-// names (and every one chunk 7A closed), whether its programs run whole on
-// the Rust engine, and the reason where one does not — read from the
-// committed patterns.json, which generate.ts writes by running each program
-// on both engines (patterns_oracle.ts).
+// The patterns report: every pattern of the language patterns.json holds,
+// where its programs end on the Rust engine (the version 5 reference), and
+// the reason where one is refused — read from the committed patterns.json,
+// which generate.ts writes by running each program (patterns_oracle.ts).
 //
-//   pnpm engine:patterns            the table
-//   pnpm engine:patterns --refused  only the patterns still refused or declined
-//   pnpm engine:patterns --json     the same, as JSON
+//   pnpm engine:patterns              the table
+//   pnpm engine:patterns --unsupported only the patterns with a program the
+//                                      engine refuses after a clean check
+//   pnpm engine:patterns --json       the same, as JSON
 //
-// A pattern is `whole` when every program the generator holds for it runs
-// whole on Rust and agrees with the TypeScript engine; `refused` or
-// `declined` when one still does not (by the reason named); `by_contract`
-// when both engines refuse it by the park-state contract; `unrecordable`
-// when the shim refuses an input the eval wire cannot carry; `unreached`
-// when no program reaches it through the real shim (the checker or the
-// parser refuses every one, or it is an input fault the shim never sends).
-// Zero refusals is 0 `refused` and 0 `declined`.
+// A program ends `whole` (run to its result or its own runtime failure),
+// `at_check` (refused before a segment opens), `unsupported` (checked clean,
+// then refused by the engine: an open gap reachability_gaps.ts lists),
+// `unrecordable` (an event the eval wire cannot carry) or `state_refused`
+// (a resume whose parked state does not read).
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-type Routes = 'whole' | 'refused' | 'declined' | 'by_contract' | 'unrecordable' | 'unreached';
+import type { CaseRecord } from './patterns_oracle';
+import type { Ends } from './patterns_table';
 
 interface PatternRow {
-  reason: string;
-  routes: Routes;
+  name: string;
+  ends: Ends;
   note: string;
   programs: number;
 }
 
-interface CaseRow {
-  pattern: string;
-  routes: Routes;
-  reasons: string[];
-  agreement?: 'exact' | 'kit' | 'check';
-}
-
-const oracle = JSON.parse(readFileSync(path.join(__dirname, 'patterns.json'), 'utf8')) as { seed: number; patterns: PatternRow[]; cases: CaseRow[] };
+const oracle = JSON.parse(readFileSync(path.join(__dirname, 'patterns.json'), 'utf8')) as { seed: number; patterns: PatternRow[]; cases: CaseRecord[] };
 
 const rows = oracle.patterns.map((pattern) => {
-  const cases = oracle.cases.filter((c) => c.pattern === pattern.reason);
-  const count = (routes: CaseRow['routes']) => cases.filter((c) => c.routes === routes).length;
-  const reasons = [...new Set(cases.filter((c) => c.routes !== 'whole').flatMap((c) => c.reasons))];
+  const cases = oracle.cases.filter((c) => c.pattern === pattern.name);
+  const count = (ends: Ends) => cases.filter((c) => c.ends === ends).length;
   return {
-    reason: pattern.reason,
-    status: pattern.routes,
+    name: pattern.name,
+    ends: pattern.ends,
     programs: cases.length,
     whole: count('whole'),
-    exact: cases.filter((c) => c.agreement === 'exact').length,
-    refused: count('refused'),
-    declined: count('declined'),
-    reasons,
+    atCheck: count('at_check'),
+    unsupported: count('unsupported'),
+    reasons: [...new Set(cases.flatMap((c) => (c.reason !== undefined ? [c.reason] : [])))],
     note: pattern.note,
   };
 });
 
 const args = process.argv.slice(2);
-const shown = args.includes('--refused') ? rows.filter((r) => r.status === 'refused' || r.status === 'declined') : rows;
+const shown = args.includes('--unsupported') ? rows.filter((r) => r.unsupported > 0) : rows;
 
 if (args.includes('--json')) {
   console.log(JSON.stringify({ seed: oracle.seed, patterns: shown }, null, 2));
 } else {
-  const by = (status: string) => rows.filter((r) => r.status === status).length;
+  const count = (ends: Ends) => oracle.cases.filter((c) => c.ends === ends).length;
   console.log(
-    `${rows.length} patterns, ${oracle.cases.length} programs (seed ${oracle.seed}): ${by('whole')} whole, ${by('refused')} refused, ${by('declined')} declined, ${by('by_contract')} refused by contract on both engines, ${by('unrecordable')} unrecordable, ${by('unreached')} unreached through the real shim\n`,
+    `${rows.length} patterns, ${oracle.cases.length} programs (seed ${oracle.seed}): ${count('whole')} whole, ${count('at_check')} at the check, ${count('unsupported')} unsupported, ${count('unrecordable')} unrecordable, ${count('state_refused')} parked states refused\n`,
   );
-  console.log('| pattern | status | programs | whole on Rust (exactly) | refused / declined for | note |');
-  console.log('|---|---|---|---|---|---|');
+  console.log('| pattern | ends | programs | whole | at the check | unsupported | reasons | note |');
+  console.log('|---|---|---|---|---|---|---|---|');
   for (const r of shown) {
-    console.log(`| \`${r.reason}\` | ${r.status} | ${r.programs} | ${r.whole} (${r.exact}) | ${r.reasons.map((x) => `\`${x}\``).join(', ') || '—'} | ${r.note} |`);
+    console.log(`| \`${r.name}\` | ${r.ends} | ${r.programs} | ${r.whole} | ${r.atCheck} | ${r.unsupported} | ${r.reasons.map((x) => `\`${x}\``).join(', ') || '—'} | ${r.note} |`);
   }
 }

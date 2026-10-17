@@ -1,32 +1,28 @@
-// patterns.json: the retirement proof (PLAN-07A Task 6). For every admission
-// pattern the Rust engine's port list names (crates/movement-engine/README.md,
-// "The port list"), and for every pattern chunk 7A closed, seeded programs
-// that exercise it, each run on BOTH engines through the real entry points
-// and the real shim against one scripted host:
+// patterns.json: what the Rust engine, the version 5 reference, does with
+// each pattern of the language. Every program of patterns_table.ts runs
+// once, in its version 5 spelling (the upgrade tool's own rewrites), on the
+// Rust engine through the real entry points and the real shim against one
+// scripted host, recorded at the host boundary (the conformance kit's
+// recorder): every request it made, and how the entry ended.
 //
-//   - the TypeScript run is recorded at the host boundary (the conformance
-//     kit's recorder): every request, every answer, how the entry ended;
-//   - the Rust run (MOVEMENT_ENGINE=rust) is recorded the same way against a
-//     fresh copy of the same scripted host, and the shim's counts say what
-//     its admission did: ran whole, refused (with every reason), declined;
-//   - a program Rust runs whole must make the TypeScript's requests with the
-//     TypeScript's answers and end as it ended (its writes, their provenance
-//     and its trace are its result): the TypeScript recording replayed
-//     through the Rust target must pass the kit's verdict, and the two
-//     recordings agree exactly or as the kit's matching rule allows;
-//   - a program Rust refuses must name the pattern among its reasons, and
-//     the TypeScript engine runs it (the fallback): the two outcomes agree.
-//
-// A pattern says which it is (`routes`): `whole` for a pattern that now runs
-// on Rust, `refused` for one still refused by name, `declined` for one only
-// the check's answer reveals, `by_contract` for one both engines refuse by
-// the park-state contract, `unrecordable` for an input the shim refuses
-// because the eval wire cannot carry it (PLAN-08A Task 1: so "0 refused, 0
-// declined" means no port is left). A program that ends somewhere its
-// pattern does not say fails the generator, and so does a program refused
-// or declined for a reason the README's port list has retired (marked
-// Closed, or no longer named): the committed file is the inventory, and the
-// one-command report (patterns_report.ts, `pnpm engine:patterns`) reads it.
+// How a program ends (`ends`):
+//   - `whole`: the engine ran it, to its result or its own runtime failure;
+//   - `at_check`: the check refused it before a segment opened (it does not
+//     parse, does not check, or is pinned to a version this release does
+//     not run), with no host request made;
+//   - `unsupported`: it checked clean, yet the engine refused it
+//     (MOVENG_UNSUPPORTED) by a named reason: a checker or engine bug, which
+//     the generator accepts only where the reachability test's list of open
+//     gaps (reachability_gaps.ts) names it;
+//   - `unrecordable`: the shim refused its event, which the eval wire cannot
+//     carry as itself;
+//   - `state_refused`: a resume whose parked state the engine refused (a
+//     corrupt or foreign record) by a named reason, before it asked its host
+//     for anything.
+// A program that ends otherwise than its pattern (or itself) says fails the
+// generator, and so does a shim fault: the committed file is the inventory,
+// and the one-command report (patterns_report.ts, `pnpm engine:patterns`)
+// reads it.
 //
 // Written by generate.ts (seed 20261015); deterministic: the scripted host
 // answers from the program alone (a fixed clock, ids in order asked).
@@ -36,19 +32,17 @@ import { spelledFor } from '../../../../packages/movement-lang/checker/__test__/
 import { tenantIdOf } from '../../../../packages/engine-contracts';
 import type { HostRecording } from '../../../../packages/engine-contracts/conformance';
 import { recordEntry, recordedError } from '../../../../apps/api/src/services/movement_engine/conformance/recorder';
-import { rustTarget } from '../../../../apps/api/src/services/movement_engine/conformance/replay';
+import { KNOWN_GAPS, reasonOf } from '../../../../apps/api/src/services/movement_engine/__test__/reachability_gaps';
 import { resumeMovement, runMovement } from '../../../../packages/movement-engine/services/movement_engine/run';
-import { resetRustRunStats, resetRustEvalStats, rustRunStats } from '../../../../packages/movement-engine/services/movement_engine/rust_stats';
+import { EVENT_DOES_NOT_CROSS } from '../../../../packages/movement-engine/services/movement_engine/rust_engine';
+import { resetRustRunStats, rustRunStats } from '../../../../packages/movement-engine/services/movement_engine/rust_stats';
 import { credentialIdsFor, makeFakeParkSink, makeTestHost } from '../../../../packages/movement-engine/services/movement_engine/test_host';
 import { staticCatalogFromManifests } from '../../../../apps/api/src/services/translation_graph/movement/catalog';
 import type { ActingUser, Adapter, RelatedResult } from '../../../../packages/movement-engine/services/translation_graph/adapter';
 import { containerAssociation } from '../../../../packages/movement-engine/services/translation_graph/adapter';
 import { makeStablePosition, makeUnstablePosition, positionData } from '../../../../packages/movement-engine/services/translation_graph/types';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 
-import { BY_CONTRACT, PATTERNS, UNRECORDABLE, type Pick, type Program, type Routes } from './patterns_table';
-import { patternOf, portListStatus, retiredReasons } from './port_list';
+import { PATTERNS, type Ends, type Pick, type Program } from './patterns_table';
 
 type Rand = () => number;
 
@@ -116,11 +110,12 @@ export const PATTERNS_CATALOG = mockCatalogSnapshot({
   plugins: PLUGINS,
 });
 
+/** What every program's file starts with, in its version 5 spelling. */
 export const PATTERNS_PRELUDE = [
   'import { email, attio } from adapters',
   'import { inbox_cred, crm_cred } from credentials',
-  'inbox = email(credentials: inbox_cred)',
-  'crm = attio(credentials: crm_cred)',
+  'inbox = connect email using inbox_cred',
+  'crm = connect attio using crm_cred',
   '',
 ].join('\n');
 
@@ -130,7 +125,7 @@ const COMPANIES = [
 ];
 
 /** The CRM: two companies, each with a note, a deal and a person; writes
- *  answered in order. Built fresh per run, so each engine meets it as new. */
+ *  answered in order. Built fresh per run, so each run meets it as new. */
 function crmAdapter(): Adapter {
   let created = 0;
   const position = (recordType: string, recordId: string, data: Record<string, unknown>) =>
@@ -299,78 +294,52 @@ const EVENT_PAYLOAD = {
   meta: { label: 'Follow up', n: 2 },
 };
 
-// ── Running a program on both engines ────────────────────────────────────────
+// ── Running a program ────────────────────────────────────────────────────────
 
 const TEAM = tenantIdOf('00000000-0000-0000-0000-0000000000f6');
 
-export function sourceOf(program: Program): string {
+/** The version a program runs under: 5, the version the Rust engine is the
+ *  reference for, unless it is pinned past it on purpose (a version this
+ *  release does not run). */
+const versionOf = (program: Program) => Math.max(program.version ?? 5, 5);
+
+export function sourceOf(program: { body?: string; file?: string }): string {
   if (program.file !== undefined) return PATTERNS_PRELUDE + program.file;
   return `${PATTERNS_PRELUDE}movement m(msg: <inbox-[:message]->>) {\n${program.body ?? ''}\n}`;
 }
 
-async function underEngine<T>(engine: 'ts' | 'rust', body: () => Promise<T>): Promise<T> {
-  const previous = process.env.MOVEMENT_ENGINE;
-  process.env.MOVEMENT_ENGINE = engine;
-  try {
-    return await body();
-  } finally {
-    if (previous === undefined) delete process.env.MOVEMENT_ENGINE;
-    else process.env.MOVEMENT_ENGINE = previous;
-  }
+function catalogOf(program: Program): typeof PATTERNS_CATALOG {
+  return program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
 }
 
-/** The parked state a resume program resumes: its first timer park on the
- *  TypeScript engine, as `program.resume` makes it. */
-async function parkedState(program: Program): Promise<unknown> {
-  const park = makeFakeParkSink();
-  const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
-  const failed = await underEngine('ts', () =>
-    runMovement({ ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], park, program.answers) }).then(
-      () => undefined,
-      (error: unknown) => String(error),
-    ),
-  );
-  const first = park.timerParks[0];
-  if (first === undefined || program.resume === undefined) {
-    throw new Error(`patterns oracle: a resume program never parked (${failed ?? 'it ran to its end'}): ${program.body ?? program.file}`);
-  }
-  return program.resume(JSON.parse(JSON.stringify(first.state)) as Record<string, unknown>);
+/** `source` as version 5 spells it: the table writes its programs (and their
+ *  library files) in the spelling versions 1–4 read, respelled here by the
+ *  upgrade tool's own rewrites (the `MOV_V5_*` fixes, nothing else). */
+function respelled(source: string, catalog: typeof PATTERNS_CATALOG): string {
+  const resolveFile = resolveFileFromSnapshot(catalog);
+  return spelledFor(5, source, fromCatalogSnapshot(catalog), resolveFile !== undefined ? { resolveFile } : {});
 }
 
-/** A program as its version spells it: from version 5 the table's programs
- *  and their library files, written in the spelling versions 1–4 read,
- *  respelled by the upgrade tool's own rewrites (the `MOV_V5_*` fixes,
- *  nothing else). */
-const spelled = new Map<string, string>();
-function respelled(version: number, source: string, catalog: typeof PATTERNS_CATALOG): string {
-  if (version < 5) return source;
-  const key = `${version}\u0000${JSON.stringify(catalog.files ?? null)}\u0000${source}`;
-  let out = spelled.get(key);
-  if (out === undefined) {
-    const resolveFile = resolveFileFromSnapshot(catalog);
-    out = spelledFor(version as 5, source, fromCatalogSnapshot(catalog), resolveFile !== undefined ? { resolveFile } : {});
-    spelled.set(key, out);
-  }
-  return out;
-}
-
-function spelledCatalog(program: Program, catalog: typeof PATTERNS_CATALOG): typeof PATTERNS_CATALOG {
-  const version = program.version ?? 3;
-  if (version < 5 || catalog.files === undefined) return catalog;
-  const files = Object.fromEntries(Object.entries(catalog.files).map(([name, file]) => [name, { ...file, source: respelled(version, file.source, { ...catalog, files: undefined }) }]));
-  return { ...catalog, files };
-}
-
-export function spelledSource(program: Program, catalog: typeof PATTERNS_CATALOG): string {
-  return respelled(program.version ?? 3, sourceOf(program), spelledCatalog(program, catalog));
+/** The program as it runs: its file (after the prelude) and its library
+ *  files in their version 5 spelling, under the version it runs at. */
+function spelledProgram(program: Program): Program {
+  const files =
+    program.files === undefined
+      ? undefined
+      : Object.fromEntries(Object.entries(program.files).map(([name, file]) => [name, { ...file, source: respelled(file.source, PATTERNS_CATALOG) }]));
+  const { body: _body, file: _file, files: _files, ...rest } = program;
+  const spelled = { ...rest, ...(files !== undefined ? { files } : {}), version: versionOf(program) };
+  const source = respelled(sourceOf(program), catalogOf(spelled));
+  if (!source.startsWith(PATTERNS_PRELUDE)) throw new Error(`patterns oracle: the upgrade rewrote the prelude of ${program.body ?? program.file}`);
+  return { ...spelled, file: source.slice(PATTERNS_PRELUDE.length) };
 }
 
 /** The run's input but its host. */
-function runInput(program: Program, written: typeof PATTERNS_CATALOG) {
-  const catalog = spelledCatalog(program, written);
+function runInput(program: Program) {
+  const catalog = catalogOf(program);
   return {
-    source: spelledSource(program, written),
-    languageVersion: program.version ?? 3,
+    source: sourceOf(program),
+    languageVersion: versionOf(program),
     ...(program.movementName !== undefined ? { movementName: program.movementName } : {}),
     event: { pipelineInputId: 'pi-patterns', adapterType: 'email', triggerType: 'webhook' as const, payload: { ...EVENT_PAYLOAD, ...program.payload } },
     catalog,
@@ -379,84 +348,77 @@ function runInput(program: Program, written: typeof PATTERNS_CATALOG) {
   };
 }
 
-/** One engine's run of a program whose input JSON cannot carry (a Date),
- *  so the recorder refuses it: how it ended, and no requests. */
-async function direct(engine: 'ts' | 'rust', program: Program): Promise<HostRecording> {
-  const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
-  const outcome = await underEngine(engine, () =>
-    runMovement({ ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], undefined, program.answers) }).then(
-      (result) => ({ result: JSON.parse(JSON.stringify(result)) as unknown }),
-      (error: unknown) => ({ failure: recordedError(error) }),
-    ),
+/** The parked state a resume program resumes: its run's first timer park,
+ *  as `program.resume` makes it. */
+async function parkedState(program: Program): Promise<unknown> {
+  const park = makeFakeParkSink();
+  const failed = await runMovement({ ...runInput(program), host: scriptedHost(program.replies ?? [], park, program.answers) }).then(
+    () => undefined,
+    (error: unknown) => String(error),
+  );
+  const first = park.timerParks[0];
+  if (first === undefined || program.resume === undefined) {
+    throw new Error(`patterns oracle: a resume program never parked (${failed ?? 'it ran to its end'}): ${program.file}`);
+  }
+  return program.resume(JSON.parse(JSON.stringify(first.state)) as Record<string, unknown>);
+}
+
+/** A run of a program whose input JSON cannot carry, so the recorder
+ *  refuses it: how it ended, and no requests. */
+async function direct(program: Program): Promise<HostRecording> {
+  const outcome = await runMovement({ ...runInput(program), host: scriptedHost(program.replies ?? [], undefined, program.answers) }).then(
+    (result) => ({ result: JSON.parse(JSON.stringify(result)) as unknown }),
+    (error: unknown) => ({ failure: recordedError(error) }),
   );
   return { kit: 'host', version: 2, entry: 'run', input: {}, methods: [], requests: [], ...outcome } as unknown as HostRecording;
 }
 
-/** One engine's run of `program`, recorded at the host boundary. */
-async function recorded(engine: 'ts' | 'rust', program: Program, state?: unknown): Promise<HostRecording | undefined> {
+/** A run of `program` (or its resume of `state`), recorded at the host
+ *  boundary. */
+async function recorded(program: Program, state?: unknown): Promise<HostRecording | undefined> {
   let kept: HostRecording | undefined;
-  const catalog = program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG;
+  const keep = (recording: HostRecording) => {
+    kept = recording;
+  };
+  const host = scriptedHost(program.replies ?? [], undefined, program.answers);
   // A run that never ends (a promise nothing settles) would end the process
   // silently: it is reported instead.
   let stalled: NodeJS.Timeout | undefined;
   const stall = new Promise<void>((resolve) => {
     stalled = setTimeout(resolve, 20_000);
   });
-  await underEngine(engine, () =>
-    Promise.race([
-      stall,
-      (state === undefined
-        ? recordEntry({
-            entry: 'run',
-            input: { ...runInput(program, catalog), host: scriptedHost(program.replies ?? [], undefined, program.answers) },
-            run: (input) => runMovement(input),
-            keep: (recording) => {
-              kept = recording;
-            },
-          })
-        : recordEntry({
-            entry: 'resume',
-            input: { ...runInput(program, catalog), state: state as never, host: scriptedHost(program.replies ?? [], undefined, program.answers) },
-            run: (input) => resumeMovement(input),
-            keep: (recording) => {
-              kept = recording;
-            },
-          })
-      ).catch(() => undefined),
-    ]),
-  );
+  await Promise.race([
+    stall,
+    (state === undefined
+      ? recordEntry({ entry: 'run', input: { ...runInput(program), host }, run: (input) => runMovement(input), keep })
+      : recordEntry({ entry: 'resume', input: { ...runInput(program), state: state as never, host }, run: (input) => resumeMovement(input), keep })
+    ).catch(() => undefined),
+  ]);
   clearTimeout(stalled);
   return kept;
 }
 
-/** What the Rust engine's admission did with the run it was just handed. */
-function routing(): { routes: Routes; reasons: string[] } {
-  const [first] = Object.keys(rustRunStats.notAdmitted);
-  if (first !== undefined) {
-    const reasons = Object.keys(rustRunStats.allReasons);
-    if (BY_CONTRACT.includes(first)) return { routes: 'by_contract', reasons };
-    if (UNRECORDABLE.includes(first)) return { routes: 'unrecordable', reasons };
-    return { routes: 'refused', reasons };
-  }
-  if (Object.keys(rustRunStats.declined).length > 0) return { routes: 'declined', reasons: Object.keys(rustRunStats.declined) };
-  // Never handed to the Rust engine (both entries refuse it first).
-  if (rustRunStats.routed === 0) return { routes: 'unreached', reasons: [] };
-  // This engine's own refusal met mid-run after an effect: a divergence,
-  // which no pattern may say it routes.
-  if (rustRunStats.unreproduced > 0) return { routes: 'declined', reasons: ['unreproduced_mid_run'] };
-  // A run that ended mid-run in the TypeScript's own MOVENG_UNSUPPORTED,
-  // mirrored, ran in Rust, counted apart: whole only where it ends as the
-  // TypeScript's does, which the comparison below holds it to, and it says so.
-  if (rustRunStats.mirroredFailure > 0) return { routes: 'whole', reasons: ['mirrored_failure'] };
-  // Whole means the shim saw it run whole, not only that nothing refused.
-  if (rustRunStats.ranWhole === 0) return { routes: 'declined', reasons: ['did_not_run_whole'] };
-  return { routes: 'whole', reasons: [] };
+const STATE_REFUSED = /^MOVENG_UNSUPPORTED: this run's parked state does not read \(([^)]+)\)$/;
+
+/** How a run just made ended, and the reason a refusal names. */
+function endOf(recording: HostRecording): { ends: Ends; reason?: string } {
+  if (!('failure' in recording) || recording.failure === undefined) return { ends: 'whole' };
+  const { code, message } = recording.failure;
+  if (code === 'MOVENG_PARSE' || code === 'MOVENG_CHECK' || code === 'MOVENG_LANGUAGE_VERSION') return { ends: 'at_check' };
+  if (code !== 'MOVENG_UNSUPPORTED') return { ends: 'whole' };
+  if (rustRunStats.unsupported[EVENT_DOES_NOT_CROSS] !== undefined) return { ends: 'unrecordable', reason: EVENT_DOES_NOT_CROSS };
+  // A resume's parked state the engine cannot read fails the resume naming
+  // why (crates/movement-engine/src/run.rs): a refusal of the state, not of
+  // the program.
+  const refused = recording.entry === 'resume' ? STATE_REFUSED.exec(message)?.[1] : undefined;
+  if (refused !== undefined) return { ends: 'state_refused', reason: refused };
+  return { ends: 'unsupported', reason: reasonOf(message) };
 }
 
 /** The unsupported-version refusal names the CURRENT language version
- *  (`"Dancing Wren" (5)`), which changes every release: both engines' endings
- *  are compared, and written to patterns.json, with that name and number
- *  masked, the message's shape otherwise exact. */
+ *  (`"Dancing Wren" (5)`), which changes every release: an ending is written
+ *  to patterns.json with that name and number masked, the message's shape
+ *  otherwise exact. */
 function maskCurrentVersion<T>(failure: T): T {
   if (failure === null || typeof failure !== 'object') return failure;
   const f = failure as { code?: string; message?: string };
@@ -470,182 +432,88 @@ function ending(recording: HostRecording): unknown {
   return { result: recording.result };
 }
 
-/** JSON with every object's keys sorted: a host reads a request's members,
- *  not their order. */
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => [k, canonical(v)]));
-  }
-  return value;
-}
-
-/** Every request in the order made, what was answered before it, and its
- *  answer — each object's keys in the order the host was handed them. */
-const requestsOf = (recording: HostRecording) =>
-  JSON.stringify(recording.requests.map((r) => ({ path: `${r.family}.${r.method}`, args: r.args, after: r.after, ...('error' in r ? { error: r.error } : { answer: r.answer }) })));
-
-interface CaseRecord {
+export interface CaseRecord {
   pattern: string;
+  /** As it ran: its version 5 spelling. */
   program: Program;
-  routes: Routes;
-  reasons: string[];
-  /** For a whole run, which always passes the kit's verdict: whether the
-   *  Rust run also made the TypeScript's requests and result exactly
-   *  (`exact`), or only as the kit's matching rule allows (`kit`). */
-  agreement?: 'exact' | 'kit' | 'check';
+  ends: Ends;
+  /** What an `unsupported`, `unrecordable` or `state_refused` ending names. */
+  reason?: string;
   requests: string[];
   ending: unknown;
 }
 
-export async function writePatternsOracle(rand: Rand, write: (name: string, text: string) => void): Promise<void> {
-  const readme = readFileSync(path.join(__dirname, '../../README.md'), 'utf8');
-  const status = portListStatus(readme);
-  const uncovered = [...status.keys()].filter((reason) => !PATTERNS.some((p) => p.reason === reason));
-  if (uncovered.length > 0) throw new Error(`patterns oracle: the port list names reasons no pattern exercises: ${uncovered.join(', ')}`);
+/** Every program of the table run, as recorded, and what is wrong with the
+ *  record (PATTERNS_ONLY, a pattern-name pattern, runs only those). */
+export async function runPatterns(rand: Rand): Promise<{ cases: CaseRecord[]; problems: string[] }> {
   const pick: Pick = (items) => items[Math.floor(rand() * items.length)]!;
   const cases: CaseRecord[] = [];
   const problems: string[] = [];
+  const seen = new Set<string>();
   const only = process.env.PATTERNS_ONLY !== undefined ? new RegExp(process.env.PATTERNS_ONLY) : undefined;
   for (const pattern of PATTERNS) {
-    if (only !== undefined && !only.test(pattern.reason)) continue;
+    if (only !== undefined && !only.test(pattern.name)) continue;
     for (const make of pattern.programs) {
-      const program = make(pick);
-      if (process.env.PATTERNS_DEBUG !== undefined) console.error('CASE', pattern.reason, JSON.stringify(program.body ?? program.file));
-      const state = program.resume !== undefined ? await parkedState(program) : undefined;
-      const ts = program.unrecordable === true ? await direct('ts', program) : await recorded('ts', program, state);
-      if (process.env.PATTERNS_DEBUG !== undefined) console.error('  ts done');
-      resetRustRunStats();
-      resetRustEvalStats();
-      const rust = program.unrecordable === true ? await direct('rust', program) : await recorded('rust', program, state);
-      if (ts === undefined || rust === undefined) {
-        problems.push(`${pattern.reason}: ${program.body ?? program.file}\n  the ${ts === undefined ? 'TypeScript' : 'Rust'} run kept no recording (it never ended within 20 s, or its input is not JSON)`);
+      const written = make(pick);
+      const where = `${pattern.name}: ${JSON.stringify(written.body ?? written.file)}`;
+      let program: Program;
+      try {
+        program = spelledProgram(written);
+      } catch (error) {
+        problems.push(`${where}\n  does not respell to version 5: ${String(error)}`);
         continue;
       }
-      const { routes, reasons } = routing();
-      const where = `${pattern.reason}: ${program.body ?? program.file}`;
-      const checkFailed = (r: HostRecording) => 'failure' in r && /^MOVENG_(PARSE|CHECK|LANGUAGE_VERSION)$/.test(r.failure?.code ?? '');
-      if (checkFailed(ts) !== (program.checks === false)) {
-        problems.push(`${where}\n  ${checkFailed(ts) ? `does not check: ${'failure' in ts ? (ts.failure?.message ?? '') : ''}` : 'checks, yet says the checker refuses it'}`);
+      if (process.env.PATTERNS_DEBUG !== undefined) console.error('CASE', pattern.name, JSON.stringify(program.file));
+      const key = JSON.stringify({ ...program, resume: program.resume?.toString() });
+      if (seen.has(key)) problems.push(`${where}\n  spells the same at version 5 as another program of the table`);
+      seen.add(key);
+      const state = program.resume !== undefined ? await parkedState(program) : undefined;
+      resetRustRunStats();
+      const recording = program.unrecordable === true ? await direct(program) : await recorded(program, state);
+      if (recording === undefined) {
+        problems.push(`${where}\n  kept no recording (it never ended within 20 s, or its input is not JSON)`);
+        continue;
       }
-      const names = reasons.some((r) => patternOf(r, [pattern.reason]) !== undefined);
-      // A program the checker refuses ends at the check the Rust route makes
-      // before its segment opens, as the TypeScript route does: it is
-      // `unreached`, and says so (its own `routes`, or its pattern's); one
-      // that ends where it does not say fails the generator.
-      const expected = program.routes ?? pattern.routes;
-      if (expected === 'unreached') {
-        // The checker refuses every program holding it (the Rust engine's
-        // admission may name it first, and both engines end at the check),
-        // or both entries refuse it before it is routed at all.
-        if (routes !== 'unreached') problems.push(`${where}\n  routes ${routes} (${reasons.join(', ')}), yet says it is unreached: one the checker refuses, or one never routed`);
-        if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) problems.push(`${where}\n  the check ended the engines differently`);
-      } else {
-        if (routes !== expected) problems.push(`${where}\n  routes ${routes} (${reasons.join(', ')}), the pattern says ${expected}`);
-        // A program whose own routes say otherwise than its pattern's (a
-        // form that declines for another reason) need not name it.
-        if (routes !== 'whole' && !names && program.routes === undefined) problems.push(`${where}\n  ${routes} for ${reasons.join(', ')}, not for ${pattern.reason}`);
-        for (const retired of retiredReasons(routes, reasons, status)) problems.push(`${where}\n  ${retired}`);
+      if (rustRunStats.shimFaults > 0) problems.push(`${where}\n  a shim fault: ${JSON.stringify(ending(recording))}`);
+      const { ends, reason } = endOf(recording);
+      const expected = program.ends ?? pattern.ends;
+      const said = 'failure' in recording ? ` (${JSON.stringify(recording.failure?.message ?? '')})` : '';
+      if (ends !== expected) problems.push(`${where}\n  ends ${ends}${said}, yet says it ends ${expected}`);
+      if (ends === 'unsupported' && !KNOWN_GAPS.includes(reason!)) {
+        problems.push(`${where}\n  checks clean, yet the engine refuses it, by a gap reachability_gaps.ts does not list (a checker or engine bug)${said}`);
       }
-      let agreement: CaseRecord['agreement'];
-      if (expected === 'unreached') {
-        agreement = 'check';
-      } else if (routes === 'whole') {
-        const same = requestsOf(ts) === requestsOf(rust) && JSON.stringify(canonical(ending(ts))) === JSON.stringify(canonical(ending(rust)));
-        if (process.env.PATTERNS_DEBUG !== undefined && !same) {
-          const [a, b] = [JSON.parse(requestsOf(ts)) as unknown[], JSON.parse(requestsOf(rust)) as unknown[]];
-          const at = a.findIndex((r, i) => JSON.stringify(r) !== JSON.stringify(b[i]));
-          console.error('DIFF', where, at, JSON.stringify(a[at]), '\n   vs', JSON.stringify(b[at]), a.length, b.length);
-          console.error('  TS ENDING', JSON.stringify(ending(ts)).slice(0, 600));
-          console.error('  RUST ENDING', JSON.stringify(ending(rust)).slice(0, 600));
-        }
-        // The kit's verdict on every whole run, not only where the two
-        // recordings differ: the TypeScript recording replayed through the
-        // Rust target must end with the same result (each write's
-        // provenance, each extraction site's dataSources), not only after
-        // the same requests.
-        const verdict = await Promise.race([
-          rustTarget.replay(ts),
-          new Promise<{ kind: 'skipped'; reason: string }>((resolve) => setTimeout(() => resolve({ kind: 'skipped', reason: 'the replay never ended' }), 20_000)),
-        ]);
-        if (verdict.kind !== 'same') problems.push(`${where}\n  the engines disagree: ${verdict.kind === 'diverged' ? verdict.divergence : verdict.reason}`);
-        else agreement = same ? 'exact' : 'kit';
-        // The kit's matching rule is looser than request for request (it
-        // matches concurrent members' requests apart, and an ending it
-        // judges equal need not be the same text): a program matching only
-        // so must say why, or the looseness may hide a divergence (a -0 the
-        // recorder refused on one engine only passed so once).
-        if (agreement === 'kit' && program.looser === undefined) {
-          problems.push(`${where}\n  the engines agree only as the kit's matching rule allows, and the program does not say why (\`looser\`)`);
-        }
-      } else if (JSON.stringify(ending(ts)) !== JSON.stringify(ending(rust))) {
-        problems.push(`${where}\n  refused, yet its fallback ended otherwise than the TypeScript run`);
-      }
-      if (program.exact === true && agreement !== 'exact') {
-        problems.push(`${where}\n  says its requests match byte for byte, yet they are ${agreement ?? 'not compared'}`);
-      }
+      const { resume: _resume, ...stored } = program;
       cases.push({
-        pattern: pattern.reason,
-        program,
-        routes,
-        reasons,
-        ...(agreement !== undefined ? { agreement } : {}),
-        requests: ts.requests.map((r) => `${r.family}.${r.method}`),
-        ending: ending(ts),
+        pattern: pattern.name,
+        program: stored,
+        ends,
+        ...(reason !== undefined ? { reason } : {}),
+        requests: recording.requests.map((r) => `${r.family}.${r.method}`),
+        ending: ending(recording),
       });
     }
   }
-  if (only !== undefined) {
-    console.log(JSON.stringify(cases.map((c) => ({ pattern: c.pattern, routes: c.routes, reasons: c.reasons, ending: c.ending })), null, 1).slice(0, 20000));
-  }
-  // A pattern that says it reaches the engine proves it with at least one
-  // program that does.
+  // A pattern proves where it ends with at least one program that ends so.
   for (const pattern of PATTERNS) {
-    if (pattern.routes === 'unreached' || (only !== undefined && !only.test(pattern.reason))) continue;
-    if (!cases.some((c) => c.pattern === pattern.reason && c.routes !== 'unreached')) {
-      problems.push(`${pattern.reason}\n  says it routes ${pattern.routes}, yet none of its programs reaches the engine`);
+    if (only !== undefined && !only.test(pattern.name)) continue;
+    if (!cases.some((c) => c.pattern === pattern.name && c.ends === pattern.ends)) {
+      problems.push(`${pattern.name}\n  says it ends ${pattern.ends}, yet none of its programs does`);
     }
   }
+  return { cases, problems };
+}
+
+export async function writePatternsOracle(rand: Rand, write: (name: string, text: string) => void): Promise<void> {
+  if (process.env.PATTERNS_ONLY !== undefined) throw new Error('patterns oracle: PATTERNS_ONLY runs a part of the table, which writes no patterns.json');
+  const { cases, problems } = await runPatterns(rand);
   if (problems.length > 0) throw new Error(`patterns oracle: ${problems.length} problem(s)\n${problems.join('\n')}`);
-  const patterns = PATTERNS.map(({ reason, routes, note }) => ({ reason, routes, note, programs: cases.filter((c) => c.pattern === reason).length }));
+  const patterns = PATTERNS.map(({ name, ends, note }) => ({ name, ends, note, programs: cases.filter((c) => c.pattern === name).length }));
   write(
     'patterns.json',
     `{"seed":20261015,"prelude":${JSON.stringify(PATTERNS_PRELUDE)},"patterns":[\n${patterns.map((p) => JSON.stringify(p)).join(',\n')}\n],"cases":[\n${cases.map((c) => JSON.stringify(c)).join(',\n')}\n]}\n`,
   );
-  console.log(`patterns.json: ${PATTERNS.length} patterns, ${cases.length} programs (${cases.filter((c) => c.routes === 'whole').length} whole on Rust)`);
-}
-
-
-// ── v5 probe (investigation only) ───────────────────────────────────────────
-/** Every pattern program (plus `extra`) forced to `version`: how the TS check
- *  went, where Rust admission routed it, and how each engine ended. */
-export async function probeVersion(version: number, rand: Rand, extra: Array<{ reason: string; program: Program }> = []): Promise<unknown[]> {
-  const pick: Pick = (items) => items[Math.floor(rand() * items.length)]!;
-  const only = process.env.PATTERNS_ONLY !== undefined ? new RegExp(process.env.PATTERNS_ONLY) : undefined;
-  const all: Array<{ reason: string; program: Program }> = [];
-  for (const pattern of PATTERNS) for (const make of pattern.programs) all.push({ reason: pattern.reason, program: make(pick) });
-  all.push(...extra);
-  const out: unknown[] = [];
-  for (const { reason, program: base } of all) {
-    if (only !== undefined && !only.test(reason)) continue;
-    const program = { ...base, version };
-    let state: unknown;
-    try {
-      state = program.resume !== undefined ? await parkedState(program) : undefined;
-    } catch (e) {
-      out.push({ reason, src: program.body ?? program.file, tsFailedToPark: String(e).slice(0, 300) });
-      continue;
-    }
-    const ts = state === undefined ? await direct('ts', program) : ((await recorded('ts', program, state)) ?? (await direct('ts', program)));
-    resetRustRunStats();
-    resetRustEvalStats();
-    const rust = state === undefined ? await direct('rust', program) : ((await recorded('rust', program, state)) ?? (await direct('rust', program)));
-    const { routes, reasons } = routing();
-    const short = (r: HostRecording) => JSON.stringify(ending(r)).slice(0, 400);
-    const tsRec = state === undefined ? await recorded('ts', program).catch(() => undefined) : undefined;
-    const rec = tsRec === undefined ? 'none' : short(tsRec);
-    if (process.env.PROBE_DUMP !== undefined && tsRec !== undefined) for (const q of tsRec.requests) if (new RegExp(process.env.PROBE_DUMP).test(`${q.family}.${q.method}`)) console.log('REQ', reason, `${q.family}.${q.method}`, JSON.stringify(q.args).slice(0, 700));
-    out.push({ reason, src: program.body ?? program.file, ...(program.version !== undefined && program.version >= 5 ? { v5: spelledSource(program, program.files !== undefined ? { ...PATTERNS_CATALOG, files: program.files } : PATTERNS_CATALOG) } : {}), routes, reasons, ts: short(ts), rust: short(rust), ...(rec !== short(ts) ? { tsRecorded: rec } : {}) });
-  }
-  return out;
+  const count = (ends: Ends) => cases.filter((c) => c.ends === ends).length;
+  console.log(
+    `patterns.json: ${PATTERNS.length} patterns, ${cases.length} programs (${count('whole')} whole, ${count('at_check')} at the check, ${count('unsupported')} unsupported, ${count('unrecordable')} unrecordable, ${count('state_refused')} parked states refused)`,
+  );
 }

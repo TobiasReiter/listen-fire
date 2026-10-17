@@ -9,7 +9,7 @@
 //     pinned at version 3 or later, where they still parse;
 //   - the engine oracles' programs (crates/movement-engine/tests/oracle):
 //     records (each case's own version), handles (version 4), parallel
-//     (version 3) and patterns (each its own version, and the current one),
+//     (version 3) and patterns (version 5, the spelling the oracle ran),
 //     each against its oracle's catalog.
 //
 // Usage (run.sh does this): node -r <ts-node>/register/transpile-only reference.ts <out-dir>
@@ -74,9 +74,9 @@ for (const { file, version } of oracles) {
   }
 }
 
-// The engine's pattern programs (patterns.json): every admission pattern
-// both engines run, under its own version and, from version 3, under the
-// current one — the programs a Rust run is checked on before its segment
+// The engine's pattern programs (patterns.json), each in the version 5
+// spelling the Rust engine ran (and under the current version too, should
+// it move on) — the programs a Rust run is checked on before its segment
 // opens, which the corpus above never held (gate 19 found four the Rust
 // checker passed and the TypeScript refuses).
 {
