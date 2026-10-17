@@ -155,14 +155,16 @@ describe('the WHERE is typed against the type the target lands on', () => {
 });
 
 describe('where a target WHERE is refused', () => {
+  // From version 5 a target walks one hop (MOV_WRITE_MULTI_HOP), so only
+  // versions 1–4 have a hop before the last to narrow.
   it('on a hop other than the last', () => {
-    const found = errors(
-      inMovement(
-        '  write reg-[p:entities WHERE p.`City` == "Berlin"]->-[:Branches]-> { unique by (FUZZY `Name`), Name: wanted }',
-      ),
+    const source = inMovement(
+      '  write reg-[p:entities WHERE p.`City` == "Berlin"]->-[:Branches]-> { unique by (FUZZY `Name`), Name: wanted }',
     );
+    const found = errors(source, 4);
     expect(found.map((d) => d.code)).toContain(C.TARGET_WHERE_NOT_FINAL);
     expect(found.find((d) => d.code === C.TARGET_WHERE_NOT_FINAL)?.message).toContain('final hop');
+    expect(codes(source)).toEqual([C.WRITE_MULTI_HOP]);
   });
 
   it('a write inside the WHERE does not parse — the filter is read-only by construction', () => {

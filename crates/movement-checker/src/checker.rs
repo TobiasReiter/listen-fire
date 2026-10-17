@@ -1144,6 +1144,12 @@ impl<'c> Checker<'c> {
     /// `checkPathHead`, the name half: its root and every name its hops read.
     pub fn check_path_head(&mut self, head: &PathHead, scope: ScopeId) -> Vec<String> {
         let aliases = extract_hop_aliases(&head.hops_raw);
+        if self.version >= 5 && head.root.is_none() {
+            self.report(crate::codes::WALK_ROOTLESS, crate::families::walks::rootless_head_message(&head.hops_raw), head.span);
+        }
+        if let Some(PathRoot::Name { name }) = &head.root {
+            self.report_walk_off_json(name, &head.hops_raw, head.span, scope);
+        }
         let root_name = match &head.root {
             Some(PathRoot::Name { name }) => Some(name.clone()),
             _ => None,
@@ -1236,6 +1242,7 @@ impl<'c> Checker<'c> {
         match &awaited.source {
             AwaitSource::Traversal { head, span } => {
                 self.check_awaited_head(head, Some(*span));
+                self.report_await_on_list(head, scope);
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());
@@ -1243,6 +1250,7 @@ impl<'c> Checker<'c> {
             }
             AwaitSource::First { head, .. } => {
                 self.check_awaited_head(head, None);
+                self.report_await_on_list(head, scope);
                 self.check_path_head(head, scope);
                 let walk = self.walk_head(head, scope, true);
                 self.check_awaitable(head, walk.as_ref());

@@ -32,6 +32,7 @@
 //! - MOV_UNKNOWN_POSITION
 //! - MOV_UNKNOWN_PROPERTY
 //! - MOV_UNREACHABLE_BRANCH
+//! - MOV_WALK_ROOTLESS
 
 use movement_parser::ast::{PathHead, PathRoot};
 use movement_parser::catalog::types::{EdgeCapability, EdgeSchema, PositionSchema, PushMode};
@@ -1529,4 +1530,45 @@ impl crate::checker::Checker<'_> {
             self.push(diagnostic);
         }
     }
+}
+
+// ── A walk off a json value (version 5) ──
+
+impl crate::checker::Checker<'_> {
+    /// A walk off a name that holds a json value: a json map has no
+    /// relationships, so the walk reaches nothing.
+    pub fn report_walk_off_json(&mut self, name: &str, hops: &str, span: movement_parser::ast::Span, scope: crate::scope::ScopeId) {
+        if self.version < 5 {
+            return;
+        }
+        let crate::scope::Resolution::Found(id) = self.scopes.resolve(scope, name) else { return };
+        let types = &self.scopes.symbol(id).types;
+        if types.pos.is_some() || !matches!(types.field.as_ref().map(crate::types::field::strip_absent), Some(crate::types::field::Ty::Json)) {
+            return;
+        }
+        let shown = crate::families::names::spell_name(name);
+        self.report(
+            crate::codes::JSON_HAS_NO_EDGES,
+            format!("'{shown}' holds a json value, and a json value has no relationships — '{}' walks nothing. Read a key with a dot ('{shown}.key'), or walk the record the value came from", hops.trim()),
+            span,
+        );
+    }
+}
+
+// ── A walk with no root (version 5) ──
+
+/// A head with no root: the engine walks from a record a name holds, and
+/// none says which.
+pub fn rootless_head_message(hops_raw: &str) -> String {
+    let hops = hops_raw.trim();
+    format!("'{hops}' has no root, so nothing says which record it walks from — name the record it starts at: 'x{hops}'")
+}
+
+/// A walk in an expression with no root, outside the one place it has a
+/// record to start from: `EXISTS(-[…]->)` inside a hop's WHERE or ORDER BY
+/// reads the record that hop lands on.
+pub fn rootless_walk_message(first_hop: &str) -> String {
+    format!(
+        "'-[:{first_hop}]->' has no root, so nothing says which record it walks from — name the record it starts at ('x-[:{first_hop}]->'). Only inside a hop's WHERE does 'EXISTS(-[:{first_hop}]->)' walk from a record: the one that hop lands on"
+    )
 }
