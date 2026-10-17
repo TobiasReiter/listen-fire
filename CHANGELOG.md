@@ -173,6 +173,9 @@ for byte; on text already in the version 5 spelling it changes nothing.
   Under 1–4 nothing changes (a saved automation runs whenever the record is found); a move up
   across 5 is an upgrade warning, which holds the pin. The write-site refusal of the same records
   no longer offers the block as a way out from 5.
+  A guard is any branch that always leaves (`fail(…)`, a `return`, an `if` whose every arm and
+  `else` leave): below it the record counts as present, as below `if ISNULL(x) { ERROR(…) }` on
+  1–4, and `x != null && …` sees `x` present on the right side. Nothing else narrows.
 - **A null test on an extracted `<text>` field is refused for the call's records too**
   (`MOV_PRESENCE_TEST_ON_TEXT`, from version 5): `if (r.title != null)` where `r` is a record
   `extract(…)` or `extractOne(…)` handed back and `title` is `<text>`. Why: a text the model did
@@ -230,6 +233,23 @@ for byte; on text already in the version 5 spelling it changes nothing.
   has no hop and answers false for an absent record, so it is allowed. Guard the walk:
   `if (found != null) { … }`. Under 1–4 nothing changes; a move up across 5 is an upgrade warning,
   which holds the pin.
+
+- **Forms the engine does not run are refused at save** (from version 5; each message names the
+  spelling that does run). Why: each passed the check and failed the run.
+  - A linked write or match whose target walks more than one edge (`MOV_WRITE_MULTI_HOP`):
+    walk to the parent in a block, then write off its alias.
+  - A walk with no root, as a block head or in an expression (`MOV_WALK_ROOTLESS`): name the
+    record it starts at. Only a rootless `exists(-[…]->)` inside a hop's WHERE or ORDER BY has a
+    record to walk from (the one that hop lands on), so it stays, and it now also runs over a
+    record the run built (an extraction call's nested record).
+  - `unique by` on a write to a declared node (`MOV_WRITE_SHAPE_UNIQUE`): the record lands in
+    memory, so there is nothing to find it in.
+  - `KG_VALUE(…)` and `KG_EXISTS(…)` (`MOV_KG_QUERY_RETIRED`): walk the graph instead.
+  - `await` on a name holding a list of records (`MOV_AWAIT_ON_LIST`): an await parks on one record.
+  - A record written as the value of a field that is a relationship (`MOV_WRITE_LINK_FIELD`; before
+    5 an info nudge): write off the record, or link the two after the write.
+  - A walk off a json value (`MOV_JSON_HAS_NO_EDGES`): a json value has no relationships; read a
+    key with a dot.
 
 ### Language version 5, Dancing Wren: it runs as Rust does, not as JavaScript did
 
@@ -294,6 +314,17 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `{ z: 0, "10": 1, "2": 2 }` lists `z`, `10`, `2` (JavaScript listed `2`, `10`, `z`). TEXT.SERIALISE
   still sorts keys, as texts: `"10"` before `"2"`.
 
+- **A text counts and cuts by character.** `Text.length("😀 smile")` is 7 (it was 8: JavaScript
+  counted an emoji's two UTF-16 units). `Text.split(t, "")`, a spread of a text, `Text.chunks`
+  and every cut (a trace's 300-character prompt, a value cut at 200, a file bounded for the
+  prompt) keep an emoji whole; nothing a run makes holds half of one. Self-hosting: a lone
+  surrogate a host's JSON escapes (`"\ud83d"`) is read as U+FFFD, and a parked state, a trace or
+  an error no longer writes the `\udXXX` escape back.
+- **A field the record lacks reads nothing**, as it does on 1–4. Before, it read null, a value, so
+  `node { body: msg.missing }` held a `body`, an `IS` test counted it present, and a write sent
+  `body: null`. A field the record holds as null still reads null. For embedders: an
+  `adapters.call` answer of nothing is `{}`, with no `result`.
+
 ### Language version 5, Dancing Wren: new
 
 - **`fail("…")` inside an expression**: `coalesce(x, fail("no x"))`, `c ? a : fail("…")`. It
@@ -344,6 +375,15 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   adapter matches it by its reserved address, so a team's ontology edge named `Resources` stays
   the ontology's.
 
+- `-[f:_resources]->` reads off a record an extraction call found (`extract`, `extractOne`), and
+  off its nested records: the content the call read, a FILE resource per file and a TEXT one per
+  text. Before, the checker refused it. A paused run keeps them (park state: a `nodePosition` may
+  carry `resources`).
+- A built-in call on a line by itself (`Text.upper(x)`) parses, and the checker reports it as a
+  value nothing reads, instead of a parse error.
+- A node declared or written inline with a field or nested node named `__proto__` checks: the
+  TypeScript checker threw on it.
+
 ### Language version 5, Dancing Wren: where it runs, and pauses
 
 - **A run's engine is its pinned language version, with no fallback.** Version 5 and later run on
@@ -376,103 +416,37 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `engineReason`. `engine` stays.
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
-
-### close-narrowing
-- No change to what a program means: version 5 already narrows after a branch that always leaves,
-  in both checkers, as `if ISNULL(x) { ERROR(…) }` did on versions 1–4. Below
-  `if (x == null) { fail("…") }`, a `return`, or an `if` whose every arm and `else` leave, a record
-  that may be absent counts as present for the rest of the block, and every presence check accepts it.
-  `x != null && …` and `x == null || …` see `x` present on the right side. New twin tests pin this
-  in both checkers, under versions 4 and 5, with the branches that can fall through still refused.
-
-### close-robust
-
-- A paused version 5 run whose saved state names code the program does not hold (a place with no
-  such closure, walk or declaration, or a library the program does not link) now fails its resume
-  up front, before anything runs, saying `resume_state_code_does_not_read`. Before, it failed
-  partway through with an engine runtime error.
-- A host answer of the wrong shape now ends the run with a coded runtime error naming the host call
+- **The Rust engine runs forms it used to refuse as unsupported:**
+  - a walk off a name holding a value starts from the records it holds: one record is itself, a
+    list is each of its records, and anything else adds nothing to walk from (so a walk off a value
+    that found nothing counts 0, and `exists` is false);
+  - a walk from a callback inside an expression (`count(cb-[k:Called]->)`), reading the calls
+    recorded so far, as a block over the callback does;
+  - an `await` on an edge of a record the run read rather than wrote (the event, a walk's landing,
+    or one record a value holds), asked of that record's system by its own id;
+  - a kept (`lazy`) walk read as a bare value (`count(people)`): the records it lands on at that
+    read, across a pause too;
+  - the event read as a bare value (`coalesce(msg, r)`): the record that fired the run.
+- **Endings that depend on what the system answers are run failures** (`MOVENG_RUNTIME`), not
+  refusals by construct: an `await` on a system that cannot be awaited, or on a value holding
+  nothing; an integration function such as `DOMAIN_OF()` written to a field whose system does not
+  offer it; a collection op over a value that read as empty.
+- **A host answer of the wrong shape ends the run with a coded runtime error** naming the host call
   and what was wrong (for example "the host's lookup.resolveActingUser answered something
   malformed: expected the principal's `id` as text, got nothing"). Before, the run ended with a raw
-  JavaScript error such as "Cannot read properties of undefined". Covered: the acting user, a
-  plugin's result (its text, data, records and outcome), a callback's calls, an awaitable adapter's
-  resolution, a refetched record, and a file reader's `unreadable` reason. A plugin that answers a
-  `records` list with something other than objects in it is now such an error, not a spread of it.
-- The `unreproduced: true` marker the Rust engine put beside its own refusals is gone: nothing read
-  it. Such a refusal still ends the run as `MOVENG_UNSUPPORTED` and is still never forgiven by a
-  collection op's `onError`.
-
-### close-gate20
-
-- `pnpm dev:whatsapp setup` ships its two movements in the version 5 spelling (`connect`,
-  `function`, a walk's field read through its alias), so the setup saves on a version 5 stack.
-
-### close-devscripts
-
-- The dev scripts that ship movement source (`pnpm dev:airtable`, `dev:dealroom`, `dev:granola`, `dev:telegram`, `dev:gmail`, `dev:evertrace`, the `verify_*` probes and the `.mvt` fixtures) are respelled for version 5, so the dev loop no longer saves movements that version 5 refuses.
-
-### close-strings
-
-- **A text counts and cuts by character.** `Text.length("😀 smile")` is 7 (it was 8: JavaScript
-  counted an emoji's two UTF-16 units). `Text.split(t, "")`, a spread of a text, `Text.chunks`
-  and every cut (a trace's 300-character prompt, a value cut at 200, a file bounded for the
-  prompt) keep an emoji whole; nothing a run makes holds half of one.
-- Self-hosting: the engine holds only Unicode text. A lone surrogate a host's JSON escapes
-  (`"\ud83d"`) is read as U+FFFD, as the eval wire already read it; a parked state, a trace or an
-  error no longer writes the `\udXXX` escape back.
-- A node declared or written inline with a field or a nested node named `__proto__` (an ordinary
-  name from version 5) checks: the checker threw on it (the TypeScript checker read the field as
-  `Object.prototype`).
-
-### close-walks
-
-- **A walk off a name holding a value starts from the records it holds** (version 5). One record is
-  itself; a list is each of its records. Anything else in it (nothing, a map, a text, a list's
-  other members) holds no record, so it adds nothing to walk from. So `rows = kg-[c:company]->`
-  then `COUNT(rows-[:deals]->)` counts 0 when `rows` found nothing, `EXISTS(rows-[:deals]->)` is
-  false, and with `both = [acme, "x"]`, `EXISTS(both-[:deals]->)` asks only `acme`. Before, each of
-  these failed the run as a construct the engine did not run.
-- **A field the record lacks reads nothing on version 5, as it does on 1–4.** Before, it read null,
-  a value, so `node { body: msg.missing }` held a `body`, an `IS` test counted it present, and a
-  write sent `body: null`. A field the record holds as null still reads null. For embedders: an
-  `adapters.call` answer of nothing is `{}`, no `result`.
-
-### close-forms
-
-- The Rust engine runs a walk from a callback inside an expression (`Text.join(cb-[k:Called]->.\`note\`, ", ")`, `count(cb-[k:Called]->)`): the calls recorded so far, as a block over the callback reads them.
-- An `await` on an edge of a record the run read, not wrote, runs: the event, a record a walk landed on, or one a value holds (`c = only(e-[k:Checks]->)`, then `await first(c-[:Answer]->)`). It asks that record's system by the record's own id. A value holding nothing fails the run (`MOVENG_RUNTIME`).
-- A kept (`lazy`) walk read as a bare value is the records it lands on at that read (`count(people)`), across a pause too.
-- The event read as a bare value is the record that fired the run (`coalesce(msg, r)`), as a record a walk landed on is.
-- Three endings that depend on what the system answers are now ordinary run failures (`MOVENG_RUNTIME`), not refusals by construct (`MOVENG_UNSUPPORTED`): an `await` on a system that cannot be awaited; an integration function such as `DOMAIN_OF()` written to a field whose system does not offer it; a collection op over a value that read as empty (`List.groupBy(v.\`items\`, …)`).
-
-### close-refusals
-
-- From version 5 the checker refuses, at save, forms the engine does not run, each naming the
-  spelling it does run. Versions 1 to 4 are unchanged.
-  - A linked write or match whose target walks more than one edge (`MOV_WRITE_MULTI_HOP`):
-    walk to the parent in a block, then write off its alias.
-  - A walk with no root (`MOV_WALK_ROOTLESS`), as a block head or in an expression. Only a
-    rootless `exists(-[…]->)` inside a hop's WHERE or ORDER BY has a record to walk from: the one
-    that hop lands on. That form now also runs over a record a run built (an extraction call's
-    nested record), where the engine used to refuse it.
-  - `unique by` on a write to a declared node (`MOV_WRITE_SHAPE_UNIQUE`): the record lands in
-    memory, so there is nothing to find it in.
-  - `KG_VALUE(…)` and `KG_EXISTS(…)` (`MOV_KG_QUERY_RETIRED`): no engine runs a query text.
-  - `await` on a name holding a list of records (`MOV_AWAIT_ON_LIST`): an await parks on one
-    record.
-  - A record written as the value of a field that is a relationship (`MOV_WRITE_LINK_FIELD`;
-    before 5 an info nudge): write off the record, or link the two after the write.
-  - A walk off a json value (`MOV_JSON_HAS_NO_EDGES`): a json value has no relationships.
-- `-[f:_resources]->` reads off a record an extraction call found (`extract`, `extractOne`), and
-  off its nested records: the content the call read, a FILE resource per file and a TEXT one per
-  text. Before, the checker refused it although version 5 reads `_resources` only off an
-  extraction's result. A paused run keeps them (park state: a `nodePosition` may carry
-  `resources`).
-- A built-in call on a line by itself in version 5 spelling (`Text.upper(x)`) parses, and the
-  checker reports it as a value nothing reads, instead of a parse error.
+  JavaScript error. Covered: the acting user, a plugin's result (a `records` list must hold
+  objects), a callback's calls, an awaitable adapter's resolution, a refetched record, and a file
+  reader's `unreadable` reason.
+- A paused run whose saved state names code the program does not hold (or a library it does not
+  link) fails its resume up front, before anything runs (`resume_state_code_does_not_read`).
+  Before, it failed partway through.
 - A run whose host names a function taking a value as its entry fails saying the function is a
-  callee, no longer that the checker should have caught it: a function taking a value is a legal
-  callee, and no check can see which function a host will name.
+  callee, no longer that the checker should have caught it.
+- The `unreproduced: true` marker beside the Rust engine's own refusals is gone: nothing read it.
+  Such a refusal still ends the run as `MOVENG_UNSUPPORTED`, never forgiven by `onError`.
+- The dev loop's scripts and fixtures that ship movement source (`pnpm dev:whatsapp setup`,
+  `dev:airtable`, `dev:dealroom`, `dev:granola`, `dev:telegram`, `dev:gmail`, `dev:evertrace`, the
+  `verify_*` probes, the `.mvt` fixtures) are written in the version 5 spelling.
 
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
