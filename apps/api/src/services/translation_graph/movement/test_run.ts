@@ -18,7 +18,7 @@
 //   (Test run rewired off the TG engine onto a movement dry-run)
 
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { CapturedWrite } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { CapturedWrite } from 'movement-engine/public/adapter';
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 
 import { anthropicChat } from '../../../lib/anthropic';

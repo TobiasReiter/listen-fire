@@ -1045,6 +1045,9 @@ importers:
       kysely:
         specifier: 0.27.4
         version: 0.27.4
+      movement-engine:
+        specifier: workspace:*
+        version: link:../movement-engine
       movement-lang:
         specifier: workspace:*
         version: link:../movement-lang
