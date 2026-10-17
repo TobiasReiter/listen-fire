@@ -9,7 +9,7 @@ import type { AgentConversationId } from '../generated/kysely/public/AgentConver
 import type { TriggerRunId } from '../generated/kysely/automations/TriggerRun';
 
 import { isInsideSpendMeter, reportRunCost } from 'movement-engine/lib/run_spend';
-import { costMicrodollars } from 'movement-engine/lib/models/pricing';
+import { costMicrodollars } from 'movement-engine/public/models';
 import { models } from 'movement-engine/lib/models/registry';
 import { logger } from 'movement-engine/services/logger';
 import { getQb } from './kysely';

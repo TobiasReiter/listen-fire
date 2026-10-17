@@ -34,14 +34,14 @@ import type {
   CallbackClaim as CoreCallbackClaim,
   CallbackRecord as CoreCallbackRecord,
   CallbackStore,
-} from 'movement-engine/services/run_host/store';
+} from 'movement-engine/public/run-host';
 
 import {
   callbackBodyWork,
   callbackRefusal as coreCallbackRefusal,
   isCallbackId,
   newCallbackId,
-} from 'movement-engine/services/run_host/callbacks';
+} from 'movement-engine/public/run-host';
 import { getAutomationsQb, getQb } from '../../lib/kysely';
 import { apiBaseUrl } from '../../lib/api_base_url';
 import { enqueueWork } from '../work/store';
@@ -49,7 +49,7 @@ import { enqueueWork } from '../work/store';
 // ── The id namespace ───────────────────────────────────────────────────────
 
 // Every door's one recognition test, and the id's shape, are the core's.
-export { CALLBACK_ID_PREFIX, isCallbackId } from 'movement-engine/services/run_host/callbacks';
+export { CALLBACK_ID_PREFIX, isCallbackId } from 'movement-engine/public/run-host';
 
 function mintCallbackId(): CallbackId {
   return newCallbackId() as CallbackId;
@@ -468,7 +468,7 @@ export async function revokeCallbacksForRuns(runIds: TriggerRunId[]): Promise<nu
 
 // The core's, shared with lf: every declared parameter present and coercible,
 // no undeclared key.
-export { coerceCallbackValues, type CallbackValueCoercion } from 'movement-engine/services/run_host/callbacks';
+export { coerceCallbackValues, type CallbackValueCoercion } from 'movement-engine/public/run-host';
 
 // ── The core's callback family, over Postgres ──────────────────────────────
 

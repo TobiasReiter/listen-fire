@@ -4,7 +4,7 @@
 // executor, and Jev — and re-exports the judge under the names the rest of
 // apps/api imports.
 
-import { createIdentityJudge, type JevJudgeClient } from 'movement-engine/services/identity_judge/judge';
+import { createIdentityJudge, type JevJudgeClient } from 'movement-engine/public/models';
 
 import { execute } from '../../../lib/prompts/execute';
 import { promptDef } from '../../../lib/prompts/definition';
@@ -22,7 +22,7 @@ export {
   JUDGE_MODEL,
   type ArbitrationAnswer,
   type EntityArbitration,
-} from 'movement-engine/services/identity_judge/judge';
+} from 'movement-engine/public/models';
 
 const jev: JevJudgeClient = {
   enabled: () => jevEntityResolutionEnabled(),

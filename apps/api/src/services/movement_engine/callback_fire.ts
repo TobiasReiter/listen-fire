@@ -29,7 +29,7 @@ import { postgresRunHostStore } from './run_host_store';
 import { takeRunLease, withRunLease, type HeldRunLease } from './run_lease';
 import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
 import { enqueueAwaitWake } from './await_wake';
-import { CallbackBodyPayload } from 'movement-engine/services/run_host/callbacks';
+import { CallbackBodyPayload } from 'movement-engine/public/run-host';
 import {
   claimCallbackFireWithBody,
   coerceCallbackValues,
