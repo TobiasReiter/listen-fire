@@ -1,15 +1,42 @@
-import { randomBytes, createHash } from 'node:crypto';
-
 import { z } from 'zod';
-import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
+import { OAuth2Client } from 'google-auth-library';
 
 import { logger } from 'movement-engine/services/logger';
-import { createSecretsFamily } from 'movement-engine/public/secrets';
+import { createOAuth2Connector, createSecretsFamily, OAuth2ExchangeFailed, type OAuth2Connector, type OAuth2Declaration } from 'movement-engine/public/secrets';
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
 const scopes = [
   'https://www.googleapis.com/auth/drive.file',
 ];
+
+/** Google's OAuth endpoints, shared by every Google credential (Sheets and
+ *  Drive here, Gmail on its own scopes). */
+export const GOOGLE_OAUTH2_ENDPOINTS = {
+  authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenUrl: 'https://oauth2.googleapis.com/token',
+} as const;
+
+/** `access_type=offline` with `prompt=consent` is what makes Google issue a
+ *  refresh token on every connect, not only on an account's first grant. */
+export const GOOGLE_OFFLINE_CONSENT = { access_type: 'offline', prompt: 'consent' } as const;
+
+/** How a Google (Sheets and Drive) credential is connected: what its module
+ *  manifest will declare. The client goes in the form body. */
+export const googleOAuth2: OAuth2Declaration = {
+  ...GOOGLE_OAUTH2_ENDPOINTS,
+  scopes,
+  clientAuth: 'body',
+  pkce: true,
+  authorizeParams: { ...GOOGLE_OFFLINE_CONSENT },
+};
+
+/** What a Google token endpoint must grant a connect: a refresh token and an
+ *  expiry beside the access token. */
+export const googleIssuedTokens = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().min(1),
+  expires_in: z.coerce.number(),
+});
 
 const googleCredsParser = z.object({
   accessToken: z.string(),
@@ -18,8 +45,7 @@ const googleCredsParser = z.object({
 });
 
 class GoogleAuthClient {
-  private authCache: Record<string, string> = {};
-  private oauth2Client: OAuth2Client;
+  private readonly connector: OAuth2Connector;
   private clientId: string;
   private clientSecret: string;
   private clientsById: Record<string, OAuth2Client> = {};
@@ -29,11 +55,7 @@ class GoogleAuthClient {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.callbackUrl = `${redirectBaseUrl}/google-integrations/callback`;
-    this.oauth2Client = new OAuth2Client({
-      clientId,
-      clientSecret,
-      redirectUri: this.callbackUrl,
-    });
+    this.connector = createOAuth2Connector({ oauth2: googleOAuth2, client: { clientId, clientSecret }, redirectUri: this.callbackUrl });
   }
 
   getGoogleClient(id: string, creds: z.infer<typeof googleCredsParser>): OAuth2Client {
@@ -105,56 +127,30 @@ class GoogleAuthClient {
     state: string;
     code: string;
   }): Promise<z.infer<typeof googleCredsParser>> {
-    const codeVerifier = this.authCache[state];
-    if (!codeVerifier) {
-      throw new Error('Invalid state parameter value');
+    let response: Readonly<Record<string, unknown>>;
+    try {
+      response = (await this.connector.complete({ state, code })).response;
+    } catch (error) {
+      if (!(error instanceof OAuth2ExchangeFailed)) throw error;
+      logger.error(`[GOOGLE] Token exchange failed: ${error.message}`);
+      throw new Error('Invalid token received');
     }
 
-    delete this.authCache[state];
-
-    const { tokens } = await this.oauth2Client.getToken({
-      code,
-      codeVerifier,
-    });
-
-    if (!tokens.access_token || !tokens.refresh_token || !tokens.expiry_date) {
+    const issued = googleIssuedTokens.safeParse(response);
+    if (!issued.success) {
       logger.error('[GOOGLE] Token exchange missing required fields');
       throw new Error('Invalid token received');
     }
 
     return {
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      expiresAt: tokens.expiry_date,
+      accessToken: issued.data.access_token,
+      refreshToken: issued.data.refresh_token,
+      expiresAt: Date.now() + issued.data.expires_in * 1000,
     };
   }
 
   async generateInstallUrl(): Promise<string> {
-    const state = randomBytes(100).toString('base64url');
-    const codeVerifier = randomBytes(96).toString('base64url');
-    const codeChallenge = createHash('sha256')
-      .update(codeVerifier) // hash the code verifier with the sha256 algorithm
-      .digest('base64') // base64 encode, needs to be transformed to base64url
-      .replace(/=/g, '') // remove =
-      .replace(/\+/g, '-') // replace + with -
-      .replace(/\//g, '_'); // replace / with _ now base64url encoded
-
-    this.authCache[state] = codeVerifier;
-    setTimeout(
-      () => {
-        delete this.authCache[state];
-      },
-      1000 * 60 * 15,
-    ); // 15 minutes
-
-    return this.oauth2Client.generateAuthUrl({
-      state,
-      access_type: 'offline',
-      prompt: 'consent',
-      code_challenge: codeChallenge,
-      code_challenge_method: CodeChallengeMethod.S256,
-      scope: scopes,
-    });
+    return this.connector.begin();
   }
 }
 
