@@ -275,6 +275,7 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
     segment.insert("serves".into(), json!(SERVES));
     segment.insert("extractionFileChars".into(), json!(knob("EXTRACTION_FILE_CHARS", 50_000.0)));
     segment.insert("maxCallDepth".into(), json!(max_call_depth()?));
+    segment.insert("limits".into(), segment_limits()?);
     segment.insert("extractionTiers".into(), json!({}));
     // The catalog last, as text: its maps are read in their own order.
     let mut catalog = match input.catalog {
@@ -289,7 +290,8 @@ fn input_text(host: &SegmentHost<'_>, input: &SegmentInput<'_>) -> Result<String
 /// Run one segment to its result.
 pub async fn run_segment(host: &SegmentHost<'_>, input: SegmentInput<'_>) -> Result<Ran, Ended> {
     let text = input_text(host, &input).map_err(Ended::Failed)?;
-    let done = drive(host, &text).await;
+    let wall_clock = segment_wall_clock().map_err(Ended::Failed)?;
+    let done = drive(host, &text, wall_clock).await;
     // What it spent is the run's whatever the segment came to: the money is gone.
     let spent: f64 = host.spent.borrow().values().sum();
     if spent > 0.0 {
@@ -350,7 +352,14 @@ fn engine_call<T>(call: &str, body: impl FnOnce() -> T) -> Result<T, Fault> {
 
 /// `driveEngine`: start the segment, serve every request it issues, answer
 /// each as it settles.
-async fn drive(host: &SegmentHost<'_>, input: &str) -> Result<Json, Fault> {
+async fn drive(host: &SegmentHost<'_>, input: &str, wall_clock: std::time::Duration) -> Result<Json, Fault> {
+    let deadline = tokio::time::Instant::now() + wall_clock;
+    let past_deadline = || {
+        Fault(format!(
+            "MOVENG_LIMIT_WALL_CLOCK: this segment took longer than {} seconds. The segment was stopped so one movement cannot exhaust its host; raise {WALL_CLOCK_ENV_VAR} if it legitimately needs longer.",
+            wall_clock.as_secs()
+        ))
+    };
     let mut segment = engine_call("start", || movement_engine::begin(input))?.map_err(|e| Fault(format!("the Rust engine refused start: {}", e.0)))?;
     let mut step = step_json(engine_call("start", || segment.start())?, "start")?;
     let mut in_flight = InFlight { futures: Vec::new() };
@@ -366,7 +375,17 @@ async fn drive(host: &SegmentHost<'_>, input: &str) -> Result<Json, Fault> {
         if in_flight.futures.is_empty() {
             break Err(Fault("the Rust engine is waiting with no request in flight".into()));
         }
-        let mut settled = Some(in_flight.next().await);
+        // Past the deadline, what is in flight is dropped, not awaited: it
+        // may be the very wait that overran.
+        if tokio::time::Instant::now() >= deadline {
+            in_flight.futures.clear();
+            break Err(past_deadline());
+        }
+        let Ok(first) = tokio::time::timeout_at(deadline, in_flight.next()).await else {
+            in_flight.futures.clear();
+            break Err(past_deadline());
+        };
+        let mut settled = Some(first);
         let mut next_pending = Vec::new();
         let mut finished = None;
         while let Some((id, answer)) = settled.take() {
@@ -513,17 +532,51 @@ fn describe_chain(chain: &[&str]) -> String {
 
 const CALL_DEPTH_ENV_VAR: &str = "MOVEMENT_MAX_CALL_DEPTH";
 
-/// `maxCallDepth`: the deployment's limit, or 32; a value that is set but is
-/// not a positive whole number is refused, never read as no limit.
+/// `maxCallDepth`: the deployment's limit, or 32.
 fn max_call_depth() -> Result<u64, String> {
-    let raw = std::env::var(CALL_DEPTH_ENV_VAR).unwrap_or_default();
-    if raw.trim().is_empty() {
-        return Ok(32);
+    Ok(positive_whole(CALL_DEPTH_ENV_VAR, "how many calls deep one movement run may nest", 32)?.unwrap_or(32))
+}
+
+/// The deployment's limits for one segment (movement_engine::limits), each
+/// from the environment as the call depth is; an unset one is the engine's
+/// default.
+const LIMIT_ENV_VARS: &[(&str, &str, &str, u64)] = &[
+    ("MOVEMENT_MAX_STEPS", "maxSteps", "how many statements and expressions one segment may run", 10_000_000),
+    ("MOVEMENT_MAX_TEXT_BYTES", "maxTextBytes", "how many bytes one text may hold", 16_777_216),
+    ("MOVEMENT_MAX_COLLECTION_ITEMS", "maxCollectionItems", "how many members one list or map may hold", 1_000_000),
+    ("MOVEMENT_MAX_RESULT_BYTES", "maxResultBytes", "how many bytes one segment's result may be", 67_108_864),
+];
+
+fn segment_limits() -> Result<Json, String> {
+    let mut limits = serde_json::Map::new();
+    for (var, key, what, example) in LIMIT_ENV_VARS {
+        if let Some(n) = positive_whole(var, what, *example)? {
+            limits.insert((*key).into(), json!(n));
+        }
     }
-    raw.trim().parse::<u64>().ok().filter(|n| *n > 0).ok_or_else(|| {
-        format!(
-            "{CALL_DEPTH_ENV_VAR}=\"{raw}\" is not a positive whole number. Set it to how many calls deep one movement run may nest (e.g. {CALL_DEPTH_ENV_VAR}=32), or leave it unset for the default of 32."
-        )
+    Ok(Json::Object(limits))
+}
+
+const WALL_CLOCK_ENV_VAR: &str = "MOVEMENT_MAX_SEGMENT_SECONDS";
+const DEFAULT_WALL_CLOCK_SECONDS: u64 = 900;
+
+/// How long one segment may take, waits on its host included. The engine
+/// reads no clock, so this host keeps it; between two host requests the
+/// engine's step budget bounds the work.
+fn segment_wall_clock() -> Result<std::time::Duration, String> {
+    let seconds = positive_whole(WALL_CLOCK_ENV_VAR, "how many seconds one segment may take", DEFAULT_WALL_CLOCK_SECONDS)?;
+    Ok(std::time::Duration::from_secs(seconds.unwrap_or(DEFAULT_WALL_CLOCK_SECONDS)))
+}
+
+/// A deployment's positive whole number, None when unset; a value that is set
+/// but is not one is refused, never read as no limit.
+fn positive_whole(var: &str, what: &str, example: u64) -> Result<Option<u64>, String> {
+    let raw = std::env::var(var).unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    raw.trim().parse::<u64>().ok().filter(|n| *n > 0).map(Some).ok_or_else(|| {
+        format!("{var}=\"{raw}\" is not a positive whole number. Set it to {what} (e.g. {var}={example}), or leave it unset for the default.")
     })
 }
 

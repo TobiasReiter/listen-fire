@@ -1435,6 +1435,7 @@ mod tests {
             call_stack: RefCell::default(),
             wire: crate::env::Wire::default(),
             stored_sources: RefCell::default(),
+            meter: Default::default(),
         };
         let read = Rc::new(crate::traverse::Read {
             instance: crate::host::Instance { id: "i1".into(), methods: Rc::new(Vec::new()) },

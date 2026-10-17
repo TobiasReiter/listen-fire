@@ -37,6 +37,7 @@ pub mod js;
 pub mod js_date;
 pub mod js_string;
 pub mod js_regex;
+pub mod limits;
 pub mod marks;
 pub mod ledger;
 pub mod local;
@@ -184,7 +185,7 @@ mod tests {
                 ErrorClass::Unreproduced => json!({ "class": "MovementEngineError", "code": "MOVENG_UNSUPPORTED", "message": message }),
             } }),
             Err(EvalError::Fallback(reason)) => json!({ "fallback": reason }),
-            Err(EvalError::Host(_) | EvalError::CapExceeded(_)) => unreachable!("an evaluation with no reader asks no host"),
+            Err(EvalError::Host(_) | EvalError::CapExceeded(_) | EvalError::Limit(_)) => unreachable!("an evaluation with no reader asks no host"),
         })
     }
 

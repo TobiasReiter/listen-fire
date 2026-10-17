@@ -957,7 +957,7 @@ alone refuses it). What it writes is Unicode text, so it holds none.
 **The input** (`engine_start`): `{entry: "segment", source, languageVersion,
 movementName?, event, segmentId, credentialIds?, spend?, now,
 catalog, dryRun?, nativeCheck?, snapshotModels?, versionWarning?, resume?, fire?, settle?, limitPaused?, suspendAt?, serves,
-extractionFileChars?, maxCallDepth?, extractionTiers?}`. `segmentId` is the segment the run host opened (`segment.open`),
+extractionFileChars?, maxCallDepth?, extractionTiers?, limits?}`. `segmentId` is the segment the run host opened (`segment.open`),
 named on every host request; `credentialIds` maps an import's credential name
 to its id; `spend` is the run's account as the segment starts
 (`{priorMicrodollars, capBaselineMicrodollars, capMicrodollars?}`). `dryRun` is a
@@ -986,7 +986,10 @@ run a callback body or settle a deferred race against `resume`'s state;
 (call_depth.ts, the deployment's `MOVEMENT_MAX_CALL_DEPTH`);
 `extractionTiers` is what the deployment buys for each extraction tier
 (ai_tiers.ts, its `EXTRACTION_TIERS` parsed: `{careful: {model?, effort?},
-…}`, each member over the built-in row's; the built-in table when absent).
+…}`, each member over the built-in row's; the built-in table when absent);
+`limits` is what the segment may consume (docs/contracts/run-limits.md:
+`{maxSteps?, maxTextBytes?, maxCollectionItems?, maxResultBytes?}`, each
+absent one the engine's default).
 Other members are ignored.
 
 **Requests and answers.** An answer is `{value}`, `{}` for `undefined`, or

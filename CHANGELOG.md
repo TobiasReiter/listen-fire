@@ -56,6 +56,10 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 ### r-dist
 
 `lf` ships as a download. Tagging `lf-v<version>` builds `lf` for macOS (arm64, x64) and Linux (x64, arm64, static) and attaches the archives and `SHA256SUMS` to a GitHub release (`.github/workflows/lf-release.yml`); `scripts/dist/install.sh` verifies the checksum and installs to `~/.local` (or `--system` for `/usr/local`). `lf init [dir]` scaffolds a starter project (`lf.yaml`, one movement that checks clean, `.gitignore` for `.lf/` and secrets). Built-in modules ride in each archive (`share/lf/modules`, found beside the binary or at `LF_MODULES_DIR`); an external names one as `module: "@lf/dealroom"`. Modules are TypeScript, so running one needs node.
+### r-safety
+
+- A segment now has host-set limits with safe defaults: a step budget, one text's size, one list's or map's size, and the result's size; past one the segment ends coded `MOVENG_LIMIT_*`, never forgiven by `onError`. lf reads them from `MOVEMENT_MAX_STEPS`, `MOVEMENT_MAX_TEXT_BYTES`, `MOVEMENT_MAX_COLLECTION_ITEMS`, `MOVEMENT_MAX_RESULT_BYTES`, and keeps a per-segment wall clock (`MOVEMENT_MAX_SEGMENT_SECONDS`, default 900). The table and the network review: [docs/contracts/run-limits.md](docs/contracts/run-limits.md).
+- The engine itself refuses a model call once the run has spent its cost cap, so the cap holds on any host.
 
 ### lfr-upgrade
 

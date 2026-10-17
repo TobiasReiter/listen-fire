@@ -1087,6 +1087,7 @@ impl Run<'_> {
     /// The judge (`llm.arbitrateEntities`), a priced call: the index it
     /// picked, and why it could not judge, if it could not.
     async fn judge(&self, asserted: &Js, candidates: &[Js], record_type: &str, constraints: &Js) -> Result<(Option<usize>, Option<String>), Stop> {
+        self.admit_model_call().map_err(thrown)?;
         let request = host::llm::arbitrate_entities(
             self.segment(),
             host::llm::Arbitration {

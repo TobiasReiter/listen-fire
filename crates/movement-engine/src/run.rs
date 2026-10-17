@@ -182,6 +182,11 @@ pub struct SegmentInput {
     /// environment. Absent: the built-in table.
     #[serde(default)]
     pub extraction_tiers: std::collections::BTreeMap<String, crate::extract::TierAssignment>,
+    /// What this segment may consume (crate::limits), the deployment's
+    /// `MOVEMENT_MAX_*` knobs: the shim reads them, so the engine reads no
+    /// environment. Absent: the defaults.
+    #[serde(default)]
+    pub limits: crate::limits::Limits,
 }
 
 /// A field that is there, null included (serde reads a null `Option` as
@@ -228,6 +233,12 @@ pub async fn segment(host: Host, input: SegmentInput) -> Json {
             unreachable!("a cancel, a park or a quiet end ends the body, and the run returns its result")
         }
     };
+    // Measured with its result, before its cost lines: those are the
+    // host's account, which a refused result still owes.
+    let bytes = done.to_string().len();
+    if bytes > input.limits.max_result_bytes {
+        done = json!({ "thrown": crate::limits::LimitExceeded::result(bytes, input.limits.max_result_bytes).to_json() });
+    }
     // What this segment's priced calls spent, by source, for the run host's
     // account (the run's figures are the run host's to report).
     let cost = ledger.cost_lines();
@@ -276,6 +287,8 @@ pub(crate) enum Failure {
     /// A call would nest deeper than the limit (`CallDepthExceeded`): the
     /// run's movement, each call it is inside, then the refused one.
     CallDepth { limit: usize, chain: Vec<String> },
+    /// The segment met one of its host's limits (crate::limits).
+    Limit(crate::limits::LimitExceeded),
 }
 
 impl Failure {
@@ -314,6 +327,7 @@ impl Failure {
             Failure::CapExceeded(cap) => EvalError::CapExceeded(cap),
             // No evaluation makes a call: a call's statement does.
             Failure::CallDepth { .. } => unreachable!("an expression makes no movement call"),
+            Failure::Limit(limit) => EvalError::Limit(limit),
         }
     }
 
@@ -324,6 +338,7 @@ impl Failure {
             EvalError::Thrown { class, message } => Failure::Engine { class, message },
             EvalError::Host(error) => Failure::Host(error),
             EvalError::CapExceeded(cap) => Failure::CapExceeded(cap),
+            EvalError::Limit(limit) => Failure::Limit(limit),
             EvalError::Fallback(reason) => Failure::unreproduced(&format!("this reading ({reason})"), unreproduced),
         }
     }
@@ -342,6 +357,7 @@ impl Failure {
             Failure::Host(error) => json!({ "hostError": error.detail.get("ref").cloned().unwrap_or(Json::Null) }),
             Failure::CapExceeded(cap) => cap.to_json(),
             Failure::CallDepth { limit, chain } => json!({ "class": "CallDepthExceeded", "limit": limit, "chain": chain }),
+            Failure::Limit(limit) => limit.to_json(),
         }
     }
 }
@@ -479,6 +495,8 @@ pub(crate) struct Run<'a> {
     /// Each library's text as the host's source store keeps it
     /// (`park.sources`), by path: the hash a park names it by.
     pub(crate) stored_sources: RefCell<Vec<(String, String)>>,
+    /// What the segment has consumed against its limits.
+    pub(crate) meter: crate::limits::Meter,
 }
 
 async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) -> Result<Json, Stop> {
@@ -593,6 +611,7 @@ async fn run(host: &Host, input: &SegmentInput, ledger: &crate::ledger::Ledger) 
         call_stack: RefCell::default(),
         wire,
         stored_sources: RefCell::new(stored_sources),
+        meter: Default::default(),
     };
     // A deprecated pin runs, and says so on the run's own record (the check
     // answer's version warning; an unsupported pin never got an answer).
@@ -1319,6 +1338,7 @@ impl Run<'_> {
     /// suspends just before it, its finished calls journalled.
     async fn statement_at(&self, statement: &Statement, scope: &Rc<Scope>, at: &Address, path: &str) -> Result<Flow, Stop> {
         self.suspend_before(at, scope).await?;
+        self.meter.step(&self.input.limits).map_err(|limit| Stop::Thrown(Failure::Limit(limit)))?;
         match self.statement(statement, scope, at, path).await {
             Err(Stop::Thrown(Failure::CapExceeded(cap))) => Err(self.suspend_at_limit(cap, at, scope).await),
             other => other,
@@ -1938,6 +1958,7 @@ impl Run<'_> {
             effort: settings.effort.as_deref(),
             max_tokens: settings.max_tokens,
         };
+        self.admit_model_call()?;
         let answer = self.priced(host::llm::client_call(self.segment(), call, self.ledger.budget())).await?;
         let value = ai_answer(&event_get(&answer, "parsedJson"));
         let traced = crate::extract::emission::cut(prompt, AI_TRACE_PROMPT_CHARS);
@@ -2403,6 +2424,14 @@ impl Reader for Reading<'_, '_> {
 
     fn field_function(&self, id: &str) -> bool {
         self.field.is_some_and(|field| field.has(id))
+    }
+
+    fn step(&self) -> Result<(), EvalError> {
+        self.run.meter.step(&self.run.input.limits).map_err(EvalError::Limit)
+    }
+
+    fn admit(&self, value: &Js) -> Result<(), EvalError> {
+        crate::limits::admit(value, &self.run.input.limits).map_err(EvalError::Limit)
     }
 
     fn trace(&self, entry: TraceEntry) {
@@ -3083,6 +3112,26 @@ mod tests {
         assert!(reads[1].args.get("position").is_none(), "the landing's stamp is registered once");
         // Stamped with the parameter's declared type, its inline data kept.
         assert!(reads[0].args["position"].to_string().contains(r#"["recordType","message"]"#), "{}", reads[0].args["position"]);
+    }
+
+    /// A segment past one of its host's limits ends with the limit's code.
+    fn limited(body: &str, limits: Json) -> Json {
+        let source = format!("import {{ email }} from adapters\ninbox = email()\nmovement m(msg: <inbox-[:message]->>) {{\n{body}\n}}");
+        let mut input = segment_input(&source, json!(["o", []]), &[]);
+        input["limits"] = limits;
+        drive_input(input, plain_host(json!({}))).0
+    }
+
+    #[test]
+    fn a_segment_past_a_limit_ends_with_its_code() {
+        let body = "  a = \"xxxx\"\n  b = \"${a}${a}\"\n  c = [a, b]";
+        assert!(limited(body, json!({})).get("result").is_some());
+        let code = |done: Json| done["failed"]["error"]["code"].as_str().map(str::to_string).unwrap_or_else(|| done.to_string());
+        assert_eq!(code(limited(body, json!({ "maxSteps": 3 }))), "MOVENG_LIMIT_STEPS");
+        assert_eq!(code(limited(body, json!({ "maxTextBytes": 6 }))), "MOVENG_LIMIT_TEXT_SIZE");
+        assert_eq!(code(limited(body, json!({ "maxCollectionItems": 1 }))), "MOVENG_LIMIT_COLLECTION_SIZE");
+        let done = limited(body, json!({ "maxResultBytes": 10 }));
+        assert_eq!(done["thrown"]["code"], json!("MOVENG_LIMIT_RESULT_SIZE"), "{done}");
     }
 
     #[test]
