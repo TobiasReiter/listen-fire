@@ -201,16 +201,16 @@ the walk awaits where it is made.
 ### JavaScript semantics, written out
 
 Each row names the test that pins it (`js::tests::…` and so on are in the
-module; `oracle::…` is tests/stdlib_oracle.rs).
+module; `frozen::…` is tests/stdlib_frozen.rs).
 
 | what | how it is handled | test |
 |---|---|---|
-| `Number(text)` | trimmed (Rust's whitespace), then a plain decimal (`12`, `-1.5e3`, `.5`, `5.`) or `Infinity`; `""` → 0; a radix prefix (`0x10`) or anything else NaN | `js::tests::string_to_number_matches_javascript`, `oracle::the_standard_library_answers_as_typescript_does` (`coerce.number`, `flat.tonumber`) |
+| `Number(text)` | trimmed (Rust's whitespace), then a plain decimal (`12`, `-1.5e3`, `.5`, `5.`) or `Infinity`; `""` → 0; a radix prefix (`0x10`) or anything else NaN | `js::tests::string_to_number_matches_javascript`, `frozen::the_standard_library_answers_as_it_was_frozen` (`coerce.number`, `flat.tonumber`) |
 | `String(number)` | the shortest digits that read back as the number (one formatter for the parser, the checker and the engine: movement_parser::util::js), laid out as JavaScript lays them out (`1e+21`, `1.5e-7`, `0.000001`); on a 17-digit tie the last digit may differ from JavaScript's | `js::tests::number_to_string_prints_shortest_digits` |
 | `String(value)` | arrays join with `,` (null and undefined members empty), objects `[object Object]` | `js::tests::string_and_number_coercions_of_composites` |
 | `===`, `includes`, `Set` | strict equality (NaN not itself, `-0 === 0`), SameValueZero for membership, objects by identity (`Rc`) within the run; nothing from the host keeps its identity | `js::tests::identity_not_shape_decides_equality`, `filter::tests::membership_uses_same_value_zero`, `tests::the_callers_maps_cross_as_copies` |
 | truthiness | `0`, `-0`, `NaN`, `""`, null, undefined are false | `tests::absence_reads_as_typescript_reads_it` |
-| `ROUND` | Rust's `round`: a half away from zero (`-2.5` → `-3`) | `stdlib::tests::flat_builtins`, `oracle::…` |
+| `ROUND` | Rust's `round`: a half away from zero (`-2.5` → `-3`) | `stdlib::tests::flat_builtins`, `frozen::…` |
 | `toFixed` (NUMBER.FORMAT, CURRENCY) | Rust's `{:.N}`: the double's exact value, a tie to even (`0.25` → `0.2`) | `js::tests::to_fixed_is_rusts_fixed_point`, `stdlib::tests::number_format_and_currency` |
 | `%` | Rust's `%` is fmod, the dividend's sign, as JavaScript's | `filter::tests::remainder_and_division_by_zero`, `tests::arithmetic_keeps_javascript_semantics` |
 | object key order | the order keys were first set, a number-like key included; a repeated key keeps its place | `js::tests::maps_keep_their_keys_in_the_order_first_set`, `tests::maps_keep_their_keys_in_the_order_first_set` |
@@ -223,10 +223,10 @@ module; `oracle::…` is tests/stdlib_oracle.rs).
 | a date-time text (`DATETIME`, `DATE`, a comparison) | ISO 8601 / RFC 3339 only (crate::js_date); no offset is UTC; a day the month lacks or the hour 24 is no date-time; a comparison reads only ISO texts as dates (`"item 3" < "item 12"` compares texts) | `js_date::tests::reads_the_iso_forms`, `js_date::tests::refuses_everything_else`, `filter::tests::texts_that_only_v8_read_as_dates_compare_as_texts` |
 | `Date.UTC` round trip | `validParts` refuses years 0–99 (Date.UTC reads them as 19xx), months outside 1–12, days past the month | `stdlib::tests::dates_parse_add_and_format` |
 | `toISOString` | six-digit signed years outside 0000–9999; an instant past ±8.64e15 ms throws `RangeError: Invalid time value` (DATE.ADD_DAYS) | `js_date::tests::iso_strings_outside_four_digit_years`, `js_date::tests::time_clip_bounds_and_truncates`, `tests::coalesce_short_circuits` |
-| regexes (TEXT.REGEX_EXTRACT) | a flagless dialect over code points (an astral character is one character), compiled to a flat program run on an explicit backtracking stack: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators; lookahead and lookbehind, named groups (ASCII names) and `\k<name>`, backreferences, `\xHH`, `\uHHHH`, `\u{H…}`, `\cX` with a letter, an escaped non-letter. Annex B is not read: an octal escape, `\N` past the groups, `\c` without a letter and an unknown letter escape are malformed. Groups nested past 1,000 are malformed. No step budget. A malformed pattern is null, as `new RegExp` throws | `js_regex::tests::*`, `oracle::regexes_match_as_node_matches_them_bar_annex_b_and_astral_characters` (7,209 seeded cases) |
-| `URL` (URL.HOST) | `new URL` itself, asked of the environment (`url_parse`); only the TypeScript's own pre-reading (trim, the assumed `http://`, opaque uris) is written here | `stdlib::tests::url_host_as_whatwg_reads_it`, `oracle::…` (`url.host`) |
-| `normalize("NFKD")` (TEXT.SLUG) | asked of the environment (`normalize`) | `stdlib::tests::text_members`, `oracle::…` (`text.slug`) |
-| `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `oracle::…` (`date.today`, `datetime.at`) |
+| regexes (TEXT.REGEX_EXTRACT) | a flagless dialect over code points (an astral character is one character), compiled to a flat program run on an explicit backtracking stack: each iteration of a group clears its captures, an empty iteration ends a loop, `.` stops at line terminators; lookahead and lookbehind, named groups (ASCII names) and `\k<name>`, backreferences, `\xHH`, `\uHHHH`, `\u{H…}`, `\cX` with a letter, an escaped non-letter. Annex B is not read: an octal escape, `\N` past the groups, `\c` without a letter and an unknown letter escape are malformed. Groups nested past 1,000 are malformed. No step budget. A malformed pattern is null, as `new RegExp` throws | `js_regex::tests::*`, `regex_frozen::regexes_match_as_they_were_frozen` (7,209 seeded cases) |
+| `URL` (URL.HOST) | `new URL` itself, asked of the environment (`url_parse`); only the TypeScript's own pre-reading (trim, the assumed `http://`, opaque uris) is written here | `stdlib::tests::url_host_as_whatwg_reads_it`, `frozen::…` (`url.host`) |
+| `normalize("NFKD")` (TEXT.SLUG) | asked of the environment (`normalize`) | `stdlib::tests::text_members`, `frozen::…` (`text.slug`) |
+| `Intl.DateTimeFormat` (DATE.TODAY, DATETIME.AT) | the zone's wall reading asked of the environment (`tz_convert`); `instantAtZonedWallTime`'s search over those readings written out, `Date.UTC`'s 19xx years included | `stdlib::tests::datetime_at_names_the_instant_on_the_zones_wall_clock`, `frozen::…` (`date.today`, `datetime.at`) |
 | `JSON.stringify` (TEXT.SERIALISE) | its quoting and two-space layout; keys sorted as texts, then laid out in object order | `js::tests::json_stringify_indents_as_javascript_does`, `stdlib::tests::text_members` |
 | the figure and month tables | `MAGNITUDE_SUFFIXES["constructor"]` is `Object`, so `"5 constructor"` is NaN; `MONTH_NAMES["constructor"]` fails `validParts` like no month (stdlib.rs keeps the tables' own quirk) | `stdlib::tests::figures_read_as_the_regex_reads_them` |
 | a dict whose `kind` names a binding kind | data, as every dict is: only an engine object (`Js::Record`) is a record, so the content of data never changes how it is treated (Henry's ruling, 2026-10-10) | `record::tests::a_dict_is_never_a_record_whatever_its_kind`, apps/api's `rust_engine.unit.test.ts` ("host data is never read as an engine object") |
@@ -237,14 +237,14 @@ others, and CI diffs it too. (Until the extraction keyword was retired,
 2026-10-16, an extraction.json pinned the keyword's specs, prompts and reply
 reading as well; that code is gone.)
 
-`tests/stdlib_oracle.rs` holds every built-in and the comparator to the
-TypeScript's own answers (tests/oracle/stdlib.json, 10,455 cases) and the regex matcher to
-Node over 7,209 seeded pattern/text pairs (regex.json: 3,200 over the core
-dialect, 4,000 over the rest of it, and nine long texts and deep nestings).
-Where version 5 answers differently from JavaScript (CHANGELOG.md), the test
-names the difference it allows and nothing else. All three files are
-written by tests/oracle/generate.ts, deterministically; CI regenerates and
-diffs them.
+`tests/stdlib_frozen.rs` holds every built-in and the comparator to their
+recorded answers (tests/frozen/stdlib.jsonl, 11,357 cases) and
+`tests/regex_frozen.rs` the regex matcher (regex.jsonl: 7,209 seeded
+pattern/text pairs, 3,200 over the core dialect, 4,000 over the rest of it,
+and nine long texts and deep nestings). The answers are Rust's: the files were
+first written by the TypeScript engine, and Rust agreed with it except where
+version 5 differs on purpose (CHANGELOG.md). To change an answer on purpose,
+run the test with `FROZEN_REGENERATE=1` and read the diff of the .jsonl.
 
 ## Refusals
 

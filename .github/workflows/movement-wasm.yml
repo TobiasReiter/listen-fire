@@ -149,8 +149,11 @@ jobs:
       - name: Engine shim, against a double and through the committed artifact
         working-directory: apps/api
         run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_write|rust_traverse|rust_verbs|rust_extract|program_check|seam_guard)\.unit\.test\.ts$'
-      # The oracle the crate tests hold the Rust engine to is the TypeScript's
-      # own answers: a TypeScript change that moves one must move the oracle.
+      # What the crate tests still hold the Rust engine to from the TypeScript
+      # (the ORDER BY / LIMIT plan, the priced cap) and what Rust does with the
+      # pattern programs: a change that moves one must move the oracle. The
+      # built-ins, regexes, CHUNKS and sorts are frozen Rust answers
+      # (tests/frozen), not regenerated here.
       - name: The Rust engine's oracle is current
         working-directory: apps/api
         run: |

@@ -324,6 +324,7 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `node { body: msg.missing }` held a `body`, an `IS` test counted it present, and a write sent
   `body: null`. A field the record holds as null still reads null. For embedders: an
   `adapters.call` answer of nothing is `{}`, with no `result`.
+- Not a run difference: the Rust engine's test fixtures for the built-ins, regexes, CHUNKS, file bounds and mixed-key sorts hold Rust's own answers, no longer regenerated from the TypeScript engine.
 
 ### Language version 5, Dancing Wren: new
 

@@ -1,12 +1,11 @@
-//! The form the oracles were recorded in (tests/oracle/wire.ts): JavaScript
+//! The form the frozen fixtures' values are recorded in: JavaScript
 //! values exactly, as the eval wire carried them before it became plain
 //! JSON — `["u"]` undefined, `["n", "NaN" | "Infinity" | "-Infinity" |
 //! "-0"]`, `["s16", [units…]]` a text holding a lone surrogate (read here
 //! with each lone half U+FFFD, as the engine reads one), `["l", id,
 //! [items…]]`, `["o", id, [[key, value]…]]`, `["r", id]` the same list or
-//! object again. The engine no longer reads it; the oracles keep it so
-//! TypeScript's answers stay exact, and each test says where the engine's
-//! answer may differ.
+//! object again. The engine no longer reads it; the fixtures keep it so
+//! their inputs stay exact.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
