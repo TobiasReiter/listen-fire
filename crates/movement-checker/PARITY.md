@@ -3,20 +3,20 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **263 of 263** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 164013 of 164013; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 44042 of 44042.
-- Rust side: 36.9s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Diagnostics matched: 164028 of 164028; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 44057 of 44057.
+- Rust side: 37.1s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 6819 | 6819 | 6819 |
+| checks under v5 | 6820 | 6820 | 6820 |
 | checks v1 | 2246 | 2246 | 2246 |
 | checks v2 | 2500 | 2500 | 2500 |
-| checks v3 | 3158 | 3158 | 3158 |
-| checks v4 | 6519 | 6519 | 6519 |
-| checks v5 | 19239 | 19239 | 19239 |
+| checks v3 | 3159 | 3159 | 3159 |
+| checks v4 | 6520 | 6520 | 6520 |
+| checks v5 | 19251 | 19251 | 19251 |
 | checks v99 | 9 | 9 | 9 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -28,8 +28,8 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| (not in PORT.md) | 19 | 19 | 112398 | 112398 | 0 | 0 | 0 |
-| calls | 29 | 29 | 2007 | 2007 | 0 | 0 | 0 |
+| (not in PORT.md) | 19 | 19 | 112405 | 112405 | 0 | 0 | 0 |
+| calls | 29 | 29 | 2011 | 2011 | 0 | 0 | 0 |
 | closures | 15 | 15 | 2382 | 2382 | 0 | 0 | 0 |
 | extraction | 20 | 20 | 558 | 558 | 0 | 0 | 0 |
 | flow | 10 | 10 | 111 | 111 | 0 | 0 | 0 |
@@ -39,7 +39,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | nodes | 28 | 28 | 707 | 707 | 0 | 0 | 0 |
 | records | 12 | 12 | 948 | 948 | 0 | 0 | 0 |
 | systems | 8 | 8 | 175 | 175 | 0 | 0 | 0 |
-| values | 22 | 22 | 2922 | 2922 | 0 | 0 | 0 |
+| values | 22 | 22 | 2926 | 2926 | 0 | 0 | 0 |
 | versions | 2 | 2 | 12 | 12 | 0 | 0 | 0 |
 | walks | 22 | 22 | 1329 | 1329 | 0 | 0 | 0 |
 | writes | 48 | 48 | 2152 | 2152 | 0 | 0 | 0 |
@@ -48,7 +48,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | code | family | TS | matched | missing in Rust | extra in Rust | message differs | parity |
 |---|---|---|---|---|---|---|---|
-| MOV_ABSENT_REQUIRED | values | 1399 | 1399 | 0 | 0 | 0 | yes |
+| MOV_ABSENT_REQUIRED | values | 1403 | 1403 | 0 | 0 | 0 | yes |
 | MOV_ADAPTER_NOT_CONSTRUCTED | systems | 42 | 42 | 0 | 0 | 0 | yes |
 | MOV_AI_TIER_LEGACY | systems | 32 | 32 | 0 | 0 | 0 | yes |
 | MOV_AMBIGUOUS_PROPERTY | walks | 8 | 8 | 0 | 0 | 0 | yes |
@@ -67,7 +67,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_BORROW_UNKNOWN_GRAPH | nodes | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_BORROW_UNKNOWN_ROOT | nodes | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_BUILTIN_ARGS | calls | 34 | 34 | 0 | 0 | 0 | yes |
-| MOV_BUILTIN_ARG_TYPE | calls | 33 | 33 | 0 | 0 | 0 | yes |
+| MOV_BUILTIN_ARG_TYPE | calls | 37 | 37 | 0 | 0 | 0 | yes |
 | MOV_BUILTIN_NOT_RUN | calls | 10 | 10 | 0 | 0 | 0 | yes |
 | MOV_BUILTIN_UNUSED | calls | 5 | 5 | 0 | 0 | 0 | yes |
 | MOV_CALLBACK_BAD_CONFIG | listens | 24 | 24 | 0 | 0 | 0 | yes |
@@ -277,7 +277,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_V5_HIDES_BUILTIN | ? | 244 | 244 | 0 | 0 | 0 | yes |
 | MOV_V5_IMPORT_NEEDS_ALIAS | ? | 1 | 1 | 0 | 0 | 0 | yes |
 | MOV_V5_NOT_YET | ? | 2 | 2 | 0 | 0 | 0 | yes |
-| MOV_V5_SPELLING | ? | 109871 | 109871 | 0 | 0 | 0 | yes |
+| MOV_V5_SPELLING | ? | 109878 | 109878 | 0 | 0 | 0 | yes |
 | MOV_V5_UNKNOWN_MEMBER | ? | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_VALUE_UNLISTED | values | 40 | 40 | 0 | 0 | 0 | yes |
 | MOV_WAIT_NOT_RESUMABLE | flow | 12 | 12 | 0 | 0 | 0 | yes |
