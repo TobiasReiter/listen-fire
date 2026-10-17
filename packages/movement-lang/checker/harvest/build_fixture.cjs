@@ -15,8 +15,10 @@
 // found (hash, text, the tests it came from) and the corpus assembled from the
 // pin and them to target/checks/ (checks_pin.ts says what reads it):
 //
-//   --pin       rewrite the pin from this harvest (a re-harvest);
-//   (default)   keep the pin, and refuse when a pinned program was not found;
+//   --pin       rewrite the pin from this harvest (a re-harvest), dropping
+//               the pin's stored texts of programs no test writes;
+//   (default)   keep the pin, and refuse when a pinned program was not found
+//               (in the harvest, or among the pin's stored texts);
 //   --partial   keep the pin, and assemble what was found (./harvest.sh's
 //               first pass, which the corpus's own readers then extend).
 //
@@ -130,7 +132,11 @@ fs.writeFileSync(
   pin.PROGRAMS_FILE,
   lines([...programs.entries()].sort(([a], [b]) => cmp(a, b)).map(([program, { source, files }]) => ({ program, source, files: [...files].sort() }))),
 );
-const { records, missing } = pin.assemble(pin.readPin(), new Map([...programs].map(([key, { source }]) => [key, source])));
+// A re-harvest pins only what the tests write; otherwise the pin's stored
+// texts (checks_pin.ts) stand in for the programs no test writes.
+if (mode === 'pin') pin.dropStoredPrograms();
+const texts = new Map([...pin.storedPrograms().programs, ...[...programs].map(([key, { source }]) => [key, source])]);
+const { records, missing } = pin.assemble(pin.readPin(), texts);
 pin.writeCorpus(records);
 console.log(`${programs.size} programs → ${path.relative(process.cwd(), pin.PROGRAMS_FILE)}`);
 console.log(`${records.length} pinned checks assembled with their text → ${path.relative(process.cwd(), pin.CORPUS_FILE)}`);
