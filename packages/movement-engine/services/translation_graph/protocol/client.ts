@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { PROTOCOL_VERSION, RpcResponse } from 'engine-contracts';
 
-import type { RpcErrorShape } from 'engine-contracts';
+import type { RpcErrorShape, WireCredentialShape, WireCredentialUpdateShape } from 'engine-contracts';
 
 /**
  * The header naming a team, both ways: the host sends it on every call to a
@@ -120,6 +120,12 @@ export async function postRpc(opts: {
   method: string;
   cacheScopeId: string;
   params: unknown;
+  /** The install's credential, for a module that declares it. */
+  credential?: WireCredentialShape;
+  /** Called with the response's `credentialUpdate`, on a failed response
+   *  too, before the result is returned or the failure thrown: a rotated
+   *  refresh token must be stored either way. */
+  onCredentialUpdate?: (update: WireCredentialUpdateShape) => Promise<void>;
 }): Promise<unknown> {
   const res = await fetch(opts.baseUrl, {
     method: 'POST',
@@ -129,6 +135,7 @@ export async function postRpc(opts: {
       method: opts.method,
       cacheScopeId: opts.cacheScopeId,
       params: opts.params,
+      ...(opts.credential !== undefined ? { credential: opts.credential } : {}),
     }),
   });
 
@@ -138,6 +145,9 @@ export async function postRpc(opts: {
     method: opts.method,
     adapter: opts.baseUrl,
   });
+  if (body.credentialUpdate !== undefined && opts.onCredentialUpdate !== undefined) {
+    await opts.onCredentialUpdate(body.credentialUpdate);
+  }
   if (!body.ok) throw new RemoteProtocolError(body.error, opts.method);
   return body.result;
 }

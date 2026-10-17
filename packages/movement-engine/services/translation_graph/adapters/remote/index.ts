@@ -86,9 +86,11 @@ import type {
 import type { TriggerEvent, TriggerType } from '../../triggers/types';
 import type { Expression } from '#shared/expression/types';
 import type { AuthStrategy } from '../../protocol/client';
-import type { MethodName } from 'engine-contracts';
+import type { MethodName, WireCredentialDeclarationShape, WireCredentialShape, WireCredentialUpdateShape } from 'engine-contracts';
 
-import { authHeader, postRpc, parseWireResult } from '../../protocol/client';
+import { authHeader, postRpc, parseWireResult, RemoteProtocolError } from '../../protocol/client';
+import { SecretVersionConflict, withSecret, type Refresher, type SecretsFamily } from '../../../secrets/family';
+import { declaredFields, declaredRefresher, OAUTH2_TOKEN_FIELDS, type OAuth2ClientApp } from '../../../secrets/oauth2';
 import { DOCUMENT_STORE_OWNER, type DocumentStore } from '../../engine/files/document_store';
 import { fileOwner, hasFileSource, redeemFileRef } from '../../engine/files/redeem';
 import { countAdapterCall } from '../../segment_scope';
@@ -139,6 +141,42 @@ export interface RemoteManifest {
   /** Static webhook/synthetic event type, consumed by the engine's generic
    *  `resolvePositionTypeId`. Pure config — no RPC. */
   webhookEventTypeId?: string;
+  /** The credentials the module declares it needs (protocol `credentials`). */
+  credentials?: readonly WireCredentialDeclarationShape[];
+}
+
+/**
+ * The install's credential, for a module whose manifest declares one: sent on
+ * every call as the request's `credential`, refreshed by the host (the
+ * standard OAuth 2 grant from the declaration, or the module's own
+ * `refreshCredential`), and written back from any `credentialUpdate` the
+ * module answers, through the shell's secrets family.
+ */
+export interface RemoteCredentialBinding {
+  /** The declaration's name; must be one the manifest declares. */
+  name: string;
+  secrets: SecretsFamily;
+  /** The secrets store's name for the install's credential. */
+  ref: string;
+  /** The host's own OAuth app at the provider, for the generic refresh.
+   *  Absent: the credential's own `client_id` / `client_secret` fields. */
+  client?: OAuth2ClientApp;
+}
+
+/** Thrown when a module would be sent a raw credential over a channel the
+ *  protocol does not allow (neither HTTPS nor loopback). */
+export class CredentialChannelRefused extends Error {
+  constructor(adapterType: string, baseUrl: string) {
+    super(`Remote adapter "${adapterType}" at ${baseUrl}: a credential is sent only over HTTPS or to a loopback address`);
+    this.name = 'CredentialChannelRefused';
+  }
+}
+
+function isCredentialChannel(baseUrl: string): boolean {
+  const url = new URL(baseUrl);
+  if (url.protocol === 'https:') return true;
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  return url.protocol === 'http:' && (host === 'localhost' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host));
 }
 
 /**
@@ -208,6 +246,7 @@ export async function fetchRemoteManifest(
     runtimeCapabilities: result.runtimeCapabilities,
     methods: result.methods,
     webhookEventTypeId: result.webhookEventTypeId,
+    ...(result.credentials !== undefined ? { credentials: result.credentials } : {}),
   };
 }
 
@@ -225,6 +264,15 @@ export interface RemoteAdapterInput {
    *  `unauthorized`). It hands each attempt the secret to send. Without it,
    *  every call sends `secret`. */
   authorize?: <T>(call: (secret: string) => Promise<T>) => Promise<T>;
+  /** The install's credential, when the manifest declares one. */
+  credential?: RemoteCredentialBinding;
+}
+
+/** How a bound credential travels with each call. */
+interface BoundCredential {
+  binding: RemoteCredentialBinding;
+  declaration: WireCredentialDeclarationShape;
+  refresher: Refresher | undefined;
 }
 
 export class RemoteAdapter implements Adapter {
@@ -247,6 +295,7 @@ export class RemoteAdapter implements Adapter {
   private readonly cacheScopeId: string;
   private readonly advertised: ReadonlySet<string>;
   private readonly documents: DocumentStore;
+  private readonly bound: BoundCredential | undefined;
 
   constructor(input: RemoteAdapterInput) {
     this.config = input.config;
@@ -260,6 +309,97 @@ export class RemoteAdapter implements Adapter {
     this.webhookEventTypeId = input.manifest.webhookEventTypeId;
     this.advertised = new Set(input.manifest.methods);
     if (this.advertised.has('resolveAwait')) this.awaitable = this.remoteAwaitable();
+    this.bound = input.credential !== undefined ? this.bind(input.credential, input.manifest) : undefined;
+  }
+
+  /** Only a module that declares the credential is sent it, and only over a
+   *  channel the protocol allows; both are checked once, here. */
+  private bind(binding: RemoteCredentialBinding, manifest: RemoteManifest): BoundCredential {
+    const declaration = manifest.credentials?.find((declared) => declared.name === binding.name);
+    if (declaration === undefined) {
+      throw new Error(`Remote adapter "${this.config.adapterType}" declares no credential "${binding.name}"; it is not sent one`);
+    }
+    if (!isCredentialChannel(this.config.baseUrl)) throw new CredentialChannelRefused(this.config.adapterType, this.config.baseUrl);
+    const refresher = this.advertised.has('refreshCredential')
+      ? this.moduleRefresher(declaration)
+      : declaredRefresher(declaration, binding.client !== undefined ? { client: binding.client } : {});
+    return { binding, declaration, refresher };
+  }
+
+  /** The module's own `refreshCredential`, for a provider whose refresh is
+   *  not the standard grant. Its fields and any `credentialUpdate` beside
+   *  them are what changed. */
+  private moduleRefresher(declaration: WireCredentialDeclarationShape): Refresher {
+    return async (current) => {
+      let update: WireCredentialUpdateShape | undefined;
+      const raw = await this.authorize((secret) =>
+        postRpc({
+          baseUrl: this.config.baseUrl,
+          auth: authHeader(this.config.authStrategy, secret),
+          teamId: this.config.teamId,
+          method: 'refreshCredential',
+          cacheScopeId: this.cacheScopeId,
+          params: {},
+          credential: { name: declaration.name, fields: declaredFields(declaration, current.fields) },
+          onCredentialUpdate: async (answered) => {
+            update = answered;
+          },
+        }),
+      );
+      const { fields } = parseWireResult(METHODS.refreshCredential.result, raw, { method: 'refreshCredential', adapter: this.config.adapterType });
+      return this.acceptedFields(declaration, { ...(update?.fields ?? {}), ...fields });
+    };
+  }
+
+  /** The fields of an update the host stores: the declaration's own. A module
+   *  that names any other field (the host's client secret, a token URL) is
+   *  refused, naming the fields and never their values. */
+  private acceptedFields(declaration: WireCredentialDeclarationShape, fields: Record<string, string>): Record<string, string> {
+    const allowed = new Set(declaration.fields.map((field) => field.name));
+    if (declaration.kind === 'oauth2') for (const name of OAUTH2_TOKEN_FIELDS) allowed.add(name);
+    const foreign = Object.keys(fields).filter((name) => !allowed.has(name));
+    if (foreign.length > 0) {
+      throw new Error(`Remote adapter "${this.config.adapterType}" answered credential fields it does not declare: ${foreign.join(', ')}`);
+    }
+    return fields;
+  }
+
+  /** Store a `credentialUpdate` over the credential the call was sent. If the
+   *  stored one moved on meanwhile, the update still lands over it: losing a
+   *  rotated refresh token is worse than replacing a newer access token. */
+  private async storeCredentialUpdate(bound: BoundCredential, update: WireCredentialUpdateShape, sentVersion: string): Promise<void> {
+    if (update.name !== bound.declaration.name) {
+      throw new Error(`Remote adapter "${this.config.adapterType}" answered an update for credential "${update.name}", which it was not sent`);
+    }
+    const fields = this.acceptedFields(bound.declaration, update.fields);
+    const { secrets, ref } = bound.binding;
+    try {
+      await secrets.writeBack(ref, fields, sentVersion);
+    } catch (error) {
+      if (!(error instanceof SecretVersionConflict)) throw error;
+      await secrets.update(ref, fields);
+    }
+  }
+
+  /** Run one protocol call with the bound credential (if any): refreshed
+   *  first when it is about to expire, once more on `unauthorized`. */
+  private withCredential<T>(
+    send: (credential?: WireCredentialShape, onCredentialUpdate?: (update: WireCredentialUpdateShape) => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    const bound = this.bound;
+    if (bound === undefined) return send();
+    return withSecret(
+      bound.binding.secrets,
+      bound.binding.ref,
+      {
+        ...(bound.refresher !== undefined ? { refresher: bound.refresher } : {}),
+        isUnauthorized: (error) => error instanceof RemoteProtocolError && error.error.code === 'unauthorized',
+      },
+      (record) =>
+        send({ name: bound.declaration.name, fields: declaredFields(bound.declaration, record.fields) }, (update) =>
+          this.storeCredentialUpdate(bound, update, record.version),
+        ),
+    );
   }
 
   runtimeCapabilities(): RuntimeCapabilities {
@@ -271,15 +411,19 @@ export class RemoteAdapter implements Adapter {
     params: unknown,
   ): Promise<ReturnType<(typeof METHODS)[M]['result']['parse']>> {
     countAdapterCall('remote');
-    const result = await this.authorize((secret) =>
-      postRpc({
-        baseUrl: this.config.baseUrl,
-        auth: authHeader(this.config.authStrategy, secret),
-        teamId: this.config.teamId,
-        method,
-        cacheScopeId: this.cacheScopeId,
-        params,
-      }),
+    const result = await this.withCredential((credential, onCredentialUpdate) =>
+      this.authorize((secret) =>
+        postRpc({
+          baseUrl: this.config.baseUrl,
+          auth: authHeader(this.config.authStrategy, secret),
+          teamId: this.config.teamId,
+          method,
+          cacheScopeId: this.cacheScopeId,
+          params,
+          ...(credential !== undefined ? { credential } : {}),
+          ...(onCredentialUpdate !== undefined ? { onCredentialUpdate } : {}),
+        }),
+      ),
     );
     return parseWireResult(METHODS[method].result, result, {
       method,

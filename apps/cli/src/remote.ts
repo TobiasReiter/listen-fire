@@ -10,7 +10,7 @@ import { triggerTypeSchema } from 'engine-contracts';
 import { createRemoteAdapter, type RemoteAdapter } from 'movement-engine/services/translation_graph/adapters/remote';
 import type { DocumentStore } from 'movement-engine/services/translation_graph/engine/files/document_store';
 import type { RunningExternal } from './externals';
-import { withCredential, type Credential } from './secrets';
+import { secretsOf, withCredential, type Credential } from './secrets';
 
 export function remoteAdapterOf(input: {
   running: RunningExternal;
@@ -20,6 +20,8 @@ export function remoteAdapterOf(input: {
 }): RemoteAdapter {
   const { running, credential } = input;
   const name = running.external.manifest.name;
+  // The protocol carries one credential per request: the first declared.
+  const declared = running.credentials[0];
   return createRemoteAdapter({
     config: {
       adapterType: name,
@@ -37,12 +39,23 @@ export function remoteAdapterOf(input: {
       runtimeCapabilities: running.runtimeCapabilities,
       methods: running.methods,
       ...(running.webhookEventTypeId !== undefined ? { webhookEventTypeId: running.webhookEventTypeId } : {}),
+      credentials: running.credentials,
     },
     documents: input.documents,
-    // A refreshable credential is refreshed before a call that would carry a
-    // stale token, and once more when the external answers `unauthorized`;
-    // each attempt sends the credential's secret as it stands then.
-    authorize: (call) => withCredential(credential, () => call(secretOf(running, credential))),
+    ...(declared !== undefined && credential !== undefined
+      ? {
+          // The external declares its credential: it is sent on each call and
+          // refreshed from the declaration, so the auth secret is read as it
+          // stands after any refresh, with no second refresh of its own.
+          credential: { name: declared.name, secrets: secretsOf(credential), ref: credential.name },
+          authorize: (call) => call(secretOf(running, credential)),
+        }
+      : {
+          // A refreshable credential is refreshed before a call that would carry a
+          // stale token, and once more when the external answers `unauthorized`;
+          // each attempt sends the credential's secret as it stands then.
+          authorize: (call) => withCredential(credential, () => call(secretOf(running, credential))),
+        }),
   });
 }
 

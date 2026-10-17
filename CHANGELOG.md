@@ -1243,6 +1243,24 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf check` reports a file that does not parse at the column the parser names. It reported column 1
   for every such file.
 
+### ev2-secrets
+
+- One secrets family for every host: resolve a credential, write it back at the version it was read
+  at (a write against a newer version is refused), and refresh it at most once at a time, across
+  processes too. The host refreshes an `oauth2` credential itself with the standard refresh-token
+  grant at the token URL the module declares.
+- The platform's connected credentials: the Dropbox refresh, and the Google and Gmail token
+  rotations, now write back through it. Two workers that find the same expired Dropbox token now
+  make one token call; before, both refreshed. The stored encryption and each payload's shape are
+  unchanged, so existing connections read and write as before.
+- `lf`: a refreshed token is written back under a lock file beside the secrets file, so `lf serve`
+  and an `lf run` beside it spend a refresh token once. A credential from the environment is still
+  used for the run only, with one warning.
+- Adapter protocol 2, within version 2: a module whose manifest declares a credential is sent the
+  install's credential on every call (only the fields it declares, only over HTTPS or loopback),
+  and its `credentialUpdate` is written back, from a failed call too. An update naming a field the
+  module does not declare is refused. In `lf` today; hosted installs do not store declarations yet.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
