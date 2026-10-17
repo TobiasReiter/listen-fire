@@ -222,7 +222,8 @@ listen to runs {} fire m
     const [mint] = callbacks.mints;
     // `greeting` is stmt0, the callback is stmt1 — the address is the callback's.
     expect(mint.address).toBe('s1');
-    expect(mint.state.version).toBe(1);
+    // A version 5 run's state: park state version 2, the Rust engine's.
+    expect(mint.state.version).toBe(2);
     expect(mint.state.address).toBe('s1');
     expect(mint.state.bindingName).toBeNull();
     // The closure carries what the body will read.

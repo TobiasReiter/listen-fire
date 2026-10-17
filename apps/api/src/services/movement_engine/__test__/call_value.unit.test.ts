@@ -97,6 +97,7 @@ import { containerAssociation, isFileValue } from 'movement-engine/services/tran
 import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
 import { makeUnstablePosition, positionData } from 'movement-engine/services/translation_graph/types';
 import { tenantIdOf } from 'engine-contracts';
+import { parseProgram } from 'movement-lang';
 import { makeFakeParkSink, makeTestHost } from 'movement-engine/services/movement_engine/test_host';
 
 const TEAM_ID = tenantIdOf('00000000-0000-0000-0000-000000000021');
@@ -261,6 +262,22 @@ interface RunAdapters {
   dropbox?: Adapter;
   callbacks?: { sink: CallbackSink };
   parkSink?: ParkSink;
+}
+
+/** The syntax-tree node a version 2 park names by its place in the pinned
+ *  program: a JSON Pointer through the parser's tree of `source`. */
+function codeAt(source: string, place: unknown): Record<string, unknown> {
+  if (typeof place !== 'string') throw new Error(`expected code parked by its place, got ${JSON.stringify(place)}`);
+  const found = place
+    .split('/')
+    .slice(1)
+    .map((key) => key.replace(/~1/g, '/').replace(/~0/g, '~'))
+    .reduce<unknown>(
+      (node, key) => (typeof node === 'object' && node !== null ? Reflect.get(node, key) : undefined),
+      JSON.parse(JSON.stringify(parseProgram(source))),
+    );
+  if (typeof found !== 'object' || found === null) throw new Error(`no code at ${place}`);
+  return { ...found };
 }
 
 function run(source: string, payload: Record<string, unknown>, adapters: RunAdapters):
@@ -540,17 +557,14 @@ describe("a park carries a call value's deferred walk, not what it walked to", (
     const attio = makeFakeAdapter('attio');
     const callbacks = makeFakeCallbackSink();
 
-    await run(
-      SHAPER + [
-        'function intake(msg: <inbox-[:message]->>) {',
-        '  crm = connect attio using acme_main',
-        '  doc = email_to_doc(msg)',
-        '  cb = callback({ write crm-[:companies]-> { name: doc.title } })',
-        '}',
-      ].join('\n'),
-      { subject: 'x' },
-      { email: email.adapter, attio: attio.adapter, callbacks },
-    );
+    const source = SHAPER + [
+      'function intake(msg: <inbox-[:message]->>) {',
+      '  crm = connect attio using acme_main',
+      '  doc = email_to_doc(msg)',
+      '  cb = callback({ write crm-[:companies]-> { name: doc.title } })',
+      '}',
+    ].join('\n');
+    await run(source, { subject: 'x' }, { email: email.adapter, attio: attio.adapter, callbacks });
 
     const value = callbacks.mints[0].state.scopeChain
       .flatMap((scope) => Object.entries(scope.bindings))
@@ -562,8 +576,12 @@ describe("a park carries a call value's deferred walk, not what it walked to", (
     expect(value.fields.title).toBe('x');
     const edge = value.edges.files;
     if (edge.kind !== 'deferred') throw new Error('expected the edge to park deferred');
-    expect(edge.walk.head.hopsRaw).toBe('-[a:files]->');
-    expect(edge.walk.mapping?.entries.map((e) => e.name)).toEqual(['name']);
+    // Version 2: the walk and its mapping are parked as their places in the
+    // pinned program.
+    expect(codeAt(PRELUDE + source, edge.walk.head).hopsRaw).toBe('-[a:files]->');
+    expect(codeAt(PRELUDE + source, edge.walk.mapping).entries).toEqual([
+      expect.objectContaining({ name: 'name' }),
+    ]);
     // The callee's scope outlives the call for the walk's purposes: the walk's
     // root resolves against what it captured THERE, and it captured it whole.
     expect(email.relatedCalls.count).toBe(0);
@@ -647,7 +665,7 @@ describe('a closure survives park → resume and is still callable', () => {
     '}',
   ].join('\n');
 
-  it('parks with the closure in scope — its body as AST, its capture as bindings', async () => {
+  it('parks with the closure in scope — its body as its place in the program, its capture as bindings', async () => {
     const { sink, timerParks } = makeFakeParkSink();
     const email = makeFakeAdapter('email');
     const attio = makeFakeAdapter('attio');
@@ -664,7 +682,7 @@ describe('a closure survives park → resume and is still callable', () => {
       .flatMap((scope) => Object.entries(scope.bindings))
       .find(([name]) => name === 'ready')?.[1];
     if (stored?.kind !== 'closure') throw new Error('expected the closure to park');
-    expect(stored.closure.body.map((s) => s.kind)).toEqual(['return']);
+    expect(codeAt(PRELUDE + SOURCE, stored.closure).body).toEqual([expect.objectContaining({ kind: 'return' })]);
     // The closure names the scope it was written in — that is what makes
     // `subject` readable a month later, in another process — and the scope it
     // names holds the value.
