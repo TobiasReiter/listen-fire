@@ -1299,6 +1299,12 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - Not in `lf-host` yet: `serve` and the inbound doors, callbacks, `cancel`, model calls, credential
   refresh, and `run --webhook`. The TypeScript `lf` is unchanged and still has them all.
 
+### ev3-oauthfake
+
+- The dev loop has a fake OAuth2 provider in fake-channels (`/oauth`): authorize, token for the authorization_code and refresh_token grants with rotating refresh tokens, a protected endpoint, and injectable expiry and failures.
+- With `MOCK_OUTPUT_ADAPTERS=true` the Dropbox auth client signs in and refreshes against it, and the fake Dropbox refuses access tokens the provider has expired.
+- `pnpm dev:oauth setup`, `pnpm dev:inject oauth-expire|oauth-config` and `pnpm dev:inspect oauth` drive and read it; documented in `docs/dev-loop.md`.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

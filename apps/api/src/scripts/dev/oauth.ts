@@ -5,7 +5,7 @@
  *
  * Signs a Dropbox credential in against the fake OAuth provider in
  * fake-channels (the real authorize redirect and code exchange) and saves one
- * movement, `oauth_refresh_proof`, whose manual run uploads a file to the fake
+ * movement, `oauth_refresh_proof`, whose manual run creates a folder in the fake
  * Dropbox with it. Then:
  *
  *   pnpm dev:inject oauth-expire          # stored token stale, provider refuses it
@@ -25,20 +25,19 @@ import { saveMovement } from '../../services/translation_graph/movement/provisio
 
 function proofFile(): string {
   return `
-import { dropbox } from adapters
+import { manual, dropbox } from adapters
 import { \`${DEV_LOOP_DROPBOX_CREDENTIAL_NAME}\` } from credentials
 
-go = manual()
+runs = connect manual
+drive = connect dropbox using \`${DEV_LOOP_DROPBOX_CREDENTIAL_NAME}\`
 
-movement oauth_refresh_proof() {
-  drive = dropbox(credentials: \`${DEV_LOOP_DROPBOX_CREDENTIAL_NAME}\`)
-  write drive-[:file]-> {
-    name: "oauth-refresh-proof.txt"
-    data: "written after a token refresh"
+function oauth_refresh_proof(go: <runs-[:Invocation]->>) {
+  write drive-[:Folders]-> {
+    Name: "oauth-refresh-proof"
   }
 }
 
-listen to go {} fire oauth_refresh_proof
+listen to runs {} fire oauth_refresh_proof
 `;
 }
 
