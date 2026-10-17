@@ -137,13 +137,24 @@ export class OAuth2ExchangeFailed extends Error {
     readonly tokenUrl: string,
     readonly status: number | undefined,
     detail: string,
+    options?: { cause?: unknown },
   ) {
-    super(`exchanging the authorization code at ${tokenUrl} failed: ${detail}`);
+    super(`exchanging the authorization code at ${tokenUrl} failed: ${detail}`, options);
     this.name = 'OAuth2ExchangeFailed';
   }
 }
 
 const ERROR_BODY_CHARS = 200;
+
+/** Tries of one code exchange, and the wait before the first retry (doubled
+ *  after each). A 5xx or a network error is retried; any other answer is the
+ *  provider's verdict. Google's library retried its exchange like this before
+ *  Google moved onto this flow, and a provider hiccup at the redirect would
+ *  otherwise send the user back through consent. */
+export const EXCHANGE_TRIES = 3;
+export const EXCHANGE_RETRY_DELAY_MS = 250;
+
+const sleepFor = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Exchange the code the redirect brought back, at the declared token URL. */
 export async function exchangeOAuth2Code(input: {
@@ -153,6 +164,7 @@ export async function exchangeOAuth2Code(input: {
   code: string;
   fetch?: typeof fetch;
   now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<OAuth2Grant> {
   const { oauth2, client, attempt } = input;
   const doFetch = input.fetch ?? fetch;
@@ -162,8 +174,21 @@ export async function exchangeOAuth2Code(input: {
   const headers = tokenRequestHeaders();
   authenticateClient({ client, clientAuth: oauth2.clientAuth, form, headers });
   const hidden = [input.code, ...(client.clientSecret !== undefined ? [client.clientSecret] : []), ...(attempt.codeVerifier !== undefined ? [attempt.codeVerifier] : [])];
-  const response = await doFetch(oauth2.tokenUrl, { method: 'POST', headers, body: form });
-  const text = await response.text();
+  const sleep = input.sleep ?? sleepFor;
+  const { response, text } = await (async () => {
+    for (let tried = 1; ; tried++) {
+      try {
+        const answer = await doFetch(oauth2.tokenUrl, { method: 'POST', headers, body: form });
+        const body = await answer.text();
+        if (answer.status < 500 || tried >= EXCHANGE_TRIES) return { response: answer, text: body };
+      } catch (error) {
+        if (tried >= EXCHANGE_TRIES) {
+          throw new OAuth2ExchangeFailed(oauth2.tokenUrl, undefined, redactSecrets(error instanceof Error ? error.message : String(error), hidden), { cause: error });
+        }
+      }
+      await sleep(EXCHANGE_RETRY_DELAY_MS * 2 ** (tried - 1));
+    }
+  })();
   if (!response.ok) {
     throw new OAuth2ExchangeFailed(oauth2.tokenUrl, response.status, `HTTP ${response.status}: ${redactSecrets(text.slice(0, ERROR_BODY_CHARS), hidden)}`);
   }
