@@ -1,20 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { trpc, type RouterInputs } from "@/lib/trpc";
 
 import { Card } from "../card";
+import { ModuleCredentials } from "./module-credentials";
+import { btnPrimary, btnSecondary, inputClass, labelClass } from "./styles";
 
 type RuntimeCapabilitiesInput =
   RouterInputs["views"]["remoteAdapter"]["upsertFromManifest"]["runtimeCapabilities"];
 
-const btnPrimary =
-  "rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-50";
-const btnSecondary =
-  "rounded-md border border-gray-200 px-3 py-1.5 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50";
-const inputClass =
-  "w-full rounded-md border border-gray-200 px-3 py-2 text-[13px] focus:border-gray-400 focus:outline-none";
-const labelClass = "text-[12px] font-medium text-gray-500";
 
 type AuthKind = "bearer" | "shared_secret";
 
@@ -91,6 +87,15 @@ export default function RemoteAdaptersPage() {
   const [confirmDeleteSlug, setConfirmDeleteSlug] = useState<string | null>(
     null,
   );
+
+  // Where a provider sign-in lands: the callback names the credential it
+  // created, or why it created none.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const connected = searchParams.get("connected");
+  const signInError = searchParams.get("error");
+  const dismissSignInOutcome = () => router.replace(pathname, { scroll: false });
 
   const openAdd = () => {
     setIsEdit(false);
@@ -268,6 +273,40 @@ export default function RemoteAdaptersPage() {
         handles reading and writing data there. Install one from a manifest
         file, then edit its details here.
       </p>
+
+      {connected && (
+        <div className="mt-4 flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2">
+          <svg
+            className="h-4 w-4 text-green-600"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <span className="text-[13px] font-medium text-green-700">
+            Connected {connected}
+          </span>
+          <button
+            onClick={dismissSignInOutcome}
+            className="ml-auto cursor-pointer text-[12px] text-green-600 hover:text-green-800"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {signInError && (
+        <div className="mt-4 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2">
+          <span className="text-[12px] text-red-700">{signInError}</span>
+          <button
+            onClick={dismissSignInOutcome}
+            className="ml-auto cursor-pointer text-[12px] text-red-600 hover:text-red-800"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {editing ? (
         <div className="mt-4 rounded-md border border-gray-200 p-4">
@@ -512,6 +551,10 @@ export default function RemoteAdaptersPage() {
                         Updated{" "}
                         {new Date(adapter.updatedAt).toLocaleDateString()}
                       </div>
+                      <ModuleCredentials
+                        adapterType={adapter.adapterType}
+                        displayName={adapter.displayName ?? adapter.adapterType}
+                      />
                     </>
                   ) : (
                     <div className="mt-1 text-[12px] text-red-600">

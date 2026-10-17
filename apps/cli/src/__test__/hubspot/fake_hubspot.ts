@@ -26,6 +26,9 @@ export interface FakeHubSpot {
   /** A user's account, signed in: an access token (already expired when
    *  `expired`) and a refresh token, as a sign-in leaves them. */
   signIn(user: string, options?: { expired?: boolean }): { access_token: string; refresh_token: string; expires_at: string };
+  /** The code the provider's authorize page would send back for `user`'s
+   *  consent; the token endpoint exchanges it once, as `signIn` issues. */
+  authorize(user: string, options?: { expired?: boolean }): string;
   /** The refresh token the provider honours for `user` now. */
   refreshTokenOf(user: string): string | undefined;
   close(): Promise<void>;
@@ -37,6 +40,7 @@ export async function startFakeHubSpot(options: { clientId: string; clientSecret
   const calls: ProviderCall[] = [];
   const refreshes: string[] = [];
   const deals: FakeHubSpot['deals'] = [];
+  const codes = new Map<string, { user: string; expired: boolean }>();
   let serial = 0;
 
   const issue = (user: string, lifetimeMs: number) => {
@@ -61,6 +65,13 @@ export async function startFakeHubSpot(options: { clientId: string; clientSecret
       const form = new URLSearchParams(body);
       const basic = `Basic ${Buffer.from(`${encodeURIComponent(options.clientId)}:${encodeURIComponent(options.clientSecret)}`).toString('base64')}`;
       if (req.headers.authorization !== basic) return json(res, 401, { error: 'invalid_client' });
+      if (form.get('grant_type') === 'authorization_code') {
+        const consent = codes.get(form.get('code') ?? '');
+        codes.delete(form.get('code') ?? '');
+        if (consent === undefined) return json(res, 400, { error: 'invalid_grant' });
+        const issued = issue(consent.user, consent.expired ? -60_000 : 3_600_000);
+        return json(res, 200, { access_token: issued.accessToken, refresh_token: issued.refreshToken, expires_in: issued.expiresIn, token_type: 'bearer' });
+      }
       if (form.get('grant_type') !== 'refresh_token') return json(res, 400, { error: 'unsupported_grant_type' });
       const user = refresh.get(form.get('refresh_token') ?? '');
       if (user === undefined) return json(res, 400, { error: 'invalid_grant' });
@@ -108,6 +119,11 @@ export async function startFakeHubSpot(options: { clientId: string; clientSecret
         refresh_token: issued.refreshToken,
         expires_at: new Date(Date.now() + (signInOptions.expired === true ? -60_000 : 3_600_000)).toISOString(),
       };
+    },
+    authorize(user, authorizeOptions = {}) {
+      const code = `code-${user}-${randomBytes(6).toString('hex')}`;
+      codes.set(code, { user, expired: authorizeOptions.expired === true });
+      return code;
     },
     refreshTokenOf(user) {
       for (const [token, owner] of refresh) if (owner === user) return token;

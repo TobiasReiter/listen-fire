@@ -37,7 +37,7 @@ import {
   gmailOAuthClientCredentials,
 } from './adapters/gmail/connect_method';
 import { SlackMonitoring } from './lib/slack';
-import { getEnvVar } from './lib/utils/environment';
+import { oauthRedirectBaseUrl } from './lib/api_base_url';
 import { neverAsAny } from 'movement-engine/public/types';
 import { getFlowUserId } from './lib/oauthFlows';
 import { storePendingCredentials } from './lib/pendingCredentials';
@@ -47,14 +47,6 @@ import { notifyEngineOfSettledAsks } from './services/asks/in_process_notifier';
 import { mounts } from './products';
 
 const NODE_ENV = process.env.NODE_ENV as typeof process.env.NODE_ENV | 'staging';
-// Read only when a connector that actually redirects is being wired up — this
-// module is the composition root and is imported at boot, so an eager read
-// would stop a deployment that connects nothing from starting at all.
-const oauthRedirectBaseUrl = () =>
-  getEnvVar('OAUTH_REDIRECT_BASE_URL', {
-    devDefault: 'http://localhost:3003',
-    because: 'OAuth connectors redirect the user back to it after granting access',
-  });
 const isProductionOrStaging = NODE_ENV === 'production' || NODE_ENV === 'staging';
 const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY;
 const MAILGUN_SENDING_DOMAIN = process.env.MAILGUN_SENDING_DOMAIN;
