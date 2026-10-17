@@ -34,6 +34,23 @@ refusal (`x.k` would read the field). A narrowing a host registers matches a hop
 the field read is spelled (`e.action` under 5, `action` before). Comments and layout outside the rewritten spans are kept byte
 for byte; on text already in the version 5 spelling it changes nothing.
 
+**Every built-in integration is now a module, and the six bundled plugins are one.** Granola,
+Evertrace, Dropbox, Google Sheets, Google Drive, Gmail, Affinity, Airtable, Attio, Telegram and
+Slack run from `modules/<name>`, and the bundled plugins from `@lf/web`; the platform loads each in
+process and `serve-module` serves the same code everywhere else. For a team nothing changes: each
+was held to a recording of its old adapter (same requests, answers and writes), webhook URLs,
+signatures and stored credentials are untouched, and each can be switched back with one line.
+**Action may be needed:** Affinity, Airtable, Attio and Slack webhooks whose subscription has no
+signing secret (missing, blank or a placeholder) are now refused; Affinity needs the account's
+Webhook Signature Key, then the listen registered again. The API logs at boot how many live
+subscriptions this refuses. A separately run module's server secret now belongs to its install
+and the provider credential to the connection (`connect … using …`), on the platform, in `lf` and
+in `lf-host`; one new nullable column, `external_service_credentials.declared_credential`. A
+module served as a process hands out its files' bytes at one-use URLs under `MODULE_PUBLIC_URL`
+(else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
+refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
+(`ev4-*`), have the detail.
+
 ### lfr-upgrade
 
 - `lf-host upgrade [--check] [--all]` rewrites a project's movement files by the Rust checker's own fixes, with the TypeScript `lf upgrade`'s output, exit code and resulting file text.
@@ -1477,6 +1494,7 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   Postgres store refuses it, because the hosted product keeps it on a webhook subscription row lf
   has no counterpart for.
 ### ev4-cleanup
+
 - Dev loop: `pnpm dev:oauth setup` signs an existing Dropbox credential in again when the fake
   OAuth provider no longer knows its refresh token (a fresh checkout, a reset), so the first
   refresh after setup succeeds. An injected WhatsApp document is now a PDF with a text layer, and
@@ -1561,7 +1579,8 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   platform it reads models through Anthropic and the web through Bright Data, on a `web` credential
   whose fields are all optional; with no scrape provider it reads a page with a plain request. It
   has no profile reader, gated-document browser or document store there, so a LinkedIn address or
-  a gated deck comes back as nothing.
+  a gated deck fails, naming what is not available off the platform (the research plugins log that
+  failure and read on, as for any page that fails).
 - `examples/lf-custom-plugin`: a plugin module of your own, in one file with no imports, dropped
   into a project's externals.
 ### ev4-crm
@@ -1631,8 +1650,8 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   `adapters.<name>.declaredCredentials`); install secrets are never offered to `using`.
 - lf: a module that declares a credential is connected with `using` (as on the platform); one
   that declares none is connected as itself once its install entry holds the server secret. A
-  hand-written `external:` entry works as before. lf-host checks the same bindings; it refuses to
-  run a connection with a user credential (it does not send declared credentials yet).
+  hand-written `external:` entry works as before. lf-host checks the same bindings, sends the
+  connection's credential and signs with the install's secret, as the TypeScript `lf` does.
 
 ## [v0.11.0] - 2026-10-12
 
