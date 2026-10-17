@@ -66,3 +66,25 @@ Branch `checks-slim` (worktree `.claude/worktrees/checks-slim`), cut from cloud-
 | v99 | 0.002 | 0.001 | |
 
   The snapshot table is 1.42 MB and is unchanged.
+
+## 2026-10-17: after the merge of cloud-native 52378364 and one re-harvest
+
+### Read
+
+- **The merge was clean.** No conflicts. cloud-native did not touch the checks pin or its readers.
+- **The orphan programs are gone.** Both stored text files (`v4.programs.json`, `v5.programs.json`) are deleted, with the code that read them.
+- **The loop is cut.** A re-harvest rewrites the pin from the first pass before the corpus readers run, so the readers only see programs some test writes.
+- **The re-harvest dropped 3,909 checks and added 148: 37,421 became 33,660.** That is more than the 951 checks the orphans had.
+  - 951 checks belonged to the 174 orphan programs.
+  - 2,810 checks were of programs the tests still write, under 84 catalogs no test builds any more. Only the same loop kept them: the readers re-checked each pinned record against its pinned catalog.
+  - 148 upgrade checks are new. The upgrade floor picks each version 4 program under its first catalog. Where that catalog was dropped, the program's rewrite is now checked under the next one.
+  - No surviving check's diagnostics changed.
+- **Upgrade floor: 0.837 → 0.858** (measured 4,732 of 5,515, which is 85.8%).
+- **The ship gate now runs `pnpm checks:corpus`** (Henry's ruling: a ship gate step, not CI).
+
+### Results
+
+- `pnpm checks:corpus`: 33,660 checks assembled; the replay and the upgrade floor pass (6 of 6 tests); reachability passes.
+- Parity: 263 of 263 codes; 163,937 of 163,937 diagnostics matched; every record exact (43,999); 0 extra.
+- movement-lang: 5,308 passed, 13 skipped. Engine tests: 3,969 passed, 1 skipped. `cargo test -p movement-checker`: 208 passed. `pnpm -r code:type-check`: clean.
+- Pin sizes (MB): v1 0.56 + 0.63, v2 0.63 + 0.70, v3 0.79 + 0.94, v4 1.63 + 1.04, v5 5.02 + 13.21, v99 0.002 + 0.001, snapshot table 1.24. Total 26.4 MB in 13 files.
