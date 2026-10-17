@@ -46,7 +46,9 @@ export function shapeToSchema(
 ): InstanceSchema {
   const schema: InstanceSchema = { positions: {}, collections: {}, writableRoots: {} };
   const add = (node: ShapeNode, key: string): void => {
-    const properties: Record<string, SchemaFieldType> = {};
+    // Without a prototype: a field or node named `__proto__` (an ordinary name
+    // from version 5) is held as its own key, not set as the prototype.
+    const properties: Record<string, SchemaFieldType> = Object.create(null);
     for (const field of node.fields) {
       // Unknown surface type names degrade to text rather than dropping the
       // field (a dropped field would false-positive every write to it).
@@ -56,7 +58,7 @@ export function shapeToSchema(
       // an extraction's shape: the engine holds null there in every case.
       properties[field.name] = field.nullable === true ? (maybeAbsent(named) ?? named) : named;
     }
-    const edges: PositionSchema['edges'] = {};
+    const edges: PositionSchema['edges'] = Object.create(null);
     for (const child of node.children) {
       // The nesting IS the edge, and the nested node's name IS the edge name.
       // `order by <sequencing>` after the child's `}` is the author's own

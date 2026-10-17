@@ -196,7 +196,7 @@ impl Run<'_> {
         let mut entry = Members::default();
         entry.set("plugin", Js::str(registered.clone()));
         if let Some(Js::String(url)) = config.get("url") {
-            entry.set("url", Js::str(crate::extract::emission::cut(url.as_form(), crate::extract::run::TRACE_URL_CHARS)));
+            entry.set("url", Js::str(crate::extract::emission::cut(url.as_str(), crate::extract::run::TRACE_URL_CHARS)));
         }
         entry.set("durationMs", Js::Number(duration));
         result.trace_into(&mut entry);

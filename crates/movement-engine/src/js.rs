@@ -1,7 +1,6 @@
 //! JavaScript's values, and the JavaScript semantics the TypeScript engine
 //! leans on without saying so: `String()`, `Number()`, `===`, truthiness,
-//! property order, `Math.round`, `toFixed`, `trim`, UTF-16 lengths and
-//! comparisons, `JSON.stringify`. Each is written out here because Rust's own
+//! property order, `Math.round`, `toFixed`, `trim`, `JSON.stringify`. Each is written out here because Rust's own
 //! version differs somewhere (see the README's list), and the engine has to
 //! compute what the TypeScript engine computed, byte for byte.
 //!
@@ -19,7 +18,7 @@ pub enum Js {
     Null,
     Bool(bool),
     Number(f64),
-    /// A string, lone surrogates and all (crate::js_string).
+    /// A text (crate::js_string).
     String(JsString),
     Array(Rc<JsArray>),
     Object(Rc<JsObject>),
@@ -193,7 +192,7 @@ impl Js {
             Js::Null => 0.0,
             Js::Bool(b) => f64::from(u8::from(*b)),
             Js::Number(n) => *n,
-            Js::String(s) => string_to_number(s.as_form()),
+            Js::String(s) => string_to_number(s.as_str()),
             Js::Array(_) => string_to_number(&self.to_js_string()),
             Js::Object(_) | Js::Record(_) | Js::File(_) => f64::NAN,
         }
@@ -256,9 +255,9 @@ pub fn trim(s: &str) -> &str {
     s.trim()
 }
 
-/// `.length`: UTF-16 code units, not bytes or chars.
-pub fn utf16_len(s: &str) -> usize {
-    crate::js_string::utf16_len(s)
+/// `.length`: characters (code points), not bytes.
+pub fn len_chars(s: &str) -> usize {
+    crate::js_string::len_chars(s)
 }
 
 // ── Case ──────────────────────────────────────────────────────────────────────
@@ -317,8 +316,7 @@ pub fn to_fixed(x: f64, digits: usize) -> String {
 
 // ── JSON.stringify ────────────────────────────────────────────────────────────
 
-/// `JSON.stringify(text)` (crate::js_string, a lone surrogate written
-/// `\udXXX`).
+/// `JSON.stringify(text)` (crate::js_string).
 pub fn json_quote(s: &str) -> String {
     crate::js_string::json_quote(s)
 }
@@ -394,7 +392,7 @@ fn write_json(value: &Js, indent: usize, depth: usize, out: &mut String, held: &
         Js::File(file) => write_json(&crate::file::display(file), indent, depth, out, held),
         Js::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Js::Number(n) => out.push_str(&if n.is_finite() { number_to_string(*n) } else { "null".into() }),
-        Js::String(s) => out.push_str(&json_quote(s.as_form())),
+        Js::String(s) => out.push_str(&json_quote(s.as_str())),
         Js::Array(array) => {
             if array.items().is_empty() {
                 out.push_str("[]");
@@ -600,8 +598,9 @@ mod tests {
     }
 
     #[test]
-    fn strings_are_utf16_where_javascript_says_so() {
-        assert_eq!(utf16_len("a😀"), 3);
+    fn strings_are_characters() {
+        // An emoji is one character (JavaScript counted its two UTF-16 units).
+        assert_eq!(len_chars("a😀"), 2);
         // Texts order by code point (JavaScript ordered UTF-16 units, so
         // U+FF61 sorted after an emoji).
         assert!("\u{FF61}" < "😀");

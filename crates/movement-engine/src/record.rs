@@ -331,7 +331,7 @@ pub fn get(value: &Js, key: &str) -> Result<Js, EvalError> {
         },
         Js::Array(list) if key == "length" => Ok(Js::Number(list.items().len() as f64)),
         Js::Array(list) => Ok(key.parse::<usize>().ok().and_then(|i| list.items().get(i).cloned()).unwrap_or(Js::Undefined)),
-        Js::String(text) if key == "length" => Ok(Js::Number(js::utf16_len(text.as_form()) as f64)),
+        Js::String(text) if key == "length" => Ok(Js::Number(js::len_chars(text.as_str()) as f64)),
         _ => Ok(Js::Undefined),
     }
 }
@@ -560,8 +560,8 @@ mod tests {
             schema: None,
         };
         let record = Binding::Instance(std::rc::Rc::new(instance));
-        assert!(matches!(own_property(&record, "name").unwrap(), Js::String(name) if name.as_form() == "crm"));
-        assert!(matches!(own_property(&record, "adapterSlug").unwrap(), Js::String(slug) if slug.as_form() == "attio"));
+        assert!(matches!(own_property(&record, "name").unwrap(), Js::String(name) if name.as_str() == "crm"));
+        assert!(matches!(own_property(&record, "adapterSlug").unwrap(), Js::String(slug) if slug.as_str() == "attio"));
         assert!(matches!(own_property(&record, "credentialName").unwrap(), Js::Null));
         assert!(matches!(get(&held(record), "credentialName").unwrap(), Js::Undefined));
     }

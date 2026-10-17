@@ -91,7 +91,7 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
         "length" => match &a {
             Js::Undefined | Js::Null => Js::Number(0.0),
             Js::Array(list) => Js::Number(list.items().len() as f64),
-            other => Js::Number(js::utf16_len(&other.to_js_string()) as f64),
+            other => Js::Number(js::len_chars(&other.to_js_string()) as f64),
         },
         "abs" => Js::Number(a.to_number().abs()),
         "round" => Js::Number(a.to_number().round()),
@@ -101,7 +101,7 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
         "tonumber" => {
             let n = a.to_number();
             // An empty text is no number (JavaScript's `Number("")` is 0).
-            let empty = matches!(&a, Js::String(text) if js::trim(text.as_form()).is_empty());
+            let empty = matches!(&a, Js::String(text) if js::trim(text.as_str()).is_empty());
             if n.is_nan() || empty { Js::Null } else { Js::Number(n) }
         }
         "date" => coerce_to_date(&a).map_or(Js::Null, Js::str),
@@ -125,12 +125,11 @@ pub fn apply_flat(id: &str, args: &[Js]) -> Result<Js, EvalError> {
             let separator = arg(args, 1);
             let separator = if separator.is_nullish() { ",".to_string() } else { separator.to_js_string() };
             let text = a.to_js_string();
-            // By code unit, as `split` reads: `split("")` parts an astral
-            // character into its two halves.
+            // `split("")` parts the text into its characters, an emoji whole.
             let parts: Vec<String> = if separator.is_empty() {
-                crate::js_string::split_units(&text)
+                crate::js_string::split_chars(&text)
             } else {
-                crate::js_string::split(&text, &separator)
+                text.split(separator.as_str()).map(String::from).collect()
             };
             Js::array(parts.iter().map(|p| js::trim(p)).filter(|p| !p.is_empty()).map(Js::str).collect())
         }
@@ -200,7 +199,6 @@ fn figure_match(text: &str) -> Option<(String, Option<String>)> {
         }
     }
     let number: String = chars[start..at].iter().collect();
-    // `\s` is UTF-16 based, but every JavaScript space is a BMP character.
     while at < chars.len() && char::is_whitespace(chars[at]) {
         at += 1;
     }
@@ -609,13 +607,11 @@ fn text_regex_extract(args: &[Js]) -> Result<Js, EvalError> {
     if text.is_nullish() || pattern.is_nullish() {
         return Ok(Js::Null);
     }
-    // The regex reads code points: a lone surrogate is U+FFFD to it.
-    let plain = |value: Js| String::from_utf16_lossy(&crate::js_string::units_vec(&value.to_js_string()));
-    let regex = match Regex::new(&plain(pattern)) {
+    let regex = match Regex::new(&pattern.to_js_string()) {
         Ok(regex) => regex,
         Err(RegexError::Syntax) => return Ok(Js::Null),
     };
-    let Some(groups) = regex.exec(&plain(text)) else { return Ok(Js::Null) };
+    let Some(groups) = regex.exec(&text.to_js_string()) else { return Ok(Js::Null) };
     let index = if args.len() > 2 { group.to_number() } else if groups.len() > 1 { 1.0 } else { 0.0 };
     if !js::is_integer(index) || index < 0.0 || index >= groups.len() as f64 {
         return Ok(Js::Null);
@@ -659,7 +655,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
         _ => return Js::Null,
     };
     let separator = match separator {
-        Js::String(s) => s.as_form(),
+        Js::String(s) => s.as_str(),
         _ => " | ",
     };
     let parts: Vec<String> = record
@@ -672,8 +668,7 @@ fn text_pairs(record: &Js, separator: &Js) -> Js {
     Js::str(parts.join(separator))
 }
 
-/// `toStableJson`: keys sorted by UTF-16 code unit (and then laid out as an
-/// object lays them out: index keys first), `-0` as `0`, non-finite numbers
+/// `toStableJson`: keys sorted as texts (by code point), `-0` as `0`, non-finite numbers
 /// and absence as null, a file the engine holds as its descriptor (a dict
 /// with a file's keys is a dict).
 fn to_stable_json(value: &Js) -> Js {
@@ -1092,7 +1087,7 @@ mod tests {
         assert_eq!(text(call("trim", vec![s("\u{feff} x")])), "\u{feff} x");
         assert_eq!(text(call("upper", vec![s("straße")])), "STRASSE");
         assert_eq!(text(call("lower", vec![s("ΣΑΣ")])), "σας");
-        assert!(matches!(call("length", vec![s("a😀")]), Js::Number(n) if n == 3.0));
+        assert!(matches!(call("length", vec![s("a😀")]), Js::Number(n) if n == 2.0));
         assert!(matches!(call("length", vec![Js::Null]), Js::Number(n) if n == 0.0));
         assert!(matches!(call("length", vec![Js::Number(-1.5)]), Js::Number(n) if n == 4.0));
         // Half away from zero (JavaScript went half toward +∞: -2).
@@ -1108,6 +1103,8 @@ mod tests {
         assert_eq!(parts.items().iter().map(|p| text(p.clone())).collect::<Vec<_>>(), ["a", "b"]);
         let Js::Array(chars) = call("split", vec![s("ab c"), s("")]) else { panic!("a list") };
         assert_eq!(chars.items().len(), 3);
+        let Js::Array(chars) = call("split", vec![s("a😀"), s("")]) else { panic!("a list") };
+        assert_eq!(chars.items().iter().map(|p| text(p.clone())).collect::<Vec<_>>(), ["a", "😀"]);
         let Js::Array(flat) = call("multi", vec![Js::Number(1.0), Js::Null, Js::array(vec![Js::Number(2.0), Js::Undefined])]) else {
             panic!("a list")
         };

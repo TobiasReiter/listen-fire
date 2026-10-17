@@ -107,7 +107,7 @@ pub struct Evaluated {
 /// `-0` there (a `-0` computed at run time is).
 pub fn static_value(value: &StaticValue) -> Js {
     match value {
-        StaticValue::String(s) => Js::str(s.clone()),
+        StaticValue::String(s) => Js::str(crate::js_string::of_program(s)),
         StaticValue::Number(n) if n.0 == 0.0 => Js::Number(0.0),
         StaticValue::Number(n) => Js::Number(n.0),
         StaticValue::Bool(b) => Js::Bool(*b),
@@ -359,8 +359,8 @@ impl<'a> Evaluator<'a> {
                 // or one that is not text, is null. A record held as a value is
                 // a dict to `isDictValue`: its own keys are the binding's.
                 let value = match (&inner.value, &index.value) {
-                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key.as_form()).cloned().unwrap_or(Js::Null),
-                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key.as_form())?,
+                    (Js::Object(object), Js::String(key)) if crate::js::is_dict(&inner.value) => object.get(key.as_str()).cloned().unwrap_or(Js::Null),
+                    (Js::Record(record), Js::String(key)) => crate::record::own_property(record, key.as_str())?,
                     (Js::Object(_), _) if crate::js::is_dict(&inner.value) => Js::Null,
                     (Js::Record(_), _) => Js::Null,
                     (other, _) => at_index(other, index.value.to_number()),
@@ -409,7 +409,7 @@ impl<'a> Evaluator<'a> {
                     match member {
                         ObjectMember::Entry { key, value } => {
                             let result = self.member(value).await?;
-                            object.set(key.clone(), result.value);
+                            object.set(crate::js_string::of_program(key).into_owned(), result.value);
                             provs.push(result.prov);
                         }
                         ObjectMember::Spread(spread) => {
@@ -740,7 +740,7 @@ impl<'a> Evaluator<'a> {
             AggregationFunction::Max if values.is_empty() => Js::Null,
             AggregationFunction::Max => Js::Number(math_max(values.iter().map(Js::to_number))),
             AggregationFunction::Join => Js::str(
-                values.iter().filter(|v| !v.is_nullish()).map(Js::to_text).collect::<Result<Vec<_>, _>>().map_err(thrown)?.join(separator.unwrap_or(", ")),
+                values.iter().filter(|v| !v.is_nullish()).map(Js::to_text).collect::<Result<Vec<_>, _>>().map_err(thrown)?.join(&separator.map_or(", ".into(), crate::js_string::of_program)),
             ),
             AggregationFunction::Collect => Js::array(values),
             AggregationFunction::Sort => unreachable!("SORT answered above"),
@@ -1019,21 +1019,21 @@ impl<'a> Evaluator<'a> {
             }
             reader.trace(crate::trace::TraceEntry::Chunks(members));
         };
-        let units = match &text.value {
+        let chars: Vec<char> = match &text.value {
             value if value.is_nullish() => {
                 traced(0.0, Vec::new(), None);
                 return Ok(Evaluated { value: Js::array(Vec::new()), prov });
             }
-            Js::String(text) => crate::js_string::units_vec(text.as_form()),
+            Js::String(text) => text.as_str().chars().collect(),
             other => {
                 return Err(EvalError::engine("MOVENG_RUNTIME", format!("CHUNKS() cuts a text, and this is {} — the checker should have caught this", other.type_of())));
             }
         };
-        let pieces: Vec<&[u16]> = crate::chunks::chunk(&units, spec).into_iter().map(|range| &units[range]).collect();
+        let pieces: Vec<&[char]> = crate::chunks::chunk(&chars, spec).into_iter().map(|range| &chars[range]).collect();
         let estimates = matches!(spec, crate::chunks::Spec::Entities { .. })
             .then(|| pieces.iter().map(|piece| Js::Number(crate::chunks::entities(piece) as f64)).collect());
         traced(pieces.len() as f64, pieces.iter().map(|piece| Js::Number(piece.len() as f64)).collect(), estimates);
-        Ok(Evaluated { value: Js::array(pieces.iter().map(|piece| Js::String(crate::js_string::JsString::from_units(piece))).collect()), prov })
+        Ok(Evaluated { value: Js::array(pieces.iter().map(|piece| Js::str(piece.iter().collect::<String>())).collect()), prov })
     }
 
     /// The origins a value's trail holds (`provenance.origins`).

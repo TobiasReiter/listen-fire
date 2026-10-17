@@ -94,16 +94,8 @@ unsafe fn emit(result: Result<Step, ProtocolError>, out_ptr_ptr: *mut usize, out
         Ok(step) => (OK, to_sorted_json(&step)),
         Err(ProtocolError(message)) => (ERROR, to_sorted_json(&json!({ "error": { "message": message } }))),
     };
-    let bytes = written(bytes);
     unsafe { write_out(bytes, out_ptr_ptr, out_len_ptr) };
     status
-}
-
-/// What serde_json wrote, as `JSON.stringify` writes it: a lone surrogate
-/// as its `\udXXX` escape (crate::js_string).
-fn written(bytes: Vec<u8>) -> Vec<u8> {
-    let text = String::from_utf8(bytes).expect("serde_json writes UTF-8");
-    crate::js_string::write_json_text(text).into_bytes()
 }
 
 

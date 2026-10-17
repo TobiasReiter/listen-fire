@@ -45,7 +45,7 @@ Section 2 respells the whole surface; nothing in it changes what a program means
 - The result is checked under 5. The pin moves only when it checks clean; otherwise the automation stays on its version, runs as before, and lists what is left.
 - A release's deploy check never rewrites an automation. It moves a pin only when the automation's text, as written, is already clean under 5; an automation in an older spelling stays on its version, and the team is told that an upgrade can rewrite it.
 - Check a few rewrites by hand, because the right one depends on what the value is:
-  - `LENGTH(x)` is rewritten to `Text.length(x)`. On a list, write `count(x)`.
+  - `LENGTH(x)` is rewritten to `Text.length(x)`. On a list, write `count(x)`. Under 5 a text's length counts characters: an emoji is 1 (under 4 and earlier it was 2, its UTF-16 units). `Text.split(t, "")` and `Text.chunks` count and cut the same way, so an emoji is never cut in two.
   - `x CONTAINS v` outside brackets is rewritten to `Text.includes(x, v)` when `v` is a text literal, else to `List.includes(x, v)`. Check that it matches what `x` is.
   - `SORT(xs, key)` whose key is anything but one field has no fix yet (`MOV_V5_NOT_YET`). Write `sort(xs, (r) => …)`.
   - A WHERE that calls out (`AI(…)` per record, a plugin, your own function) moves to `filter(walk, (r) => …)`, then `map` over what it kept.

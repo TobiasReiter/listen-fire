@@ -73,7 +73,7 @@ impl Emission {
 pub(crate) fn absent_if_blank(value: &Js) -> Js {
     match value {
         Js::Undefined => Js::Null,
-        Js::String(text) if js::trim(text.as_form()).is_empty() => Js::Null,
+        Js::String(text) if js::trim(text.as_str()).is_empty() => Js::Null,
         Js::Array(list) => {
             let kept: Vec<Js> = list.items().iter().map(absent_if_blank).filter(|v| !matches!(v, Js::Null)).collect();
             if kept.is_empty() { Js::Null } else { Js::array(kept) }
@@ -144,7 +144,7 @@ fn collect_traced(tree: &TracedTree, into: &mut Vec<(String, Vec<Js>)>, truncate
 }
 
 /// `tracedValue`: absent stays null; anything else a text of at most 200
-/// UTF-16 units, marked where it was cut.
+/// characters, marked where it was cut.
 fn traced_value(value: &Js) -> Js {
     let text = match value {
         Js::Undefined | Js::Null => return Js::Null,
@@ -155,14 +155,12 @@ fn traced_value(value: &Js) -> Js {
     Js::str(cut(&text, TRACE_VALUE_CHARS))
 }
 
-/// A text past `limit` UTF-16 units cut there and marked, as
-/// `${text.slice(0, limit)}…` cuts it: a cut through a pair keeps its high
-/// half.
+/// A text past `limit` characters cut there and marked (`…`).
 pub(crate) fn cut(text: &str, limit: usize) -> String {
-    if js::utf16_len(text) <= limit {
+    if js::len_chars(text) <= limit {
         return text.to_string();
     }
-    format!("{}…", crate::js_string::slice_units(text, 0, limit))
+    format!("{}…", crate::js_string::first_chars(text, limit))
 }
 
 #[cfg(test)]
@@ -180,10 +178,10 @@ mod tests {
     }
 
     #[test]
-    fn a_long_value_is_cut_at_its_utf16_length() {
+    fn a_long_value_is_cut_at_its_length_in_characters() {
         assert_eq!(cut("abc", 3), "abc");
         assert_eq!(cut("abcd", 3), "abc…");
-        assert_eq!(cut("a😀b", 2), format!("{}…", crate::js_string::slice_units("a😀", 0, 2)));
-        assert_eq!(crate::js_string::units_vec(&cut("a😀b", 2)), [0x61, 0xD83D, 0x2026]);
+        assert_eq!(cut("a😀b", 2), "a😀…");
+        assert_eq!(cut("a😀", 2), "a😀");
     }
 }

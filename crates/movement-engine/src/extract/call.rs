@@ -605,7 +605,7 @@ impl Run<'_> {
     async fn run_extract_call(&self, content: &Js, content_trail: &Trail, spec: &NodeSpec, one: bool, settings: &CallSettings, site_id: &str) -> Result<Binding, Stop> {
         let items = self.content_items(content).await?;
         let files: Vec<Js> = items.iter().filter_map(|item| item.file.clone()).collect();
-        let parts: Vec<(String, usize)> = items.iter().map(|item| (item.classification.clone(), js::utf16_len(&item.block))).collect();
+        let parts: Vec<(String, usize)> = items.iter().map(|item| (item.classification.clone(), js::len_chars(&item.block))).collect();
         let number = |n: usize| Js::Number(n as f64);
         let mut shape = Members::default();
         shape.set("form", Js::str("call"));

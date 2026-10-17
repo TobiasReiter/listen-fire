@@ -76,7 +76,7 @@ use host::{Family, Request};
 /// `{answers}`, each in the answer envelope it came in; `panic` panics with
 /// `message` on the first poll.
 pub fn begin(input_text: &str) -> Result<Segment, ProtocolError> {
-    // Read as `JSON.parse` reads it: a lone surrogate's escape included.
+    // A lone surrogate's escape is U+FFFD (crate::js_string).
     let input_text = &js_string::read_json_text(input_text);
     let input: Json = serde_json::from_str(input_text).map_err(|e| ProtocolError(format!("the input is not JSON: {e}")))?;
     match input.get("entry").and_then(Json::as_str) {

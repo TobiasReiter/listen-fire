@@ -12,9 +12,9 @@
 // makes it a prototype, so no read goes through one.
 //
 // A lone surrogate in a host's value (`JSON.parse('"\\ud83d"')` makes one)
-// crosses as U+FFFD, and one the engine makes (a cut through a pair, a
-// `split("")`) crosses back to the host as U+FFFD too. Inside the run a text
-// is still read in UTF-16 code units: its length, a cut, a split, a regex.
+// crosses as U+FFFD. Inside the run a text is read by character (code
+// point): its length, a cut, a split and a regex keep an emoji whole, so the
+// engine never makes a lone surrogate of its own.
 
 import { mockCatalogSnapshot, type InstanceSchema, type PluginSpec } from 'movement-lang';
 
@@ -297,7 +297,7 @@ describe('own `__proto__` keys on the wire', () => {
 const LONE = JSON.parse('{"hi":"a\\ud83d","lo":"\\ude00b","pair":"x😀y","\\udc00key":"\\ud800","astral":"😀𝒜"}');
 
 describe('lone surrogates on the wire', () => {
-  it('reads an event field holding them as U+FFFD: counted, cut, split, matched, printed, compared', async () => {
+  it('reads an event field holding them as U+FFFD: counted, split, matched, printed, compared by character', async () => {
     const { ended } = await run({
       source: program(
         '  v = msg.`meta`',
@@ -310,9 +310,9 @@ describe('lone surrogates on the wire', () => {
       meta: LONE,
     });
     // Each half arrived as U+FFFD, so side by side they are no pair;
-    // `split("")` and `.` still part an astral character into its halves.
-    expect(ended).toContain('MOVENG_ERROR: 2 4 false 4');
-    expect(ended).toContain('"\\ud83d"');
+    // `split("")` and `.` keep an emoji whole.
+    expect(ended).toMatch(/MOVENG_ERROR: 2 4 false 3 \[\s+"x",\s+"😀",\s+"y"\s+\] "😀" 1 /);
+    expect(ended).not.toContain('\\ud83d');
     expect(ended).toContain('"\ufffdkey": "\ufffd"');
     expect(ended).not.toContain('\\udc00');
   });
@@ -332,7 +332,7 @@ describe('lone surrogates on the wire', () => {
     expect(ended).toContain('"s": "a\ufffd"');
   });
 
-  it('reads a model reply holding them as U+FFFD, and traces an AI() prompt cut through a pair with U+FFFD for the half', async () => {
+  it('reads a model reply holding them as U+FFFD, and traces an AI() prompt cut by character', async () => {
     const ai = await run({
       source: program('  x = ai("${msg.`subject`}")', '  fail("${Json.stringify(x)} ${Text.length(x.`a`)}")'),
       meta: LONE,
@@ -341,8 +341,7 @@ describe('lone surrogates on the wire', () => {
     expect(ai.asked).toHaveLength(1);
     expect(ai.ended).toContain('\\"a\\":\\"\ufffd\\"');
     expect(ai.ended).not.toContain('ud800');
-    // The trace keeps the prompt's first 300 code units: the high half, which
-    // crosses to the host as U+FFFD.
+    // The trace keeps the prompt's first 300 characters: the emoji whole.
     const long = { ...event(LONE), payload: { subject: `${'p'.repeat(299)}😀 tail`, meta: LONE } };
     const seen = { invoked: [] as unknown[], asked: [] as unknown[] };
     const input = { ...inputOf({ source: program('  x = ai("${msg.`subject`}")'), replies: [{ value: 1 }] }, makeFakeParkSink(), seen), event: long };
@@ -350,25 +349,25 @@ describe('lone surrogates on the wire', () => {
     const result = await runMovement(input);
     expect(rustRunStats).toMatchObject({ segments: 1, shimFaults: 0 });
     const traced = result.trace.find((entry) => Reflect.get(entry, 'kind') === 'ai');
-    expect(JSON.stringify(traced)).toEqual(expect.stringContaining(`${'p'.repeat(299)}\ufffd…`));
+    expect(JSON.stringify(traced)).toEqual(expect.stringContaining(`${'p'.repeat(299)}😀…`));
     const extraction = await run({
       source: program(...ONE_COMPANY, '  fail("${found.name} ${Text.length(found.name)}")'),
       replies: [JSON.parse(`{"record":{"name":{"value":"${'n'.repeat(199)}😀\\udc00","evidence":{"item":0,"quote":"q"}}}}`)],
     });
-    // Read in one call, the lone half as U+FFFD: still 202 code units.
+    // Read in one call, the lone half as U+FFFD: 201 characters.
     expect(extraction.asked).toHaveLength(1);
-    expect(extraction.ended).toContain('😀\ufffd 202');
+    expect(extraction.ended).toContain('😀\ufffd 201');
   });
 
   it('parks a value holding them with U+FFFD for each lone half, and the park resumes to that ending', async () => {
     const source = program('  v = msg.`meta`', '  h = Text.split(v.`pair`, "")', '  await sleep(1h)', '  fail("${Json.stringify(v)} ${Json.stringify(h)}")');
     const parked = await run({ source, meta: LONE });
-    // A half the run made (`split("")`) crosses into the park as U+FFFD too.
-    expect(parked.parks).toContain('"h":{"kind":"value","value":["x","\ufffd","\ufffd","y"]');
+    // `split("")` keeps the emoji whole, so the park holds it as itself.
+    expect(parked.parks).toContain('"h":{"kind":"value","value":["x","😀","y"]');
     expect(parked.parks).not.toContain('\\ud83d');
     const resumed = await resumedFrom({ source, meta: LONE }, parked.parks);
     expect(resumed).toContain('"\ufffdkey": "\ufffd"');
-    expect(resumed).toMatch(/"x",\s+"\ufffd",\s+"\ufffd",\s+"y"/);
+    expect(resumed).toMatch(/"x",\s+"😀",\s+"y"/);
   });
 
   it.each([

@@ -1,44 +1,27 @@
-//! A JavaScript string: any sequence of UTF-16 code units, a lone surrogate
-//! included (`JSON.parse('"\ud83d"')` makes one, and so does a cut through a
-//! surrogate pair, `"😀".slice(0, 1)`).
+//! A text: a Rust `String`, so Unicode scalar values. Every count, cut and
+//! search is by character (code point): an emoji's `length` is 1,
+//! `split("")` keeps it whole, and a cut never falls inside it. Equality,
+//! hashing and order are the `String`'s own.
 //!
-//! A Rust `String` holds Unicode scalar values only, so a lone surrogate is
-//! held in-band: the noncharacter U+FDD0 (`ESCAPE`, which Unicode reserves
-//! for a program's internal use) followed by one plane-16 private-use
-//! character naming the unit (U+100000 + unit − U+D800). A U+FDD0 the text
-//! itself holds is written twice. Every text the engine holds is in this
-//! form, the host's JSON (serde_json's `Value`) included: the JSON text
-//! reader (`read_json_text`) turns a lone `\udXXX` escape into it and the
-//! writer (`write_json_text`) turns it back, as `JSON.parse` and
-//! `JSON.stringify` read and write one. A text with no lone surrogate (and
-//! no U+FDD0) is itself, byte for byte: nothing is paid for the escape
-//! unless it is there.
+//! What is not Unicode text never gets in. A host's JSON can escape half
+//! of a surrogate pair on its own (`"\ud83d"`, which `JSON.stringify`
+//! writes for a lone half); the JSON reader (`read_json_text`) makes each
+//! such escape U+FFFD. A program's source reaches the engine the same way,
+//! and a string literal has no `\u` escape, so it holds none either.
 //!
-//! The form is canonical (a lone high half followed by a lone low half is
-//! the pair, as `"\ud83d" + "\ude00"` is `"😀"`), so equality and hashing of
-//! the Rust text are JavaScript's `===`. What counts or cuts by code unit
-//! (`length`, `slice`, a regex, `split("")`, an order by code unit) reads
-//! the units (`units_of`); a search whose text or needle holds the escape
-//! searches the units (`find_units`), as a plane-16 character the text
-//! holds would otherwise match an escape's second half.
+//! The parser keeps its own text form, so a span counts the UTF-16 units an
+//! editor counts (movement_parser::util::form: a U+FDD0 written twice). A
+//! literal's text is made plain where it becomes a value (`of_program`).
 
 use std::borrow::Cow;
 use std::fmt;
 
-pub use movement_parser::util::form::{read_json_text, ESCAPE, Piece, is_well_formed, pieces, text_of_units, units_of, units_vec, utf16_len};
-
-/// A JavaScript string, in the engine's form (see the module's note).
+/// A text the engine holds (see the module's note).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JsString(String);
 
 impl JsString {
-    /// The text in the engine's in-band form (the module's note): for a
-    /// function of this crate that reads the form (`utf16_len`, `trim`,
-    /// `to_lower_case`, `string_to_number`, a comparison with known text, a
-    /// key), and for the JSON writer. Never read it with a `str` method that
-    /// counts, cuts or searches: there a lone surrogate is two characters
-    /// where JavaScript sees one unit.
-    pub fn as_form(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 
@@ -51,22 +34,11 @@ impl JsString {
         self.0
     }
 
-    /// A text made of these code units, lone surrogates and all.
-    pub fn from_units(units: &[u16]) -> JsString {
-        JsString(text_of_units(units))
-    }
-
-    /// `.length`.
-    pub fn len_utf16(&self) -> usize {
-        utf16_len(&self.0)
-    }
-
-    /// Whether every surrogate is half of a pair (`isWellFormed()`).
-    pub fn is_well_formed(&self) -> bool {
-        is_well_formed(&self.0)
+    /// `.length`: characters.
+    pub fn len_chars(&self) -> usize {
+        self.0.chars().count()
     }
 }
-
 
 impl fmt::Display for JsString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -76,19 +48,19 @@ impl fmt::Display for JsString {
 
 impl From<String> for JsString {
     fn from(text: String) -> JsString {
-        JsString(canonical(text))
+        JsString(text)
     }
 }
 
 impl From<&str> for JsString {
     fn from(text: &str) -> JsString {
-        JsString::from(text.to_string())
+        JsString(text.to_string())
     }
 }
 
 impl From<&String> for JsString {
     fn from(text: &String) -> JsString {
-        JsString::from(text.clone())
+        JsString(text.clone())
     }
 }
 
@@ -100,25 +72,25 @@ impl From<&JsString> for JsString {
 
 impl From<Cow<'_, str>> for JsString {
     fn from(text: Cow<'_, str>) -> JsString {
-        JsString::from(text.into_owned())
+        JsString(text.into_owned())
     }
 }
 
 impl From<Box<str>> for JsString {
     fn from(text: Box<str>) -> JsString {
-        JsString::from(String::from(text))
+        JsString(String::from(text))
     }
 }
 
 impl From<char> for JsString {
     fn from(c: char) -> JsString {
-        JsString::from(c.to_string())
+        JsString(c.to_string())
     }
 }
 
 impl FromIterator<char> for JsString {
     fn from_iter<I: IntoIterator<Item = char>>(chars: I) -> JsString {
-        JsString::from(chars.into_iter().collect::<String>())
+        JsString(chars.into_iter().collect())
     }
 }
 
@@ -128,7 +100,6 @@ impl std::borrow::Borrow<str> for JsString {
     }
 }
 
-/// Written as the text it is; the JSON text writer writes a lone surrogate.
 impl serde::Serialize for JsString {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
@@ -177,96 +148,51 @@ impl PartialEq<JsString> for String {
     }
 }
 
-// ── The form ──────────────────────────────────────────────────────────────────
+// ── Characters ────────────────────────────────────────────────────────────────
 
-/// `text` in the canonical form: a lone high half met by a lone low half
-/// made the pair, a bare U+FDD0 written twice.
-fn canonical(text: String) -> String {
-    if !text.contains(ESCAPE) {
-        return text;
-    }
-    text_of_units(&units_vec(&text))
+/// `.length`: characters, not bytes.
+pub fn len_chars(text: &str) -> usize {
+    text.chars().count()
 }
 
-/// `text.slice(from, to)` by code unit (`from <= to`, both within the
-/// text): a cut through a pair keeps the half on its side.
-pub fn slice_units(text: &str, from: usize, to: usize) -> String {
-    let units = units_vec(text);
-    text_of_units(&units[from.min(units.len())..to.min(units.len())])
+/// The text's first `count` characters (all of it when it has fewer).
+pub fn first_chars(text: &str, count: usize) -> &str {
+    text.char_indices().nth(count).map_or(text, |(at, _)| &text[..at])
 }
 
-/// `haystack.indexOf(needle, from)` by code unit.
-pub fn find_units(haystack: &[u16], needle: &[u16], from: usize) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(from.min(haystack.len()));
-    }
-    (from..=haystack.len().checked_sub(needle.len())?).find(|&at| haystack[at..at + needle.len()] == *needle)
-}
-
-/// Whether a search over these texts must read their code units: either
-/// holds the escape.
-pub fn needs_units(a: &str, b: &str) -> bool {
-    a.contains(ESCAPE) || b.contains(ESCAPE)
-}
-
-/// `haystack.includes(needle)`.
-pub fn includes(haystack: &str, needle: &str) -> bool {
-    if !needs_units(haystack, needle) {
-        return haystack.contains(needle);
-    }
-    find_units(&units_vec(haystack), &units_vec(needle), 0).is_some()
-}
-
-/// `text.split(separator)` (a non-empty separator), by code unit.
-pub fn split(text: &str, separator: &str) -> Vec<String> {
-    if !needs_units(text, separator) {
-        return text.split(separator).map(String::from).collect();
-    }
-    let (units, separator) = (units_vec(text), units_vec(separator));
-    let mut parts = Vec::new();
-    let mut at = 0;
-    while let Some(found) = find_units(&units, &separator, at) {
-        parts.push(text_of_units(&units[at..found]));
-        at = found + separator.len();
-    }
-    parts.push(text_of_units(&units[at..]));
-    parts
-}
-
-/// `text.split("")`: one text per code unit, a pair's halves apart.
-pub fn split_units(text: &str) -> Vec<String> {
-    units_vec(text).into_iter().map(|unit| text_of_units(&[unit])).collect()
+/// `split("")`: one text per character.
+pub fn split_chars(text: &str) -> Vec<String> {
+    text.chars().map(String::from).collect()
 }
 
 /// `JSON.stringify(text)`: the quoting JSON.stringify does (`\u00xx` in
-/// lower case for the controls it has no short escape for, and for a lone
-/// surrogate).
+/// lower case for the controls it has no short escape for).
 pub fn json_quote(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
-    for piece in pieces(text) {
-        match piece {
-            Piece::Lone(unit) => out.push_str(&format!("\\u{unit:04x}")),
-            Piece::Char('"') => out.push_str("\\\""),
-            Piece::Char('\\') => out.push_str("\\\\"),
-            Piece::Char('\u{08}') => out.push_str("\\b"),
-            Piece::Char('\u{0C}') => out.push_str("\\f"),
-            Piece::Char('\n') => out.push_str("\\n"),
-            Piece::Char('\r') => out.push_str("\\r"),
-            Piece::Char('\t') => out.push_str("\\t"),
-            Piece::Char(c) if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            // In the engine's form, as every text is (a U+FDD0 twice).
-            other => other.push_onto(&mut out),
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
         }
     }
     out.push('"');
     out
 }
 
-/// The text with each lone surrogate made U+FFFD: what crosses a boundary
-/// that carries only Unicode text.
-pub fn well_formed(text: &str) -> Cow<'_, str> {
-    if is_well_formed(text) {
+// ── The program boundary ──────────────────────────────────────────────────────
+
+/// A text the parser wrote (a literal, a map key), as the text it is.
+pub fn of_program(text: &str) -> Cow<'_, str> {
+    use movement_parser::util::form::{ESCAPE, Piece, pieces};
+    if !text.contains(ESCAPE) {
         return Cow::Borrowed(text);
     }
     Cow::Owned(
@@ -281,15 +207,50 @@ pub fn well_formed(text: &str) -> Cow<'_, str> {
 
 // ── The JSON text boundary ────────────────────────────────────────────────────
 
-/// A JSON text serde_json wrote, as `JSON.stringify` writes it: each lone
-/// surrogate the engine's form holds written `\udXXX`, each U+FDD0 written
-/// once. The escape only ever sits inside a JSON string, which is where
-/// serde_json puts text.
-pub fn write_json_text(text: String) -> String {
-    match movement_parser::util::form::external_text(&text) {
-        Cow::Borrowed(_) => text,
-        Cow::Owned(out) => out,
+/// A JSON text ready for serde_json (which refuses a lone surrogate's
+/// escape): each `\udXXX` escape that is not half of an escaped pair
+/// rewritten `\ufffd`. A text with none is itself.
+pub fn read_json_text(text: &str) -> Cow<'_, str> {
+    if !text.contains("\\u") {
+        return Cow::Borrowed(text);
     }
+    let bytes = text.as_bytes();
+    let escape_at = |at: usize| -> Option<u16> {
+        if bytes.get(at) != Some(&b'\\') || bytes.get(at + 1) != Some(&b'u') {
+            return None;
+        }
+        let digits = text.get(at + 2..at + 6)?;
+        digits.bytes().all(|b| b.is_ascii_hexdigit()).then(|| u16::from_str_radix(digits, 16).ok()).flatten()
+    };
+    let mut out = String::new();
+    let mut in_string = false;
+    let mut copied = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'"' => {
+                in_string = !in_string;
+                at += 1;
+            }
+            b'\\' if in_string => match escape_at(at) {
+                Some(0xD800..=0xDBFF) if matches!(escape_at(at + 6), Some(0xDC00..=0xDFFF)) => at += 12,
+                Some(0xD800..=0xDFFF) => {
+                    out.push_str(&text[copied..at]);
+                    out.push_str("\\ufffd");
+                    at += 6;
+                    copied = at;
+                }
+                // Any other escape, a backslash's included, is two bytes on.
+                _ => at += 2,
+            },
+            _ => at += 1,
+        }
+    }
+    if copied == 0 {
+        return Cow::Borrowed(text);
+    }
+    out.push_str(&text[copied..]);
+    Cow::Owned(out)
 }
 
 /// `serde_json::from_str`, through the JSON text reader.
@@ -297,67 +258,39 @@ pub fn from_json_text<T: serde::de::DeserializeOwned>(text: &str) -> serde_json:
     serde_json::from_str(&read_json_text(text))
 }
 
-/// `serde_json::to_string`, through the JSON text writer.
-pub fn to_json_text<T: serde::Serialize + ?Sized>(value: &T) -> String {
-    write_json_text(serde_json::to_string(value).expect("a JSON value serializes"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn lone(unit: u16) -> String {
-        text_of_units(&[unit])
+    #[test]
+    fn a_text_counts_and_cuts_by_character() {
+        assert_eq!(len_chars("a😀b"), 3);
+        assert_eq!(JsString::from("😀").len_chars(), 1);
+        assert_eq!(first_chars("a😀b", 2), "a😀");
+        assert_eq!(first_chars("ab", 5), "ab");
+        assert_eq!(split_chars("a😀"), ["a", "😀"]);
     }
 
     #[test]
-    fn a_lone_surrogate_is_held_and_counted_as_one_unit() {
-        let high = JsString::from_units(&[0xD83D]);
-        assert_eq!(high.len_utf16(), 1);
-        assert!(!high.is_well_formed());
-        assert_eq!(units_vec(high.as_form()), [0xD83D]);
-        assert!(JsString::from("😀").is_well_formed());
-        assert_eq!(JsString::from(format!("a{high}")).len_utf16(), 2);
-    }
-
-    #[test]
-    fn two_halves_made_one_text_are_the_pair() {
-        let joined = JsString::from(format!("{}{}", lone(0xD83D), lone(0xDE00)));
-        assert_eq!(joined, "😀");
-        assert_eq!(slice_units("😀", 0, 1), lone(0xD83D));
-        assert_eq!(slice_units("a😀", 0, 2), format!("a{}", lone(0xD83D)));
-    }
-
-    #[test]
-    fn a_text_holding_the_escape_character_keeps_it() {
-        let text = JsString::from_units(&[0x61, 0xFDD0, 0xD800]);
-        assert_eq!(units_vec(text.as_form()), [0x61, 0xFDD0, 0xD800]);
-        assert_eq!(text.len_utf16(), 3);
-        // A bare one (never read through the JSON reader) is itself.
-        assert_eq!(JsString::from("a\u{FDD0}b").len_utf16(), 3);
-        assert_eq!(units_vec(JsString::from("a\u{FDD0}b").as_form()), [0x61, 0xFDD0, 0x62]);
-    }
-
-    #[test]
-    fn a_search_reads_code_units() {
-        // `"😀".includes("\ud83d")` and its split, as JavaScript answers.
-        assert!(includes("😀", &lone(0xD83D)));
-        assert_eq!(split("a😀b", &lone(0xDE00)), [format!("a{}", lone(0xD83D)), "b".to_string()]);
-        // A plane-16 character the text holds is not a lone surrogate's escape.
-        let plane16 = "\u{100000}";
-        assert!(!includes(&lone(0xD800), plane16));
-        assert_eq!(split_units("a😀"), ["a".to_string(), lone(0xD83D), lone(0xDE00)]);
-    }
-
-    #[test]
-    fn the_json_text_boundary_reads_and_writes_as_javascript_does() {
+    fn a_lone_surrogate_from_the_host_is_u_fffd() {
         let read: serde_json::Value = from_json_text(r#"{"a":"x\ud83d","b":"\ud83d\ude00","c":"\\ud800","\udc00":"\ufdd0\u0041"}"#).unwrap();
-        assert_eq!(read["a"].as_str().unwrap(), format!("x{}", lone(0xD83D)));
-        assert_eq!(read["b"].as_str().unwrap(), "😀");
-        assert_eq!(read["c"].as_str().unwrap(), "\\ud800");
-        assert_eq!(read[lone(0xDC00).as_str()].as_str().unwrap(), "\u{FDD0}\u{FDD0}A");
-        assert_eq!(to_json_text(&read), r#"{"a":"x\ud83d","b":"😀","c":"\\ud800","\udc00":"﷐A"}"#);
-        assert_eq!(json_quote(&format!("\"{}", lone(0xDBFF))), r#""\"\udbff""#);
+        assert_eq!(read["a"], "x\u{FFFD}");
+        assert_eq!(read["b"], "😀");
+        assert_eq!(read["c"], "\\ud800");
+        assert_eq!(read["\u{FFFD}"], "\u{FDD0}A");
+        assert_eq!(serde_json::to_string(&read).unwrap(), r#"{"a":"x�","b":"😀","c":"\\ud800","�":"﷐A"}"#);
         assert!(matches!(read_json_text(r#"{"a":"\u0041"}"#), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn a_literal_s_text_is_made_plain() {
+        let written = movement_parser::util::form::text_of_units(&[0x61, 0xFDD0, 0xD800]);
+        assert_eq!(of_program(&written), "a\u{FDD0}\u{FFFD}");
+        assert!(matches!(of_program("a😀"), Cow::Borrowed("a😀")));
+    }
+
+    #[test]
+    fn json_quote_writes_as_json_stringify_does() {
+        assert_eq!(json_quote("\"a\\\u{1}\n😀"), r#""\"a\\\u0001\n😀""#);
     }
 }

@@ -2,9 +2,8 @@
 //! pieces (movement-lang expression/chunk.ts), and the entities estimate
 //! the second mode walks with (expression/density.ts).
 //!
-//! The size mode is exact: every count, cut and search is over UTF-16 code
-//! units, as the TypeScript's `length`, `slice` and `indexOf` are. The
-//! entities mode reads letters, numbers and capitals with Rust's own
+//! Every count, cut and search is over characters (code points), so a
+//! piece never cuts an emoji in two. The entities mode reads letters, numbers and capitals with Rust's own
 //! predicates (`char::is_alphanumeric`, `char::is_uppercase`; Henry's
 //! ruling, 2026-10-12: no regex dialect is grown for it), so on text with
 //! uncommon letters a piece boundary may move by a line from where
@@ -86,16 +85,16 @@ fn describe(value: &Js) -> String {
     match value {
         v if v.is_nullish() => "nothing".into(),
         Js::Number(n) => crate::js::number_to_string(*n),
-        Js::String(text) => format!("the text \"{}\"", text.as_form()),
+        Js::String(text) => format!("the text \"{}\"", text.as_str()),
         other => format!("a {}", other.type_of()),
     }
 }
 
 const CUT_WINDOW: f64 = 0.1;
-const NL: u16 = b'\n' as u16;
+const NL: char = '\n';
 
-/// `chunkText`: the pieces, in order, as code-unit ranges of `text`.
-pub fn chunk(text: &[u16], spec: Spec) -> Vec<std::ops::Range<usize>> {
+/// `chunkText`: the pieces, in order, as character ranges of `text`.
+pub fn chunk(text: &[char], spec: Spec) -> Vec<std::ops::Range<usize>> {
     if is_blank(text) {
         return Vec::new();
     }
@@ -106,11 +105,11 @@ pub fn chunk(text: &[u16], spec: Spec) -> Vec<std::ops::Range<usize>> {
 }
 
 /// `text.trim().length === 0`.
-fn is_blank(text: &[u16]) -> bool {
-    crate::js::trim(&crate::js_string::text_of_units(text)).is_empty()
+fn is_blank(text: &[char]) -> bool {
+    text.iter().all(|c| c.is_whitespace())
 }
 
-fn by_size(text: &[u16], size: usize, overlap: usize) -> Vec<std::ops::Range<usize>> {
+fn by_size(text: &[char], size: usize, overlap: usize) -> Vec<std::ops::Range<usize>> {
     if text.len() <= size {
         return vec![std::ops::Range { start: 0, end: text.len() }];
     }
@@ -122,16 +121,16 @@ fn by_size(text: &[u16], size: usize, overlap: usize) -> Vec<std::ops::Range<usi
             pieces.push(start..text.len());
             break;
         }
-        let cut = whole_code_point(text, cut_before(text, start, ceiling, size));
+        let cut = cut_before(text, start, ceiling, size);
         pieces.push(start..cut);
-        start = whole_code_point(text, cut.saturating_sub(overlap)).max(start + 1);
+        start = cut.saturating_sub(overlap).max(start + 1);
     }
     pieces
 }
 
 /// `cutBefore`: the last break within the final tenth before the ceiling, a
 /// blank line over a line break over a space, else the ceiling.
-fn cut_before(text: &[u16], start: usize, ceiling: usize, size: usize) -> usize {
+fn cut_before(text: &[char], start: usize, ceiling: usize, size: usize) -> usize {
     let back = ((size as f64 * CUT_WINDOW).floor() as usize).max(1);
     let window_start = (start + 1).max(ceiling.saturating_sub(back));
     let window = &text[window_start.min(ceiling)..ceiling];
@@ -141,20 +140,20 @@ fn cut_before(text: &[u16], start: usize, ceiling: usize, size: usize) -> usize 
     if let Some(line) = window.iter().rposition(|&u| u == NL) {
         return window_start + line + 1;
     }
-    if let Some(space) = window.iter().rposition(|&u| u == b' ' as u16) {
+    if let Some(space) = window.iter().rposition(|&u| u == ' ') {
         return window_start + space + 1;
     }
     ceiling
 }
 
 /// The end of the last `/\n[ \t]*\n/g` match.
-fn last_paragraph_end(window: &[u16]) -> Option<usize> {
+fn last_paragraph_end(window: &[char]) -> Option<usize> {
     let mut end = None;
     let mut at = 0;
     while at < window.len() {
         if window[at] == NL {
             let mut next = at + 1;
-            while next < window.len() && (window[next] == b' ' as u16 || window[next] == b'\t' as u16) {
+            while next < window.len() && matches!(window[next], ' ' | '\t') {
                 next += 1;
             }
             if next < window.len() && window[next] == NL {
@@ -168,16 +167,6 @@ fn last_paragraph_end(window: &[u16]) -> Option<usize> {
     end
 }
 
-/// `wholeCodePoint`: off the seam of a surrogate pair.
-fn whole_code_point(text: &[u16], offset: usize) -> usize {
-    if offset == 0 || offset >= text.len() {
-        return offset;
-    }
-    let before = text[offset - 1];
-    let at = text[offset];
-    if (0xd800..=0xdbff).contains(&before) && (0xdc00..=0xdfff).contains(&at) { offset - 1 } else { offset }
-}
-
 struct Line {
     start: usize,
     end: usize,
@@ -185,7 +174,7 @@ struct Line {
     blank: bool,
 }
 
-fn counted_lines(text: &[u16]) -> Vec<Line> {
+fn counted_lines(text: &[char]) -> Vec<Line> {
     let mut lines = Vec::new();
     let mut start = 0;
     while start < text.len() {
@@ -197,7 +186,7 @@ fn counted_lines(text: &[u16]) -> Vec<Line> {
     lines
 }
 
-fn by_entities(text: &[u16], entities: usize, overlap: usize) -> Vec<std::ops::Range<usize>> {
+fn by_entities(text: &[char], entities: usize, overlap: usize) -> Vec<std::ops::Range<usize>> {
     let lines = counted_lines(text);
     let mut pieces = Vec::new();
     let mut first = 0;
@@ -248,12 +237,12 @@ fn cut_back_to_paragraph(lines: &[Line], first: usize, last: usize) -> (usize, u
 // ── The entities estimate (density.ts) ────────────────────────────────────
 
 /// `estimateEntities`: the sum over the text's lines (split on `\n`).
-pub fn entities(text: &[u16]) -> usize {
+pub fn entities(text: &[char]) -> usize {
     text.split(|&u| u == NL).map(entities_in_line).sum()
 }
 
 /// `estimateEntitiesInLine`.
-pub fn entities_in_line(line: &[u16]) -> usize {
+pub fn entities_in_line(line: &[char]) -> usize {
     let links = distinct_links(line);
     let item = usize::from(is_list_item(line));
     if links > 0 || item > 0 {
@@ -265,7 +254,7 @@ pub fn entities_in_line(line: &[u16]) -> usize {
 /// `PROSE_ENTITIES_PER_HUNDRED_CHARS`.
 const PROSE_ENTITIES_PER_HUNDRED_CHARS: f64 = 0.5;
 
-fn proper_nouns(line: &[u16]) -> usize {
+fn proper_nouns(line: &[char]) -> usize {
     let runs = distinct_proper_noun_runs(line);
     if runs == 0 {
         return 0;
@@ -275,45 +264,44 @@ fn proper_nouns(line: &[u16]) -> usize {
 }
 
 /// `LIST_ITEM`: `^[ \t]*(?:\[[^\]]+\]|[•·*\-–—][ \t]|\d+[.)][ \t])`.
-fn is_list_item(line: &[u16]) -> bool {
+fn is_list_item(line: &[char]) -> bool {
     let mut at = 0;
-    while at < line.len() && (line[at] == b' ' as u16 || line[at] == b'\t' as u16) {
+    while at < line.len() && matches!(line[at], ' ' | '\t') {
         at += 1;
     }
     let rest = &line[at..];
-    let space = |u: Option<&u16>| matches!(u, Some(&c) if c == b' ' as u16 || c == b'\t' as u16);
+    let space = |u: Option<&char>| matches!(u, Some(' ' | '\t'));
     match rest.first() {
-        Some(&open) if open == b'[' as u16 => rest.iter().skip(1).position(|&u| u == b']' as u16).is_some_and(|close| close > 0),
-        Some(&mark) if [0x2022, 0x00b7, b'*' as u16, b'-' as u16, 0x2013, 0x2014].contains(&mark) => space(rest.get(1)),
+        Some('[') => rest.iter().skip(1).position(|&u| u == ']').is_some_and(|close| close > 0),
+        Some(&mark) if ['\u{2022}', '\u{00b7}', '*', '-', '\u{2013}', '\u{2014}'].contains(&mark) => space(rest.get(1)),
         Some(&d) if is_digit(d) => {
             let digits = rest.iter().take_while(|&&u| is_digit(u)).count();
-            matches!(rest.get(digits), Some(&p) if p == b'.' as u16 || p == b')' as u16) && space(rest.get(digits + 1))
+            matches!(rest.get(digits), Some('.' | ')')) && space(rest.get(digits + 1))
         }
         _ => false,
     }
 }
 
-fn is_digit(u: u16) -> bool {
-    (b'0' as u16..=b'9' as u16).contains(&u)
+fn is_digit(u: char) -> bool {
+    u.is_ascii_digit()
 }
 
 /// `PROPER_NOUN_RUN` (`/u`): an uppercase letter and the word it starts,
 /// then one or more runs of spaces or tabs each followed by another such
 /// word; counted distinct by `toLowerCase()`.
-fn distinct_proper_noun_runs(line: &[u16]) -> usize {
-    let chars: Vec<(usize, char)> = code_points(line);
+fn distinct_proper_noun_runs(chars: &[char]) -> usize {
     let word_char = |c: char| c.is_alphanumeric() || matches!(c, '\'' | '\u{2019}' | '&' | '.' | '-');
     let upper = |c: char| c.is_uppercase();
     let mut seen: Vec<String> = Vec::new();
     let mut at = 0;
     while at < chars.len() {
-        if !upper(chars[at].1) {
+        if !upper(chars[at]) {
             at += 1;
             continue;
         }
         let word_end = |from: usize| {
             let mut end = from + 1;
-            while end < chars.len() && word_char(chars[end].1) {
+            while end < chars.len() && word_char(chars[end]) {
                 end += 1;
             }
             end
@@ -322,10 +310,10 @@ fn distinct_proper_noun_runs(line: &[u16]) -> usize {
         let mut words = 1;
         loop {
             let mut gap = end;
-            while gap < chars.len() && matches!(chars[gap].1, ' ' | '\t') {
+            while gap < chars.len() && matches!(chars[gap], ' ' | '\t') {
                 gap += 1;
             }
-            if gap == end || gap >= chars.len() || !upper(chars[gap].1) {
+            if gap == end || gap >= chars.len() || !upper(chars[gap]) {
                 break;
             }
             end = word_end(gap);
@@ -335,34 +323,13 @@ fn distinct_proper_noun_runs(line: &[u16]) -> usize {
             at += 1;
             continue;
         }
-        let from = chars[at].0;
-        let to = chars.get(end).map_or(line.len(), |c| c.0);
-        let run = crate::js::to_lower_case(&crate::js_string::text_of_units(&line[from..to]));
+        let run = crate::js::to_lower_case(&chars[at..end].iter().collect::<String>());
         if !seen.contains(&run) {
             seen.push(run);
         }
         at = end;
     }
     seen.len()
-}
-
-/// The code points of `units` with where each starts; a lone surrogate is
-/// a code point of its own, as `/u` reads it.
-fn code_points(units: &[u16]) -> Vec<(usize, char)> {
-    let mut out = Vec::new();
-    let mut at = 0;
-    while at < units.len() {
-        let u = units[at];
-        if (0xd800..=0xdbff).contains(&u) && at + 1 < units.len() && (0xdc00..=0xdfff).contains(&units[at + 1]) {
-            let c = 0x10000 + ((u32::from(u) - 0xd800) << 10) + (u32::from(units[at + 1]) - 0xdc00);
-            out.push((at, char::from_u32(c).unwrap_or('\u{fffd}')));
-            at += 2;
-        } else {
-            out.push((at, char::from_u32(u32::from(u)).unwrap_or('\u{fffd}')));
-            at += 1;
-        }
-    }
-    out
 }
 
 /// The top-level suffixes a bare domain must end in (`LINK`), in the
@@ -372,13 +339,13 @@ const SUFFIXES: [&str; 24] = [
 ];
 
 /// `LINK` (`/gi`), each match normalised (`normalizeLink`), counted distinct.
-fn distinct_links(line: &[u16]) -> usize {
+fn distinct_links(line: &[char]) -> usize {
     let mut seen: Vec<String> = Vec::new();
     let mut at = 0;
     while at < line.len() {
         match link_at(line, at) {
             Some(end) => {
-                let link = normalize_link(&crate::js_string::text_of_units(&line[at..end]));
+                let link = normalize_link(&line[at..end].iter().collect::<String>());
                 if !seen.contains(&link) {
                     seen.push(link);
                 }
@@ -390,27 +357,27 @@ fn distinct_links(line: &[u16]) -> usize {
     seen.len()
 }
 
-fn lower(u: u16) -> u16 {
-    if (b'A' as u16..=b'Z' as u16).contains(&u) { u + 32 } else { u }
+fn lower(u: char) -> char {
+    u.to_ascii_lowercase()
 }
 
 /// `[^\s<>()[\]"']`: JavaScript's `\s` is its whitespace set.
-fn link_char(u: u16) -> bool {
-    !(is_js_space(u) || b"<>()[]\"'".iter().any(|&c| u == c as u16))
+fn link_char(u: char) -> bool {
+    !(is_js_space(u) || "<>()[]\"'".contains(u))
 }
 
-fn is_js_space(u: u16) -> bool {
-    matches!(u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
+fn is_js_space(u: char) -> bool {
+    matches!(u, '\u{09}'..='\u{0d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }
 
-fn is_word(u: u16) -> bool {
-    (b'a' as u16..=b'z' as u16).contains(&u) || (b'A' as u16..=b'Z' as u16).contains(&u) || is_digit(u) || u == b'_' as u16
+fn is_word(u: char) -> bool {
+    u.is_ascii_alphanumeric() || u == '_'
 }
 
 /// The end of a `LINK` match starting at `at`, its first alternative (a
 /// scheme) tried first.
-fn link_at(line: &[u16], at: usize) -> Option<usize> {
-    let starts = |offset: usize, text: &str| text.bytes().enumerate().all(|(i, b)| line.get(offset + i).is_some_and(|&u| lower(u) == b as u16));
+fn link_at(line: &[char], at: usize) -> Option<usize> {
+    let starts = |offset: usize, text: &str| text.chars().enumerate().all(|(i, b)| line.get(offset + i).is_some_and(|&u| lower(u) == b));
     for scheme in ["https://", "http://"] {
         if starts(at, scheme) {
             let from = at + scheme.len();
@@ -423,10 +390,10 @@ fn link_at(line: &[u16], at: usize) -> Option<usize> {
     // `(?:label\.)+` greedily, then backed off one label at a time until a
     // suffix ends on a word boundary.
     let label = |from: usize| -> Option<usize> {
-        let alnum = |u: u16| (b'a' as u16..=b'z' as u16).contains(&lower(u)) || is_digit(u);
-        let run = line[from..].iter().take_while(|&&u| alnum(u) || u == b'-' as u16).count();
+        let alnum = |u: char| lower(u).is_ascii_lowercase() || is_digit(u);
+        let run = line[from..].iter().take_while(|&&u| alnum(u) || u == '-').count();
         let end = from + run;
-        (run > 0 && alnum(line[from]) && alnum(line[end - 1]) && line.get(end) == Some(&(b'.' as u16))).then_some(end + 1)
+        (run > 0 && alnum(line[from]) && alnum(line[end - 1]) && line.get(end) == Some(&'.')).then_some(end + 1)
     };
     let mut ends = Vec::new();
     let mut next = at;
@@ -439,7 +406,7 @@ fn link_at(line: &[u16], at: usize) -> Option<usize> {
             let end = after + suffix.len();
             if starts(after, suffix) && line.get(end).is_none_or(|&u| !is_word(u)) {
                 // `(?:\/[^\s<>()[\]"']*)?`.
-                if line.get(end) == Some(&(b'/' as u16)) {
+                if line.get(end) == Some(&'/') {
                     return Some(end + 1 + line[end + 1..].iter().take_while(|&&u| link_char(u)).count());
                 }
                 return Some(end);
@@ -467,13 +434,13 @@ fn normalize_link(link: &str) -> String {
 mod tests {
     use super::*;
 
-    fn units(text: &str) -> Vec<u16> {
-        text.encode_utf16().collect()
+    fn chars(text: &str) -> Vec<char> {
+        text.chars().collect()
     }
 
     fn pieces(text: &str, spec: Spec) -> Vec<String> {
-        let units = units(text);
-        chunk(&units, spec).into_iter().map(|r| String::from_utf16_lossy(&units[r])).collect()
+        let chars = chars(text);
+        chunk(&chars, spec).into_iter().map(|r| chars[r].iter().collect()).collect()
     }
 
     #[test]
@@ -482,16 +449,18 @@ mod tests {
         assert_eq!(pieces(text, Spec::Size { size: 20, overlap: 0 }), ["aaaaaaaaa bbbbbbbbb\n", "\ncccccccccc dddddddd"]);
         assert_eq!(pieces("   ", Spec::Size { size: 2, overlap: 0 }), Vec::<String>::new());
         assert_eq!(pieces("abcdef", Spec::Size { size: 4, overlap: 2 }), ["abcd", "cdef"]);
+        // A size counts characters: an emoji is one, and never cut in two.
+        assert_eq!(pieces("😀😀😀😀😀", Spec::Size { size: 2, overlap: 0 }), ["😀😀", "😀😀", "😀"]);
     }
 
     #[test]
     fn the_entities_estimate_counts_links_items_and_proper_nouns() {
-        assert_eq!(entities_in_line(&units("See https://Acme.com/x and acme.com and www.beta.io.")), 3);
-        assert_eq!(entities_in_line(&units("- one item")), 1);
-        assert_eq!(entities_in_line(&units("12) numbered")), 1);
-        assert_eq!(entities_in_line(&units("[src] tagged")), 1);
-        assert_eq!(entities_in_line(&units("Jane Doe met Example Ventures")), 1);
-        assert_eq!(entities_in_line(&units("acme.community is no link")), 0);
-        assert_eq!(entities_in_line(&units("acme.co.uk")), 1);
+        assert_eq!(entities_in_line(&chars("See https://Acme.com/x and acme.com and www.beta.io.")), 3);
+        assert_eq!(entities_in_line(&chars("- one item")), 1);
+        assert_eq!(entities_in_line(&chars("12) numbered")), 1);
+        assert_eq!(entities_in_line(&chars("[src] tagged")), 1);
+        assert_eq!(entities_in_line(&chars("Jane Doe met Example Ventures")), 1);
+        assert_eq!(entities_in_line(&chars("acme.community is no link")), 0);
+        assert_eq!(entities_in_line(&chars("acme.co.uk")), 1);
     }
 }

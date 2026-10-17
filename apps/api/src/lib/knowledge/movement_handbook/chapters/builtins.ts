@@ -175,7 +175,7 @@ code = Text.upper(Text.trim(msg.Subject))
 
 ### LENGTH
 
-\`Text.length(text)\` → \`number\`, always present — the character count of a text. \`0\` for null. A list's length is \`count(xs)\`.
+\`Text.length(text)\` → \`number\`, always present — the character count of a text (an emoji is one character). \`0\` for null. A list's length is \`count(xs)\`.
 
 \`\`\`
 big = Text.length(msg.Body) > 500

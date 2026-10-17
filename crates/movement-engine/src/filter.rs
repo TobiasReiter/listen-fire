@@ -46,7 +46,7 @@ pub fn compare_values(left: &Js, op: FilterOperator, right: &Js) -> Result<bool,
             _ => false,
         },
         FilterOperator::Contains => match (left, right) {
-            (Js::String(l), Js::String(r)) => crate::js_string::includes(l.as_form(), r.as_form()),
+            (Js::String(l), Js::String(r)) => l.as_str().contains(r.as_str()),
             (Js::Array(list), _) => list.items().iter().any(|item| js::same_value_zero(item, right)),
             _ => false,
         },
@@ -69,7 +69,7 @@ pub fn within(left: &Js, right: &Js, now: f64) -> bool {
 fn duration_to_ms(spec: &Js) -> Option<f64> {
     let text = match spec {
         Js::Number(n) => return n.is_finite().then_some(*n),
-        Js::String(s) => s.as_form().to_string(),
+        Js::String(s) => s.as_str().to_string(),
         _ => return None,
     };
     let text = js::trim(&text);
@@ -118,7 +118,7 @@ fn set_equals(a: &[Js], b: &[Js]) -> bool {
 fn to_finite_number(value: &Js) -> Option<f64> {
     match value {
         Js::Number(n) => n.is_finite().then_some(*n),
-        Js::String(s) if !js::trim(s.as_form()).is_empty() => Some(js::string_to_number(s.as_form())).filter(|n| n.is_finite()),
+        Js::String(s) if !js::trim(s.as_str()).is_empty() => Some(js::string_to_number(s.as_str())).filter(|n| n.is_finite()),
         _ => None,
     }
 }
@@ -147,7 +147,7 @@ fn relational_order(left: &Js, right: &Js) -> Option<f64> {
         return Some(js::math_sign(l - r));
     }
     match (left, right) {
-        (Js::String(l), Js::String(r)) => Some(match l.as_form().cmp(r.as_form()) {
+        (Js::String(l), Js::String(r)) => Some(match l.as_str().cmp(r.as_str()) {
             std::cmp::Ordering::Less => -1.0,
             std::cmp::Ordering::Equal => 0.0,
             std::cmp::Ordering::Greater => 1.0,

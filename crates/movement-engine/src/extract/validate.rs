@@ -111,8 +111,8 @@ fn normalise_call_field(raw: &Js) -> Js {
         Some(Js::String(quote)) => crate::env::object_of(vec![("quote", Js::str(quote.clone()))]),
         Some(Js::Object(evidence)) => {
             let item = match evidence.get("item") {
-                Some(Js::String(text)) if !js::trim(text.as_form()).is_empty() && js::trim(text.as_form()).bytes().all(|b| b.is_ascii_digit()) => {
-                    Js::Number(js::string_to_number(js::trim(text.as_form())))
+                Some(Js::String(text)) if !js::trim(text.as_str()).is_empty() && js::trim(text.as_str()).bytes().all(|b| b.is_ascii_digit()) => {
+                    Js::Number(js::string_to_number(js::trim(text.as_str())))
                 }
                 Some(other) => other.clone(),
                 None => Js::Undefined,
@@ -382,7 +382,7 @@ impl Parse {
                 self.nullable(value, "string", |v| matches!(v, Js::String(_)))
             }
             FieldType::Composite(Composite::Enum { options, open }) => {
-                if matches!(value, Js::String(s) if js::trim(s.as_form()).is_empty()) {
+                if matches!(value, Js::String(s) if js::trim(s.as_str()).is_empty()) {
                     return Js::Null;
                 }
                 if let Some(matched) = match_option(value, options) {
@@ -429,7 +429,7 @@ impl Parse {
         };
         let mut kept = Vec::new();
         for item in list.items().iter() {
-            if matches!(item, Js::String(s) if js::trim(s.as_form()).is_empty()) {
+            if matches!(item, Js::String(s) if js::trim(s.as_str()).is_empty()) {
                 continue;
             }
             if let Some(matched) = match_option(item, options) {
@@ -465,7 +465,7 @@ impl Parse {
 /// ignoring case.
 fn match_option(candidate: &Js, options: &[String]) -> Option<String> {
     let Js::String(candidate) = candidate else { return None };
-    let trimmed = js::trim(candidate.as_form());
+    let trimmed = js::trim(candidate.as_str());
     if let Some(exact) = options.iter().find(|o| *o == trimmed) {
         return Some(exact.clone());
     }
@@ -473,9 +473,9 @@ fn match_option(candidate: &Js, options: &[String]) -> Option<String> {
     options.iter().find(|o| js::to_lower_case(o) == lowered).cloned()
 }
 
-/// `pushCoercion`: past 80 UTF-16 units a rendering is cut and marked.
+/// `pushCoercion`: past 80 characters a rendering is cut and marked.
 fn push(into: &mut Vec<(String, Vec<String>)>, key: &str, rendered: String) {
-    let rendered = if js::utf16_len(&rendered) > 80 { crate::extract::emission::cut(&rendered, 80) } else { rendered };
+    let rendered = if js::len_chars(&rendered) > 80 { crate::extract::emission::cut(&rendered, 80) } else { rendered };
     match into.iter_mut().find(|(k, _)| k == key) {
         Some((_, list)) => list.push(rendered),
         None => into.push((key.to_string(), vec![rendered])),

@@ -174,7 +174,7 @@ struct HostImports;
 #[cfg(target_arch = "wasm32")]
 impl HostImports {
     fn ask<T: serde::de::DeserializeOwned>(&self, op: &Op<'_>) -> T {
-        let request = crate::js_string::to_json_text(&request_json(op));
+        let request = serde_json::to_string(&request_json(op)).expect("a JSON value serializes");
         let (mut out_ptr, mut out_len) = (0usize, 0usize);
         let status = unsafe { env_call(request.as_ptr(), request.len() as u32, &mut out_ptr, &mut out_len) };
         let bytes = unsafe { std::slice::from_raw_parts(out_ptr as *const u8, out_len) }.to_vec();

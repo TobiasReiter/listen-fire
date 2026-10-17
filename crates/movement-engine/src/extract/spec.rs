@@ -249,7 +249,7 @@ impl<'a, F: Firing> Builder<'a, F> {
         let expression = movement_parser::lowering::lower_expression(&tree, &slot.raw).map_err(|e| invalid(format!("{e:?}")))?;
         match expression {
             Expression::Static { value } => Ok(match value {
-                StaticValue::String(text) => text,
+                StaticValue::String(text) => crate::js_string::of_program(&text).into_owned(),
                 StaticValue::Number(n) => crate::js::number_to_string(n.0),
                 StaticValue::Bool(b) => b.to_string(),
                 StaticValue::Null => String::new(),

@@ -411,6 +411,19 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 
 - The dev scripts that ship movement source (`pnpm dev:airtable`, `dev:dealroom`, `dev:granola`, `dev:telegram`, `dev:gmail`, `dev:evertrace`, the `verify_*` probes and the `.mvt` fixtures) are respelled for version 5, so the dev loop no longer saves movements that version 5 refuses.
 
+### close-strings
+
+- **A text counts and cuts by character.** `Text.length("😀 smile")` is 7 (it was 8: JavaScript
+  counted an emoji's two UTF-16 units). `Text.split(t, "")`, a spread of a text, `Text.chunks`
+  and every cut (a trace's 300-character prompt, a value cut at 200, a file bounded for the
+  prompt) keep an emoji whole; nothing a run makes holds half of one.
+- Self-hosting: the engine holds only Unicode text. A lone surrogate a host's JSON escapes
+  (`"\ud83d"`) is read as U+FFFD, as the eval wire already read it; a parked state, a trace or an
+  error no longer writes the `\udXXX` escape back.
+- A node declared or written inline with a field or a nested node named `__proto__` (an ordinary
+  name from version 5) checks: the checker threw on it (the TypeScript checker read the field as
+  `Object.prototype`).
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)

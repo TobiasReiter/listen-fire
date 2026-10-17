@@ -187,9 +187,8 @@ impl Decoder<'_> {
     }
 }
 
-/// A text for the wire: a lone surrogate is U+FFFD.
 fn wire_text(text: &str) -> Json {
-    json!(crate::js_string::well_formed(text))
+    json!(text)
 }
 
 /// One value off the wire, on its own.
@@ -269,7 +268,7 @@ impl Encoder<'_> {
             Js::Bool(b) => json!(b),
             Js::Number(n) if !n.is_finite() || (*n == 0.0 && n.is_sign_negative()) => Json::Null,
             Js::Number(n) => json!(n),
-            Js::String(s) => wire_text(s.as_form()),
+            Js::String(s) => wire_text(s.as_str()),
             // The event and a callback, the records the shim rebuilds, cross
             // tagged, by their number, with their data for the host to build
             // them from; any other never crosses: a request holding one is
@@ -547,13 +546,12 @@ mod tests {
         assert_eq!(json_of_js(&Js::Object(object)), json!({ "a": 1, "__proto__": { "x": 2 } }));
     }
 
-    /// A lone surrogate the engine holds crosses as U+FFFD, in a value and
-    /// in a key; a pair crosses as the text it is.
+    /// A lone surrogate's escape in the host's JSON is U+FFFD, in a value
+    /// and in a key; an escaped pair is the text it is.
     #[test]
     fn a_lone_surrogate_crosses_as_the_replacement_character() {
-        let mut object = JsObject::new();
-        object.set(crate::js_string::text_of_units(&[0xD83D]), Js::String(crate::js::JsString::from_units(&[0x61, 0xDE00])));
-        object.set("k".into(), Js::str("😀"));
-        assert_eq!(encode_plain(&Js::object(object)), json!(["o", [["\u{FFFD}", "a\u{FFFD}"], ["k", "😀"]]]));
+        let sent: Json = crate::js_string::from_json_text(r#"["o", [["\ud83d", "a\ude00"], ["k", "\ud83d\ude00"]]]"#).unwrap();
+        let value = Wire::default().decode(&sent).unwrap();
+        assert_eq!(encode_plain(&value), json!(["o", [["\u{FFFD}", "a\u{FFFD}"], ["k", "😀"]]]));
     }
 }

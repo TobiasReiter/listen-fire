@@ -1,7 +1,8 @@
 //! The form the oracles were recorded in (tests/oracle/wire.ts): JavaScript
 //! values exactly, as the eval wire carried them before it became plain
 //! JSON — `["u"]` undefined, `["n", "NaN" | "Infinity" | "-Infinity" |
-//! "-0"]`, `["s16", [units…]]` a text holding a lone surrogate, `["l", id,
+//! "-0"]`, `["s16", [units…]]` a text holding a lone surrogate (read here
+//! with each lone half U+FFFD, as the engine reads one), `["l", id,
 //! [items…]]`, `["o", id, [[key, value]…]]`, `["r", id]` the same list or
 //! object again. The engine no longer reads it; the oracles keep it so
 //! TypeScript's answers stay exact, and each test says where the engine's
@@ -38,7 +39,8 @@ fn text(json: &Json) -> Result<JsString, String> {
         Json::Array(tagged) if tagged.first().and_then(Json::as_str) == Some("s16") => {
             let units = tagged.get(1).and_then(Json::as_array).ok_or("s16 without units")?;
             let units: Vec<u16> = units.iter().map(|u| u.as_u64().and_then(|u| u16::try_from(u).ok()).ok_or("a unit")).collect::<Result<_, _>>()?;
-            Ok(JsString::from_units(&units))
+            // The engine holds Unicode text: a lone half is U+FFFD.
+            Ok(JsString::from(String::from_utf16_lossy(&units)))
         }
         _ => Err(format!("not a text: {json}")),
     }
@@ -99,10 +101,7 @@ struct Encoder {
 }
 
 fn wire_text(text: &str) -> Json {
-    if movement_engine::js_string::is_well_formed(text) {
-        return json!(text);
-    }
-    json!(["s16", movement_engine::js_string::units_vec(text)])
+    json!(text)
 }
 
 impl Encoder {
@@ -115,7 +114,7 @@ impl Encoder {
             Js::Number(n) if n.is_infinite() => json!(["n", if *n > 0.0 { "Infinity" } else { "-Infinity" }]),
             Js::Number(n) if *n == 0.0 && n.is_sign_negative() => json!(["n", "-0"]),
             Js::Number(n) => json!(n),
-            Js::String(s) => wire_text(s.as_form()),
+            Js::String(s) => wire_text(s.as_str()),
             Js::Array(array) => self.shared(Rc::as_ptr(array) as usize, "l", |this| json!(array.items().iter().map(|item| this.value(item)).collect::<Vec<_>>())),
             Js::Object(object) => self.shared(Rc::as_ptr(object) as usize, "o", |this| {
                 json!(object.entries().iter().map(|(k, v)| json!([wire_text(k), this.value(v)])).collect::<Vec<_>>())

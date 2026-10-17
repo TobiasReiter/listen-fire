@@ -1175,6 +1175,38 @@ describe('extract field duplicates', () => {
     expect(declared.map(d => d.code)).not.toContain(C.SHAPE_FIELD_PROTO);
   });
 
+  // From version 5 `__proto__` is an ordinary name: a node's schema holds it
+  // as its own key, so a field read through it is the field, not
+  // Object.prototype (which the checker once took for a type, and threw on).
+  it('reads a field or walks a node named __proto__ from version 5, inline or declared', () => {
+    expectClean(
+      inMovement(
+        [
+          '  d = extractOne([msg.`text`], node D: "the company" {',
+          '    __proto__: <text> "p"',
+          '    name: <text> "n"',
+          '  })',
+          '  x = coalesce(d.__proto__, "none")',
+        ].join('\n'),
+      ),
+    );
+    expectClean(
+      [
+        PRELUDE,
+        'node Found: "the companies" {',
+        '  name: <text> "a name"',
+        '  node __proto__: "each round" { a: <text> "a stage" }',
+        '}',
+        'function m(msg: <inbox-[:message]->>) {',
+        '  d = extractOne([msg.`text`], Found)',
+        '  if (d != null) {',
+        '    d-[r:__proto__]-> { x = r.a }',
+        '  }',
+        '}',
+      ].join('\n'),
+    );
+  });
+
   // The engine keeps a scope's names as an object's keys: a name spelled
   // `__proto__` would be that object's prototype instead (a parameter reads
   // as `{}`, a parked binding is dropped). Refused on every version.

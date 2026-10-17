@@ -113,7 +113,7 @@ impl LocalEdge {
     /// The landing behind an id, whichever kind it is (`anyLandingAt`).
     pub fn any_landing_at(&self, external_id: &Js) -> Option<Binding> {
         let Js::String(id) = external_id else { return None };
-        let index = js::string_to_number(id.as_form());
+        let index = js::string_to_number(id.as_str());
         if !(index.fract() == 0.0 && index.is_finite()) || index < 0.0 {
             return None;
         }
@@ -193,7 +193,7 @@ impl LocalEdge {
         }
         node.field_order = order;
         let index = match external_id {
-            Js::String(id) => js::string_to_number(id.as_form()),
+            Js::String(id) => js::string_to_number(id.as_str()),
             _ => f64::NAN,
         };
         let data = Js::object(JsObject::clone_of(&node.fields));

@@ -35,12 +35,11 @@ pub(crate) fn file_handle(file: &Js) -> Option<String> {
 /// where `slice` truncates it, and the marker and the count print the number
 /// itself (`first 2.5 of …`), as the TypeScript's template prints it.
 pub fn bound_text(text: &str, ceiling: f64) -> (String, f64, Option<usize>) {
-    let length = js::utf16_len(text);
+    let length = js::len_chars(text);
     if length as f64 <= ceiling {
         return (text.to_string(), length as f64, None);
     }
-    // `slice`: a cut through a pair keeps its high half.
-    let head = crate::js_string::slice_units(text, 0, ceiling.trunc() as usize);
+    let head = crate::js_string::first_chars(text, ceiling.trunc() as usize);
     let marker = js::number_to_string(ceiling);
     (format!("{head}\n[… truncated: first {marker} of {length} characters]"), ceiling, Some(length))
 }
@@ -57,7 +56,7 @@ impl Run<'_> {
         // here rather than left to the shim's check of the trace.
         let unreadable = member(&answer, "unreadable");
         if !matches!(unreadable, Js::Undefined)
-            && !matches!(&unreadable, Js::String(why) if matches!(why.as_form(), "unsupported_type" | "bytes_unavailable" | "extraction_failed" | "no_text"))
+            && !matches!(&unreadable, Js::String(why) if matches!(why.as_str(), "unsupported_type" | "bytes_unavailable" | "extraction_failed" | "no_text"))
         {
             return Err(Failure::host_answer("files.resolveFileText", "`unreadable` as unsupported_type, bytes_unavailable, extraction_failed or no_text, or absent", &unreadable));
         }
