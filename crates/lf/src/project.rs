@@ -226,10 +226,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_below_version_5_is_refused() {
-        let refused = refuse_below_lf(4, "lf.yaml", "run `lf upgrade`").unwrap_err();
-        assert!(refused.contains("which lf does not run (lf runs language version 5 and later)"), "{refused}");
-        assert!(refuse_below_lf(5, "lf.yaml", "").is_ok());
+    fn a_pin_below_version_5_is_refused_saying_what_to_do() {
+        for version in 1..=4 {
+            assert_eq!(
+                refuse_below_lf(version, "lf.yaml", "run `lf upgrade`"),
+                Err(format!("lf.yaml is pinned to language version {version}, which lf does not run (lf runs language version 5 and later): run `lf upgrade`"))
+            );
+        }
+        assert_eq!(FIRST_LF_LANGUAGE_VERSION, 5);
+        for version in [5, CURRENT_LANGUAGE_VERSION] {
+            assert!(refuse_below_lf(version, "lf.yaml", "").is_ok());
+        }
     }
 
     #[test]

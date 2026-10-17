@@ -70,11 +70,11 @@ impl Drop for Session {
     }
 }
 
-/// `localIdentity`: LF_USER / LF_USER_EMAIL, else lf.yaml's `user`, else the OS user.
-fn local_identity(project: &Project) -> Js {
-    let env = |k: &str| std::env::var(k).ok();
-    let name = env("LF_USER").or_else(|| project.user.0.clone()).or_else(|| env("USER")).or_else(|| env("USERNAME")).unwrap_or_else(|| "lf".into());
-    let email = env("LF_USER_EMAIL").or_else(|| project.user.1.clone()).unwrap_or_else(|| format!("{name}@localhost"));
+/// `localIdentity`: LF_USER / LF_USER_EMAIL, else lf.yaml's `user` (its
+/// name and email), else the OS user.
+fn local_identity(configured: &(Option<String>, Option<String>), env: impl Fn(&str) -> Option<String>) -> Js {
+    let name = env("LF_USER").or_else(|| configured.0.clone()).or_else(|| env("USER")).or_else(|| env("USERNAME")).unwrap_or_else(|| "lf".into());
+    let email = env("LF_USER_EMAIL").or_else(|| configured.1.clone()).unwrap_or_else(|| format!("{name}@localhost"));
     Js::Obj(obj! {
         "principal" => Js::Obj(obj! { "id" => Js::Str(format!("local:{name}")), "display" => Js::str(&name) }),
         "email" => Js::Str(email),
@@ -124,7 +124,7 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
     let files = scan_movements(&project)?;
     let catalog = catalog_of(&running, &schemas, &credentials, &files);
     let listens = collect_listens(&files, project.language_version);
-    let user = local_identity(&project);
+    let user = local_identity(&project.user, |k| std::env::var(k).ok());
     let public_url = project
         .public_url
         .clone()
@@ -828,4 +828,29 @@ pub fn read_event_file(path: &std::path::Path) -> Result<(String, Js), String> {
         _ => return Err(format!("{}: event: expected an object", path.display())),
     };
     Ok((external.to_string(), event))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity(configured: (Option<&str>, Option<&str>), env: &[(&str, &str)]) -> (String, String) {
+        let configured = (configured.0.map(str::to_string), configured.1.map(str::to_string));
+        let user = local_identity(&configured, |k| env.iter().find(|(name, _)| *name == k).map(|(_, v)| v.to_string()));
+        let text = |value: Option<&Js>| value.and_then(Js::as_str).unwrap_or_default().to_string();
+        (text(user.get("principal").and_then(|p| p.get("id"))), text(user.get("email")))
+    }
+
+    #[test]
+    fn the_acting_user_is_the_environments_then_lf_yamls_then_the_os_users() {
+        let os = [("USER", "ada")];
+        assert_eq!(identity((None, None), &os), ("local:ada".into(), "ada@localhost".into()));
+        assert_eq!(identity((Some("grace"), Some("grace@acme.test")), &os), ("local:grace".into(), "grace@acme.test".into()));
+        let overridden = [("USER", "ada"), ("LF_USER", "linus"), ("LF_USER_EMAIL", "linus@acme.test")];
+        assert_eq!(identity((Some("grace"), Some("grace@acme.test")), &overridden), ("local:linus".into(), "linus@acme.test".into()));
+        // Each part on its own: a name override keeps lf.yaml's email.
+        assert_eq!(identity((Some("grace"), Some("grace@acme.test")), &[("LF_USER", "linus")]), ("local:linus".into(), "grace@acme.test".into()));
+        assert_eq!(identity((None, None), &[("USERNAME", "win")]), ("local:win".into(), "win@localhost".into()));
+        assert_eq!(identity((None, None), &[]), ("local:lf".into(), "lf@localhost".into()));
+    }
 }

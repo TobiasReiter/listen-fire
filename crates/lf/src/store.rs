@@ -765,4 +765,79 @@ mod tests {
         assert!(work_claim("/3").is_err());
         assert!(work_claim("abc").is_err());
     }
+
+    /// A fresh state file, and its path for a second handle.
+    fn state_file() -> (Store, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("lf-state-{}", uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.db");
+        (Store::open(&path).unwrap(), path)
+    }
+
+    fn work_row(store: &Store, key: &str) -> (String, Option<String>) {
+        store.db.query_row("select due_at, lease_token from work where key = ?", params![key], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    fn no_payload() -> Js {
+        Js::Obj(crate::json::Obj::new())
+    }
+
+    #[test]
+    fn enqueue_against_a_row_whose_lease_lapsed_keeps_the_earlier_due_time() {
+        let (store, _) = state_file();
+        let due = iso(-60_000);
+        store.enqueue("resume_timer", "k", &no_payload(), Some(&due)).unwrap();
+        // Claimed under a lease that has already lapsed.
+        assert_eq!(store.claim_due(10, -1, None).unwrap().len(), 1);
+        store.enqueue("resume_timer", "k", &no_payload(), Some(&iso(3_600_000))).unwrap();
+        assert_eq!(work_row(&store, "k").0, due);
+    }
+
+    #[test]
+    fn a_release_without_a_retry_time_keeps_the_due_time_and_clears_the_lease() {
+        let (store, _) = state_file();
+        let due = iso(-60_000);
+        store.enqueue("wake_await", "k", &no_payload(), Some(&due)).unwrap();
+        let claimed = store.claim_due(10, 60_000, None).unwrap().pop().unwrap();
+        assert!(work_row(&store, "k").1.is_some());
+        store.release_work(&claimed.id, &claimed.claim, None).unwrap();
+        assert_eq!(work_row(&store, "k"), (due, None));
+    }
+
+    #[test]
+    fn two_handles_on_one_file_claim_disjoint_rows() {
+        let (store, path) = state_file();
+        let other = Store::open(&path).unwrap();
+        for i in 0..6 {
+            store.enqueue("wake_await", &format!("k{i}"), &no_payload(), Some(&iso(-1_000))).unwrap();
+        }
+        let mut keys: Vec<String> = store.claim_due(3, 60_000, None).unwrap().into_iter().map(|w| w.key).collect();
+        keys.extend(other.claim_due(3, 60_000, None).unwrap().into_iter().map(|w| w.key));
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 6);
+    }
+
+    #[test]
+    fn a_kind_lf_does_not_drain_is_refused_at_the_queue() {
+        let (store, _) = state_file();
+        assert!(matches!(store.enqueue("resume_callback", "k", &no_payload(), None), Err(StoreError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_lapsed_run_lease_is_taken_by_another_process_with_the_abandoned_claim_parked_again() {
+        let (store, path) = state_file();
+        store.start_run("run-1", "f", "m", &iso(0), "{}").unwrap();
+        store.put_leaf("run-1", "s1", "timer", Some(&iso(-1_000)), &no_payload(), None).unwrap();
+        let first = store.claim_lease("run-1", 60_000).unwrap().expect("the run was free");
+        assert!(store.claim_leaf("run-1", "s1", None).unwrap().is_some());
+        let other = Store::open(&path).unwrap();
+        assert_eq!(other.claim_lease("run-1", 60_000).unwrap(), None, "one holder at a time");
+        // The first holder's lease lapses (its process stalled past it).
+        store.db.execute("update run set lease_until = ? where id = 'run-1'", params![iso(-1)]).unwrap();
+        assert!(!store.renew_lease("run-1", &first, 60_000).unwrap());
+        assert!(other.claim_lease("run-1", 60_000).unwrap().is_some());
+        let parked: Vec<String> = other.leaves("run-1", true, None, None).unwrap().into_iter().map(|l| l.address).collect();
+        assert_eq!(parked, ["s1"]);
+    }
 }

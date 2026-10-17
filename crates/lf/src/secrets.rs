@@ -274,7 +274,7 @@ pub fn missing_credentials(
 
 #[cfg(test)]
 mod tests {
-    use super::{Binding, parse_entry};
+    use super::{Binding, Credential, Credentials, Origin, apply_environment, parse_entry};
 
     type Entry = (String, Binding, Vec<(String, String)>);
 
@@ -293,5 +293,41 @@ mod tests {
         assert_eq!(entry("external: acme_crm\ntoken: x\n"), Ok(("acme_crm".into(), Binding::Legacy, vec![pair("token", "x")])));
         assert!(entry("external: a\nmodule: b\n").unwrap_err().contains("both"));
         assert!(entry("credential: c\ntoken: x\n").is_err());
+    }
+
+    fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn the_environment_supplies_or_overrides_a_field_of_an_entry_by_name() {
+        let mut credentials: Credentials = vec![Credential {
+            name: "acme".into(),
+            external: "acme_crm".into(),
+            binding: Binding::Legacy,
+            fields: [("Token".to_string(), "from-file".to_string())].into_iter().collect(),
+            origin: Origin::default(),
+        }];
+        // Names are matched without regard to case; a field keeps the file's spelling.
+        apply_environment(&mut credentials, &env(&[("LF_SECRET__ACME__TOKEN", "from-env"), ("LF_SECRET__ACME__WEBHOOK_SECRET", "s"), ("PATH", "/bin")])).unwrap();
+        let acme = &credentials[0];
+        assert_eq!(acme.fields.get("Token").map(String::as_str), Some("from-env"));
+        assert_eq!(acme.fields.get("webhook_secret").map(String::as_str), Some("s"));
+        assert_eq!(acme.origin.env_fields.iter().map(String::as_str).collect::<Vec<_>>(), ["Token", "webhook_secret"]);
+    }
+
+    #[test]
+    fn an_entry_made_wholly_from_the_environment_names_its_external() {
+        let mut credentials = Vec::new();
+        apply_environment(&mut credentials, &env(&[("LF_SECRET__CRM__EXTERNAL", "acme_crm"), ("LF_SECRET__CRM__TOKEN", "t")])).unwrap();
+        assert_eq!((credentials[0].name.as_str(), credentials[0].external.as_str()), ("crm", "acme_crm"));
+        assert_eq!(credentials[0].fields.get("token").map(String::as_str), Some("t"));
+
+        let missing = apply_environment(&mut Vec::new(), &env(&[("LF_SECRET__CRM__TOKEN", "t")])).unwrap_err();
+        assert!(missing.contains("LF_SECRET__CRM__EXTERNAL is not set"), "{missing}");
+        for malformed in ["LF_SECRET__CRM", "LF_SECRET__CRM__A__B", "LF_SECRET____TOKEN"] {
+            let refused = apply_environment(&mut Vec::new(), &env(&[(malformed, "x")])).unwrap_err();
+            assert!(refused.contains("expected LF_SECRET__<CREDENTIAL>__<FIELD>"), "{malformed}: {refused}");
+        }
     }
 }
