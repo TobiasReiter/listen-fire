@@ -62,7 +62,7 @@ function snapshot(): Record<string, number[]> {
     KEYS.map(([provider, wireModel]) => [
       `${provider}/${wireModel}`,
       VECTORS.map((vector) =>
-        calculateCostMicrodollars({ served: { provider, wireModel, preferred: wireModel } as never, ...vector }),
+        calculateCostMicrodollars({ served: { provider, wireModel, preferred: 'claude-sonnet-5' } as never, ...vector }),
       ),
     ]),
   );
