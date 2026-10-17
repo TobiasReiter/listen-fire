@@ -14,11 +14,9 @@
 // row, made due at once, which runs it once the run is free; a row whose body
 // already started does nothing.
 
-import { z } from 'zod';
 import { logger } from 'movement-engine/services/logger';
 import { CALLBACK_AWAIT_TYPE } from 'engine-contracts';
 
-import type { Kysely, QueryExecutorProvider } from 'kysely';
 import type { WorkHandler } from '../work/kinds';
 import type { CallbackParamSpec } from 'engine-contracts';
 
@@ -30,11 +28,12 @@ import { loadRunContext } from './resume_step';
 import { postgresRunHostStore } from './run_host_store';
 import { takeRunLease, withRunLease, type HeldRunLease } from './run_lease';
 import { notifyWork, registerWorkHandler, WorkDeferred } from '../work/drain';
-import { enqueueWork } from '../work/store';
 import { enqueueAwaitWake } from './await_wake';
+import { CallbackBodyPayload } from 'movement-engine/services/run_host/callbacks';
 import {
-  claimCallbackFire,
+  claimCallbackFireWithBody,
   coerceCallbackValues,
+  enqueueCallbackBody,
   getCallback,
   callbackRefusal,
   markCallbackBodyStarted,
@@ -91,15 +90,10 @@ export async function fireCallback(input: {
   // ledger, its body is durable work, whatever this process does next. The
   // row is due only once the body would long since have run here; the queued
   // row that finds the body started does nothing.
-  const claim = await inTransaction(getAutomationsQb(['callback']), async (trx) => {
-    const claimed = await claimCallbackFire({ id: input.id, values: coerced.values }, { db: trx });
-    if (claimed.kind === 'recorded') {
-      await queueCallbackBody(
-        { callback: claimed.callback, callIndex: claimed.callback.calls.length - 1 },
-        { dueAt: new Date(Date.now() + CALLBACK_BACKSTOP_MS), db: trx },
-      );
-    }
-    return claimed;
+  const claim = await claimCallbackFireWithBody({
+    id: input.id,
+    values: coerced.values,
+    bodyDueAt: new Date(Date.now() + CALLBACK_BACKSTOP_MS),
   });
   switch (claim.kind) {
     case 'not_found':
@@ -137,12 +131,6 @@ export async function fireCallback(input: {
   }
 }
 
-/** `fn` inside a transaction: the caller's own when it is already in one,
- *  else a fresh one. */
-async function inTransaction<DB, T>(db: Kysely<DB>, fn: (trx: Kysely<DB>) => Promise<T>): Promise<T> {
-  return db.isTransaction ? fn(db) : db.transaction().execute(fn);
-}
-
 /** The run's lease for the body to run under now, or null when the body
  *  waits for its row: the run is held elsewhere (the row is made due at
  *  once), or the lease could not be asked for (the row runs at its backstop
@@ -151,7 +139,7 @@ async function takeLeaseOrQueue(callback: CallbackRecord, callIndex: number): Pr
   try {
     const lease = await takeRunLease(callback.runId);
     if (lease === null) {
-      await queueCallbackBody({ callback, callIndex }, { dueAt: new Date() });
+      await enqueueCallbackBody({ callback, callIndex }, { dueAt: new Date() });
       notifyWork();
     }
     return lease;
@@ -163,35 +151,6 @@ async function takeLeaseOrQueue(callback: CallbackRecord, callIndex: number): Pr
     });
     return null;
   }
-}
-
-const fireCallbackPayloadSchema = z.object({
-  callbackId: z.string(),
-  teamId: z.string(),
-  callIndex: z.number().int().nonnegative(),
-});
-
-/** One recorded call's body as a work row, keyed by the call, so a call is
- *  queued once however often this is reached; an earlier due time wins. */
-async function queueCallbackBody(
-  input: { callback: CallbackRecord; callIndex: number },
-  opts: { dueAt: Date; db?: QueryExecutorProvider },
-): Promise<void> {
-  const payload: z.infer<typeof fireCallbackPayloadSchema> = {
-    callbackId: input.callback.id,
-    teamId: input.callback.teamId,
-    callIndex: input.callIndex,
-  };
-  await enqueueWork(
-    {
-      kind: 'fire_callback',
-      key: `fire_callback:${input.callback.id}:${input.callIndex}`,
-      teamId: input.callback.teamId,
-      payload,
-      dueAt: opts.dueAt,
-    },
-    opts.db !== undefined ? { db: opts.db } : {},
-  );
 }
 
 /** Why a queued body must not run now, or null when it may: the door's own
@@ -218,7 +177,7 @@ async function queuedBodyRefusal(callback: CallbackRecord, callIndex: number): P
  *  the lease, where nothing else can change the run. */
 export const fireCallbackHandler: WorkHandler = {
   async run(payload) {
-    const { callbackId, callIndex } = fireCallbackPayloadSchema.parse(payload);
+    const { callbackId, callIndex } = CallbackBodyPayload.parse(payload);
     const queued = await getCallback(callbackId);
     if (queued === null || queued.calls[callIndex] === undefined) return;
     // The lease first, as `fireCallback` takes it: an entry of this very

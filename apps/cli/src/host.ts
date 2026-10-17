@@ -1,7 +1,8 @@
 // The local run host: every EngineHost family served from the project folder.
 // adapters → the externals, through the hosted product's own adapter table
 // and remote adapter, each call inside the segment's scope (call ceiling) ·
-// parks, trace, run log → SQLite · locks → in process · files → the document
+// parks, callbacks, trace, run log → SQLite · cancel → the run's row
+// (`lf cancel`) · locks → in process · files → the document
 // store's local backend (`.lf/files/`) · acting user → a local identity ·
 // model calls → the provider key in the secrets file.
 
@@ -16,7 +17,6 @@ import { withFileOwners } from 'movement-engine/services/translation_graph/engin
 import { hostSegments, segmentScopedCalls } from 'movement-engine/services/translation_graph/segment_scope';
 import {
   closeSegmentWith,
-  NEVER_CANCELLED,
   openSegmentWith,
   RANDOM_IDS,
   SegmentDirectory,
@@ -27,7 +27,7 @@ import type { LocalDocumentStore } from './documents';
 import { credentialFor, type RunningExternal } from './externals';
 import { localFileText } from './files';
 import { modelCalls } from './models';
-import { localParkFamily } from './parks';
+import { localCancelGate, localParkFamily } from './parks';
 import type { Project } from './project';
 import { remoteAdapterOf } from './remote';
 import type { Credential } from './secrets';
@@ -53,6 +53,9 @@ export interface LocalHostParts {
   /** The run host core over the state: its park sink, its await wake. */
   runHost: RunHost;
   documents: LocalDocumentStore;
+  /** Where lf is reached from outside (lf.yaml's `publicUrl`, else where
+   *  `lf serve` listens): a callback's url is under it. */
+  publicUrl: string;
   /** Receives each write a rehearsed (dry-run) instance captured instead of
    *  making it. */
   writeSink?: DryRunWriteSink;
@@ -103,8 +106,9 @@ export function localHost(parts: LocalHostParts & { runId: string; fence?: strin
       runId: parts.runId,
       teamId: LOCAL_TENANT,
       ...(parts.fence !== undefined ? { fence: parts.fence } : {}),
+      publicUrl: parts.publicUrl,
     }),
-    control: { cancel: NEVER_CANCELLED },
+    control: { cancel: localCancelGate(state, parts.runId) },
     files: {
       resolveFileText: async ({ segmentId, file }) =>
         localFileText({

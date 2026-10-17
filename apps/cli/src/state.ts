@@ -2,7 +2,7 @@
 // `--ephemeral`): the run log, each run's trace, record bindings, and the run
 // host's backend families (store.ts in the run-host core): parked leaves, the
 // joins they hold, await correlations, the run lease and the work queue
-// `lf serve` drains. The families mean what the hosted Postgres backend's
+// `lf serve` drains, and the callbacks a run mints. The families mean what the hosted Postgres backend's
 // mean, held to it by the run host's contract suite; the rules over them are
 // the core's. Every write that must not interleave with another process's
 // runs in one `begin immediate` transaction, so `lf resume` and a running
@@ -16,8 +16,16 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { BindingEndpoint, EncodedEndpoint } from 'movement-engine/services/movement_engine/host';
 import { RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
-import type { ClaimedWork, LeafRow as CoreLeafRow, RunHostStore } from 'movement-engine/services/run_host/store';
-import { CORE_PARK_REASONS } from 'engine-contracts';
+import type {
+  CallbackClaim,
+  CallbackRecord,
+  CallbackStore,
+  ClaimedWork,
+  LeafRow as CoreLeafRow,
+  RunHostStore,
+} from 'movement-engine/services/run_host/store';
+import { callbackBodyWork, callbackRefusal, isCallbackId, newCallbackId } from 'movement-engine/services/run_host/callbacks';
+import { CALLBACK_PARAM_TYPES, CORE_PARK_REASONS } from 'engine-contracts';
 import {
   asEncoded,
   encodeEndpoint,
@@ -38,10 +46,13 @@ const RunRow = z.object({
   /** The run's facts a resume needs, as JSON: source, event, language version. */
   input: z.string(),
   outcome: z.string().nullable(),
+  /** When an operator asked to cancel the run (`lf cancel`), and why. */
+  cancel_requested_at: z.string().nullable(),
+  cancel_reason: z.string().nullable(),
 });
 export type RunRow = z.infer<typeof RunRow>;
 
-export const WorkKind = z.enum(['resume_timer', 'wake_await', 'fire_event']);
+export const WorkKind = z.enum(['resume_timer', 'wake_await', 'fire_event', 'fire_callback']);
 export type WorkKind = z.infer<typeof WorkKind>;
 
 const WorkRow = z.object({
@@ -63,6 +74,44 @@ const LeafRow = z.object({
   status: z.enum(['parked', 'resuming']),
   wake_at: z.string().nullable(),
 });
+
+const CallbackRow = z.object({
+  id: z.string(),
+  team_id: z.string(),
+  run_id: z.string(),
+  address: z.string(),
+  params: z.string(),
+  state: z.string(),
+  calls: z.string(),
+  single_use: z.number().int(),
+  expires_at: z.string().nullable(),
+  status: z.enum(['live', 'fired', 'revoked']),
+});
+
+const CallbackParams = z.array(z.object({ name: z.string(), type: z.enum(CALLBACK_PARAM_TYPES) }));
+const CallbackLedger = z.array(
+  z.object({ at: z.string(), values: z.record(z.string(), z.unknown()), bodyStartedAt: z.string().optional() }),
+);
+
+function callbackOf(row: unknown): CallbackRecord {
+  const r = CallbackRow.parse(row);
+  return {
+    id: r.id,
+    teamId: r.team_id,
+    runId: r.run_id,
+    address: r.address,
+    params: CallbackParams.parse(JSON.parse(r.params)),
+    state: JSON.parse(r.state),
+    calls: CallbackLedger.parse(JSON.parse(r.calls)).map(({ at, values, bodyStartedAt }) => ({
+      at,
+      values,
+      ...(bodyStartedAt !== undefined ? { bodyStartedAt } : {}),
+    })),
+    singleUse: r.single_use === 1,
+    expiresAt: r.expires_at,
+    status: r.status,
+  };
+}
 
 /** A work claim's handle: the lease it took and the version it saw. */
 const WorkClaim = z.string().transform((claim, ctx) => {
@@ -150,6 +199,22 @@ create table if not exists park_library_source (
   source text not null,
   primary key (team_id, hash)
 );
+create table if not exists callback (
+  id text primary key,
+  team_id text not null,
+  run_id text not null,
+  address text not null,
+  params text not null,
+  state text not null,
+  calls text not null,
+  single_use integer not null,
+  expires_at text,
+  status text not null,
+  created_at text not null,
+  fired_at text,
+  revoked_at text
+);
+create index if not exists callback_run on callback (run_id);
 create table if not exists work (
   id integer primary key autoincrement,
   kind text not null,
@@ -169,6 +234,8 @@ export class State {
   readonly path: string;
   /** The run host's backend families over this file. */
   readonly store: RunHostStore;
+  /** The callbacks runs mint, over this file. */
+  readonly callbacks: CallbackStore;
   private readonly db: DatabaseSync;
   private readonly now: () => Date;
   /** How far ahead of `now` what is due is judged (timers, work rows). */
@@ -183,7 +250,9 @@ export class State {
     // never block the writer, and a writer waits for another's transaction.
     this.db.exec('pragma journal_mode = wal; pragma busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    this.addMissingColumns();
     this.store = this.families();
+    this.callbacks = this.callbackFamily();
   }
 
   static open(project: Project, options: { ephemeral: boolean; dueClockOffsetMs?: number }): State {
@@ -195,6 +264,19 @@ export class State {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Columns a state file written by an earlier lf lacks. */
+  private addMissingColumns(): void {
+    const columns = new Set(
+      this.db
+        .prepare('pragma table_info(run)')
+        .all()
+        .map((r) => z.object({ name: z.string() }).parse(r).name),
+    );
+    for (const column of ['cancel_requested_at', 'cancel_reason']) {
+      if (!columns.has(column)) this.db.exec(`alter table run add column ${column} text`);
+    }
   }
 
   private iso(offsetMs = 0): string {
@@ -222,16 +304,20 @@ export class State {
 
   // ── Runs ──────────────────────────────────────────────────────────────────
 
-  startRun(row: Omit<RunRow, 'finished_at' | 'outcome' | 'status'>): void {
+  startRun(row: Pick<RunRow, 'id' | 'file' | 'movement' | 'started_at' | 'input'>): void {
     this.db
       .prepare('insert into run (id, file, movement, status, started_at, input) values (?, ?, ?, ?, ?, ?)')
       .run(row.id, row.file, row.movement, 'running', row.started_at, row.input);
   }
 
+  /** Record where the run stands. A run that ends, however it ends, revokes
+   *  its live callbacks: a callback is something the run can still react to. */
   settleRun(id: string, status: RunStatus, outcome: unknown, at: string): void {
-    this.db
-      .prepare('update run set status = ?, outcome = ?, finished_at = ? where id = ?')
-      .run(status, JSON.stringify(outcome ?? null), status === 'parked' || status === 'running' ? null : at, id);
+    const ended = status === 'completed' || status === 'failed';
+    this.transaction(() => {
+      this.db.prepare('update run set status = ?, outcome = ?, finished_at = ? where id = ?').run(status, JSON.stringify(outcome ?? null), ended ? at : null, id);
+      if (ended) this.revokeCallbacks(id);
+    });
   }
 
   /** The run is observably parked (a park landed). A settled run stays. */
@@ -241,9 +327,35 @@ export class State {
 
   /** The run is over without completing. A run already settled stays. */
   markFailed(id: string, message: string): void {
+    this.transaction(() => {
+      this.db
+        .prepare("update run set status = 'failed', outcome = ?, finished_at = ? where id = ? and status in ('running', 'parked')")
+        .run(JSON.stringify({ error: message }), this.iso(), id);
+      this.revokeCallbacks(id);
+    });
+  }
+
+  private revokeCallbacks(runId: string): void {
+    this.db.prepare("update callback set status = 'revoked', revoked_at = ? where run_id = ? and status = 'live'").run(this.iso(), runId);
+  }
+
+  /** An operator asks to cancel the run. The first request's reason stands;
+   *  a run already over takes none. True when the run is open and now
+   *  carries a request. */
+  requestCancel(id: string, reason: string | null): boolean {
     this.db
-      .prepare("update run set status = 'failed', outcome = ?, finished_at = ? where id = ? and status in ('running', 'parked')")
-      .run(JSON.stringify({ error: message }), this.iso(), id);
+      .prepare(
+        "update run set cancel_requested_at = ?, cancel_reason = ? where id = ? and cancel_requested_at is null and status in ('running', 'parked')",
+      )
+      .run(this.iso(), reason, id);
+    const row = this.run(id);
+    return row !== undefined && row.cancel_requested_at !== null && (row.status === 'running' || row.status === 'parked');
+  }
+
+  /** The operator's cancel request on the run, or null. */
+  cancelRequest(id: string): { reason: string | null } | null {
+    const row = this.run(id);
+    return row?.cancel_requested_at != null ? { reason: row.cancel_reason } : null;
   }
 
   run(id: string): RunRow | undefined {
@@ -350,6 +462,88 @@ export class State {
       if (fence !== undefined && !this.holds(runId, fence)) throw new RunLeaseLost(runId);
       return body();
     });
+  }
+
+  /** Upsert a work row by key. Against a held row the new due time wins: its
+   *  holder's completion leaves the row for the re-arm. */
+  private enqueue({ kind, key, payload, dueAt }: { kind: string; key: string; payload: unknown; dueAt?: string }): void {
+    const now = this.iso();
+    this.db
+      .prepare(
+        `insert into work (kind, key, payload, due_at) values (?, ?, ?, ?)
+         on conflict (key) do update set
+           due_at = case when work.lease_until > ? then excluded.due_at else min(work.due_at, excluded.due_at) end,
+           payload = excluded.payload,
+           version = work.version + 1`,
+      )
+      .run(WorkKind.parse(kind), key, JSON.stringify(payload ?? null), dueAt ?? now, now);
+  }
+
+  // ── Callbacks ─────────────────────────────────────────────────────────────
+  //
+  // The claim is one transaction: read the row, judge it live and unexpired
+  // by this file's clock, append the call, and queue its body.
+
+  private callbackFamily(): CallbackStore {
+    const db = this.db;
+    const read = (id: string): CallbackRecord | null => {
+      if (!isCallbackId(id)) return null;
+      const row = db.prepare('select * from callback where id = ?').get(id);
+      return row === undefined ? null : callbackOf(row);
+    };
+    return {
+      mint: async ({ teamId, runId, address, params, state, singleUse, expiresAt }) => {
+        const id = newCallbackId();
+        db.prepare(
+          `insert into callback (id, team_id, run_id, address, params, state, calls, single_use, expires_at, status, created_at)
+           values (?, ?, ?, ?, ?, ?, '[]', ?, ?, 'live', ?)`,
+        ).run(
+          id,
+          teamId,
+          runId,
+          address,
+          JSON.stringify(params),
+          JSON.stringify(state ?? null),
+          singleUse ? 1 : 0,
+          expiresAt !== undefined ? new Date(expiresAt).toISOString() : null,
+          this.iso(),
+        );
+        return { id };
+      },
+      get: async ({ id }) => read(id),
+      record: async ({ id, values, bodyDueAt }) =>
+        this.transaction((): CallbackClaim => {
+          const callback = read(id);
+          if (callback === null) return { kind: 'not_found' };
+          const now = this.iso();
+          const refused = callbackRefusal(callback, { for: 'a new call', now });
+          if (refused !== null) return { kind: refused, callback };
+          const calls = [...callback.calls, { at: now, values }];
+          const status = callback.singleUse ? 'fired' : 'live';
+          db.prepare('update callback set calls = ?, status = ?, fired_at = case when ? then ? else fired_at end where id = ?').run(
+            JSON.stringify(calls),
+            status,
+            callback.singleUse ? 1 : 0,
+            now,
+            id,
+          );
+          const callIndex = calls.length - 1;
+          this.enqueue(callbackBodyWork({ callbackId: id, teamId: callback.teamId, callIndex, dueAt: bodyDueAt }));
+          return { kind: 'recorded', callback: { ...callback, calls, status }, callIndex };
+        }),
+      markBodyStarted: async ({ id, callIndex, fence }) =>
+        this.transaction(() => {
+          const callback = read(id);
+          if (callback === null || callback.calls[callIndex] === undefined) return false;
+          if (fence !== undefined && !this.holds(callback.runId, fence)) return false;
+          const calls = callback.calls.map((call, i) => (i === callIndex ? { ...call, bodyStartedAt: this.iso() } : call));
+          db.prepare('update callback set calls = ? where id = ?').run(JSON.stringify(calls), id);
+          return true;
+        }),
+      landed: async ({ ids }) =>
+        ids.filter((id) => (read(id)?.calls ?? []).some((call) => call.bodyStartedAt !== undefined)),
+      revokeRun: async ({ runId }) => this.revokeCallbacks(runId),
+    };
   }
 
   private families(): RunHostStore {
@@ -546,18 +740,7 @@ export class State {
       },
 
       work: {
-        enqueue: async ({ kind, key, payload, dueAt }) => {
-          // Against a held row the new due time wins: its holder's completion
-          // leaves the row for the re-arm.
-          const now = this.iso();
-          db.prepare(
-            `insert into work (kind, key, payload, due_at) values (?, ?, ?, ?)
-             on conflict (key) do update set
-               due_at = case when work.lease_until > ? then excluded.due_at else min(work.due_at, excluded.due_at) end,
-               payload = excluded.payload,
-               version = work.version + 1`,
-          ).run(WorkKind.parse(kind), key, JSON.stringify(payload ?? null), dueAt ?? now, now);
-        },
+        enqueue: async (input) => this.enqueue(input),
         claimDue: async ({ limit, leaseMs, dueBy }) => {
           const now = this.iso();
           return this.transaction(() => {

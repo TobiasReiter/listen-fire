@@ -1,12 +1,13 @@
 // A session: one project opened for running — its secrets, externals,
-// catalog, files and listens — plus the two entry points every command shares:
-// an inbound event routed to the listens it matches and run, and a parked run
-// resumed.
+// catalog, files and listens — plus the entry points every command shares:
+// an inbound event routed to the listens it matches and run, a parked run
+// resumed, a callback called, and a run cancelled.
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CatalogSnapshot, InstanceSchema } from 'movement-lang';
-import { runMovement, resumeMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import { fireCallbackBody, runMovement, resumeMovement, settleRaceFrame, type MovementRunResult } from 'movement-engine/services/movement_engine/run';
+import type { AnyParkedScopeState } from 'engine-contracts';
 import { runFailureCause, RunLeaseLost } from 'movement-engine/services/movement_engine/errors';
 import { withRunLease, type HeldRunLease } from 'movement-engine/services/run_host/lease';
 import {
@@ -14,9 +15,18 @@ import {
   clearIfQuiescent,
   queueAwaitWake,
   runQuiescent,
+  settleIfCancelRequested,
   type RunHost,
-  type RunRecords,
 } from 'movement-engine/services/run_host/rules';
+import {
+  CallbackBodyPayload,
+  callbackAwaitKeeper,
+  callbackBodyWork,
+  recordCallbackCall,
+  runCallbackBody,
+  type CallbackBodyOutcome,
+  type CallbackCallOutcome,
+} from 'movement-engine/services/run_host/callbacks';
 import { afterStep, drainDueTimers, drainRun, nextTimerWake, wakeAwaits, type StepLeaf, type StepOutcome } from 'movement-engine/services/run_host/drain';
 import type { ClaimedWork } from 'movement-engine/services/run_host/store';
 import { eventMatchesTriggerScope } from 'movement-engine/services/translation_graph/triggers/listen_config';
@@ -36,17 +46,20 @@ import {
 } from './externals';
 import { neverAsAny } from 'movement-engine/lib/utils/types';
 import { LOCAL_TENANT, localHost, tenant } from './host';
+import { localRunRecords } from './parks';
 import { refuseBelowLf, type Project } from './project';
 import { remoteAdapterOf } from './remote';
 import { loadSecrets, requireCredentials, type Credential } from './secrets';
 import { catalogOf, collectListens, scanMovements, type Listen, type MovementFile } from './sources';
-import { LEASE_TTL_MS, State, WorkKind } from './state';
+import { LEASE_TTL_MS, State, WorkKind, type RunRow } from './state';
 
 export interface Session {
   project: Project;
   state: State;
   /** The run host core over the state: lf supplies only its run records. */
   runHost: RunHost;
+  /** Where lf is reached from outside: a callback's url is under it. */
+  publicUrl: string;
   credentials: Map<string, Credential>;
   externals: External[];
   running: Map<string, RunningExternal>;
@@ -56,6 +69,9 @@ export interface Session {
   listens: Listen[];
   close(): void;
 }
+
+/** Where `lf serve` listens unless told otherwise. */
+export const DEFAULT_PORT = 4400;
 
 /** `LF_CLOCK_AHEAD_MS`: what is due is judged this far ahead of the wall
  *  clock, so a developer (or a test) sees a timer wake without waiting for
@@ -100,7 +116,8 @@ export async function openSession(
     return {
       project,
       state,
-      runHost: { store: state.store, keepers: [], runs: localRunRecords(state) },
+      runHost: { store: state.store, keepers: [callbackAwaitKeeper(state.store, state.callbacks)], runs: localRunRecords(state) },
+      publicUrl: project.publicUrl ?? options.hostUrl ?? `http://127.0.0.1:${DEFAULT_PORT}`,
       credentials,
       externals,
       running,
@@ -116,15 +133,6 @@ export async function openSession(
   }
 }
 
-/** What lf keeps about a run beyond its live state: its row. lf has no cancel
- *  command, so no run carries a cancel request. */
-function localRunRecords(state: State): RunRecords {
-  return {
-    cancelRequest: async () => null,
-    markFailed: async ({ runId, message }) => state.markFailed(runId, message),
-  };
-}
-
 /** A pre-parsed event file: which external it came from, and the event. */
 export const EventFile = z.object({
   external: z.string().min(1),
@@ -135,8 +143,9 @@ export interface RunOutcome {
   runId: string;
   file: string;
   movement: string;
-  /** A fresh firing, or a parked run stepped forward. */
-  entry: 'fired' | 'resumed';
+  /** A fresh firing, a parked run stepped forward, or a callback's body run
+   *  (`error`: the body failed; the run carries on). */
+  entry: 'fired' | 'resumed' | 'called';
   /** `leaseLost`: the run's lease lapsed mid-segment; whoever took it over
    *  steps it now, and this entry left its rows as they were. */
   status: 'completed' | 'parked' | 'failed' | 'leaseLost';
@@ -286,7 +295,7 @@ async function recordSegment(
   tally.writes += result.writes.length;
   const deferredRaceFrames = result.deferredRaceFrames ?? [];
   const at = new Date().toISOString();
-  if (result.cancelled === true) return { kind: 'cancelled' };
+  if (result.cancelled === true) return cancelledOutcome(state, runId);
   if (result.parked === true) {
     state.settleRun(runId, 'parked', { writes: tally.writes }, at);
     return { kind: 'parked', parkedAddress: result.parkedAddress, deferredRaceFrames };
@@ -296,35 +305,54 @@ async function recordSegment(
   return { kind: 'completed', deferredRaceFrames };
 }
 
+/** An operator's cancel stopped the segment: the reason they gave. */
+function cancelledOutcome(state: State, runId: string): StepOutcome {
+  const reason = state.cancelRequest(runId)?.reason;
+  return { kind: 'cancelled', ...(reason != null ? { reason } : {}) };
+}
+
+/** What every entry into a parked run's program shares: the run's own facts
+ *  (its pinned source and event, its first firing's instant) and this
+ *  session's catalog and host, under the lease `lease`. */
+function reentryOf(session: Session, input: { runId: string; facts: z.infer<typeof RunFacts>; lease: HeldRunLease }) {
+  const { runId, facts, lease } = input;
+  return {
+    source: facts.source,
+    languageVersion: facts.languageVersion,
+    movementName: facts.movementName,
+    event: facts.event as TriggerEvent,
+    teamId: tenant(),
+    catalog: session.catalog,
+    credentialIds: credentialIdsOf(session.catalog),
+    firedAt: facts.firedAt,
+    runId,
+    parkedOnEngine: 'rust' as const,
+    host: localHost({ ...sessionParts(session), runId, fence: lease.token }),
+  };
+}
+
+/** A run's facts, refused when its pin is one lf does not run. */
+function runFactsOf(row: RunRow): z.infer<typeof RunFacts> {
+  const facts = RunFacts.parse(JSON.parse(row.input));
+  // An earlier lf ran versions below 5 on the Rust engine; this one hands
+  // them to no engine (the engine would route them to TypeScript).
+  refuseBelowLf(facts.languageVersion, {
+    pinned: `run ${row.id}`,
+    remedy: 'it cannot resume; run `lf upgrade` and fire it again',
+  });
+  return facts;
+}
+
 /** A parked run's step for the core's drains, under the lease `lease`. Null
  *  when the run is not parked. */
 function parkedStepper(session: Session, runId: string, lease: HeldRunLease): { run: NamedRun; tally: Tally; step: StepLeaf } | null {
   const row = session.state.run(runId);
   if (row === undefined || row.status !== 'parked') return null;
-  const facts = RunFacts.parse(JSON.parse(row.input));
-  // An earlier lf ran versions below 5 on the Rust engine; this one hands
-  // them to no engine (the engine would route them to TypeScript).
-  refuseBelowLf(facts.languageVersion, {
-    pinned: `run ${runId}`,
-    remedy: 'it cannot resume; run `lf upgrade` and fire it again',
-  });
+  const facts = runFactsOf(row);
   const run = { runId, file: row.file, movement: row.movement };
   const tally = { writes: 0, stepped: 0 };
   const step: StepLeaf = (request, settle) => {
-    const resumed = {
-      source: facts.source,
-      languageVersion: facts.languageVersion,
-      movementName: facts.movementName,
-      event: facts.event as TriggerEvent,
-      teamId: tenant(),
-      catalog: session.catalog,
-      credentialIds: credentialIdsOf(session.catalog),
-      firedAt: facts.firedAt,
-      runId,
-      state: request.state,
-      parkedOnEngine: 'rust' as const,
-      host: localHost({ ...sessionParts(session), runId, fence: lease.token }),
-    };
+    const resumed = { ...reentryOf(session, { runId, facts, lease }), state: request.state };
     return recordSegment(session, {
       runId,
       tally,
@@ -486,6 +514,12 @@ async function doWork(session: Session, claimed: ClaimedWork): Promise<{ busy: b
       if (outcome === 'busy') return { busy: true, outcomes: [] };
       return { busy: false, outcomes: outcome === null ? [] : [outcome] };
     }
+    case 'fire_callback': {
+      const { callbackId, callIndex } = CallbackBodyPayload.parse(claimed.payload);
+      const ran = await runRecordedBody(session, { callbackId, callIndex });
+      if (ran.kind !== 'ran') return { busy: ran.kind === 'busy', outcomes: [] };
+      return { busy: false, outcomes: ran.outcomes };
+    }
     case 'wake_await': {
       const wake = WakeAwaitPayload.parse(claimed.payload);
       const stepped: Array<{ run: NamedRun; tally: Tally }> = [];
@@ -511,6 +545,7 @@ async function doWork(session: Session, claimed: ClaimedWork): Promise<{ busy: b
 
 function sessionParts(session: Session) {
   return {
+    publicUrl: session.publicUrl,
     project: session.project,
     state: session.state,
     externals: session.running,
@@ -579,4 +614,161 @@ export class WebhookRefused extends Error {
     super(message);
     this.name = 'WebhookRefused';
   }
+}
+
+// ── Callbacks ───────────────────────────────────────────────────────────────
+
+/** How long after a call its durable rows (its body's, its awaiters' wake)
+ *  come due. Its body runs at once when the run is free; the rows matter only
+ *  if this process dies first, so they wait well past a normal body. */
+const CALLBACK_BACKSTOP_MS = 30_000;
+
+export interface CallOutcome {
+  call: CallbackCallOutcome;
+  /** The run was being stepped elsewhere: the body waits on its work row,
+   *  due now, for whichever lf process drains next. */
+  queued: boolean;
+  outcomes: RunOutcome[];
+}
+
+/**
+ * Call a callback: validate and record the call (its body queued with it),
+ * then run the body now under the run's lease and wake whatever awaits the
+ * callback. The door (`POST /api/cb/<id>`) and `lf call` both come here.
+ */
+export async function callCallback(session: Session, input: { id: string; values: Record<string, unknown> }): Promise<CallOutcome> {
+  const backstop = new Date(Date.now() + CALLBACK_BACKSTOP_MS).toISOString();
+  const call = await recordCallbackCall(session.runHost, session.state.callbacks, {
+    id: input.id,
+    values: input.values,
+    bodyDueAt: backstop,
+    wakeDueAt: backstop,
+  });
+  if (call.kind !== 'recorded') return { call, queued: false, outcomes: [] };
+  const ran = await runRecordedBody(session, { callbackId: call.callback.id, callIndex: call.callIndex });
+  if (ran.kind === 'ran') return { call, queued: false, outcomes: ran.outcomes };
+  if (ran.kind === 'refused') return { call, queued: false, outcomes: [] };
+  // Held elsewhere: its row, due now, runs it once the run is free.
+  await session.runHost.store.work.enqueue(
+    callbackBodyWork({ callbackId: call.callback.id, teamId: call.callback.teamId, callIndex: call.callIndex, dueAt: new Date().toISOString() }),
+  );
+  return { call, queued: true, outcomes: [] };
+}
+
+type RecordedBodyRun = { kind: 'ran'; outcomes: RunOutcome[] } | { kind: 'busy' } | { kind: 'refused'; reason: string };
+
+/** Run one recorded call's body under its run's lease, then the awaits it
+ *  resolves. `busy` when another process holds the run, or the lease went
+ *  before the body began: the body is left to its work row. */
+async function runRecordedBody(session: Session, input: { callbackId: string; callIndex: number }): Promise<RecordedBodyRun> {
+  const { state, runHost } = session;
+  const callback = await state.callbacks.get({ id: input.callbackId });
+  if (callback === null) return { kind: 'refused', reason: 'its callback is gone' };
+  const row = state.run(callback.runId);
+  if (row === undefined) return { kind: 'refused', reason: 'its run is gone' };
+  const run = { runId: row.id, file: row.file, movement: row.movement };
+  const held = await withRunLease(runHost.store.leases, run.runId, async (lease) => {
+    const facts = runFactsOf(row);
+    const tally = { writes: 0, stepped: 0 };
+    const stepped: Array<{ run: NamedRun; tally: Tally }> = [];
+    let failure: string | undefined;
+    const ran = await runCallbackBody(runHost, state.callbacks, {
+      id: input.callbackId,
+      callIndex: input.callIndex,
+      lease,
+      now: new Date().toISOString(),
+      runOpen: async (runId) => {
+        const status = state.run(runId)?.status;
+        return status === 'parked' || status === 'running';
+      },
+      body: async ({ callback: minted, values }) => {
+        const outcome = await callbackBodySegment(session, { ...run, facts, lease, tally, state: minted.state, values, callIndex: input.callIndex });
+        if (outcome.kind === 'failed') failure = outcome.error;
+        return outcome;
+      },
+      stepper: async ({ runId, lease: held }) => {
+        const stepper = parkedStepper(session, runId, held);
+        if (stepper === null) return null;
+        stepped.push(stepper);
+        return stepper.step;
+      },
+    });
+    return { ran, tally, stepped, failure };
+  });
+  if (held.kind === 'busy') return { kind: 'busy' };
+  const { ran, tally, stepped, failure } = held.value;
+  if (ran.kind === 'not_started') return { kind: 'busy' };
+  if (ran.kind === 'refused') return ran;
+  const drained = ran.outcome.kind === 'leaseLost' ? 'leaseLost' : 'done';
+  const called = await settledOutcome(session, { run, entry: 'called', tally, drained });
+  const outcomes = [failure !== undefined ? { ...called, error: `the callback's body failed: ${failure}` } : called];
+  for (const s of stepped) {
+    if (s.tally.stepped > 0) outcomes.push(await settledOutcome(session, { run: s.run, entry: 'resumed', tally: s.tally, drained: 'done' }));
+  }
+  return { kind: 'ran', outcomes };
+}
+
+/** A callback's body: one engine segment entered at the callback, with the
+ *  call's values. A body that fails fails its segment, never the run. */
+async function callbackBodySegment(
+  session: Session,
+  input: NamedRun & {
+    facts: z.infer<typeof RunFacts>;
+    lease: HeldRunLease;
+    tally: Tally;
+    state: unknown;
+    values: Record<string, unknown>;
+    callIndex: number;
+  },
+): Promise<CallbackBodyOutcome> {
+  if (!isParkState(input.state)) return { kind: 'failed', error: 'the callback holds no state to run its body from' };
+  input.tally.stepped += 1;
+  try {
+    const result = await fireCallbackBody({
+      ...reentryOf(session, { runId: input.runId, facts: input.facts, lease: input.lease }),
+      state: input.state,
+      values: input.values,
+      callIndex: input.callIndex,
+    });
+    input.tally.writes += result.writes.length;
+    if (result.cancelled === true) {
+      const reason = session.state.cancelRequest(input.runId)?.reason;
+      return { kind: 'cancelled', ...(reason != null ? { reason } : {}) };
+    }
+    return { kind: 'ran' };
+  } catch (error) {
+    const cause = runFailureCause(error);
+    if (cause instanceof RunLeaseLost) return { kind: 'leaseLost' };
+    return { kind: 'failed', error: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
+/** A park state as the engine reads it: the engine re-validates the shape
+ *  and refuses a version it does not read. */
+function isParkState(value: unknown): value is AnyParkedScopeState {
+  return typeof value === 'object' && value !== null && typeof (value as { version?: unknown }).version === 'number';
+}
+
+// ── Cancel ──────────────────────────────────────────────────────────────────
+
+export type CancelOutcome =
+  /** The run was not being stepped: it is settled failed now. */
+  | { kind: 'cancelled' }
+  /** Another lf process is stepping it: its segment stops at the next
+   *  statement boundary, and the run settles failed there. */
+  | { kind: 'requested' };
+
+/**
+ * `lf cancel <run>`: stamp the operator's request on the run's row, then
+ * settle it through the core's cancel path (failed with the reason, its live
+ * state torn down, its callbacks revoked) when no one holds it. A run being
+ * stepped elsewhere reads the stamp at its next boundary.
+ */
+export async function cancelRun(session: Session, input: { runId: string; reason: string | null }): Promise<CancelOutcome> {
+  const { state, runHost } = session;
+  const row = state.run(input.runId);
+  if (row === undefined) throw new Error(`no run ${input.runId}`);
+  if (!state.requestCancel(input.runId, input.reason)) throw new Error(`run ${input.runId} is ${row.status}; there is nothing to cancel`);
+  const held = await withRunLease(runHost.store.leases, input.runId, (lease) => settleIfCancelRequested(runHost, { runId: input.runId, fence: lease.token }));
+  return held.kind === 'busy' ? { kind: 'requested' } : { kind: 'cancelled' };
 }

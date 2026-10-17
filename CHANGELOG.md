@@ -1210,6 +1210,19 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `lf` now prices its model calls from the same table and charges them to the run, so a run's cost cap sees them.
 - The extraction output budget is a host input (`outputBudget`) rather than an environment read inside the engine; the hosted product still reads `EXTRACTION_OUTPUT_BUDGET`.
 
+### ev1-callbacks
+
+- `lf` takes callbacks: a run's `callback(…)` is called at `lf serve`'s `POST /api/cb/<id>` (its
+  `url`) or with `lf call <id> --body <values.json>`. The values are checked against the callback's
+  parameters; the body runs once, then the run's `await cb-[:Called]->` resumes. A callback closes
+  when its run ends, however it ends.
+- `lf.yaml` takes `publicUrl`: where this lf is reached from outside. A callback's `url` is under it
+  (else under where `lf serve` listens).
+- `lf cancel <run> [--reason <text>]`: a parked run is settled failed with the reason, its
+  callbacks closed. A run another lf process is stepping stops at its next statement.
+- The hosted product's callbacks are unchanged (same table, ids, links and answers); their store now
+  serves the run host core's callback family, which lf's SQLite store serves too.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check
