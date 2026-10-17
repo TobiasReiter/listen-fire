@@ -303,9 +303,6 @@ batches = Number.ceil(count(rows) / 50)
 
 \`\`\`
 n = Number.parse(msg.Subject) ?: 0
-\`\`\`
-
-\`\`\`
 crm-[t:Teams WHERE t.\`Team Size\` <= NUMBER(m.Body)]->
 \`\`\`
 
