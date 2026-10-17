@@ -470,11 +470,13 @@ dependencies = [
  "indexmap",
  "jiff",
  "movement-checker",
+ "movement-engine",
  "movement-parser",
  "rusqlite",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tokio",
  "uuid",
 ]

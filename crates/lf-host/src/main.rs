@@ -4,6 +4,9 @@
 //! project format, state file and output it keeps.
 //!
 //!   lf-host check [--dir <project>]          the TypeScript `lf check`
+//!   lf-host run --event <file> [--dry-run]   route an event to its listens and run each
+//!   lf-host resume [<run-id>]                step a parked run, or drain due work and every parked run
+//!   lf-host runs                             the runs, most recent first
 //!   lf-host catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
 //!   lf-host --contract-store <state.db>      the run host's backend over stdio JSON-RPC
 //!   lf-host --project-schema                 one schema projection, stdin to stdout (a parity probe)
@@ -13,33 +16,53 @@
 mod catalog;
 mod check;
 mod contract_store;
+mod documents;
 mod externals;
+mod file_ref;
 mod json;
 mod project;
 mod protocol;
+mod remote;
+mod routing;
+mod run_host;
+mod runs;
 mod schema;
 mod secrets;
+mod segment;
 mod sources;
 mod store;
+mod wire;
+mod wire_results;
 
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf-host <check|catalog> [--dir <project folder>]
+const USAGE: &str = "usage: lf-host <check|catalog|run|resume|runs> [--dir <project folder>] [--ephemeral]
+       lf-host run --event <file.json> [--dry-run]
+       lf-host resume [<run-id>]
        lf-host --contract-store <state.db>
        lf-host --project-schema
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
+  run       route the event file's event to the listens it matches and run each (as `lf run --event`)
+  resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
+  runs      the runs in the state file, most recent first (as `lf runs`)
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
-not yet here (the TypeScript lf has them): init, upgrade, run, resume, serve, runs";
+not yet here (the TypeScript lf has them): init, upgrade, serve, call, cancel, run --webhook";
 
 /// The commands the TypeScript lf has that this binary does not yet.
-const NOT_YET: &[&str] = &["init", "upgrade", "run", "resume", "serve", "runs"];
+const NOT_YET: &[&str] = &["init", "upgrade", "serve", "call", "cancel"];
 
 struct Args {
     command: Option<String>,
+    /// Positionals after the command (`resume <run-id>`).
+    rest: Vec<String>,
     dir: PathBuf,
+    ephemeral: bool,
+    dry_run: bool,
+    event: Option<PathBuf>,
+    webhook: Option<String>,
     contract_store: Option<PathBuf>,
     project_schema: bool,
     help: bool,
@@ -48,7 +71,12 @@ struct Args {
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut args = Args {
         command: None,
+        rest: Vec::new(),
         dir: std::env::current_dir().map_err(|e| e.to_string())?,
+        ephemeral: false,
+        dry_run: false,
+        event: None,
+        webhook: None,
         contract_store: None,
         project_schema: false,
         help: false,
@@ -58,13 +86,17 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         let mut value = |name: &str| rest.next().cloned().ok_or_else(|| format!("{name} needs a value"));
         match arg.as_str() {
             "--dir" => args.dir = PathBuf::from(value("--dir")?),
+            "--event" => args.event = Some(PathBuf::from(value("--event")?)),
+            "--webhook" => args.webhook = Some(value("--webhook")?),
+            "--ephemeral" => args.ephemeral = true,
+            "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(PathBuf::from(value("--contract-store")?)),
             "--project-schema" => args.project_schema = true,
             "-h" | "--help" => args.help = true,
             flag if flag.starts_with("--dir=") => args.dir = PathBuf::from(&flag["--dir=".len()..]),
             flag if flag.starts_with('-') => return Err(format!("unknown option \"{flag}\"")),
             positional if args.command.is_none() => args.command = Some(positional.to_string()),
-            extra => return Err(format!("unexpected argument \"{extra}\"")),
+            positional => args.rest.push(positional.to_string()),
         }
     }
     Ok(args)
@@ -100,6 +132,40 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 Ok(1)
             }
         },
+        "run" => {
+            if args.webhook.is_some() {
+                eprintln!("lf-host: `run --webhook` is not in lf-host yet; use the TypeScript lf for it");
+                return Ok(2);
+            }
+            let Some(event_file) = &args.event else {
+                eprintln!("lf run needs --event <file> or --webhook <external> --body <file>");
+                return Ok(2);
+            };
+            let session = runs::open_session(project::load_project(&args.dir)?, args.ephemeral).await?;
+            let (external, event) = runs::read_event_file(event_file)?;
+            let outcomes = session.fire_event(&external, &event, args.dry_run).await?;
+            runs::report(&outcomes, &mut out)
+        }
+        "resume" => {
+            let session = runs::open_session(project::load_project(&args.dir)?, false).await?;
+            let outcomes = match args.rest.first() {
+                Some(run_id) => vec![session.resume_run(run_id).await?],
+                None => session.resume_all(&mut std::io::stderr()).await?,
+            };
+            if outcomes.is_empty() {
+                writeln!(out, "no parked runs").map_err(|e| e.to_string())?;
+                // As the TypeScript lf: an empty resume still says no listen matched.
+            }
+            runs::report(&outcomes, &mut out)
+        }
+        "runs" => {
+            let project = project::load_project(&args.dir)?;
+            let store = store::Store::open(&project.lf_dir.join("state.db")).map_err(|e| e.to_string())?;
+            for run in store.runs(50).map_err(|e| e.to_string())? {
+                writeln!(out, "{} {} {}:{} {}", run.id, run.started_at, run.file, run.movement, run.status).map_err(|e| e.to_string())?;
+            }
+            Ok(0)
+        }
         other if NOT_YET.contains(&other) => {
             eprintln!("lf-host: `{other}` is not in lf-host yet; use the TypeScript lf for it");
             Ok(2)

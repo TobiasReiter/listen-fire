@@ -117,6 +117,11 @@ pub struct RunningExternal {
     pub supported_triggers: Vec<String>,
     /// What a listen on it may say (`WireListenDeclarations`), as JSON.
     pub listen: Obj,
+    /// The protocol methods it implements (`methods`).
+    pub methods: Vec<String>,
+    /// `runtimeCapabilities`, as it answered them.
+    pub runtime_capabilities: Js,
+    pub webhook_event_type_id: Option<String>,
     /// The started process; killed when this is dropped.
     _child: Option<Child>,
 }
@@ -145,7 +150,7 @@ async fn call(external: &External, base_url: &str, credentials: &Credentials, te
         refuse_stale(credential, jiff::Timestamp::now().as_millisecond())?;
     }
     let bearer = call_secret(external, credential)?;
-    post_rpc(Call { base_url, bearer, team_id: tenant, method, params }).await
+    Ok(post_rpc(Call { base_url, bearer, team_id: tenant, method, cache_scope_id: "<none>", params }).await?)
 }
 
 /// Start (or reach) every adapter external and read its manifest.
@@ -174,6 +179,9 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             base_url,
             supported_triggers: manifest.supported_triggers,
             listen: manifest.listen,
+            methods: manifest.methods,
+            runtime_capabilities: manifest.runtime_capabilities,
+            webhook_event_type_id: manifest.webhook_event_type_id,
             _child: child,
         });
     }
@@ -185,6 +193,9 @@ struct WireManifest {
     adapter_type: String,
     supported_triggers: Vec<String>,
     listen: Obj,
+    methods: Vec<String>,
+    runtime_capabilities: Js,
+    webhook_event_type_id: Option<String>,
 }
 
 impl WireManifest {
@@ -197,7 +208,7 @@ impl WireManifest {
         };
         let adapter_type = raw.get("adapterType").and_then(Js::as_str).ok_or("adapterType: expected string")?.to_string();
         let supported_triggers = strings("supportedTriggers")?;
-        strings("methods")?;
+        let methods = strings("methods")?;
         let capabilities = raw.get("runtimeCapabilities");
         let flag = |path: &[&str]| path.iter().try_fold(capabilities, |v, k| v.map(|v| v.get(k))).flatten().is_some_and(|v| matches!(v, Js::Bool(_)));
         if !(flag(&["traversal", "incoming"]) && flag(&["traversal", "edgeProperties"]) && flag(&["resources"])) {
@@ -211,7 +222,17 @@ impl WireManifest {
                 return Err(format!("supportedTriggers: \"{trigger}\" is not a trigger type ({})", TRIGGER_TYPES.join(", ")));
             }
         }
-        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)? })
+        // As the schema parses it: the two declared members, in order.
+        let traversal = capabilities.and_then(|c| c.get("traversal"));
+        let runtime_capabilities = Js::Obj(crate::obj! {
+            "traversal" => Js::Obj(crate::obj! {
+                "incoming" => traversal.and_then(|t| t.get("incoming")).cloned().unwrap_or(Js::Null),
+                "edgeProperties" => traversal.and_then(|t| t.get("edgeProperties")).cloned().unwrap_or(Js::Null),
+            }),
+            "resources" => capabilities.and_then(|c| c.get("resources")).cloned().unwrap_or(Js::Null),
+        });
+        let webhook_event_type_id = raw.get("webhookEventTypeId").and_then(Js::as_str).map(str::to_string);
+        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)?, methods, runtime_capabilities, webhook_event_type_id })
     }
 }
 
