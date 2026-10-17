@@ -1,6 +1,7 @@
 # Documentation
 
 - [`dev-loop.md`](dev-loop.md): the local development loop. Boot the whole stack against real Postgres and Redis and fake third-party services, drive the knowledge agents and the UI, inject synthetic inbound events, and inspect what the system did. This is how a change is verified end to end without an account anywhere. [`CONTRIBUTING.md`](../CONTRIBUTING.md) has the short version.
+- [`getting-started-lf.md`](getting-started-lf.md): running movements from a project folder with the `lf` command. [`core-slots.md`](core-slots.md): the modules `lf.yaml`'s `core:` chooses (models, judge, store, files). [`embedding.md`](embedding.md): running the engine inside your own product.
 - [`api-ingest.md`](api-ingest.md): the ingest API: submitting records over HTTP with an API key. [`api-ingest-slack.txt`](api-ingest-slack.txt) is the same content formatted for pasting into Slack.
 - [`contracts/`](contracts/README.md): the five versioned contracts the movement core speaks, with an index of the versions each release supports and deprecates. The catalog snapshot, the parked run state, the host families (the boundary between the engine and the code that runs it, and the entry points), the adapter protocol a remote adapter serves, and the language versions.
 - [`engine-host.md`](engine-host.md): how this repository's two hosts serve the host families: spend metering, the cross-run write locks, the production and test hosts, and what stays outside the contract.
