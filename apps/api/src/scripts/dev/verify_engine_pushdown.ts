@@ -91,9 +91,9 @@ function affinityOnFake(): AffinityAdapter {
 function movementSource(body: string): string {
   return `import { manual, affinity } from adapters
 import { affinity_cred } from credentials
-runs = manual()
-crm = affinity(credentials: affinity_cred)
-movement lookup(go: <runs-[:Invocation]->>) {
+runs = connect manual
+crm = connect affinity using affinity_cred
+function lookup(go: <runs-[:Invocation]->>) {
 ${body}
 }
 listen to runs {} fire lookup
@@ -103,12 +103,12 @@ listen to runs {} fire lookup
 /** The hop names `host`, a value bound a line earlier — the shape production
  *  writes, and the one that used to reach the adapter unresolved. */
 const BOUND_NAME = `  host = "${TARGET.domain}"
-  found = FIRST(crm-[o:Organization WHERE \`Domain\` == host ORDER BY \`Name\`]->)
-  if found == null { ERROR("no organization matched") }`;
+  found = first(crm-[o:Organization WHERE o.\`Domain\` == host ORDER BY o.\`Name\`]->)
+  if (found == null) { fail("no organization matched") }`;
 
 /** The control: nothing to narrow by, so the walk pages the workspace. */
-const NO_WHERE = `  found = FIRST(crm-[o:Organization ORDER BY \`Name\`]->)
-  if found == null { ERROR("no organization matched") }`;
+const NO_WHERE = `  found = first(crm-[o:Organization ORDER BY o.\`Name\`]->)
+  if (found == null) { fail("no organization matched") }`;
 
 function manualEvent(): TriggerEvent {
   return {

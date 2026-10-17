@@ -83,10 +83,10 @@ async function snapshot(adapter: AffinityAdapter): Promise<CatalogSnapshot> {
 const SOURCE = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 
-movement sync(e: <crm-[:\`Organization\`]->>) {
-  crm-[org:\`Organization\` WHERE \`Domain\` == "graphredesign.co"]-> {
+function sync(e: <crm-[:\`Organization\`]->>) {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "graphredesign.co"]-> {
     write org-[:\`List Entries\`]-> {
       listName: "Pipeline",
       \`Deal Stage\`: "Sourced",
@@ -110,10 +110,10 @@ movement sync(e: <crm-[:\`Organization\`]->>) {
 const OWNERS_SOURCE = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 
-movement sync(e: <crm-[:\`Organization\`]->>) {
-  crm-[org:\`Organization\` WHERE \`Domain\` == "graphredesign.co"]-> {
+function sync(e: <crm-[:\`Organization\`]->>) {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "graphredesign.co"]-> {
     entry = write org-[:\`List Entries\`]-> { listName: "Pipeline", \`Deal Stage\`: "Sourced" }
     write entry-[:\`Owners\`]-> { \`First name\`: "Olivia", \`Last name\`: "Owner", Email: "o@example.com" }
   }

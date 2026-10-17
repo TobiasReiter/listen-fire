@@ -65,19 +65,23 @@ const TELEGRAM_VOICE_MOVEMENT = `
 import { telegram, slack } from adapters
 import { \`Dev Loop Telegram\`, \`Dev Loop Slack\` } from credentials
 
-tg   = telegram(credentials: \`Dev Loop Telegram\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+tg   = connect telegram using \`Dev Loop Telegram\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement telegram_voice_intake(m: <tg-[:\`Message\`]->>) {
-  extracted = extract from [m.\`Text\`, m-[:Attachments]->.\`File\`] {
-    node update: "Each distinct update, report, or request in this message — including anything SPOKEN in an attached voice note or audio file (the audio's transcript is part of the source text)." {
-      summary: "a one-sentence summary of the update in the sender's own words"
-    }
+node ExtractedShape: "the relevant information in the content" {
+  node update: "Each distinct update, report, or request in this message — including anything SPOKEN in an attached voice note or audio file (the audio's transcript is part of the source text)." {
+    summary: <text> "a one-sentence summary of the update in the sender's own words"
   }
-  extracted-[u:update]-> {
-    chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
-      write ch-[:Messages]-> {
-        Message: "Telegram update: \${u.summary}"
+}
+
+function telegram_voice_intake(m: <tg-[:\`Message\`]->>) {
+  extracted = extractOne([m.\`Text\`, m-[:Attachments]->.\`File\`], ExtractedShape)
+  if (extracted != null) {
+    extracted-[u:update]-> {
+      chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
+        write ch-[:Messages]-> {
+          Message: "Telegram update: \${u.summary}"
+        }
       }
     }
   }
@@ -92,9 +96,9 @@ const TELEGRAM_REPLY_MOVEMENT = `
 import { telegram } from adapters
 import { \`Dev Loop Telegram\` } from credentials
 
-tg = telegram(credentials: \`Dev Loop Telegram\`)
+tg = connect telegram using \`Dev Loop Telegram\`
 
-movement tg_reply(m: <tg-[:\`Message\`]->>) {
+function tg_reply(m: <tg-[:\`Message\`]->>) {
   write m-[:Replies]-> {
     Text: "Noted: \${m.\`Text\`}"
   }
@@ -109,10 +113,10 @@ const TELEGRAM_DM_MOVEMENT = `
 import { telegram } from adapters
 import { \`Dev Loop Telegram\` } from credentials
 
-tg = telegram(credentials: \`Dev Loop Telegram\`)
+tg = connect telegram using \`Dev Loop Telegram\`
 
-movement tg_dm(m: <tg-[:\`Message\`]->>) {
-  tg-[u:\`Linked Users\` WHERE \`Email\` == "${DEV_LOOP_EMAIL}"]-> {
+function tg_dm(m: <tg-[:\`Message\`]->>) {
+  tg-[u:\`Linked Users\` WHERE u.\`Email\` == "${DEV_LOOP_EMAIL}"]-> {
     write u-[:Messages]-> {
       Text: "DM for \${u.\`Email\`}: saw \\"\${m.\`Text\`}\\""
     }

@@ -118,21 +118,25 @@ const MOVEMENT_NAME = 'background_run_context_probe';
 
 const program = (website: string) => `
 import { manual } from adapters
-import { fetch_url } from plugins
+import { fetchUrl } from plugins
 
-runs = manual()
+runs = connect manual
 
-movement ${MOVEMENT_NAME}(go: <runs-[:Invocation]->>) {
-  found = extract from [go.\`Text\`] {
-    node company: "each company named in this message" {
-      name:    "the company's name"
-      website: "the company's web address, if the message gives one"
-    } through [
-      fetch_url(url: website, email: "x@y.z")
-    ] {
-      motto: "the company's motto, exactly as its own page words it"
-    }
-  }
+node Company: "each company named in this message" {
+  name:    <text> "the company's name"
+  website: <text> "the company's web address, if the message gives one"
+}
+
+node Page: "the company's own page" {
+  motto: <text> "the company's motto, exactly as its own page words it"
+}
+
+function ${MOVEMENT_NAME}(go: <runs-[:Invocation]->>) {
+  companies = extract([go.\`Text\`], Company)
+  mottos = map(companies, (c) => {
+    page = fetchUrl(c.website, { email: "x@y.z" })
+    return extractOne([page], Page)
+  })
 }
 
 listen to runs {} fire ${MOVEMENT_NAME}

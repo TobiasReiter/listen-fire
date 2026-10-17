@@ -407,6 +407,10 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - `pnpm dev:whatsapp setup` ships its two movements in the version 5 spelling (`connect`,
   `function`, a walk's field read through its alias), so the setup saves on a version 5 stack.
 
+### close-devscripts
+
+- The dev scripts that ship movement source (`pnpm dev:airtable`, `dev:dealroom`, `dev:granola`, `dev:telegram`, `dev:gmail`, `dev:evertrace`, the `verify_*` probes and the `.mvt` fixtures) are respelled for version 5, so the dev loop no longer saves movements that version 5 refuses.
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)

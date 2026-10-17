@@ -1,12 +1,12 @@
 import { manual, attio, slack, ask } from adapters
 import { `Dev Loop Attio`, `Dev Loop Slack` } from credentials
 
-runs = manual()
-crm  = attio(credentials: `Dev Loop Attio`)
-chat = slack(credentials: `Dev Loop Slack`)
-asks = ask()
+runs = connect manual
+crm  = connect attio using `Dev Loop Attio`
+chat = connect slack using `Dev Loop Slack`
+asks = connect ask
 
-movement ask_provide_demo(go: <runs-[:Invocation]->>) {
+function ask_provide_demo(go: <runs-[:Invocation]->>) {
   # Write the question along its family edge — the record mints a readable Url.
   q = write asks-[:Provide]-> {
     Prompt: "Approved amount?"
@@ -15,14 +15,14 @@ movement ask_provide_demo(go: <runs-[:Invocation]->>) {
   }
 
   # Deliver the link (the ONLY delivery affordance — the adapter sends nothing).
-  chat-[ch:Channels WHERE `Name` == "dealflow"]-> {
+  chat-[ch:Channels WHERE ch.`Name` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "Amount needed: ${q.Url}"
     }
   }
 
   # Park until the Response lands, then read the typed answer.
-  answer = await FIRST(q-[:Response]->)
+  answer = await first(q-[:Response]->)
   write crm-[:Companies]-> { Domains: "amount.example", Name: "AMOUNT-${answer.Answer}" }
 }
 

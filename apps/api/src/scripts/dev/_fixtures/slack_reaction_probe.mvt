@@ -1,11 +1,11 @@
 import { slack } from adapters
 import { `Dev Loop Slack` } from credentials
 
-chat = slack(credentials: `Dev Loop Slack`)
+chat = connect slack using `Dev Loop Slack`
 
 # React to the message that fired the run, then reply — so the run's effect is
 # visible on the message itself (the reaction) and in the channel (the reply).
-movement slack_reaction_probe(msg: <chat-[:Message]->>) {
+function slack_reaction_probe(msg: <chat-[:Message]->>) {
   write msg-[:Reactions]-> { Emoji: "eyes" }
   write msg-[:Replies]-> { Message: "Picked it up." }
 }

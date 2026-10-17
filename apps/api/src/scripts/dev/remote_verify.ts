@@ -44,9 +44,9 @@ import {
  *  resolved to the remote server's internal id at the wire boundary. */
 const REMOTE_MOVEMENT = `
 import { manual, acme_crm } from adapters
-crm = acme_crm()
-runs = manual()
-movement push_company(go: <runs-[:Invocation]->>) {
+crm = connect acme_crm
+runs = connect manual
+function push_company(go: <runs-[:Invocation]->>) {
   write crm-[:Company]-> { Name: "Vireo Robotics" }
 }
 listen to runs {} fire push_company

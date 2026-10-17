@@ -56,10 +56,10 @@ const MOVEMENT = `
 import { telegram, ask } from adapters
 import { \`Dev Loop Telegram\` } from credentials
 
-tg = telegram(credentials: \`Dev Loop Telegram\`)
-questions = ask()
+tg = connect telegram using \`Dev Loop Telegram\`
+questions = connect ask
 
-movement tg_ask_buttons(m: <tg-[:\`Message\`]->>) {
+function tg_ask_buttons(m: <tg-[:\`Message\`]->>) {
   q = write questions-[:Check]-> {
     Prompt: "Send the update?"
     Detail: "\${m.\`Text\`}"
@@ -75,8 +75,8 @@ movement tg_ask_buttons(m: <tg-[:\`Message\`]->>) {
     }
   }
 
-  answer = await FIRST(q-[:Response]->)
-  if answer.Answer {
+  answer = await first(q-[:Response]->)
+  if (answer.Answer) {
     write m-[:Replies]-> { Text: "Approved." }
   }
 }

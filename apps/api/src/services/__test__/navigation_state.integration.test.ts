@@ -289,8 +289,8 @@ describe('NavigationState — integration', () => {
   describe('history recording', () => {
     it('records each pinned name in navigation_history', async () => {
       seeded = await seedTeamAndConversation();
-      await navigateTo(seeded.conversationId, { tgName: 'Dealflow' });
-      await navigateTo(seeded.conversationId, { tgName: 'Dealflow v2' });
+      await navigateTo(seeded.conversationId, { triggerName: 'Dealflow' });
+      await navigateTo(seeded.conversationId, { triggerName: 'Dealflow v2' });
 
       const row = await getQb(['agent_conversation'])
         .selectFrom('agent_conversation')
@@ -300,8 +300,8 @@ describe('NavigationState — integration', () => {
 
       const history = row.navigation_history as Array<{ kind: string; name: string; at: string }>;
       expect(history).toHaveLength(2);
-      expect(history[0]).toMatchObject({ kind: 'translation_graph', name: 'Dealflow' });
-      expect(history[1]).toMatchObject({ kind: 'translation_graph', name: 'Dealflow v2' });
+      expect(history[0]).toMatchObject({ kind: 'trigger', name: 'Dealflow' });
+      expect(history[1]).toMatchObject({ kind: 'trigger', name: 'Dealflow v2' });
     });
   });
 });

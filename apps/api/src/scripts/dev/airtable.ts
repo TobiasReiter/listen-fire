@@ -97,13 +97,13 @@ const AIRTABLE_MOVEMENT = `
 import { airtable, slack } from adapters
 import { \`Dev Loop Airtable\`, \`Dev Loop Slack\` } from credentials
 
-at   = airtable(credentials: \`Dev Loop Airtable\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+at   = connect airtable using \`Dev Loop Airtable\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement airtable_intake(e: <at-[:\`Record Change\`
+function airtable_intake(e: <at-[:\`Record Change\`
       WHERE \`action\` == "record.created" AND \`base\` == "${DEV_AIRTABLE_BASE_ID}" AND \`table\` == "${DEV_AIRTABLE_TABLE_ID}"]->>) {
   e-[r:Record]-> {
-    chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+    chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
       write ch-[:Messages]-> {
         Message: "Airtable record created: \${r.\`Name\`} (stage \${r.\`Stage\`})"
       }
@@ -131,13 +131,13 @@ const AIRTABLE_POSITIONED_MOVEMENT = `
 import { airtable, slack } from adapters
 import { \`Dev Loop Airtable\`, \`Dev Loop Slack\` } from credentials
 
-at   = airtable(credentials: \`Dev Loop Airtable\`, base: "${DEV_AIRTABLE_BASE_NAME}")
-chat = slack(credentials: \`Dev Loop Slack\`)
+at   = connect airtable using \`Dev Loop Airtable\` { base: "${DEV_AIRTABLE_BASE_NAME}" }
+chat = connect slack using \`Dev Loop Slack\`
 
-movement airtable_intake_positioned(e: <at-[:\`Record Change\`
+function airtable_intake_positioned(e: <at-[:\`Record Change\`
       WHERE \`action\` == "record.created" AND \`table\` == "${DEV_AIRTABLE_TABLE_ID}"]->>) {
   e-[r:Record]-> {
-    chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+    chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
       write ch-[:Messages]-> {
         Message: "Positioned intake: \${r.\`Name\`} (stage \${r.\`Stage\`})"
       }

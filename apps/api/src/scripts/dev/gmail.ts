@@ -96,7 +96,7 @@ function movementBody(mode: WriteMode): string {
     Body: "Thanks — got it, looking now."
   }`;
   }
-  return `  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+  return `  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "Gmail: \${msg.\`Subject\`} from \${msg.\`From\`} — \${msg.\`Body\`}"
     }
@@ -109,10 +109,10 @@ function gmailFile(scope: { query?: string; mode: WriteMode }): string {
 import { gmail, slack } from adapters
 import { \`Dev Loop Gmail\`, \`Dev Loop Slack\` } from credentials
 
-mail = gmail(credentials: \`Dev Loop Gmail\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+mail = connect gmail using \`Dev Loop Gmail\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement gmail_message_intake(msg: <mail-[:\`Message\`]->>) {
+function gmail_message_intake(msg: <mail-[:\`Message\`]->>) {
 ${movementBody(scope.mode)}
 }
 

@@ -81,21 +81,21 @@ function evertraceFile(scope: { list?: string; search?: string } = {}): string {
 import { evertrace, slack } from adapters
 import { \`Dev Loop Evertrace\`, \`Dev Loop Slack\` } from credentials
 
-et   = evertrace(credentials: \`Dev Loop Evertrace\`)
-chat = slack(credentials: \`Dev Loop Slack\`)
+et   = connect evertrace using \`Dev Loop Evertrace\`
+chat = connect slack using \`Dev Loop Slack\`
 
-movement evertrace_intake(sig: <et-[:\`Signal\`]->>) {
-  chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+function evertrace_intake(sig: <et-[:\`Signal\`]->>) {
+  chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
     write ch-[:Messages]-> {
       Message: "Evertrace signal: \${sig.\`First Name\`} \${sig.\`Last Name\`} (\${sig.\`Score\`})"
     }
   }
 }
 
-movement evertrace_list_intake(entry: <et-[:\`List Entry\`]->>) {
+function evertrace_list_intake(entry: <et-[:\`List Entry\`]->>) {
   entry-[sig:\`Signal\`]-> {
     entry-[lst:\`List\`]-> {
-      chat-[ch:Channels WHERE \`Name\` == "dealflow"]-> {
+      chat-[ch:Channels WHERE ch.\`Name\` == "dealflow"]-> {
         write ch-[:Messages]-> {
           Message: "Evertrace list addition: \${sig.\`First Name\`} \${sig.\`Last Name\`} onto \${lst.\`Name\`}"
         }

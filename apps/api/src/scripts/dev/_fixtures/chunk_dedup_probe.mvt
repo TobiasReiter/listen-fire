@@ -1,8 +1,8 @@
 import { manual, slack } from adapters
 import { `Dev Loop Slack` } from credentials
 
-runs = manual()
-chat = slack(credentials: `Dev Loop Slack`)
+runs = connect manual
+chat = connect slack using `Dev Loop Slack`
 
 # A local node declaration (piece 1 of the four under verification): a
 # structure this file owns, with no address anywhere in a real system. Its
@@ -22,30 +22,34 @@ node Company {
 #       isolation is ever wanted instead)
 #   (c) each extracted company is deduplicated into `deduped` by FUZZY name
 #   (d) the deduplicated list is read back and posted as the run's result
-movement chunk_dedup_probe(go: <runs-[:Invocation]->>) {
+node FoundShape: "the relevant information in the content" {
+  node company: "each company named in this piece of text" {
+    name: <text> "the company's name"
+    website: <text> "the company's website, if the text gives one"
+  }
+}
+
+function chunk_dedup_probe(go: <runs-[:Invocation]->>) {
   deduped = node { companies: <Company> }
 
-  pieces = CHUNKS(go.`Text`, { size: 110, overlap: 15 })
+  pieces = Text.chunks(go.`Text`, { size: 110, overlap: 15 })
 
-  found = extract from [pieces] {
-    node company: "each company named in this piece of text" {
-      name: "the company's name"
-      website: "the company's website, if the text gives one"
+  found = extractOne([...pieces], FoundShape)
+
+  if (found != null) {
+    found-[c:company]-> {
+      write deduped-[:companies]-> {
+        unique by (FUZZY name)
+        name: c.`name`
+        website ?: c.`website`
+      }
     }
   }
 
-  found-[c:company]-> {
-    write deduped-[:companies]-> {
-      unique by (FUZZY name)
-      name: c.`name`
-      website ?: c.`website`
-    }
-  }
+  names = List.from(deduped-[c:companies ORDER BY c.`name`]->.`name`)
+  summary = Text.join(names, ", ")
 
-  names = COLLECT(deduped-[:companies ORDER BY `name`]->.`name`)
-  summary = JOIN(names, ", ")
-
-  chat-[ch:Channels WHERE `Name` == "general"]-> {
+  chat-[ch:Channels WHERE ch.`Name` == "general"]-> {
     write ch-[:Messages]-> { Message: "Deduplicated companies: ${summary}" }
   }
 }

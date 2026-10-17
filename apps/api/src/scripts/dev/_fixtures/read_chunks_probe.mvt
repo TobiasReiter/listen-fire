@@ -1,8 +1,8 @@
 import { manual, slack } from adapters
 import { `Dev Loop Slack` } from credentials
 
-runs = manual()
-chat = slack(credentials: `Dev Loop Slack`)
+runs = connect manual
+chat = connect slack using `Dev Loop Slack`
 
 # Verifies READ + CHUNKS over the SAME file-extraction seam `extract from [
 # … .`File`]` already uses: reuses the born-digital attachment
@@ -12,21 +12,25 @@ chat = slack(credentials: `Dev Loop Slack`)
 # handing the raw file straight to `extract from [ … ]`. Confirms both new
 # built-ins' trace entries (`read`, `chunks`) appear on the run alongside the
 # extraction's own trace, and that extraction still emits off the cut text.
-movement read_chunks_probe(go: <runs-[:Invocation]->>) {
-  chat-[ch:Channels WHERE `Name` == "general"]-> {
+node FoundShape: "the relevant information in the content" {
+  node company: "each company named in this piece of text" {
+    name: <text> "the company's name"
+    stage: <text> "the funding round or stage the document names, if any"
+  }
+}
+
+function read_chunks_probe(go: <runs-[:Invocation]->>) {
+  chat-[ch:Channels WHERE ch.`Name` == "general"]-> {
     ch-[m:Messages]-> {
       m-[f:Files]-> {
-        pieces = CHUNKS(READ(f.`File`), { size: 120, overlap: 20 })
+        pieces = Text.chunks(File.read(f.`File`), { size: 120, overlap: 20 })
 
-        found = extract from [pieces] {
-          node company: "each company named in this piece of text" {
-            name: "the company's name"
-            stage: "the funding round or stage the document names, if any"
+        found = extractOne([...pieces], FoundShape)
+
+        if (found != null) {
+          found-[c:company]-> {
+            write m-[:Replies]-> { Message ?: c.`name` }
           }
-        }
-
-        found-[c:company]-> {
-          write m-[:Replies]-> { Message ?: c.`name` }
         }
       }
     }

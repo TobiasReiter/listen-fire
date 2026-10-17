@@ -53,10 +53,10 @@ const MOVEMENT = `
 import { telegram, ask } from adapters
 import { \`Dev Loop Telegram Builtin\` } from credentials
 
-tg = telegram(credentials: \`Dev Loop Telegram Builtin\`)
-questions = ask()
+tg = connect telegram using \`Dev Loop Telegram Builtin\`
+questions = connect ask
 
-movement tg_ask_buttons_builtin(m: <tg-[:\`Message\`]->>) {
+function tg_ask_buttons_builtin(m: <tg-[:\`Message\`]->>) {
   q = write questions-[:Check]-> {
     Prompt: "Send the update? (builtin)"
     Detail: "\${m.\`Text\`}"
@@ -72,8 +72,8 @@ movement tg_ask_buttons_builtin(m: <tg-[:\`Message\`]->>) {
     }
   }
 
-  answer = await FIRST(q-[:Response]->)
-  if answer.Answer {
+  answer = await first(q-[:Response]->)
+  if (answer.Answer) {
     write m-[:Replies]-> { Text: "Approved (builtin)." }
   }
 }

@@ -165,6 +165,8 @@ const TRANSCRIPT = [
   '- Larkfield — canteen software for schools and workplaces, Denmark. No link yet.',
 ].join('\n');
 
+// Version 4 on purpose: the leg drives the TypeScript extraction pipeline
+// directly, and its `through […]` stage has no version 5 spelling.
 const PROGRAM = `
 import { email } from adapters
 import { fetch_url, web_research } from plugins
@@ -205,7 +207,7 @@ function findExtract(node: unknown): ExtractExpression | undefined {
 }
 
 async function runEndToEnd(userId: string | null): Promise<void> {
-  const extract = findExtract(parseProgram(PROGRAM));
+  const extract = findExtract(parseProgram(PROGRAM, { languageVersion: 4 }));
   if (!extract) throw new Error('no extract in the program');
 
   const trace: MovementTraceEntry[] = [];

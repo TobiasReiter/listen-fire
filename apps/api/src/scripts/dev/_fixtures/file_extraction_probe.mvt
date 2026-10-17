@@ -1,25 +1,29 @@
 import { manual, slack } from adapters
 import { `Dev Loop Slack` } from credentials
 
-runs = manual()
-chat = slack(credentials: `Dev Loop Slack`)
+runs = connect manual
+chat = connect slack using `Dev Loop Slack`
 
 # Read every document posted to a channel and pull the companies out of it.
 # The probe for "the run says what it read, and what it could not read": one of
 # the seeded attachments is a born-digital PDF (its own text layer is enough),
 # the other has no text layer at all and needs an OCR provider.
-movement file_extraction_probe(go: <runs-[:Invocation]->>) {
-  chat-[ch:Channels WHERE `Name` == "general"]-> {
-    ch-[m:Messages]-> {
-      found = extract from [m-[:Files]->.`File`] {
-        node company: "each company named in the attached document" {
-          name: "the company's name"
-          stage: "the funding round or stage the document names, if any"
-        }
-      }
+node FoundShape: "the relevant information in the content" {
+  node company: "each company named in the attached document" {
+    name: <text> "the company's name"
+    stage: <text> "the funding round or stage the document names, if any"
+  }
+}
 
-      found-[c:company]-> {
-        write m-[:Replies]-> { Message ?: c.`name` }
+function file_extraction_probe(go: <runs-[:Invocation]->>) {
+  chat-[ch:Channels WHERE ch.`Name` == "general"]-> {
+    ch-[m:Messages]-> {
+      found = extractOne([m-[:Files]->.`File`], FoundShape)
+
+      if (found != null) {
+        found-[c:company]-> {
+          write m-[:Replies]-> { Message ?: c.`name` }
+        }
       }
     }
   }

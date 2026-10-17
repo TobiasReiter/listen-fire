@@ -4,7 +4,7 @@
  * against THAT list's type — the read-side dual of the discriminated write.
  *
  * Four things to see:
- *   1. `o-[le:`List Entries` WHERE `listName` == "Pipeline"]->` narrows, so a
+ *   1. `o-[le:`List Entries` WHERE le.`listName` == "Pipeline"]->` narrows, so a
  *      made-up field in the SAME WHERE is an unknown-field error naming the
  *      list's own fields;
  *   2. it still narrows when the WHERE carries further conditions the members
@@ -132,14 +132,14 @@ function snapshotOf(schema: InstanceSchema): CatalogSnapshot {
 const PRELUDE = `import { affinity } from adapters
 import { affinity_creds } from credentials
 
-crm = affinity(credentials: affinity_creds)
+crm = connect affinity using affinity_creds
 `;
 
 function sourceFor(body: string): string {
   return `${PRELUDE}
-movement sync() {
+function sync() {
   cutoff = "2026-01-01"
-  crm-[org:\`Organization\` WHERE \`Domain\` == "graphredesign.co"]-> {
+  crm-[org:\`Organization\` WHERE org.\`Domain\` == "graphredesign.co"]-> {
 ${body}
   }
 }`;
@@ -166,37 +166,37 @@ async function check(
 const CASES: Array<{ label: string; body: string }> = [
   {
     label: 'narrowed, made-up field in the same WHERE',
-    body: '    org-[le:`List Entries` WHERE `listName` == "Pipeline" AND `Made Up Field` == "x"]-> { }',
+    body: '    org-[le:`List Entries` WHERE le.`listName` == "Pipeline" AND le.`Made Up Field` == "x"]-> { }',
   },
   {
     label: 'narrowed alongside an undecidable condition (the production shape)',
-    body: '    org-[le:`List Entries` WHERE `listName` == "Pipeline" AND `Made Up Field` >= cutoff]-> { }',
+    body: '    org-[le:`List Entries` WHERE le.`listName` == "Pipeline" AND le.`Made Up Field` >= cutoff]-> { }',
   },
   {
     label: 'narrowed, a real bare field of the list',
-    body: '    org-[le:`List Entries` WHERE `listName` == "Pipeline" AND `Deal Stage` == "Sourced"]-> { }',
+    body: '    org-[le:`List Entries` WHERE le.`listName` == "Pipeline" AND le.`Deal Stage` == "Sourced"]-> { }',
   },
   {
     label: 'narrowed, the OLD list-prefixed spelling',
-    body: '    org-[le:`List Entries` WHERE `listName` == "Pipeline" AND `[Pipeline] Deal Stage` == "Sourced"]-> { }',
+    body: '    org-[le:`List Entries` WHERE le.`listName` == "Pipeline" AND le.`[Pipeline] Deal Stage` == "Sourced"]-> { }',
   },
   {
     label: 'the alias reads the list’s own field',
     body:
-      '    org-[le:`List Entries` WHERE `listName` == "Pipeline"]-> {\n' +
+      '    org-[le:`List Entries` WHERE le.`listName` == "Pipeline"]-> {\n' +
       '      stage = le.`Deal Stage`\n' +
       '    }',
   },
   {
     label: 'the alias reads a made-up field',
     body:
-      '    org-[le:`List Entries` WHERE `listName` == "Pipeline"]-> {\n' +
+      '    org-[le:`List Entries` WHERE le.`listName` == "Pipeline"]-> {\n' +
       '      stage = le.`Made Up Field`\n' +
       '    }',
   },
   {
     label: 'NO literal list name — nothing narrows',
-    body: '    org-[le:`List Entries` WHERE `listName` == cutoff AND `Made Up Field` == "x"]-> { }',
+    body: '    org-[le:`List Entries` WHERE le.`listName` == cutoff AND le.`Made Up Field` == "x"]-> { }',
   },
 ];
 

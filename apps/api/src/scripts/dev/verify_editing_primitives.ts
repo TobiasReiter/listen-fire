@@ -19,9 +19,9 @@ const MOVEMENT_NAME = 'editing_primitives_probe';
 function program(name: string, note: string): string {
   return `import { manual } from adapters
 
-runs = manual()
+runs = connect manual
 
-movement ${name}(go: <runs-[:Invocation]->>) {
+function ${name}(go: <runs-[:Invocation]->>) {
   x = "${note}"
 }
 
@@ -132,9 +132,9 @@ async function main(): Promise<void> {
   const ambiguousName = 'ambiguous_probe';
   const ambiguousSource = `import { manual } from adapters
 
-runs = manual()
+runs = connect manual
 
-movement ${ambiguousName}(go: <runs-[:Invocation]->>) {
+function ${ambiguousName}(go: <runs-[:Invocation]->>) {
   a = "dup"
   b = "dup"
 }
