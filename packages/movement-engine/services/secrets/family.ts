@@ -165,10 +165,10 @@ export function createSecretsFamily(input: {
       const inFlight = refreshing.get(ref);
       if (inFlight !== undefined) return inFlight;
       const run = exclusive(ref, async (store) => {
+        await store.assertWritable?.(ref);
         const current = await fresh(store, ref);
         // Somebody refreshed it since the caller read it: theirs is the answer.
         if (current.version !== seenVersion) return current;
-        await store.assertWritable?.(ref);
         let changed: SecretFields;
         try {
           changed = await refresher(current);
