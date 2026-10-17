@@ -26,7 +26,13 @@ export type MovementEngineErrorCode =
   | 'MOVENG_PARK_NONSERIALIZABLE'
   // An author-thrown `ERROR("…")` — the movement deliberately failed the run
   // (async user interaction §3c). Surfaced as a FAILED trigger_run.
-  | 'MOVENG_ERROR';
+  | 'MOVENG_ERROR'
+  // A segment past one of its host's limits (docs/contracts/run-limits.md):
+  // never forgiven by a collection op's `onError`.
+  | 'MOVENG_LIMIT_STEPS'
+  | 'MOVENG_LIMIT_TEXT_SIZE'
+  | 'MOVENG_LIMIT_COLLECTION_SIZE'
+  | 'MOVENG_LIMIT_RESULT_SIZE';
 
 export class MovementEngineError extends Error {
   constructor(

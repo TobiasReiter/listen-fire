@@ -12,19 +12,10 @@ import { parkSources } from '../run_host/rules';
 import type { ParkSink } from './run';
 import { isCheckFailure } from './errors';
 
-import { adapterTable, type LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
-import { withFileOwners } from '../translation_graph/engine/files/file_owners';
-import { InMemoryWriteLocks, segmentWriteLocks, type WriteLocks } from '../write_locks/write_locks';
-import {
-  actingPrincipalOf,
-  appendingInto,
-  closeSegmentWith,
-  NEVER_CANCELLED,
-  openSegmentWith,
-  SegmentDirectory,
-  type ActingUserLookup,
-  type QueuedWake,
-} from './host_kit';
+import type { adapterTable, LiveAdapterResolver } from '../translation_graph/engine/adapter_table';
+import { InMemoryWriteLocks, type WriteLocks } from '../write_locks/write_locks';
+import { appendingInto, type ActingUserLookup, type QueuedWake } from './host_kit';
+import { inProcessHost } from '../embed/in_process_host';
 
 /** What a test supplies: any piece of any group, the rest defaulted. */
 export interface TestHostOverrides {
@@ -68,10 +59,6 @@ export interface TestHostOverrides {
 /** The instant a test host's clock answers unless the test sets another. */
 export const TEST_HOST_NOW = '2026-01-01T00:00:00.000Z';
 
-function notProvided(piece: string): Error {
-  return new Error(`EngineHost.${piece} not provided`);
-}
-
 /**
  * A host for tests: every piece the test does not supply is in memory, finds
  * nothing, or throws naming itself when the run reaches it. A segment opens
@@ -83,112 +70,48 @@ function notProvided(piece: string): Error {
  * host without them (`makeFakeParkSink` is an in-memory park sink).
  */
 export function makeTestHost(overrides: TestHostOverrides = {}): EngineHost {
-  const { segment = {}, adapters = {}, llm = {}, park = {}, control = {}, files = {}, lookup = {}, wakes = [] } =
-    overrides;
+  const { segment = {}, adapters, llm, park = {}, control, files = {}, lookup, locks, writeSink, wakes = [] } = overrides;
   let opened = 0;
-  const segments = new SegmentDirectory();
-  const table = adapterTable({
-    segments,
-    resolveLive:
-      adapters.resolve ??
-      (() => {
-        throw notProvided('adapters.resolve');
-      }),
-    ...(adapters.around !== undefined ? { around: adapters.around } : {}),
-    ...(adapters.classify !== undefined ? { classify: adapters.classify } : {}),
-    ...(overrides.writeSink !== undefined ? { writeSink: overrides.writeSink } : {}),
-    // A rehearsal's invented ids, deterministic too: their own sequence, so
-    // they never meet the ids `ids.mint` answers.
-    rehearsalIds: guidSequence(1).next,
-  });
-  const locks = segmentWriteLocks(overrides.locks ?? new InMemoryWriteLocks());
-  const open = segment.open ?? (async () => ({ segmentId: `test-segment-${++opened}` }));
-  const close = segment.close ?? (async () => ({}));
-  const teamOf = (segmentId: string) => segments.facts(segmentId).teamId;
   // Deterministic by default, so a recorded run is the same run every time:
   // one fixed instant, and ids from a GUID sequence in the order asked.
   const nowIso = overrides.now ?? TEST_HOST_NOW;
   const guids = guidSequence();
-  return {
+  const segmentTeams = new Map<string, QueuedWake['teamId']>();
+  return inProcessHost({
+    ...(adapters !== undefined ? { adapters } : {}),
+    ...(llm !== undefined ? { llm } : {}),
+    ...(control !== undefined ? { control } : {}),
+    ...(lookup !== undefined ? { lookup } : {}),
+    ...(locks !== undefined ? { locks } : {}),
+    ...(writeSink !== undefined ? { writeSink } : {}),
     segment: {
-      open: (input) => openSegmentWith(input, { segments, locks, open }),
-      close: async (input) => closeSegmentWith(input, { segments, table, locks, close }),
-    },
-    clock: overrides.clock ?? { now: async () => ({ nowIso }) },
-    ids: overrides.ids ?? { mint: async ({ count }) => guids.take(count) },
-    adapters: { resolve: (input) => table.resolve(input), call: (input) => table.call(input) },
-    llm: {
-      client: llm.client ?? {
-        call: async () => {
-          throw notProvided('llm.client');
-        },
+      ...segment,
+      open: async (input) => {
+        const answer = await (segment.open ?? (async () => ({ segmentId: `test-segment-${++opened}` })))(input);
+        segmentTeams.set(answer.segmentId, input.teamId);
+        return answer;
       },
-      extractCall: llm.extractCall ?? {
-        call: async () => {
-          throw notProvided('llm.extractCall');
-        },
-      },
-      transforms: llm.transforms ?? {
-        invoke: async () => {
-          throw notProvided('llm.transforms');
-        },
-      },
-      arbitrateEntities:
-        llm.arbitrateEntities ??
-        (async () => {
-          throw notProvided('llm.arbitrateEntities');
-        }),
     },
     park: {
-      ...(park.sink !== undefined ? { sink: park.sink } : {}),
-      ...(park.callbacks !== undefined ? { callbacks: park.callbacks } : {}),
-      ...(park.sources !== undefined ? { sources: park.sources } : {}),
+      ...park,
       wake:
         park.wake ??
         (async ({ segmentId, adapterType, correlationKey }) => {
-          wakes.push({ adapterType, teamId: teamOf(segmentId), correlationKey });
+          const teamId = segmentTeams.get(segmentId);
+          if (teamId === undefined) throw new Error(`segment ${segmentId} is not open`);
+          wakes.push({ adapterType, teamId, correlationKey });
         }),
-      bindings: park.bindings ?? {
-        record: async () => {
-          throw notProvided('park.bindings');
-        },
-        findBoundCounterpart: async () => {
-          throw notProvided('park.bindings');
-        },
-        delete: async () => {
-          throw notProvided('park.bindings');
-        },
-      },
     },
-    control: {
-      cancel: control.cancel ?? NEVER_CANCELLED,
-    },
-    files: {
-      // As production reads a file: through an instance the segment holds.
-      resolveFileText: async (input) => {
-        const read = files.resolveFileText;
-        if (read === undefined) throw notProvided('files.resolveFileText');
-        return withFileOwners(table.fileOwners(input.segmentId), () => read(input));
-      },
-      render: files.render ?? renderIntoNowhere(),
-    },
-    lookup: {
-      resolveActingUser: async ({ triggerId, segmentId, instance, event }) => {
-        const resolve = lookup.resolveActingUser;
-        if (resolve === undefined) return null;
-        return actingPrincipalOf(await resolve({
-          teamId: teamOf(segmentId),
-          ...(triggerId !== undefined ? { triggerId } : {}),
-          getCandidates: () =>
-            table.answer({ segmentId, instance, method: 'getActorCandidates', args: { event } }),
-        }));
-      },
-    },
-    locks: { acquire: (input) => locks.acquire(input), release: (input) => locks.release(input) },
+    files: { render: renderIntoNowhere(), ...files },
     ...(overrides.trace !== undefined || overrides.traceAppends !== undefined
       ? { trace: recordingTrace(overrides.trace, overrides.traceAppends) }
       : {}),
-  };
+    clock: overrides.clock ?? { now: async () => ({ nowIso }) },
+    ids: overrides.ids ?? { mint: async ({ count }) => guids.take(count) },
+    // A rehearsal's invented ids, deterministic too: their own sequence, so
+    // they never meet the ids `ids.mint` answers.
+    rehearsalIds: guidSequence(1).next,
+  });
 }
 
 function recordingTrace(

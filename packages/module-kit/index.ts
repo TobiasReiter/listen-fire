@@ -10,6 +10,7 @@ export * from './served_files';
 export * from './module_server';
 export * from './serve';
 export * from './host_models';
+export * from './embed';
 export {
   AdapterBadRequestError,
   DRAINED_PAGE_LIMIT,

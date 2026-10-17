@@ -73,6 +73,15 @@ const runInputSchema = z.object({
   dryRun: z.boolean().optional(),
   suspendAt: z.array(z.string()).optional(),
   credentialIds: z.record(z.string(), z.string()).optional(),
+  limits: z
+    .object({
+      maxSteps: z.number().optional(),
+      maxTextBytes: z.number().optional(),
+      maxCollectionItems: z.number().optional(),
+      maxResultBytes: z.number().optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 const resumeInputSchema = runInputSchema.extend({
