@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { OAuth2Client } from 'google-auth-library';
 import { logger } from 'movement-engine/services/logger';
-import { createOAuth2Connector, createSecretsFamily, OAuth2ExchangeFailed, type OAuth2Connector, type OAuth2Declaration } from 'movement-engine/public/secrets';
+import {
+  createOAuth2Connector,
+  createSecretsFamily,
+  OAuth2ExchangeFailed,
+  type OAuth2ClientApp,
+  type OAuth2Connector,
+  type OAuth2Declaration,
+} from 'movement-engine/public/secrets';
 
 import { camelTokenPayloadShape, postgresSecrets } from '../../services/credentials/secrets_postgres';
 
@@ -29,6 +36,14 @@ export const googleOAuth2: OAuth2Declaration = {
   pkce: true,
   authorizeParams: { ...GOOGLE_OFFLINE_CONSENT },
 };
+
+/** The platform's own Google app (Sheets and Drive), from the environment
+ *  `services.google` is built from; undefined when it is not configured. */
+export function googleIntegrationsApp(env: Readonly<Record<string, string | undefined>> = process.env): OAuth2ClientApp | undefined {
+  const clientId = env.GOOGLE_INTEGRATIONS_CLIENT_ID;
+  const clientSecret = env.GOOGLE_INTEGRATIONS_CLIENT_SECRET;
+  return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
 
 /** What a Google token endpoint must grant a connect: a refresh token and an
  *  expiry beside the access token. */

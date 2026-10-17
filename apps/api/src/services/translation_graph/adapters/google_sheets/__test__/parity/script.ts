@@ -15,7 +15,7 @@ import type { Expression } from '#shared/expression/types';
 import type { Adapter, MutationContext, ParentLink, RelatedResult } from 'movement-engine/public/adapter';
 import type { SourcePosition } from 'movement-engine/public/catalog';
 
-import { makeMetaPosition, makeStablePosition } from 'movement-engine/public/catalog';
+import { makeMetaPosition, makeStablePosition, positionData } from 'movement-engine/public/catalog';
 
 export interface ParitySubject {
   /** A fresh adapter for one call; positioned at a granted spreadsheet's
@@ -110,7 +110,7 @@ export async function runParityScript(subject: ParitySubject): Promise<Transcrip
     a.getRelated({ position: meta, fieldId: 'Companies (table)', direction: 'outgoing' }),
   );
   const landing = (title: string): SourcePosition =>
-    grants?.find((g: RelatedResult) => (g.position.data as { Title?: unknown } | undefined)?.Title === title)?.position ??
+    grants?.find((g: RelatedResult) => Reflect.get(Object(positionData(g.position)), 'Title') === title)?.position ??
     spreadsheetPosition(PARITY_GRANTS.find((g) => g.name === title)?.spreadsheetId ?? title, title);
   const pipeline = landing('Pipeline Sheet');
   const dealflow = landing('Dealflow Log');

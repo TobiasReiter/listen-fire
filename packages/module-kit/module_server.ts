@@ -31,8 +31,13 @@ export interface ModuleServerOptions {
   authenticate?: (headers: IncomingHttpHeaders) => boolean;
   log: ModuleLog;
   files: ModuleFiles;
-  kv: ModuleKv;
+  /** The kv of the tenant a request names. */
+  kvFor: (tenant: string) => ModuleKv;
   baseUrlOverride?: string;
+  /** The install's construction arguments (an entry position), the same for
+   *  every request: protocol 2 carries none, so a served module is one
+   *  install's. */
+  constructionArgs?: Readonly<Record<string, string>>;
 }
 
 function headerValue(headers: IncomingHttpHeaders, name: string): string | undefined {
@@ -117,17 +122,19 @@ async function answer(options: ModuleServerOptions, req: IncomingMessage, reques
   const { definition } = options;
   const updates: Record<string, string> = {};
   const credential = requestCredential(definition, request.credential, updates);
+  const tenant = headerValue(req.headers, ADAPTER_TEAM_HEADER) ?? '';
   let loaded: LoadedModule;
   try {
     loaded = loadedModule(
       definition,
       moduleContext({
-        tenant: headerValue(req.headers, ADAPTER_TEAM_HEADER) ?? '',
+        tenant,
         credential,
         log: options.log,
         files: options.files,
-        kv: options.kv,
+        kv: options.kvFor(tenant),
         ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
+        ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
         validateResults: false,
       }),
     );

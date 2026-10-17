@@ -9,6 +9,7 @@ import { resolve as resolvePath } from 'node:path';
 
 import type { ModuleDefinition, ModuleLog } from './define';
 
+import { fileKv } from './file_kv';
 import { refusingFiles, refusingKv } from './in_process';
 import { createModuleProtocolHandler } from './module_server';
 
@@ -31,6 +32,11 @@ export interface ServeModuleOptions {
   token?: string;
   baseUrlOverride?: string;
   log?: ModuleLog;
+  /** Where the module's kv is kept, one file per tenant. Absent: the module
+   *  has no kv, and using it is refused. */
+  stateDir?: string;
+  /** The install's construction arguments, for every request. */
+  constructionArgs?: Readonly<Record<string, string>>;
 }
 
 export async function serveModule(options: ServeModuleOptions): Promise<{ port: number; server: Server }> {
@@ -38,12 +44,15 @@ export async function serveModule(options: ServeModuleOptions): Promise<{ port: 
   const log = options.log ?? jsonLineLog(definition.name, (line) => process.stderr.write(line));
   const unavailable = (what: string) =>
     `module ${definition.name}: ${what} is not available when the module is served as a process (protocol 2 carries files by URL and keeps no module state)`;
+  const { stateDir } = options;
+  const noKv = refusingKv(`${unavailable('ctx.kv')}; set MODULE_STATE_DIR to keep it in files`);
   const handler = createModuleProtocolHandler({
     definition,
     log,
     files: refusingFiles(unavailable('ctx.files')),
-    kv: refusingKv(unavailable('ctx.kv')),
+    kvFor: stateDir !== undefined ? (tenant) => fileKv(stateDir, tenant) : () => noKv,
     ...(options.baseUrlOverride !== undefined ? { baseUrlOverride: options.baseUrlOverride } : {}),
+    ...(options.constructionArgs !== undefined ? { constructionArgs: options.constructionArgs } : {}),
     ...(token !== undefined ? { authenticate: (headers) => headers.authorization === `Bearer ${token}` } : {}),
   });
   const server = createServer((req, res) => {
@@ -81,8 +90,21 @@ export function loadModuleDefinition(specifier: string, cwd: string): ModuleDefi
   throw new Error(`serve-module: ${specifier} exports no module (a default export or \`module\` made with defineModule)`);
 }
 
+/** A JSON object of strings (`MODULE_CONSTRUCTION_ARGS`), or a refusal. */
+export function parseConstructionArgs(text: string): Record<string, string> {
+  const refuse = (): never => {
+    throw new Error('serve-module: MODULE_CONSTRUCTION_ARGS is a JSON object of strings, e.g. {"spreadsheet":"Pipeline"}');
+  };
+  const parsed: unknown = JSON.parse(text);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return refuse();
+  const args: Record<string, string> = {};
+  for (const [name, value] of Object.entries(parsed)) args[name] = typeof value === 'string' ? value : refuse();
+  return args;
+}
+
 /** The command line: `serve-module <module> [--port N] [--host H]`; PORT,
- *  MODULE_TOKEN and MODULE_BASE_URL_OVERRIDE from the environment. */
+ *  MODULE_TOKEN, MODULE_BASE_URL_OVERRIDE, MODULE_STATE_DIR and
+ *  MODULE_CONSTRUCTION_ARGS from the environment. */
 export async function main(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): Promise<void> {
   const args = [...argv];
   const flag = (name: string): string | undefined => {
@@ -102,6 +124,10 @@ export async function main(argv: readonly string[], env: Readonly<Record<string,
     ...(host !== undefined ? { host } : {}),
     ...(env.MODULE_TOKEN !== undefined && env.MODULE_TOKEN !== '' ? { token: env.MODULE_TOKEN } : {}),
     ...(env.MODULE_BASE_URL_OVERRIDE !== undefined && env.MODULE_BASE_URL_OVERRIDE !== '' ? { baseUrlOverride: env.MODULE_BASE_URL_OVERRIDE } : {}),
+    ...(env.MODULE_STATE_DIR !== undefined && env.MODULE_STATE_DIR !== '' ? { stateDir: env.MODULE_STATE_DIR } : {}),
+    ...(env.MODULE_CONSTRUCTION_ARGS !== undefined && env.MODULE_CONSTRUCTION_ARGS !== ''
+      ? { constructionArgs: parseConstructionArgs(env.MODULE_CONSTRUCTION_ARGS) }
+      : {}),
   });
   process.stdout.write(`listening ${served.port}\n`);
 }

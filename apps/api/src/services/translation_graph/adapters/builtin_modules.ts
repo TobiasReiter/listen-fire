@@ -5,7 +5,10 @@
 // app starts, and the platform is then the module's host: the credential from
 // the encrypted store, the dev loop's fake as `baseUrlOverride` for the
 // test-harness team, the engine's logger, answers validated outside hosted
-// production (`inProcessValidationDefault`). The module declares the rest —
+// production (`inProcessValidationDefault`). A line may add what its module
+// needs of the host beyond that: how its stored payload reads as fields, the
+// platform's OAuth app that refreshes its token, its dev-loop fake, its kv and
+// files. The module declares the rest —
 // its poll, its periodic tasks, its signed inbound — and the platform acts on
 // the declarations, so nothing here names what a module does.
 
@@ -26,9 +29,17 @@ import {
   type InProcessPluginModule,
   type ModuleCredential,
   type ModuleDefinition,
+  type ModuleFiles,
+  type ModuleKv,
   type PluginModuleDefinition,
 } from 'module-kit';
-import { createSecretsFamily, type SecretsFamily } from 'movement-engine/public/secrets';
+import {
+  createSecretsFamily,
+  declaredRefresher,
+  expiresWithin,
+  type OAuth2ClientApp,
+  type SecretsFamily,
+} from 'movement-engine/public/secrets';
 import { declaredInboundVerifier, type InboundVerifier } from 'movement-engine/public/inbound';
 import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
@@ -36,17 +47,40 @@ import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
 import { getAutomationsQb } from '../../../lib/kysely';
-import { postgresSecrets } from '../../credentials/secrets_postgres';
+import { postgresSecrets, type PayloadShape } from '../../credentials/secrets_postgres';
 import { credentialTypeOf } from './credential_type';
 
 export type BuiltinLine = 'legacy' | 'module';
+
+/** What a module line asks of the platform as its host, beyond the
+ *  credential, the logger and validation every module line gets. */
+export interface ModuleLineHost {
+  /** How the stored credential payload reads as the module's fields (and
+   *  takes a write-back). Default: flat, its string keys as they are. */
+  storedAs?: PayloadShape;
+  /** The platform's own OAuth app at the provider. With one, an `oauth2`
+   *  credential is refreshed by the platform before it reaches the module. */
+  hostApp?: () => OAuth2ClientApp | undefined;
+  /** The install's kv. Default: refused, by name. */
+  kv?: (install: BuiltinInstall) => ModuleKv;
+  /** The install's files. Default: refused, by name. */
+  files?: (install: BuiltinInstall) => ModuleFiles;
+}
 
 /** One built-in's line. A module line names how to load the module, and the
  *  manifest the host lists it by without loading it. */
 export type BuiltinModuleLine =
   | { kind: 'adapter' | 'plugin'; line: 'legacy' }
-  | { kind: 'adapter'; line: 'module'; manifest: AdapterManifest; load: () => AdapterModuleDefinition }
-  | { kind: 'plugin'; line: 'module'; load: () => PluginModuleDefinition };
+  | (ModuleLineHost & {
+      kind: 'adapter';
+      line: 'module';
+      manifest: AdapterManifest;
+      load: () => AdapterModuleDefinition;
+      /** The dev loop's fake for this module, by its service name in the
+       *  recording layer. Default: the manifest's credential type. */
+      harnessService?: string;
+    })
+  | (ModuleLineHost & { kind: 'plugin'; line: 'module'; load: () => PluginModuleDefinition });
 
 /** The table a lookup reads: `BUILTIN_MODULES`, or a test's own. */
 export type BuiltinModuleTable = Readonly<Record<string, BuiltinModuleLine>>;
@@ -93,9 +127,9 @@ function moduleLineOf(name: string): AdapterModuleLine | undefined {
   return entry?.kind === 'adapter' && entry.line === 'module' ? entry : undefined;
 }
 
-/** Every adapter module line's definition, loaded. */
-function adapterModuleDefinitions(): AdapterModuleDefinition[] {
-  return Object.values(BUILTIN_MODULES).flatMap((entry) => (entry.kind === 'adapter' && entry.line === 'module' ? [entry.load()] : []));
+/** Every adapter module line. */
+function adapterModuleLines(): AdapterModuleLine[] {
+  return Object.values(BUILTIN_MODULES).flatMap((entry) => (entry.kind === 'adapter' && entry.line === 'module' ? [entry] : []));
 }
 
 /** What an install of a built-in is constructed for. */
@@ -105,9 +139,25 @@ export interface BuiltinInstall {
   constructionArgs?: Record<string, string>;
 }
 
-/** The install's credential, read and written back through the encrypted
- *  store (cipher and payload exactly as the connect flow stored them). */
-function storedCredential(definition: ModuleDefinition, install: BuiltinInstall, secrets: SecretsFamily): ModuleCredential {
+/** How long before its expiry the platform refreshes a token it hands a
+ *  module: google-auth-library's eager threshold, which the Google lines
+ *  refreshed by before they were modules. */
+export const HOST_REFRESH_WINDOW_MS = 5 * 60_000;
+
+/**
+ * The install's credential, read and written back through the encrypted
+ * store (cipher and payload exactly as the connect flow stored them, read as
+ * fields the way the line says). An `oauth2` credential on a line with a host
+ * app is refreshed first when it expires within the window: through the
+ * family, so one refresh runs at a time per credential here, and the store's
+ * lock and version keep two processes from spending one refresh token.
+ */
+function storedCredential(
+  definition: ModuleDefinition,
+  install: BuiltinInstall,
+  options: { secrets: SecretsFamily; hostApp?: () => OAuth2ClientApp | undefined },
+): ModuleCredential {
+  const { secrets, hostApp } = options;
   const declared = definition.credentials[0];
   const displayName = definition.kind === 'adapter' ? definition.manifest.displayName : definition.name;
   if (declared === undefined) return noCredential(`module ${definition.name} declares no credential`);
@@ -115,39 +165,63 @@ function storedCredential(definition: ModuleDefinition, install: BuiltinInstall,
   if (ref === undefined) {
     return noCredential(`${displayName}: no credential is connected for team ${install.teamId} (credentialsId unset). Connect ${displayName}.`);
   }
+  const refreshes = declared.kind === 'oauth2' && hostApp !== undefined;
   return {
     name: declared.name,
-    fields: async () => (await secrets.resolve(ref)).fields,
+    fields: async () => {
+      const record = await secrets.resolve(ref);
+      if (!refreshes || !expiresWithin(record.fields, HOST_REFRESH_WINDOW_MS)) return record.fields;
+      const client = hostApp();
+      if (client === undefined) {
+        throw new Error(`${displayName}: the token has expired and the platform has no ${displayName} OAuth app configured to refresh it.`);
+      }
+      const refresher = declaredRefresher(declared, { client });
+      if (refresher === undefined) return record.fields;
+      return (await secrets.refresh(ref, { seenVersion: record.version, refresher })).fields;
+    },
     update: async (fields) => {
       await secrets.update(ref, fields);
     },
   };
 }
 
-/** The dev loop's fake for the test-harness team, by the credential type the
- *  module's manifest names; nothing for anyone else. */
-function harnessBaseUrl(definition: AdapterModuleDefinition, teamId: TeamId): string | undefined {
-  const type = definition.manifest.requiredCredentialType;
-  if (!isTestHarnessTeam(teamId) || type === undefined) return undefined;
-  const redirected = injectFakeBaseUrl({}, type).baseUrl;
+/** The dev loop's fake for the test-harness team, by the service the line
+ *  names (default the manifest's credential type); nothing for anyone else. */
+function harnessBaseUrl(entry: AdapterModuleLine, definition: AdapterModuleDefinition, teamId: TeamId): string | undefined {
+  const service = entry.harnessService ?? definition.manifest.requiredCredentialType;
+  if (!isTestHarnessTeam(teamId) || service === undefined) return undefined;
+  const redirected = injectFakeBaseUrl({}, service).baseUrl;
   return typeof redirected === 'string' ? redirected : undefined;
 }
 
-/** A module line's adapter module, loaded in process for one install. */
-export function loadBuiltinModule(definition: AdapterModuleDefinition, install: BuiltinInstall): InProcessAdapterModule {
+/** What the platform hosts a module line's module with, for one install:
+ *  the stored credential, and the line's kv and files (refused by name
+ *  where the line names none). */
+function platformHost(
+  entry: ModuleLineHost,
+  definition: ModuleDefinition,
+  install: BuiltinInstall,
+): { credential: ModuleCredential; kv: ModuleKv; files: ModuleFiles } {
   const secrets = createSecretsFamily({
-    backend: postgresSecrets({ teamId: install.teamId }),
+    backend: postgresSecrets({ teamId: install.teamId, ...(entry.storedAs !== undefined ? { shape: entry.storedAs } : {}) }),
     warn: (message) => logger.warn(message),
   });
-  const unavailable = (what: string) =>
-    `module ${definition.name}: ${what} has no store on the platform yet (no built-in module uses it)`;
-  const baseUrlOverride = harnessBaseUrl(definition, install.teamId);
+  const unavailable = (what: string) => `module ${definition.name}: ${what} has no store on the platform for this module`;
+  return {
+    credential: storedCredential(definition, install, { secrets, ...(entry.hostApp !== undefined ? { hostApp: entry.hostApp } : {}) }),
+    kv: entry.kv?.(install) ?? refusingKv(unavailable('ctx.kv')),
+    files: entry.files?.(install) ?? refusingFiles(unavailable('ctx.files')),
+  };
+}
+
+/** A module line's adapter module, loaded in process for one install. */
+export function loadBuiltinModule(entry: AdapterModuleLine, install: BuiltinInstall): InProcessAdapterModule {
+  const definition = entry.load();
+  const baseUrlOverride = harnessBaseUrl(entry, definition, install.teamId);
   return adapterInProcess(definition, {
     tenant: install.teamId,
-    credential: storedCredential(definition, install, secrets),
+    ...platformHost(entry, definition, install),
     log: logger,
-    files: refusingFiles(unavailable('ctx.files')),
-    kv: refusingKv(unavailable('ctx.kv')),
     ...(baseUrlOverride !== undefined ? { baseUrlOverride } : {}),
     ...(install.constructionArgs !== undefined ? { constructionArgs: install.constructionArgs } : {}),
     validateResults: inProcessValidationDefault(process.env),
@@ -167,7 +241,7 @@ export function builtinAdapterFactory(
 ): (input: BuiltinInstall) => Adapter {
   const entry = moduleLineOf(adapterType);
   if (entry === undefined) return legacy;
-  return (install) => loadBuiltinModule(entry.load(), install).adapter;
+  return (install) => loadBuiltinModule(entry, install).adapter;
 }
 
 /** A registry poll source for a built-in: the module's declared poll when its
@@ -181,7 +255,7 @@ export function builtinPollSourceFactory(
   return (install) => {
     const definition = entry.load();
     const declared = definition.poll;
-    const loaded = loadBuiltinModule(definition, install);
+    const loaded = loadBuiltinModule(entry, install);
     const poll = loaded.poll;
     if (declared === undefined || poll === undefined) {
       throw new Error(`module ${definition.name} declares no poll; it is not a polled source`);
@@ -200,8 +274,8 @@ export function builtinPollSourceFactory(
  * verifies, as it always has).
  */
 export function builtinModuleInboundVerifier(providerKey: string): InboundVerifier | undefined {
-  for (const definition of adapterModuleDefinitions()) {
-    const declared = definition.inbound;
+  for (const entry of adapterModuleLines()) {
+    const declared = entry.load().inbound;
     if (declared !== undefined && declared.providerKey.toUpperCase() === providerKey.toUpperCase()) {
       return declaredInboundVerifier(declared);
     }
@@ -240,7 +314,8 @@ export function builtinModuleWorkKinds(
   listInstalls: (definition: AdapterModuleDefinition) => Promise<BuiltinInstall[]> = installsOf,
 ): WorkKindRegistration[] {
   const kinds: WorkKindRegistration[] = [];
-  for (const definition of adapterModuleDefinitions()) {
+  for (const entry of adapterModuleLines()) {
+    const definition = entry.load();
     for (const task of definition.periodic ?? []) {
       kinds.push({
         kind: `module_periodic:${definition.manifest.adapterType}:${task.name}`,
@@ -249,7 +324,7 @@ export function builtinModuleWorkKinds(
           async run() {
             for (const install of await listInstalls(definition)) {
               try {
-                await loadBuiltinModule(definition, install).runPeriodic?.(task.name);
+                await loadBuiltinModule(entry, install).runPeriodic?.(task.name);
               } catch (error) {
                 // One install's failure never stops the next.
                 logger.error(`[module] ${definition.name} periodic task ${task.name} failed for an install`, {
@@ -283,14 +358,10 @@ export function builtinPluginModule(
     if (entry.kind !== 'plugin' || entry.line !== 'module') continue;
     const definition = entry.load();
     if (pluginDeclarationNamed(definition.plugins, plugin) === undefined) continue;
-    const secrets = createSecretsFamily({ backend: postgresSecrets({ teamId: install.teamId }), warn: (message) => logger.warn(message) });
-    const unavailable = (what: string) => `module ${definition.name}: ${what} has no store on the platform yet (no built-in module uses it)`;
     return pluginsInProcess(definition, {
       tenant: install.teamId,
-      credential: storedCredential(definition, install, secrets),
+      ...platformHost(entry, definition, { teamId: install.teamId }),
       log: logger,
-      files: refusingFiles(unavailable('ctx.files')),
-      kv: refusingKv(unavailable('ctx.kv')),
       validateResults: inProcessValidationDefault(process.env),
     });
   }
