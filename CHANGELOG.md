@@ -378,6 +378,11 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
 - For embedders: `movement.wasm` no longer exports `eval_expression`, and `movement-lang` no longer
   exports `callEvalExpression`.
 
+### close-gate20
+
+- `pnpm dev:whatsapp setup` ships its two movements in the version 5 spelling (`connect`,
+  `function`, a walk's field read through its alias), so the setup saves on a version 5 stack.
+
 ### Self-hosting: the bundled object store is SeaweedFS (action needed if you used the bundled MinIO)
 
 - **The compose bundle's object store is now [SeaweedFS](https://github.com/seaweedfs/seaweedfs)
