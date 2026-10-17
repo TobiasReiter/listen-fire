@@ -31,6 +31,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json apps/api/
 COPY packages/principal/package.json packages/principal/
 COPY packages/file-text/package.json packages/file-text/
+
+COPY packages/model-providers/package.json packages/model-providers/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/shared/package.json packages/shared/
 COPY packages/movement-lang/package.json packages/movement-lang/

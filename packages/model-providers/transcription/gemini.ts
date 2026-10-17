@@ -2,11 +2,11 @@
 // request as an inline part, with its MIME type as a MIME type, and the model
 // is asked for the words.
 
+import type { ModelHost } from '../host';
 import type { Resolved } from 'movement-engine/lib/models/map';
 import type { TranscriptionRequest, TranscriptionResult } from './index';
 
 import { logger } from 'movement-engine/services/logger';
-import { recordLlmUsage } from '../../llm_usage';
 import { geminiClient } from '../providers/gemini';
 import { geminiAudioMimeType } from './audio_format';
 
@@ -39,7 +39,7 @@ const TRANSCRIBE_PROMPT =
 export async function geminiTranscribe(
   resolved: Resolved,
   req: TranscriptionRequest,
-  env: NodeJS.ProcessEnv,
+  host: ModelHost,
 ): Promise<TranscriptionResult> {
   const { wireModel } = resolved;
   // A format Gemini does not take fails by name here rather than being sent
@@ -67,7 +67,7 @@ export async function geminiTranscribe(
   });
 
   const startMs = Date.now();
-  const response = await geminiClient(env).models.generateContent({
+  const response = await geminiClient(host.env).models.generateContent({
     model: wireModel,
     contents: [
       {
@@ -87,7 +87,7 @@ export async function geminiTranscribe(
     .map((part) => part.text ?? '')
     .join('');
 
-  recordLlmUsage({
+  host.recordUsage({
     resolved,
     callType: 'chat',
     label: req.label,

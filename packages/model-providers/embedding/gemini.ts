@@ -1,11 +1,10 @@
 // Embeddings on Gemini, through `@google/genai`. For `gemini-embedding-001` on
 // Vertex the SDK speaks the model's `:predict` method, one text per instance.
 
+import type { ModelHost } from '../host';
 import type { Resolved } from 'movement-engine/lib/models/map';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
-import { countTokens } from '../../chunking';
-import { recordLlmUsage } from '../../llm_usage';
 import { geminiClient } from '../providers/gemini';
 import { GEMINI_EMBEDDING_MODELS } from 'movement-engine/lib/models/embedding/range';
 
@@ -26,7 +25,7 @@ function normalize(values: number[]): number[] {
 export async function geminiEmbed(
   resolved: Resolved,
   req: EmbeddingRequest,
-  env: NodeJS.ProcessEnv,
+  host: ModelHost,
 ): Promise<EmbeddingResult> {
   const { wireModel } = resolved;
   const model = GEMINI_EMBEDDING_MODELS[wireModel];
@@ -39,16 +38,16 @@ export async function geminiEmbed(
   // Nothing we send can reach the limit without something upstream having
   // broken, so a refusal names that break instead of embedding a prefix and
   // calling it the text.
-  const tooLong = req.input.find((text) => countTokens(text) > model.maxInputTokens);
+  const tooLong = req.input.find((text) => host.countTokens(text) > model.maxInputTokens);
   if (tooLong !== undefined) {
     throw new Error(
-      `A text of ${countTokens(tooLong)} tokens was sent for embedding, over the ` +
+      `A text of ${host.countTokens(tooLong)} tokens was sent for embedding, over the ` +
         `${model.maxInputTokens}-token limit of ${wireModel}. ` +
         'Chunk it before embedding rather than embedding a prefix of it.',
     );
   }
 
-  const client = geminiClient(env);
+  const client = geminiClient(host.env);
   const embeddings: number[][] = [];
   // One text per request. The docs give three different numbers on one page —
   // 250 input texts, then five, then "for gemini-embedding-001, each request
@@ -71,7 +70,7 @@ export async function geminiEmbed(
     }
     embeddings.push(embedding.values.length < model.max ? normalize(embedding.values) : embedding.values);
 
-    recordLlmUsage({
+    host.recordUsage({
       resolved,
       callType: 'embedding',
       label: req.label,

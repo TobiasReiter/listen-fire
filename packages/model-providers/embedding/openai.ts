@@ -1,20 +1,20 @@
 // Embeddings on OpenAI.
 
+import type { ModelHost } from '../host';
 import type { Resolved } from 'movement-engine/lib/models/map';
 import type { EmbeddingRequest, EmbeddingResult } from './index';
 
-import { recordLlmUsage } from '../../llm_usage';
 import { openAiClient } from '../providers/openai';
 import { OPENAI_EMBEDDING_DIMENSIONS } from 'movement-engine/lib/models/embedding/range';
 
 export async function openAiEmbed(
   resolved: Resolved,
   req: EmbeddingRequest,
-  env: NodeJS.ProcessEnv,
+  host: ModelHost,
 ): Promise<EmbeddingResult> {
   const { wireModel } = resolved;
   const native = OPENAI_EMBEDDING_DIMENSIONS[wireModel]?.max;
-  const response = await openAiClient(env).embeddings.create({
+  const response = await openAiClient(host.env).embeddings.create({
     model: wireModel,
     input: req.input,
     // Omitted at the native width: naming it changes nothing but the request,
@@ -22,7 +22,7 @@ export async function openAiEmbed(
     ...(req.dimensions === undefined || req.dimensions === native ? {} : { dimensions: req.dimensions }),
   });
 
-  recordLlmUsage({
+  host.recordUsage({
     resolved,
     callType: 'embedding',
     label: req.label,
