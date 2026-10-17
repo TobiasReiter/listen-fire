@@ -43,7 +43,7 @@ export interface LanguageEntry {
   /** A function's signature, or a concept's or recipe's short text. */
   detail: string;
   example?: string;
-  /** A route `readHandbook` serves (`builtins#JOIN`, `front#identity`). */
+  /** A route `readHandbook` serves (`builtins#Text.join`, `front#identity`). */
   anchor?: string;
 }
 
