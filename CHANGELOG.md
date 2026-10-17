@@ -1365,6 +1365,31 @@ Each line is a difference a version 5 run can show; versions 1 to 4 are unchange
   signed inbound, the host refuses a delivery with a missing, blank or placeholder key, or a bad
   signature, whatever the scheme. Built-in doors keep their current behaviour until they move.
 
+### ev4-crm
+
+- **Behaviour change (action may be needed): Affinity, Airtable and Attio webhooks are now refused
+  when their subscription has no signing secret.** The three now run as modules that declare a
+  signed inbound, and the host refuses a delivery whose secret is missing, blank or `pending`, or
+  whose signature is wrong (Henry's 2026-10-17 rule, one rule for every scheme). Before, Affinity
+  accepted every delivery when no Webhook Signature Key was set, and Attio and Airtable verified
+  against an empty secret. Affinity listeners need the account's Webhook Signature Key on the
+  credential, then the listen re-registered. The API logs at boot how many live subscriptions this
+  refuses, per module (a count only).
+- Affinity, Airtable and Attio are modules: `@lf/affinity`, `@lf/airtable`, `@lf/attio`
+  (`modules/<name>`), each on its module line in `BUILTIN_MODULES`. Webhook URLs, valid signatures,
+  stored credentials and the connect flows are unchanged. A recording of each old adapter against
+  fake-channels replays identically against the module in process and over protocol 2 (Airtable
+  over protocol 2 without its `base:` argument, which the protocol does not carry). Switching back
+  is one line per module.
+- The module kit lends a module the host's models (`ctx.models`: Affinity's fuzzy matches and
+  location formatting) and a fetchable URL for a held file (`ctx.files.expose`: Airtable
+  attachments); each is refused by name where a host lends none (the `serve-module` command line
+  lends no models). A module's credential may carry `refresh`, the host refreshing it with its own
+  OAuth app (the platform does so for Airtable when a token is refused).
+- Airtable and Attio declare an OAuth 2 credential in the protocol's token fields; the platform
+  reads and writes its existing rows in their stored field names. Airtable's webhook refresh worker
+  now reaches Airtable through the registry, so it follows the line.
+
 ## [v0.11.0] - 2026-10-12
 
 Language version 4, **Luminous Owl**, arrives. New automations are written in it. The deploy check

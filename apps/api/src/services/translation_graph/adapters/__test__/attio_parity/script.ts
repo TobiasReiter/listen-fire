@@ -63,7 +63,15 @@ export async function runAttioParityScript(adapter: Adapter): Promise<Transcript
     const answer = await t.step(`preprocessInbound ${name}`, () => adapter.preprocessInbound?.({ raw }) ?? null);
     const event = answer?.events[0];
     if (event !== undefined) {
-      const trigger = { ...event, adapterType: 'attio' } as never;
+      // The trigger event a run starts from, in the shape the wire carries.
+      const trigger = {
+        ...event,
+        id: `trigger-${name}`,
+        pipelineInputId: 'pipeline-input-parity',
+        adapterType: 'attio',
+        triggerType: 'webhook' as const,
+        ...(event.externalId !== undefined ? { recordId: event.externalId } : {}),
+      };
       await t.step(`extractActor ${name}`, () => adapter.extractActor?.({ event: trigger }) ?? null);
       await t.step(`getActorCandidates ${name}`, () => adapter.getActorCandidates?.({ event: trigger }) ?? null);
     }

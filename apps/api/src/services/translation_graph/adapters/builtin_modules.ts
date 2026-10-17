@@ -34,6 +34,7 @@ import { logger } from 'movement-engine/public/log';
 import { DEALROOM_MANIFEST } from '@lf/dealroom/manifest';
 import { AFFINITY_MANIFEST } from '@lf/affinity/manifest';
 import { AIRTABLE_MANIFEST } from '@lf/airtable/manifest';
+import { ATTIO_MANIFEST } from '@lf/attio/manifest';
 import { pluginDeclarationNamed } from 'movement-engine/public/plugins';
 
 import { injectFakeBaseUrl, isTestHarnessTeam } from '../../../lib/recording';
@@ -42,6 +43,7 @@ import { postgresSecrets } from '../../credentials/secrets_postgres';
 import { credentialTypeOf } from './credential_type';
 import { hostedModels, hostedModuleFiles } from './module_host';
 import { platformOAuthApp, storedCredentialShape } from './module_credentials';
+import { stampingFileOwners } from './module_file_owners';
 
 export type BuiltinLine = 'legacy' | 'module';
 
@@ -91,7 +93,16 @@ export const BUILTIN_MODULES: BuiltinModuleTable = {
       return airtableModule;
     },
   },
-  attio: { kind: 'adapter', line: 'legacy' },
+  attio: {
+    kind: 'adapter',
+    line: 'module',
+    manifest: ATTIO_MANIFEST,
+    load: () => {
+      require('./attio_field_rejection_alerts');
+      const { attioModule }: typeof import('@lf/attio') = require('@lf/attio');
+      return attioModule;
+    },
+  },
   google_sheets: { kind: 'adapter', line: 'legacy' },
   google_drive: { kind: 'adapter', line: 'legacy' },
   dropbox: { kind: 'adapter', line: 'legacy' },
@@ -173,6 +184,12 @@ function harnessBaseUrl(definition: AdapterModuleDefinition, teamId: TeamId): st
 
 /** A module line's adapter module, loaded in process for one install. */
 export function loadBuiltinModule(definition: AdapterModuleDefinition, install: BuiltinInstall): InProcessAdapterModule {
+  const loaded = loadModuleInProcess(definition, install);
+  // A module that serves files has them name this install as their owner.
+  return definition.manifest.methods?.includes('resolveFileRef') === true ? { ...loaded, adapter: stampingFileOwners(loaded.adapter, install) } : loaded;
+}
+
+function loadModuleInProcess(definition: AdapterModuleDefinition, install: BuiltinInstall): InProcessAdapterModule {
   const secrets = createSecretsFamily({
     backend: postgresSecrets({ teamId: install.teamId }),
     warn: (message) => logger.warn(message),

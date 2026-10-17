@@ -19,17 +19,7 @@
 // API client + linked_object queries are stubbed — no DB, no network; a
 // written FileRef's bytes sit in an in-memory document store.
 
-// The Attio adapter imports lib/credentials at module scope which reads
-// ENCRYPTION_MASTER_KEY. Stub it; the adapter's getApiClient is overridden
-// per-test so decryptToken never actually fires.
-jest.mock('../../../lib/credentials', () => ({
-  decryptToken: async () => '{}',
-  encryptToken: async () => '',
-}));
-
-// Logger pulls in services/context, which loads casl extensions and crashes
-// at module-load. Stub it.
-jest.mock('movement-engine/services/logger', () => ({
+jest.mock('movement-engine/public/log', () => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
@@ -38,154 +28,26 @@ jest.mock('movement-engine/services/logger', () => ({
   },
 }));
 
-// Recording shim is unused for non-harness team ids but its module pulls
-// in additional transitive deps; stub to keep the load chain light.
-jest.mock('../../../lib/recording', () => ({
-  isTestHarnessTeam: () => false,
-  injectFakeBaseUrl: (p: unknown) => p,
-}));
-
-// The real Attio apiClient imports lib/slack → dealflow_pipeline → casl,
-// which crashes at module load. The adapter under test only consults
-// `attioCredsParser` + `getAttioClient` at runtime; we override
-// `getApiClient` per-test so neither is actually called.
-jest.mock('../../../adapters/attio/apiClient', () => ({
-  attioCredsParser: {
-    safeParse: (data: unknown) => ({ success: true, data }),
-  },
-  getAttioClient: () => ({}),
-}));
-
-// `translation_graph/types.ts` transitively loads the same broken zod
-// chain via `knowledge_pipeline/output_v3/schemas`. Stub at the leaf —
-// types.ts only consumes the shape at type-level.
-jest.mock('movement-engine/services/knowledge_pipeline/output_v3/schemas', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret, extend: ret, merge: ret,
-    pick: ret, omit: ret, partial: ret, describe: ret, or: ret, and: ret,
-  });
-  return {
-    traversalStepSchema: stub,
-    fieldRefSchema: stub,
-    expressionSchema: stub,
-    filterExpressionSchema: stub,
-    webhookGraphOutputConfigSchema: stub,
-  };
-});
-
-// `services/knowledge_pipeline/uniqueness_constraints` transitively loads
-// the webhook/slack output chain which has a circular zod import that
-// crashes at module-load. The Attio adapter only needs the type-level
-// surface of uniqueness_constraints here (the entity-resolution path
-// isn't exercised by these tests).
-jest.mock('../../knowledge_pipeline/uniqueness_constraints', () => {
-  const stub: Record<string, unknown> = {};
-  const ret = () => stub;
-  Object.assign(stub, {
-    optional: ret, nullable: ret, default: ret, array: ret,
-    parse: (v: unknown) => v, safeParse: (v: unknown) => ({ success: true, data: v }),
-    refine: ret, transform: ret,
-  });
-  return {
-    isEdgeToEntry: () => false,
-    storedUniquenessConstraintsSchema: stub,
-  };
-});
-
-// Hold a mockable linked_object row store on globalThis so the kysely
-// factory (which runs hoisted, before any module imports) can read from
-// the same array test code mutates. Variable name must start with `mock`
-// per jest's hoist guard.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(globalThis as any).mockAttioLinkedObjects = [];
-
-jest.mock('../../../lib/kysely', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const store = () => (globalThis as any).mockAttioLinkedObjects;
-
-  function makeChain(table: string) {
-    const conds: Array<[string, unknown]> = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chain: any = {
-      selectFrom: () => chain,
-      where: (col: string, _op: string, val: unknown) => {
-        conds.push([col, val]);
-        return chain;
-      },
-      select: () => chain,
-      executeTakeFirst: async () => {
-        if (table === 'linked_object') {
-          const match = store().find((row: Record<string, unknown>) =>
-            conds.every(([col, val]) => {
-              const field = col.split('.').pop() as string;
-              return row[field] === val;
-            }),
-          );
-          if (!match) return undefined;
-          return {
-            external_id: match.external_id,
-            external_object_type: match.external_object_type,
-          };
-        }
-        return undefined;
-      },
-      execute: async () => [],
-    };
-    return chain;
-  }
-  return {
-    getQb: () => ({ selectFrom: () => makeChain('public') }),
-    getCoreQb: () => ({ selectFrom: () => makeChain('public') }),
-    getKnowledgeQb: () => ({ selectFrom: () => makeChain('linked_object') }),
-    getAutomationsQb: () => ({ selectFrom: () => makeChain('linked_object') }),
-  };
-});
-
-// The Attio adapter's recording shim runs against test-harness team ids.
-// We're using non-harness ids so no need to stub here.
-
 import { Readable } from 'node:stream';
 
-import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
-import type { FileRef, WriteInput } from 'movement-engine/services/translation_graph/adapter';
+import type { SourcePosition } from 'movement-engine/public/catalog';
+import type { FileRef, WriteInput } from 'movement-engine/public/adapter';
 
-import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from 'movement-engine/services/translation_graph/types';
+import { ADAPTER_META_TYPE_ID, isStablePosition, makeMetaPosition, makeStablePosition, makeUnstablePosition, positionRecordId } from 'movement-engine/public/catalog';
 import {
   AttioAdapter,
   ATTIO_LIST_ENTRY_TYPE_ID,
   ATTIO_LISTS_EDGE,
   ATTIO_WEBHOOK_EVENT_TYPE_ID,
-} from '../adapters/attio';
-import { fileValue, RESOURCES_REFERENCE_FIELD_ID, type FileValue } from 'movement-engine/services/translation_graph/adapter';
-import { installMemoryDocumentStore } from '../engine/files/__test__/memory_document_store';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
-import { logger } from 'movement-engine/services/logger';
+} from '../adapter';
+import { testHost, testFileStore } from './fake_host';
+import { fileValue, RESOURCES_REFERENCE_FIELD_ID, type FileValue } from 'movement-engine/public/adapter';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
+import { logger } from 'movement-engine/public/log';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-type LinkedObjectRow = {
-  team_id: string;
-  node_id: string;
-  adapter_type: string;
-  external_id: string;
-  external_object_type: string | null;
-};
-
-function getLinkedObjectsStore(): LinkedObjectRow[] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (globalThis as any).mockAttioLinkedObjects as LinkedObjectRow[];
-}
-
-function resetState() {
-  getLinkedObjectsStore().length = 0;
-}
 
 type UploadCall = {
   fileName: string;
@@ -211,10 +73,7 @@ function makeAdapter(input: {
   createdRecordId?: string;
   uploadShouldThrow?: Error;
 }): AttioAdapter {
-  const adapter = new AttioAdapter({
-    teamId: input.teamId as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = new AttioAdapter(testHost(input.teamId));
   const createdRecordId = input.createdRecordId ?? 'rec-created-1';
   const fakeClient = {
     // The write methods now build the natural-name resolver from the
@@ -288,7 +147,7 @@ function makeAdapter(input: {
       input.webhookCalls?.push({ subscriptions: args.subscriptions });
       return {};
     },
-  } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+  } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
   (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () => fakeClient;
   return adapter;
 }
@@ -299,7 +158,7 @@ function makeAdapter(input: {
  * what reaches `uploadFile`.
  */
 const FILE_BYTES = new Uint8Array([1, 2, 3, 4, 5]);
-const fileStore = installMemoryDocumentStore();
+const fileStore = testFileStore();
 
 /** Bytes the fake `downloadFile` streams back — asserted on the read side's
  *  `resolveFileRef`, so we know the FileRef is redeemed through the Attio
@@ -330,7 +189,6 @@ const writeMutationContext = {
 // ---------------------------------------------------------------------------
 
 describe('AttioAdapter `_resources` is not a readable edge', () => {
-  beforeEach(resetState);
 
   it('a `_resources` hop off an Attio record position no longer resolves', async () => {
     const adapter = makeAdapter({ teamId: 'team-no-resources' });
@@ -373,7 +231,6 @@ describe('AttioAdapter `_resources` is not a readable edge', () => {
 // ---------------------------------------------------------------------------
 
 describe('AttioAdapter file read (`record-[:files]->.`File`)', () => {
-  beforeEach(resetState);
 
   const fileRecordPosition = (): SourcePosition =>
     makeStablePosition({
@@ -444,7 +301,9 @@ describe('AttioAdapter file read (`record-[:files]->.`File`)', () => {
     expect(fileRef.__brand).toBe('FileRef');
     // The descriptor names this instance — its credential — and the stable
     // Attio file id as the handle.
-    expect(fileRef.source).toEqual({ adapterType: 'attio', credentialId: 'creds-1', handle: 'file-pitch-123' });
+    // The module names its own type and Attio's file id; the host stamps the
+    // owning install (its credential) on the way out.
+    expect(fileRef.source).toEqual({ adapterType: 'attio', handle: 'file-pitch-123' });
     expect(JSON.parse(JSON.stringify(fileRef))).toEqual(fileRef);
 
     // The owner streams the bytes via the Attio download endpoint, with the
@@ -480,10 +339,7 @@ describe('AttioAdapter file read (`record-[:files]->.`File`)', () => {
 // ---------------------------------------------------------------------------
 
 function makePerListAdapter(input: { teamId: string }): AttioAdapter {
-  const adapter = new AttioAdapter({
-    teamId: input.teamId as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = new AttioAdapter(testHost(input.teamId));
   const fakeClient = {
     listObjects: async () => [
       { id: 'deals', name: 'Deal', slug: 'deals' },
@@ -511,7 +367,7 @@ function makePerListAdapter(input: { teamId: string }): AttioAdapter {
         options: [{ id: 'o1', name: 'New' }],
       },
     ],
-  } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+  } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
   (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () => fakeClient;
   return adapter;
 }
@@ -538,10 +394,7 @@ describe('AttioAdapter per-list within recency key (INV2)', () => {
   });
 
   it('does not duplicate the entry date when a custom attribute already claims the slug', async () => {
-    const adapter = new AttioAdapter({
-      teamId: 'team-inv2-collide' as TeamId,
-      credentialsId: 'creds-1',
-    });
+    const adapter = new AttioAdapter(testHost('team-inv2-collide'));
     const fakeClient = {
       listObjects: async () => [{ id: 'deals', name: 'Deal', slug: 'deals' }],
       listLists: async () => [
@@ -550,7 +403,7 @@ describe('AttioAdapter per-list within recency key (INV2)', () => {
       listAttributes: async () => [
         { id: 'attr-c', name: 'Custom Created', type: 'date', apiSlug: 'created_at', isWritable: true, isRequired: false, isMulti: false },
       ],
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () => fakeClient;
     const descriptor = await adapter.describe('Collide List');
     const createdAtFields = descriptor!.fields.filter((f) => f.fieldId === 'created_at');
@@ -567,10 +420,7 @@ describe('AttioAdapter per-list within recency key (INV2)', () => {
 // ---------------------------------------------------------------------------
 
 function makeCapabilityAdapter(): AttioAdapter {
-  const adapter = new AttioAdapter({
-    teamId: 'team-cap' as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = new AttioAdapter(testHost('team-cap'));
   const fakeClient = {
     listObjects: async () => [
       { id: 'companies', name: 'Company', slug: 'companies' },
@@ -585,7 +435,7 @@ function makeCapabilityAdapter(): AttioAdapter {
       // `is_writable: false` and rejects a PATCH to them.
       { id: 'a-derived', name: 'Team', type: 'record-reference', apiSlug: 'team', relationshipObjectId: 'people', isWritable: false, isRequired: false, isMulti: true },
     ],
-  } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+  } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
   (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () => fakeClient;
   return adapter;
 }
@@ -753,7 +603,7 @@ describe('AttioAdapter record-reference write promises (layer 13)', () => {
   // sort), declares `bounded`/`bounded` so a WHERE or ORDER BY there is legal
   // and warned about, rather than silently permissive.
   it('carries the ROOT collection capability through to the CHECKER projection', async () => {
-    const adapter = new AttioAdapter({ teamId: 'team-root' as TeamId, credentialsId: 'creds-1' });
+    const adapter = new AttioAdapter(testHost('team-root'));
     const fakeClient = {
       listObjects: async () => [{ id: 'companies', name: 'Company', slug: 'companies' }],
       listLists: async () => [
@@ -763,7 +613,7 @@ describe('AttioAdapter record-reference write promises (layer 13)', () => {
         { id: 'a-name', name: 'Name', type: 'text', apiSlug: 'name', isWritable: true, isRequired: false, isMulti: false },
       ],
       listListAttributes: async () => [],
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient =
       async () => fakeClient;
 
@@ -822,17 +672,14 @@ function makeRecordAdapter(input: {
    *  more than one object in the catalog to have anything to resolve. */
   objects?: Array<{ id: string; name: string; slug: string }>;
 }): AttioAdapter {
-  const adapter = new AttioAdapter({
-    teamId: input.teamId as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = new AttioAdapter(testHost(input.teamId));
   const fakeClient = {
     listObjects: async () => input.objects ?? [{ id: 'deals', name: 'Deal', slug: 'deals' }],
     // No lists scoped to deals — keeps `describeRecord`'s per-list ref
     // collection empty and focuses the assertion on the object fields.
     listLists: async () => [],
     listAttributes: async () => input.attrs,
-  } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+  } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
   (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () => fakeClient;
   return adapter;
 }
@@ -897,10 +744,7 @@ describe('AttioAdapter descriptor enum options', () => {
     options?: Record<string, { id: string; name: string }[]>;
     failOptions?: boolean;
   }): AttioAdapter {
-    const adapter = new AttioAdapter({
-      teamId: input.teamId as TeamId,
-      credentialsId: 'creds-1',
-    });
+    const adapter = new AttioAdapter(testHost(input.teamId));
     const fakeClient = {
       listObjects: async () => [{ id: 'deals', name: 'Deal', slug: 'deals' }],
       listLists: async () => [],
@@ -917,7 +761,7 @@ describe('AttioAdapter descriptor enum options', () => {
         if (input.failOptions) throw new Error('boom');
         return input.options?.[attributeId] ?? [];
       },
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient =
       async () => fakeClient;
     return adapter;
@@ -972,10 +816,7 @@ describe('AttioAdapter reference-valued uniqueness resolution', () => {
     teamId: string;
     onFilter: (filter: unknown) => void;
   }): AttioAdapter {
-    const adapter = new AttioAdapter({
-      teamId: input.teamId as TeamId,
-      credentialsId: 'creds-1',
-    });
+    const adapter = new AttioAdapter(testHost(input.teamId));
     const fakeClient = {
       listObjects: async () => [{ id: 'obj-deals', name: 'Deals', slug: 'deals' }],
       listLists: async () => [],
@@ -994,7 +835,7 @@ describe('AttioAdapter reference-valued uniqueness resolution', () => {
         input.onFilter(filter);
         return [{ id: { record_id: 'rec-deal-1' }, values: {} }];
       },
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient =
       async () => fakeClient;
     return adapter;
@@ -1050,14 +891,14 @@ describe('AttioAdapter reference-valued uniqueness resolution', () => {
 
 describe('AttioAdapter.listEventTypes', () => {
   function makeAdapter(teamId: string): AttioAdapter {
-    const adapter = new AttioAdapter({ teamId: teamId as TeamId, credentialsId: 'creds-1' });
+    const adapter = new AttioAdapter(testHost(teamId));
     const fakeClient = {
       listObjects: async () => [
         { id: 'uuid-companies', name: 'Companies', slug: 'companies' },
         { id: 'uuid-deals', name: 'Deals', slug: 'deals' },
       ],
       listLists: async () => [],
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient =
       async () => fakeClient;
     return adapter;
@@ -1075,7 +916,7 @@ describe('AttioAdapter.listEventTypes', () => {
   it('its union discriminates a real inbound Attio webhook payload', async () => {
     const adapter = makeAdapter('team-eventtypes-2');
     const types = await adapter.listEventTypes();
-    const { discriminateEvent } = await import('movement-engine/services/translation_graph/engine/inbound/discriminate');
+    const { discriminateEvent } = await import('movement-engine/public/inbound');
     const result = discriminateEvent({
       adapterType: 'attio',
       event: {
@@ -1099,7 +940,7 @@ describe('AttioAdapter.listEventTypes', () => {
 
 describe('AttioAdapter.getRelated — webhook event → record (getRecordForEvent)', () => {
   function makeEventAdapter(teamId: string): AttioAdapter {
-    const adapter = new AttioAdapter({ teamId: teamId as TeamId, credentialsId: 'creds-1' });
+    const adapter = new AttioAdapter(testHost(teamId));
     const fakeClient = {
       listObjects: async () => [
         { id: 'uuid-companies', name: 'Companies', slug: 'companies' },
@@ -1111,7 +952,7 @@ describe('AttioAdapter.getRelated — webhook event → record (getRecordForEven
         values: { name: [{ value: 'Acme' }] },
         web_url: null,
       }),
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient =
       async () => fakeClient;
     return adapter;
@@ -1159,7 +1000,7 @@ describe('AttioAdapter.getRelated — webhook event → record (getRecordForEven
 
 describe('AttioAdapter.getRelated — list entry → parent record', () => {
   function makeEntryAdapter(teamId: string): AttioAdapter {
-    const adapter = new AttioAdapter({ teamId: teamId as TeamId, credentialsId: 'creds-1' });
+    const adapter = new AttioAdapter(testHost(teamId));
     const fakeClient = {
       listObjects: async () => [
         { id: 'uuid-companies', name: 'Companies', slug: 'companies' },
@@ -1171,7 +1012,7 @@ describe('AttioAdapter.getRelated — list entry → parent record', () => {
         values: { name: [{ value: 'Acme' }] },
         web_url: null,
       }),
-    } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+    } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
     (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient =
       async () => fakeClient;
     return adapter;
@@ -1228,10 +1069,6 @@ describe('AttioAdapter.getRelated — list entry → parent record', () => {
 // ---------------------------------------------------------------------------
 
 describe('AttioAdapter file-on-write', () => {
-  beforeEach(() => {
-    resetState();
-  });
-
   it('createRecord: uploads a file-kind field against the new record, keeps it out of the values envelope', async () => {
     const uploadCalls: UploadCall[] = [];
     const createCalls: RecordWriteCall[] = [];
@@ -1363,7 +1200,9 @@ describe('AttioAdapter file-on-write', () => {
         fields: { logo: fileValue({ __brand: 'FileRef', name: 'x.png' }) },
         mutationContext: writeMutationContext,
       }),
-    ).rejects.toThrow(/no handle to its bytes/);
+      // The host's refusal surfaces as the write error (the platform's own
+      // wording is the file redemption's, pinned by its tests).
+    ).rejects.toThrow(/no such file: x\.png/);
   });
 
   it('createRecord: a failed byte retrieval surfaces as a write error', async () => {
@@ -1379,8 +1218,8 @@ describe('AttioAdapter file-on-write', () => {
         fields: { deck: failing },
         mutationContext: writeMutationContext,
       }),
-    // A key the store never stored is nobody's: refused by name before any read.
-    ).rejects.toThrow(/stored document mem:\/\/doc\/gone, which is not this team's/);
+    // The host could not produce the bytes: a write error, not a silent drop.
+    ).rejects.toThrow(/no such file: deck\.pdf/);
   });
 });
 
@@ -1399,7 +1238,7 @@ function makeLinkAdapter(input: {
   updateCalls: LinkCall[];
   parentRecordValues?: Record<string, unknown>;
 }): AttioAdapter {
-  const adapter = new AttioAdapter({ teamId: input.teamId as TeamId, credentialsId: 'creds-1' });
+  const adapter = new AttioAdapter(testHost(input.teamId));
   const fakeClient = {
     listObjects: async () => [
       { id: 'obj-people', slug: 'people', name: 'People' },
@@ -1421,7 +1260,7 @@ function makeLinkAdapter(input: {
       input.updateCalls.push({ objectId: args.objectId, recordId: args.recordId, fields: args.fields });
       return { id: { record_id: args.recordId }, values: {}, web_url: null };
     },
-  } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+  } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
   (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () =>
     fakeClient;
   return adapter;
@@ -1438,7 +1277,6 @@ const refAttr = (apiSlug: string, relationshipObjectId: string, isMulti: boolean
 });
 
 describe('AttioAdapter.createRecord — parentLink relationship', () => {
-  beforeEach(resetState);
 
   it('child-ref: sets the reference on the child create when the edge lives on the child', async () => {
     const createCalls: LinkCall[] = [];
@@ -1533,10 +1371,7 @@ function makeActorAdapter(input: {
   teamId: string;
   createCalls?: RecordWriteCall[];
 }): AttioAdapter {
-  const adapter = new AttioAdapter({
-    teamId: input.teamId as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = new AttioAdapter(testHost(input.teamId));
   const fakeClient = {
     listObjects: async () => [{ id: 'deals', name: 'Deal', slug: 'deals' }],
     listLists: async () => [],
@@ -1571,7 +1406,7 @@ function makeActorAdapter(input: {
         web_url: 'https://app.attio.com/deal-created-1',
       };
     },
-  } as unknown as Awaited<ReturnType<typeof import('../../../adapters/attio/apiClient').getAttioClient>>;
+  } as unknown as Awaited<ReturnType<typeof import('../api_client').getAttioClient>>;
   (adapter as unknown as { getApiClient: () => Promise<typeof fakeClient> }).getApiClient = async () => fakeClient;
   return adapter;
 }
@@ -1891,7 +1726,7 @@ describe('describe — record-reference with relationship: null (UI-created)', (
   });
 });
 
-import { extractAttioValue, flattenAttioRecordValues } from '../adapters/attio';
+import { extractAttioValue, flattenAttioRecordValues } from '../adapter';
 
 // Attio status / select values nest the chosen option under `status` /
 // `option` with a human `title`. Reading them back must yield that title —
@@ -1944,10 +1779,7 @@ describe('flattenAttioRecordValues — status and select options', () => {
 
 /** An adapter whose fake client covers the introspection + root-read surface. */
 function makeRootReadAdapter(teamId: string): AttioAdapter {
-  const adapter = new AttioAdapter({
-    teamId: teamId as TeamId,
-    credentialsId: 'creds-1',
-  });
+  const adapter = new AttioAdapter(testHost(teamId));
   const attr = (input: {
     slug: string;
     name: string;

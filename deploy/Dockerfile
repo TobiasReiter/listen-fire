@@ -36,6 +36,7 @@ COPY packages/module-kit/package.json packages/module-kit/
 COPY modules/dealroom/package.json modules/dealroom/
 COPY modules/affinity/package.json modules/affinity/
 COPY modules/airtable/package.json modules/airtable/
+COPY modules/attio/package.json modules/attio/
 COPY packages/engine-contracts/package.json packages/engine-contracts/
 COPY packages/movement-engine/package.json packages/movement-engine/
 COPY packages/shared/package.json packages/shared/

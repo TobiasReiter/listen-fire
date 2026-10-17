@@ -10,7 +10,8 @@ import ExternalServiceType from '../../../generated/kysely/automations/ExternalS
 import { WRITE_METHODS } from 'movement-engine/services/translation_graph/adapter';
 import { credentialTypeOf } from './credential_type';
 import { KG_ADAPTER_TYPE, KG_MANIFEST, createKnowledgeGraphAdapter } from './knowledge_graph';
-import { ATTIO_ADAPTER_TYPE, ATTIO_MANIFEST, createAttioAdapter } from './attio';
+import { ATTIO_ADAPTER_TYPE } from '@lf/attio/types';
+import { ATTIO_MANIFEST } from '@lf/attio/manifest';
 import {
   NATIVE_VALUATIONS_ADAPTER_TYPE,
   NATIVE_VALUATIONS_MANIFEST,
@@ -79,8 +80,10 @@ type AdapterFactory = (input: {
 const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
   [KG_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
     createKnowledgeGraphAdapter({ teamId, credentialsId }),
-  [ATTIO_ADAPTER_TYPE]: ({ teamId, credentialsId }) =>
-    createAttioAdapter({ teamId, credentialsId }),
+  [ATTIO_ADAPTER_TYPE]: builtinAdapterFactory(ATTIO_ADAPTER_TYPE, ({ teamId, credentialsId }) => {
+    const { createAttioAdapter }: typeof import('./attio') = require('./attio');
+    return createAttioAdapter({ teamId, credentialsId });
+  }),
   // Affinity adapter — write target only (v3-output parity). Source-side
   // triggers (snapshot/poll) are deferred — Affinity has no v3 input — so it
   // appears as a target in the editor picker, not a source.

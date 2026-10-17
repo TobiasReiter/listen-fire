@@ -133,6 +133,9 @@ importers:
       '@lf/airtable':
         specifier: workspace:*
         version: link:../../modules/airtable
+      '@lf/attio':
+        specifier: workspace:*
+        version: link:../../modules/attio
       '@lf/dealroom':
         specifier: workspace:*
         version: link:../../modules/dealroom
@@ -824,6 +827,43 @@ importers:
         version: 5.5.4
 
   modules/airtable:
+    dependencies:
+      '#shared':
+        specifier: workspace:@listen-fire/shared@*
+        version: link:../../packages/shared
+      engine-contracts:
+        specifier: workspace:*
+        version: link:../../packages/engine-contracts
+      exponential-backoff:
+        specifier: 3.1.1
+        version: 3.1.1
+      lru-cache:
+        specifier: 10.4.3
+        version: 10.4.3
+      module-kit:
+        specifier: workspace:*
+        version: link:../../packages/module-kit
+      movement-engine:
+        specifier: workspace:*
+        version: link:../../packages/movement-engine
+      movement-lang:
+        specifier: workspace:*
+        version: link:../../packages/movement-lang
+      zod:
+        specifier: 4.1.12
+        version: 4.1.12
+    devDependencies:
+      '@types/jest':
+        specifier: 29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: 20.16.5
+        version: 20.16.5
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
+
+  modules/attio:
     dependencies:
       '#shared':
         specifier: workspace:@listen-fire/shared@*

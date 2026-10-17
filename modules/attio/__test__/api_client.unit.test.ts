@@ -1,8 +1,8 @@
-jest.mock('movement-engine/services/logger', () => ({
+jest.mock('movement-engine/public/log', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { parseAttributeIdFromError } from '../apiClient';
+import { parseAttributeIdFromError } from '../api_client';
 
 // The two shapes Attio uses to report a rejected field on a 400. The
 // retry handler resolves whatever key this returns against the request's
@@ -63,7 +63,7 @@ describe('parseAttributeIdFromError', () => {
   });
 });
 
-import { omitNullish } from '../apiClient';
+import { omitNullish } from '../api_client';
 
 // Movements extract multi-value fields (e.g. companies.domains) from messy
 // sources, so arrays routinely arrive with null holes. Attio 400s on a null
@@ -98,7 +98,7 @@ describe('omitNullish', () => {
   });
 });
 
-import { AttioAPIClient, suffixFileName } from '../apiClient';
+import { AttioAPIClient, suffixFileName } from '../api_client';
 
 // `report.pdf` → `report (1).pdf`, matching the OS/browser-download
 // convention — inserted before the FINAL extension, and appended outright

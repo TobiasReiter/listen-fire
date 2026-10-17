@@ -143,6 +143,10 @@ async function loadHandler(options: {
     LEGACY_SIGNATURE_HEADERS: new Proxy({}, { get: () => ({ verifyInbound: () => true }) }),
     LEGACY_INTERCEPTS: {},
   }));
+  // …built-ins on a module line too (their declared signed inbound).
+  jest.doMock('../../translation_graph/adapters/builtin_modules', () => ({
+    builtinModuleInboundVerifier: () => undefined,
+  }));
   jest.doMock('../../../lib/credentials', () => ({ decryptToken: jest.fn() }));
   jest.doMock('../../../adapters/attio/apiClient', () => ({
     AttioAPIClient: jest.fn(),
