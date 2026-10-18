@@ -3,20 +3,20 @@
 Written by `crates/movement-checker/parity/run.sh`. Do not edit by hand.
 
 - Codes at parity: **263 of 263** codes the TypeScript checker reports on this corpus.
-- Diagnostics matched: 164033 of 164033; 0 extra in Rust.
-- Records with exactly the TypeScript's diagnostics, in its order: 44061 of 44061.
-- Rust side: 37.0s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
+- Diagnostics matched: 164054 of 164054; 0 extra in Rust.
+- Records with exactly the TypeScript's diagnostics, in its order: 44082 of 44082.
+- Rust side: 37.4s; 0 records the Rust parser or catalog refused; 0 panics; 0 checks that did not finish (refused.txt names them).
 
 A code is at parity when every diagnostic of it on the corpus is matched exactly and Rust reports none extra.
 
 | corpus | records | exact | same diagnostics, any order |
 |---|---|---|---|
-| checks under v5 | 6820 | 6820 | 6820 |
+| checks under v5 | 6824 | 6824 | 6824 |
 | checks v1 | 2246 | 2246 | 2246 |
 | checks v2 | 2500 | 2500 | 2500 |
 | checks v3 | 3159 | 3159 | 3159 |
-| checks v4 | 6520 | 6520 | 6520 |
-| checks v5 | 19255 | 19255 | 19255 |
+| checks v4 | 6524 | 6524 | 6524 |
+| checks v5 | 19268 | 19268 | 19268 |
 | checks v99 | 9 | 9 | 9 |
 | oracle handles | 981 | 981 | 981 |
 | oracle parallel | 398 | 398 | 398 |
@@ -28,20 +28,20 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 
 | family | codes seen | at parity | TS diagnostics | matched | missing | extra | message differs |
 |---|---|---|---|---|---|---|---|
-| (not in PORT.md) | 19 | 19 | 112405 | 112405 | 0 | 0 | 0 |
+| (not in PORT.md) | 19 | 19 | 112419 | 112419 | 0 | 0 | 0 |
 | calls | 29 | 29 | 2011 | 2011 | 0 | 0 | 0 |
 | closures | 15 | 15 | 2382 | 2382 | 0 | 0 | 0 |
 | extraction | 20 | 20 | 558 | 558 | 0 | 0 | 0 |
 | flow | 10 | 10 | 111 | 111 | 0 | 0 | 0 |
 | imports | 5 | 5 | 68 | 68 | 0 | 0 | 0 |
-| listens | 12 | 12 | 37282 | 37282 | 0 | 0 | 0 |
-| names | 11 | 11 | 964 | 964 | 0 | 0 | 0 |
+| listens | 12 | 12 | 37285 | 37285 | 0 | 0 | 0 |
+| names | 11 | 11 | 966 | 966 | 0 | 0 | 0 |
 | nodes | 28 | 28 | 707 | 707 | 0 | 0 | 0 |
 | records | 12 | 12 | 948 | 948 | 0 | 0 | 0 |
-| systems | 8 | 8 | 175 | 175 | 0 | 0 | 0 |
+| systems | 8 | 8 | 176 | 176 | 0 | 0 | 0 |
 | values | 22 | 22 | 2929 | 2929 | 0 | 0 | 0 |
 | versions | 2 | 2 | 12 | 12 | 0 | 0 | 0 |
-| walks | 22 | 22 | 1329 | 1329 | 0 | 0 | 0 |
+| walks | 22 | 22 | 1330 | 1330 | 0 | 0 | 0 |
 | writes | 48 | 48 | 2152 | 2152 | 0 | 0 | 0 |
 
 ## By code
@@ -99,7 +99,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_COMPARE_TYPE_MISMATCH | values | 96 | 96 | 0 | 0 | 0 | yes |
 | MOV_CONSTRUCT_BAD_ARG | systems | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_CONSTRUCT_MISSING_CRED | systems | 11 | 11 | 0 | 0 | 0 | yes |
-| MOV_CONSTRUCT_NOT_ADAPTER | systems | 21 | 21 | 0 | 0 | 0 | yes |
+| MOV_CONSTRUCT_NOT_ADAPTER | systems | 22 | 22 | 0 | 0 | 0 | yes |
 | MOV_CONSTRUCT_UNKNOWN_OPTION | systems | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_COUNT_COUNTS_EMPTY | ? | 7 | 7 | 0 | 0 | 0 | yes |
 | MOV_CREDENTIAL_NOT_A_VALUE | names | 125 | 125 | 0 | 0 | 0 | yes |
@@ -178,7 +178,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_LINK_MATCH_BODY_RETIRED | writes | 35 | 35 | 0 | 0 | 0 | yes |
 | MOV_LINK_UNSUPPORTED_EDGE | writes | 19 | 19 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_ALIAS_DUPLICATE | listens | 6 | 6 | 0 | 0 | 0 | yes |
-| MOV_LISTEN_BAD_CONFIG | listens | 210 | 210 | 0 | 0 | 0 | yes |
+| MOV_LISTEN_BAD_CONFIG | listens | 213 | 213 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_CANNOT_FIRE | listens | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_DUPLICATE | listens | 12 | 12 | 0 | 0 | 0 | yes |
 | MOV_LISTEN_FILE_LEVEL | listens | 6 | 6 | 0 | 0 | 0 | yes |
@@ -197,7 +197,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_META_HOP_RETIRED | walks | 27 | 27 | 0 | 0 | 0 | yes |
 | MOV_META_UNKNOWN_KEY | walks | 28 | 28 | 0 | 0 | 0 | yes |
 | MOV_NAME_PROTO | names | 75 | 75 | 0 | 0 | 0 | yes |
-| MOV_NAME_UNRESOLVED | names | 440 | 440 | 0 | 0 | 0 | yes |
+| MOV_NAME_UNRESOLVED | names | 442 | 442 | 0 | 0 | 0 | yes |
 | MOV_NARROWING | walks | 126 | 126 | 0 | 0 | 0 | yes |
 | MOV_NESTED_CALL_SUSPENDS | calls | 8 | 8 | 0 | 0 | 0 | yes |
 | MOV_NODE_ARG_SHAPE | nodes | 117 | 117 | 0 | 0 | 0 | yes |
@@ -268,7 +268,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_UNIQUE_NOT_AUTHORABLE | writes | 18 | 18 | 0 | 0 | 0 | yes |
 | MOV_UNIQUE_UNKNOWN_FIELD | writes | 49 | 49 | 0 | 0 | 0 | yes |
 | MOV_UNKNOWN_POSITION | walks | 84 | 84 | 0 | 0 | 0 | yes |
-| MOV_UNKNOWN_PROPERTY | walks | 509 | 509 | 0 | 0 | 0 | yes |
+| MOV_UNKNOWN_PROPERTY | walks | 510 | 510 | 0 | 0 | 0 | yes |
 | MOV_UNKNOWN_TYPE_NAME | nodes | 37 | 37 | 0 | 0 | 0 | yes |
 | MOV_UNREACHABLE_BRANCH | walks | 42 | 42 | 0 | 0 | 0 | yes |
 | MOV_UNTIL_CADENCE_TOO_SHORT | flow | 6 | 6 | 0 | 0 | 0 | yes |
@@ -277,7 +277,7 @@ A code is at parity when every diagnostic of it on the corpus is matched exactly
 | MOV_V5_HIDES_BUILTIN | ? | 244 | 244 | 0 | 0 | 0 | yes |
 | MOV_V5_IMPORT_NEEDS_ALIAS | ? | 1 | 1 | 0 | 0 | 0 | yes |
 | MOV_V5_NOT_YET | ? | 2 | 2 | 0 | 0 | 0 | yes |
-| MOV_V5_SPELLING | ? | 109878 | 109878 | 0 | 0 | 0 | yes |
+| MOV_V5_SPELLING | ? | 109892 | 109892 | 0 | 0 | 0 | yes |
 | MOV_V5_UNKNOWN_MEMBER | ? | 6 | 6 | 0 | 0 | 0 | yes |
 | MOV_VALUE_UNLISTED | values | 40 | 40 | 0 | 0 | 0 | yes |
 | MOV_WAIT_NOT_RESUMABLE | flow | 12 | 12 | 0 | 0 | 0 | yes |
