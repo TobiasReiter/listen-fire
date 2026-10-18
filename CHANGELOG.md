@@ -50,6 +50,11 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-poll
+
+- lf polls a module that declares `poll: { intervalSeconds }`: `lf serve` on the interval, `lf drain` when due (a poll missed while no worker ran is one poll; one worker at a time per listen, under the work queue's lease), `lf run --poll <movement>` at once. The module's checkpoint is kept per listen in either store (no migration); each event runs the listen as a webhook's does. A listen with no webhook source (Granola, Evertrace, Dealroom, Gmail's poll) now fires in lf.
+- lf's result check keeps an event's `idempotencyKey` (it dropped it), so a redelivered webhook or poll event runs a listen once.
+
 ### r-units
 
 - `cron` and `manual` are run-host units (from language version 5): in every file's scope, already connected, with no import — `listen to manual fire hello`, `listen to cron { schedule: "0 9 * * 1" } fire digest`, the parameter typed `<manual-[:Invocation]->>` / `<cron-[:Tick]->>`. A file's own import or binding of the name replaces the unit; `connect manual` is told to listen by name. Versions 1–4 unchanged. Both checkers, the Rust engine, the platform's listen derivation (trigger rows, Run now) and lf.

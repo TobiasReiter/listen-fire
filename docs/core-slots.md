@@ -33,6 +33,17 @@ listen to manual fire backfill
 - `manual` fires when you ask: `lf run backfill` here, "Run now" on the platform.
 - `cron` fires on its schedule. `lf serve` and `lf drain` fire each due tick. A tick that came due while no worker ran fires once on the next drain (only the latest one missed), however many workers drain the store.
 
+## Polled sources
+
+A module with no webhooks declares `poll: { intervalSeconds }` in its manifest. The host then polls it for each listen on it:
+
+- `lf serve` polls each listen on the module's interval; `lf drain` polls whatever is due.
+- A poll missed while no worker ran is one poll on the next drain.
+- The store keeps each listen's checkpoint, the module's own bookmark, so the next poll asks for what is new since it.
+- One worker at a time polls a listen, however many drain the store (the poll is a row in the store's work queue, held under its lease).
+- Each event runs the listen as a webhook's event does. An event the listen has run before (the same `idempotencyKey`) runs nothing.
+- `lf run --poll <movement>` polls now, once.
+
 ## Filling a slot
 
 1. Name the module in `lf.yaml`'s `core:` (not needed for a default).

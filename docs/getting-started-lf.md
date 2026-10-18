@@ -45,6 +45,13 @@ function welcome(company: <crm-[:Company]->>) {
 listen to crm { events: ["company.created"] } fire welcome
 ```
 
+A module with no webhooks (Granola, Evertrace, Dealroom) is polled instead: its manifest declares `poll: { intervalSeconds }`, and a listen on it reads like any other (`listen to granola fire summarise`).
+
+- `lf serve` polls each such listen on the module's interval, and runs the listen on each new event.
+- `lf drain` polls every listen that is due. A poll missed while nothing ran is one poll on the next drain.
+- Each listen keeps its own checkpoint, so a poll asks only for what is new since the last one.
+- An event a listen has run before (the same `idempotencyKey`) runs nothing.
+
 `lf check` prints every diagnostic; fix them before running.
 
 ## 3. Connect a module
@@ -72,6 +79,7 @@ This signs you in at the provider (OAuth) or asks for the module's fields, and s
 lf run hello                                   # run a movement a `listen to manual` fires
 lf run --event events/company_created.json     # route one event to the listens it matches
 lf run --event events/company_created.json --dry-run
+lf run --poll summarise                        # poll now the polled source of each listen that fires it
 lf runs                                        # the runs, most recent first
 lf resume [<run-id>]                           # step a parked run, or every due one
 ```
@@ -82,7 +90,7 @@ lf resume [<run-id>]                           # step a parked run, or every due
 lf serve [--port N]
 ```
 
-`lf serve` receives webhooks and callbacks, fires `cron` listens on their schedule, and drains due work, so listens fire on their own. `lf drain` does the same work once and exits (`--until-idle`): a tick missed while nothing ran fires once on the next drain. Set `publicUrl` in `lf.yaml` when the outside world reaches it at another address. `lf call <callback-id>` and `lf cancel <run-id>` act on a parked or running run.
+`lf serve` receives webhooks and callbacks, fires `cron` listens on their schedule, polls polled sources on their interval, and drains due work, so listens fire on their own. `lf drain` does the same work once and exits (`--until-idle`): a tick or poll missed while nothing ran happens once on the next drain, and two workers never poll one listen at once. Set `publicUrl` in `lf.yaml` when the outside world reaches it at another address. `lf call <callback-id>` and `lf cancel <run-id>` act on a parked or running run.
 
 ## 7. Upgrade a project
 
