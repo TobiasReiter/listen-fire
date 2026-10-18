@@ -1076,9 +1076,14 @@ describe('the expression tail, on both engines', () => {
         '  pair = [null, 5]',
         '  write kg-[:note]-> { text: "${r0.n}${r1.n}${r2.n} ${ONLY(pair)}" }',
       ].join('\n'),
+      // Version 5 refuses SUM, AVG and MAX over a list that may hold an absent member.
+      v5Edits: [
+        ['${SUM(xs)} ${AVG(xs)}', '${SUM(filter(xs, (x) => x != null))} ${AVG(filter(xs, (x) => x != null))}'],
+        ['${MAX(xs)}', '${MAX(filter(xs, (x) => x != null))}'],
+      ],
     });
     // `count` counts the empty item too under 5 (the one in `xs`); COUNT skipped it before.
-    expect(written(rust)).toEqual(['4 8 2 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
+    expect(written(rust)).toEqual(['4 8 2.6666666666666665 0 4 3 1 3/4/1 1', 'cba', '1210', 'abc 5']);
     const only = await onRust({ body: '  xs = [1, 2]\n  x = ONLY(xs)' });
     expect(String(runFailureCause(only.rust.error))).toContain(
       'ONLY(xs) says there is exactly one, and there are 2.',
