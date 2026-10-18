@@ -558,7 +558,7 @@ async function provisionListeners(input: {
   ): Extract<TriggerRunMode, 'live' | 'dry_run'> =>
     movementWriteRunMode(program, movementName).mode === 'dry_run' ? 'dry_run' : 'live';
 
-  const fileListeners = collectFileListeners(program);
+  const fileListeners = collectFileListeners(program, { languageVersion: input.movementRow.languageVersion });
 
   const desired: DesiredListener[] = fileListeners.map((listener) => ({
     ...listener,
@@ -1236,7 +1236,7 @@ export interface MovementListItem {
 function isRunnable(row: MovementRow): boolean {
   try {
     return (
-      manualListenerMovements(parseProgram(row.source, { languageVersion: row.languageVersion }))
+      manualListenerMovements(parseProgram(row.source, { languageVersion: row.languageVersion }), { languageVersion: row.languageVersion })
         .length > 0
     );
   } catch (e) {

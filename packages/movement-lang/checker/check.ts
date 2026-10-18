@@ -260,6 +260,7 @@ import {
   before,
   since,
   changedBetween,
+  runHostUnits,
   CURRENT_LANGUAGE_VERSION,
   describeLanguageVersion,
   languageVersionDiagnostic,
@@ -4332,10 +4333,12 @@ class Checker {
         this.fileNames.add(statement.name);
       }
     }
-    // Nothing is ambient. The knowledge graph is an ordinary adapter as of
-    // D25 — imported, then CONSTRUCTED against a connection like any other
+    // Nothing is ambient but the run host's units (from version 5: `cron`,
+    // `manual`). The knowledge graph is an ordinary adapter as of D25 —
+    // imported, then CONSTRUCTED against a connection like any other
     // (`graph = kg(credentials: native_knowledge)`); an unconstructed `kg`
     // used as a graph is ADAPTER_NOT_CONSTRUCTED, the true diagnosis.
+    this.declareUnits(file);
     this.checkStatementList(program.statements, file);
     if (!this.options.library) this.reportMissingListens();
     return file;
@@ -4437,6 +4440,23 @@ class Checker {
    * Returns the same-scope binding this replaced, exactly as `declare` does, so
    * callers keep reporting their own duplicate errors.
    */
+  /** The run host's units, in the file scope before any statement: each an
+   *  instance its adapter's credential-free construction would be. */
+  private declareUnits(file: Scope): void {
+    for (const unit of runHostUnits(this.languageVersion)) {
+      const schema = this.catalog.adapter(unit) !== undefined ? this.catalog.instantiate(unit, {}) : undefined;
+      file.declare({
+        name: unit,
+        kind: 'instance',
+        span: SYNTHETIC_SPAN,
+        adapter: unit,
+        ...(schema !== undefined ? { schema } : {}),
+        addressToken: this.addressTokenOf(unit, undefined, []),
+        unit: true,
+      });
+    }
+  }
+
   private declareAuthored(
     scope: Scope,
     symbol: ScopeSymbol,
@@ -4476,7 +4496,8 @@ class Checker {
         span,
       );
     }
-    return scope.declare(symbol, options);
+    const replaced = scope.declare(symbol, options);
+    return replaced?.unit === true ? undefined : replaced;
   }
 
   /** The refinement a name declares (`type Thesis = <"A" | "B">`), when it
@@ -9585,7 +9606,9 @@ class Checker {
     if (callee.kind !== 'adapter') {
       this.report(
         DiagnosticCodes.CONSTRUCT_NOT_ADAPTER,
-        callee.kind === 'fileImport'
+        callee.unit === true
+          ? `'${construct.callee}' is one of the run host's units, always connected — listen to it by name ('listen to ${construct.callee} … fire …') with no import and no 'connect'`
+          : callee.kind === 'fileImport'
           ? `'${construct.callee}' is imported from a file (a movement or a node declaration) — only adapter types are constructed`
           : `'${construct.callee}' is ${describeKind[callee.kind]}, not an adapter type — only adapter types are constructed`,
         construct.span,

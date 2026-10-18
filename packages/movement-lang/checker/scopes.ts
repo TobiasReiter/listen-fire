@@ -106,6 +106,9 @@ export interface ScopeSymbol {
    *  absent — and a read or a write off the parameter can't be checked
    *  (MOV_EVENT_UNDESCRIBED, from version 5). */
   undescribedEvent?: UndescribedEvent;
+  /** One of the run host's units (`cron`, `manual`): in scope with no
+   *  import, and a file's own binding of the name replaces it. */
+  unit?: true;
   /**
    * True for a `binding` on the ARROW plane whose value is a whole traversal
    * BLOCK's return (`all = graph-[c:companies]-> { return c }`) — the
@@ -288,7 +291,7 @@ export class Scope {
     let child: Scope = this;
     for (let scope: Scope | undefined = this.parent; scope; child = scope, scope = scope.parent) {
       const symbol = scope.symbols.get(name);
-      if (symbol) return { kind: 'bound', symbol };
+      if (symbol && symbol.unit !== true) return { kind: 'bound', symbol };
       if (scope.pending.has(name)) return { kind: 'pending' };
     }
     return undefined;

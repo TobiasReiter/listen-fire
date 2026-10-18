@@ -166,3 +166,15 @@ export function languageVersionDiagnostic(
       return neverAsAny(standing);
   }
 }
+
+/** The run host's units (Henry 2026-10-16): from version 5 every file has
+ *  these names in scope, each already connected — `listen to manual fire
+ *  hello`, `listen to cron { schedule: "0 9 * * 1" } fire digest` — with no
+ *  import and no `connect`. A file's own binding of the name replaces it.
+ *  (`RUN_HOST_UNITS` in crates/movement-parser/src/version.rs.) */
+export const RUN_HOST_UNITS: readonly string[] = ['cron', 'manual'];
+
+/** The units a file pinned to `version` has in scope. */
+export function runHostUnits(version: LanguageVersion): readonly string[] {
+  return since(version, 5) ? RUN_HOST_UNITS : [];
+}

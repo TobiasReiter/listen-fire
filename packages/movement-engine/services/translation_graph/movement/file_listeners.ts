@@ -2,7 +2,7 @@
 // routing table every shell derives from source (the hosted product stores one
 // trigger row per listen; the command line routes from them directly).
 
-import { BridgeError, expressionOfSlot, unwrapCredentialArg } from 'movement-lang';
+import { BridgeError, CURRENT_LANGUAGE_VERSION, expressionOfSlot, runHostUnits, unwrapCredentialArg } from 'movement-lang';
 
 import type { ImportStatement, ListenDeclaration, NamedArg, Program } from 'movement-lang';
 
@@ -57,8 +57,12 @@ function configValueOf(arg: NamedArg): unknown {
  * after a clean check, so unresolvable pieces have already been reported;
  * anything still unresolvable here is skipped defensively.
  */
-export function collectFileListeners(program: Program): FileListener[] {
+export function collectFileListeners(
+  program: Program,
+  options: { languageVersion?: number } = {},
+): FileListener[] {
   const importOriginals = new Map<string, string>();
+  const imported = new Set<string>();
   const constructions = new Map<
     string,
     { adapter: string; credentialName?: string; constructionArgs?: Record<string, string> }
@@ -68,8 +72,13 @@ export function collectFileListeners(program: Program): FileListener[] {
   const recordImports = (statement: ImportStatement): void => {
     for (const { name, alias } of statement.names) {
       if (alias !== undefined) importOriginals.set(alias, name);
+      imported.add(alias ?? name);
     }
   };
+  // A run host unit (`listen to manual fire …`) the file does not bind itself
+  // is the host's own, credential-free and argument-free.
+  const units = runHostUnits(options.languageVersion ?? CURRENT_LANGUAGE_VERSION);
+  const unitConstruction = (name: string) => (units.includes(name) && !imported.has(name) ? { adapter: name } : undefined);
   const original = (local: string): string => importOriginals.get(local) ?? local;
 
   for (const statement of program.statements) {
@@ -104,7 +113,8 @@ export function collectFileListeners(program: Program): FileListener[] {
     // checker, so a clean program never reaches here with `listen.construct`
     // set. Every listen references a NAMED construction; anything still
     // unresolvable was reported as MOV_LISTEN_NOT_INSTANCE.
-    const construction = constructions.get(listen.instance);
+    const construction: { adapter: string; credentialName?: string; constructionArgs?: Record<string, string> } | undefined =
+      constructions.get(listen.instance) ?? unitConstruction(listen.instance);
     if (!construction) continue;
     listeners.push({
       instanceName: listen.instance,

@@ -24,8 +24,10 @@
 // always fails loud, never silently).
 
 import {
+  CURRENT_LANGUAGE_VERSION,
   MovementParseError,
   fileExports,
+  runHostUnits,
   parseProgram,
   referencedFileImports,
   type LanguageVersion,
@@ -146,13 +148,17 @@ interface FacetScan {
  * A listener is manual when it listens to a NAMED construction of the manual
  * adapter (`go = manual()` then `listen to go {}`), import aliases honored.
  */
-export function manualListenerMovements(program: Program): string[] {
+export function manualListenerMovements(program: Program, options: { languageVersion?: number } = {}): string[] {
   const importOriginals = new Map<string, string>();
   const constructionAdapters = new Map<string, string>();
+  // From version 5 `manual` is the run host's own unit: `listen to manual fire
+  // backfill` needs no construction, unless the file binds the name itself.
+  for (const unit of runHostUnits(options.languageVersion ?? CURRENT_LANGUAGE_VERSION)) constructionAdapters.set(unit, unit);
   for (const statement of program.statements) {
     if (statement.kind === 'import') {
       for (const { name, alias } of statement.names) {
         if (alias !== undefined) importOriginals.set(alias, name);
+        constructionAdapters.delete(alias ?? name);
       }
     } else if (statement.kind === 'assign' && statement.value.kind === 'construct') {
       const callee = statement.value.construct.callee;
@@ -228,7 +234,9 @@ function facetScanByLexicalScan(source: string): FacetScan {
     if (listen) {
       scan.listenerCount++;
       scan.firedMovements.push(listen[2]);
-      if (manualInstances.has(listen[1])) scan.manualTargets.push(listen[2]);
+      // The run host's `manual` unit, unless the file imports the name itself.
+      const unit = listen[1] === 'manual' && !adapterAliases.has('manual');
+      if (manualInstances.has(listen[1]) || unit) scan.manualTargets.push(listen[2]);
       continue;
     }
     if (EXPORT_MOVEMENT_LINE.test(line)) {
