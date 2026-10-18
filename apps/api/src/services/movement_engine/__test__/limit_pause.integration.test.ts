@@ -72,6 +72,7 @@ import { RunBusy } from '../run_lease';
 import { getMovementRunStatus } from '../../translation_graph/movement/run_now';
 
 import { cleanupTeam } from '../../../test/harness/cleanup';
+import { seedTeamCredential } from '../../../test/harness/credentials';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
@@ -327,6 +328,7 @@ const ENV_VAR = 'MOVEMENT_MAX_RUN_COST_USD';
 
 describe('a run paused at its cost cap (real DB)', () => {
   let teamId: TeamId;
+  let credentialId: string;
   let slackCreates: Record<string, unknown>[];
   let savedCap: string | undefined;
 
@@ -340,11 +342,12 @@ describe('a run paused at its cost cap (real DB)', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .values({ id: teamId, name: `limit-pause-${teamId.slice(0, 8)}` } as any)
       .execute();
+    credentialId = await seedTeamCredential(teamId);
 
     const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
       snapshot: catalog,
-      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId])),
       notes: [],
     });
     const target = makeSlackTargetFake();
@@ -463,7 +466,7 @@ describe('a run paused at its cost cap (real DB)', () => {
     const catalog = buildCatalog({ judgedSlack: true });
     mockedCatalog.mockResolvedValue({
       snapshot: catalog,
-      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId])),
       notes: [],
     });
     const target = makeJudgedSlackFake();

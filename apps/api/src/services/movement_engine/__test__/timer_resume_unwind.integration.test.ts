@@ -39,6 +39,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => {
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
 import { cleanupTeam } from '../../../test/harness/cleanup';
+import { seedTeamCredential } from '../../../test/harness/credentials';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
@@ -502,6 +503,7 @@ async function backdate(runId: string, addresses: string[]): Promise<void> {
 
 describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
   let teamId: TeamId;
+  let credentialId: string;
   let slackCreates: Record<string, unknown>[];
 
   beforeEach(async () => {
@@ -514,11 +516,12 @@ describe('timer_resume — unwind-and-continue matrix (real DB)', () => {
         name: `unwind-${teamId.slice(0, 8)}`,
       } as any)
       .execute();
+    credentialId = await seedTeamCredential(teamId);
 
     const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
       snapshot: catalog,
-      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId])),
       notes: [],
     });
 

@@ -37,6 +37,7 @@ import type { TriggerEvent } from 'movement-engine/services/translation_graph/tr
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../../lib/kysely';
 import { cleanupTeam } from '../../../../test/harness/cleanup';
+import { seedTeamCredential } from '../../../../test/harness/credentials';
 import { dispatchTriggerByIdEvent } from '../../triggers/router';
 import { inspectMovementRun, listMovementRuns } from '../run_now';
 import {
@@ -274,6 +275,7 @@ function webhookEvent(input: {
 
 describe('typed listen events — dispatch path (real DB)', () => {
   let teamId: TeamId;
+  let credentialId: string;
   let slackCreates: Record<string, unknown>[];
 
   beforeEach(async () => {
@@ -286,12 +288,13 @@ describe('typed listen events — dispatch path (real DB)', () => {
         name: `typed-ev-${teamId.slice(0, 8)}`,
       } as any)
       .execute();
+    credentialId = await seedTeamCredential(teamId);
 
     // The catalog: hand-built (the live introspection seam is faked).
     const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
       snapshot: catalog,
-      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId])),
       notes: [],
     });
 

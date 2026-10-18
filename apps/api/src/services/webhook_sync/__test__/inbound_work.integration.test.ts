@@ -47,6 +47,7 @@ import type { PipelineConfigurationId } from '../../../generated/kysely/public/P
 import type { Catalog, CatalogSnapshot, InstanceSchema, PositionSchema } from 'movement-lang';
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
 import { cleanupTeam } from '../../../test/harness/cleanup';
+import { seedTeamCredential } from '../../../test/harness/credentials';
 import { testWorkContext } from '../../../test/harness/work';
 
 import ExternalServiceType from '../../../generated/kysely/automations/ExternalServiceType';
@@ -327,6 +328,7 @@ const RECOVER_CTX = () => ({ ...testWorkContext(), attempts: 2 });
 
 describe('inbound webhook deliveries run through the work table (real DB)', () => {
   let teamId: TeamId;
+  let credentialId: string;
   let slackEvents: DiscriminableEvent[];
   let attioEvents: DiscriminableEvent[];
 
@@ -351,11 +353,12 @@ describe('inbound webhook deliveries run through the work table (real DB)', () =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .values({ id: teamId, name: `inbound-work-${teamId.slice(0, 8)}` } as any)
       .execute();
+    credentialId = await seedTeamCredential(teamId);
 
     const catalog = buildCatalog();
     mockedCatalog.mockResolvedValue({
       snapshot: catalog,
-      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId])),
       notes: [],
     });
     slackEvents = [];

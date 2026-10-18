@@ -23,6 +23,7 @@ jest.mock('../../translation_graph/adapters/resolve', () => {
 
 import { getAutomationsQb, getCoreQb, getQb } from '../../../lib/kysely';
 import { cleanupTeam } from '../../../test/harness/cleanup';
+import { seedTeamCredential } from '../../../test/harness/credentials';
 import type { TeamId } from '../../../generated/kysely/core/Team';
 import type { TriggerId } from '../../../generated/kysely/automations/Trigger';
 import type { MovementId } from '../../../generated/kysely/automations/Movement';
@@ -217,6 +218,7 @@ const libraryRowTeam = (teamId: TeamId): ParkLibrarySourceTeamId => teamId as st
 
 describe('a paused run resumes on the text it was pinned to (real DB, Rust engine)', () => {
   let teamId: TeamId;
+  let credentialId: string;
   let slackCreates: Record<string, unknown>[];
 
   /** The catalog snapshot the run host reads, with the team's library as saved now. */
@@ -224,7 +226,7 @@ describe('a paused run resumes on the text it was pinned to (real DB, Rust engin
     const catalog = { ...buildCatalog(), files: { 'lib/words': { source: spelled(LIBRARY(marker)) } } };
     mockedCatalog.mockResolvedValue({
       snapshot: catalog,
-      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, 'cred-1'])),
+      credentialIds: Object.fromEntries(Object.keys(catalog.credentials).map((name) => [name, credentialId])),
       notes: [],
     });
   }
@@ -236,6 +238,7 @@ describe('a paused run resumes on the text it was pinned to (real DB, Rust engin
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .values({ id: teamId, name: `pinned-resume-${teamId.slice(0, 8)}` } as any)
       .execute();
+    credentialId = await seedTeamCredential(teamId);
     serveLibrary('ORIGINAL');
     const target = makeSlackTargetFake();
     slackCreates = target.creates;
