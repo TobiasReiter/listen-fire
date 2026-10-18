@@ -50,6 +50,10 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-json
+
+- `lf` gains `--json` on `check`, `catalog`, `run`, `resume`, `call`, `cancel`, `runs`, `connect` and `credential list`: one stable JSON document per command, so agents need not parse the human text (docs/lf-json.md). New `lf runs show <run-id>`: one run's status, event, trace, writes, cost and what it is parked on.
+
 ### r-limits
 
 - Drain pools: `lf drain --kinds poll_listen` (or `resume_timer,wake_await,fire_event,fire_callback`, and `cron` for the cron ticks) claims only work of those kinds, so polls and run steps can be drained by separately sized fleets. Both stores and the store wire (`work.claimDue`'s `kinds`) take the filter; the run host contract holds every store to it.

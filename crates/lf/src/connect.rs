@@ -18,7 +18,8 @@ use std::path::Path;
 use crate::check::LOCAL_TENANT;
 use crate::externals::{EXTERNAL_MANIFEST, External, ExternalManifest, scan_externals, start_externals};
 use crate::http_out::{hex, random_bytes};
-use crate::json::Js;
+use crate::json::{Js, Obj};
+use crate::obj;
 use crate::oauth2::{Declaration, declarations_of};
 use crate::oauth_redirect::{loopback_redirect_uri, public_redirect_uri};
 use crate::project::Project;
@@ -60,12 +61,18 @@ pub async fn read_manifest(project: &Project, external: &External, install: Opti
     Ok(ManifestFacts { declarations: declarations_of(&started.manifest_answer)?, answer: started.manifest_answer.clone() })
 }
 
+/// One module `lf connect` lists: the line it prints, and the same facts as JSON.
+pub struct KnownModule {
+    pub line: String,
+    pub facts: Obj,
+}
+
 /// `lf connect` with no module: the installed externals, and module packages
 /// the project can install.
-pub fn known_modules(project: &Project) -> Result<Vec<String>, String> {
+pub fn known_modules(project: &Project) -> Result<Vec<KnownModule>, String> {
     let credentials = load_secrets(project, &process_env())?;
     let installed = scan_externals(project)?;
-    let mut lines = Vec::new();
+    let mut modules = Vec::new();
     for external in &installed {
         let name = &external.manifest.name;
         let how = match (&external.manifest.module, &external.manifest.url) {
@@ -73,32 +80,58 @@ pub fn known_modules(project: &Project) -> Result<Vec<String>, String> {
             (None, Some(url)) => format!("at {url}"),
             (None, None) => "command".to_string(),
         };
-        let install = match install_of(&credentials, name) {
+        let install = install_of(&credentials, name);
+        let install_text = match install {
             Some(install) => format!("install set up ({})", install.name),
             None => "install not set up".to_string(),
         };
         let users: Vec<&str> = credentials.iter().filter(|c| c.external == *name && c.binding != Binding::Install).map(|c| c.name.as_str()).collect();
-        let users = if users.is_empty() { "none".to_string() } else { users.join(", ") };
-        lines.push(format!("{name}  installed ({how}); {install}; credentials: {users}"));
+        let users_text = if users.is_empty() { "none".to_string() } else { users.join(", ") };
+        modules.push(KnownModule {
+            line: format!("{name}  installed ({how}); {install_text}; credentials: {users_text}"),
+            facts: obj! {
+                "name" => Js::str(name),
+                "kind" => Js::str("external"),
+                "state" => Js::str("installed"),
+                "how" => Js::str(&how),
+                "installSetUp" => Js::Bool(install.is_some()),
+                "install" => install.map_or(Js::Null, |i| Js::str(&i.name)),
+                "credentials" => Js::strings(users),
+            },
+        });
     }
     let core_processes = crate::externals::core_modules_in(&project.externals_dir)?;
     for module in crate::core::BUILTIN.iter().chain(&core_processes) {
         let needs_setup = module.settings.iter().any(|s| !s.optional);
-        let set_up = match (install_of(&credentials, &module.name).is_some(), needs_setup) {
+        let has_install = install_of(&credentials, &module.name).is_some();
+        let set_up = match (has_install, needs_setup) {
             (true, _) => "set up",
             (false, false) => "ready with its defaults",
             (false, true) => "not set up",
         };
         let how = if module.process.is_some() { "installed" } else { "built-in" };
-        lines.push(format!("{}  {how} {} module; {set_up} (lf connect {})", module.name, module.slot.name(), module.name));
+        modules.push(KnownModule {
+            line: format!("{}  {how} {} module; {set_up} (lf connect {})", module.name, module.slot.name(), module.name),
+            facts: obj! {
+                "name" => Js::str(module.name.as_ref()),
+                "kind" => Js::str("core"),
+                "slot" => Js::str(module.slot.name()),
+                "state" => Js::str(how),
+                "setUp" => Js::Bool(has_install || !needs_setup),
+                "setupNote" => Js::str(set_up),
+            },
+        });
     }
     let installed_modules: BTreeSet<&str> = installed.iter().filter_map(|e| e.manifest.module.as_deref()).collect();
     for name in module_packages(&project.root) {
         if !installed_modules.contains(name.as_str()) {
-            lines.push(format!("{name}  not installed (lf connect {name})"));
+            modules.push(KnownModule {
+                line: format!("{name}  not installed (lf connect {name})"),
+                facts: obj! { "name" => Js::str(&name), "kind" => Js::str("package"), "state" => Js::str("not installed") },
+            });
         }
     }
-    Ok(lines)
+    Ok(modules)
 }
 
 /// The `@lf/*` packages in the project's node_modules.

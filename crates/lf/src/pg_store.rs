@@ -486,6 +486,20 @@ impl RunHostStore for PgStore {
         Ok(row.map_or(0, |r| r.get(0)))
     }
 
+    fn trace_entries(&self, run_id: &str) -> Result<Option<Vec<Js>>> {
+        let rows = self.query(
+            "select t.entry::text
+             from lf.trigger_run r,
+                  jsonb_array_elements(r.steps) with ordinality as s(step, i),
+                  jsonb_array_elements(case when jsonb_typeof(s.step -> 'diagnostics' -> 'trace') = 'array' then s.step -> 'diagnostics' -> 'trace' else '[]'::jsonb end)
+                    with ordinality as t(entry, j)
+             where r.id = $1::text::uuid and r.team_id = $2::text::uuid
+             order by s.i, t.j",
+            &[&run_id, &self.tenant],
+        )?;
+        rows.iter().map(|r| Js::parse(r.get::<_, String>(0).as_bytes()).map_err(StoreError::Backend)).collect::<Result<Vec<_>>>().map(Some)
+    }
+
     // ── Parks ───────────────────────────────────────────────────────────────
 
     fn put_leaf(&self, run_id: &str, address: &str, reason: &str, wake_at: Option<&str>, state: &Js, fence: Option<&str>) -> Result<()> {

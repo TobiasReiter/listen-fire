@@ -376,9 +376,17 @@ fn call_answer(called: &Called) -> (u16, String) {
 
 // ── The other ways in: lf call, lf cancel, lf run --webhook ─────────────────
 
+/// What `lf call` was given.
+pub struct CallArgs<'a> {
+    pub id: Option<&'a str>,
+    pub body: Option<&'a Path>,
+    pub json: bool,
+}
+
 /// `lf call <callback-id> [--body <values.json>]`.
-pub async fn call_command(project: Project, store: &StoreSpec, id: Option<&str>, body: Option<&Path>, out: &mut impl Write) -> Result<i32, String> {
+pub async fn call_command(project: Project, store: &StoreSpec, args: CallArgs<'_>, out: &mut impl Write) -> Result<i32, String> {
     let io = |e: std::io::Error| e.to_string();
+    let CallArgs { id, body, json } = args;
     let Some(id) = id else {
         eprintln!("lf call needs a callback id");
         return Ok(2);
@@ -393,6 +401,17 @@ pub async fn call_command(project: Project, store: &StoreSpec, id: Option<&str>,
     };
     let session = open_session(project, false, store).await?;
     let called = session.call_callback(id, &values).await?;
+    if json {
+        let (result, message) = match &called.call {
+            CallOutcome::Recorded { .. } => ("recorded", None),
+            CallOutcome::Mismatch(message) => ("refused", Some(message.as_str())),
+            CallOutcome::NotFound => ("notFound", None),
+            CallOutcome::Closed => ("closed", None),
+            CallOutcome::Expired => ("expired", None),
+        };
+        let code = if result == "recorded" { crate::lfjson::exit_of(&called.outcomes) } else { 1 };
+        return crate::lfjson::emit(out, &crate::lfjson::call_doc(id, result, message, called.queued, &called.outcomes), code);
+    }
     match &called.call {
         CallOutcome::Recorded { .. } => {
             if called.queued {
@@ -423,13 +442,21 @@ pub async fn call_command(project: Project, store: &StoreSpec, id: Option<&str>,
 
 /// `lf cancel <run-id> [--reason <text>]`. Settling a run starts no segment:
 /// no externals, just the store.
-pub async fn cancel_command(store: &StoreSpec, run_id: Option<&str>, reason: Option<&str>, out: &mut impl Write) -> Result<i32, String> {
+pub async fn cancel_command(store: &StoreSpec, run_id: Option<&str>, reason: Option<&str>, json: bool, out: &mut impl Write) -> Result<i32, String> {
     let Some(run_id) = run_id else {
         eprintln!("lf cancel needs a run id");
         return Ok(2);
     };
     let store = open_store(store)?;
-    let line = match cancel_run(&*store, run_id, reason).await? {
+    let cancelled = cancel_run(&*store, run_id, reason).await?;
+    if json {
+        let result = match cancelled {
+            Cancelled::Now => "cancelled",
+            Cancelled::Requested => "cancelRequested",
+        };
+        return crate::lfjson::emit(out, &crate::lfjson::cancel_doc(run_id, result), 0);
+    }
+    let line = match cancelled {
         Cancelled::Now => format!("run {run_id} cancelled"),
         Cancelled::Requested => format!("run {run_id}: cancel requested; another lf process is stepping it, and it stops at its next statement"),
     };
