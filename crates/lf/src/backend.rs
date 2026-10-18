@@ -178,6 +178,11 @@ pub trait RunHostStore {
     /// The cap counts spend from here on: a run paused at its cap, resumed.
     fn reset_spend_baseline(&self, run_id: &str) -> Result<()>;
     fn trace_len(&self, run_id: &str) -> Result<i64>;
+    /// The run's trace entries in order, or None when this store does not
+    /// hand them back (a store module's wire has no read for them).
+    fn trace_entries(&self, _run_id: &str) -> Result<Option<Vec<Js>>> {
+        Ok(None)
+    }
 
     // ── Parks ───────────────────────────────────────────────────────────────
     fn put_leaf(&self, run_id: &str, address: &str, reason: &str, wake_at: Option<&str>, state: &Js, fence: Option<&str>) -> Result<()>;
@@ -275,6 +280,9 @@ impl RunHostStore for Store {
     }
     fn trace_len(&self, run_id: &str) -> Result<i64> {
         Store::trace_len(self, run_id)
+    }
+    fn trace_entries(&self, run_id: &str) -> Result<Option<Vec<Js>>> {
+        Store::trace_entries(self, run_id).map(Some)
     }
     fn run_spent(&self, run_id: &str) -> Result<f64> {
         Store::run_spent(self, run_id)

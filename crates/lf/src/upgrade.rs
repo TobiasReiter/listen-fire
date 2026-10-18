@@ -227,11 +227,11 @@ fn severity_word(d: &Diagnostic) -> &'static str {
 pub async fn run(project: &Project, options: UpgradeOptions, out: &mut impl Write) -> Result<i32, String> {
     let io = |e: std::io::Error| e.to_string();
     let checking = match open_checking(project).await? {
-        Opened::MissingCredentials(lines) => {
-            for line in &lines {
-                writeln!(out, "{line}").map_err(io)?;
+        Opened::MissingCredentials(missing) => {
+            for m in &missing {
+                writeln!(out, "{}", crate::check::missing_line(m)).map_err(io)?;
             }
-            writeln!(out, "{} error(s)", lines.len()).map_err(io)?;
+            writeln!(out, "{} error(s)", missing.len()).map_err(io)?;
             return Ok(1);
         }
         Opened::Ready(checking) => checking,

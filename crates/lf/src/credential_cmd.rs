@@ -21,6 +21,8 @@ use std::path::PathBuf;
 
 use crate::completion;
 use crate::connect::{CLIENT_ID_FIELD, CLIENT_SECRET_FIELD, REDIRECT_PORT_FIELD, connect_module, entry_content, find_external, known_modules, process_env, public_url, read_manifest};
+use crate::json::{Js, Obj};
+use crate::obj;
 use crate::oauth2::{ClientApp, Declaration, DeclarationKind};
 use crate::oauth_redirect::{RedirectMode, authorize_at_provider};
 use crate::project::{Project, load_project};
@@ -181,16 +183,22 @@ pub async fn delete_credential(project: &Project, name: &str, prompter: &mut Pro
     Ok(())
 }
 
-/// One line per credential: its name, module, declared credential, and where it is kept. Never a value.
-pub fn list_credentials(project: &Project) -> Result<Vec<String>, String> {
+/// A credential `list` shows: its line, and the same facts as JSON. Never a value.
+pub struct ListedCredential {
+    pub line: String,
+    pub facts: Obj,
+}
+
+/// Each credential's name, module, declared credential, where it is kept and its token's expiry.
+pub fn list_credentials(project: &Project) -> Result<Vec<ListedCredential>, String> {
     let credentials = load_secrets(project, &process_env())?;
     Ok(credentials
         .iter()
         .map(|credential| {
-            let what = match &credential.binding {
-                Binding::Install => "install".to_string(),
-                Binding::Credential(declared) => format!("credential {declared}"),
-                Binding::Legacy => "written by hand (lf credential update records its binding)".to_string(),
+            let (what, binding, declared) = match &credential.binding {
+                Binding::Install => ("install".to_string(), "install", Js::Null),
+                Binding::Credential(declared) => (format!("credential {declared}"), "credential", Js::str(declared)),
+                Binding::Legacy => ("written by hand (lf credential update records its binding)".to_string(), "legacy", Js::Null),
             };
             let mut where_ = Vec::new();
             if let Some(file) = &credential.origin.file {
@@ -199,8 +207,19 @@ pub fn list_credentials(project: &Project) -> Result<Vec<String>, String> {
             if !credential.origin.env_fields.is_empty() {
                 where_.push("environment".to_string());
             }
-            let expires = credential.fields.get("expires_at").map(|at| format!("; token expires {at}")).unwrap_or_default();
-            format!("{}  {}  {what}  ({}){expires}", credential.name, credential.external, where_.join(" + "))
+            let expires_at = credential.fields.get("expires_at");
+            let expires = expires_at.map(|at| format!("; token expires {at}")).unwrap_or_default();
+            ListedCredential {
+                line: format!("{}  {}  {what}  ({}){expires}", credential.name, credential.external, where_.join(" + ")),
+                facts: obj! {
+                    "name" => Js::str(&credential.name),
+                    "module" => Js::str(&credential.external),
+                    "binding" => Js::str(binding),
+                    "declaredCredential" => declared,
+                    "kept" => Js::strings(&where_),
+                    "expiresAt" => expires_at.map_or(Js::Null, Js::str),
+                },
+            }
         })
         .collect())
 }
@@ -291,11 +310,11 @@ fn user_name() -> String {
 
 pub const COMMANDS: &[&str] = &["connect", "credential", "completion"];
 
-pub const USAGE: &str = "  lf connect [<module>] [--url <server url>]     set a module up: install it, its server and webhook secrets, its OAuth app (no module: list the ones known)
+pub const USAGE: &str = "  lf connect [<module>] [--url <server url>]     set a module up: install it, its server and webhook secrets, its OAuth app (no module: list the ones known; --json: as JSON)
   lf credential add --module <module> [<name>] [--credential <declared>]   a user credential for the module: sign in at the provider, or its fields
   lf credential update <name> [--no-reauthorize]   sign in again and edit its fields
   lf credential delete <name>
-  lf credential list
+  lf credential list [--json]
     signing in: --redirect-port N (the port your app registered)  --no-browser  --headless (paste the redirect back)  --public (through lf serve at publicUrl)
   lf completion <bash|zsh|fish>   a shell's tab completion for lf (subcommands, modules, credentials)";
 
@@ -312,6 +331,7 @@ struct Line {
     headless: bool,
     public: bool,
     no_reauthorize: bool,
+    json: bool,
 }
 
 fn parse(argv: &[String]) -> Result<Line, String> {
@@ -334,6 +354,7 @@ fn parse(argv: &[String]) -> Result<Line, String> {
             "--headless" => line.headless = true,
             "--public" => line.public = true,
             "--no-reauthorize" => line.no_reauthorize = true,
+            "--json" => line.json = true,
             "--ephemeral" => {}
             flag if flag.starts_with('-') && flag != "-" => return Err(format!("unknown option \"{flag}\"")),
             positional => line.positionals.push(positional.to_string()),
@@ -369,10 +390,13 @@ async fn run(argv: &[String]) -> Result<i32, String> {
             let project = project_at(&line)?;
             let Some(reference) = rest.first() else {
                 let known = known_modules(&project)?;
-                if known.is_empty() {
+                if line.json {
+                    let doc = Js::Obj(obj! { "modules" => Js::Arr(known.into_iter().map(|m| Js::Obj(m.facts)).collect()) });
+                    println!("{}", doc.to_json());
+                } else if known.is_empty() {
                     println!("no modules known here; install one: lf connect <package or name>");
                 } else {
-                    println!("{}", known.join("\n"));
+                    println!("{}", known.iter().map(|m| m.line.as_str()).collect::<Vec<_>>().join("\n"));
                 }
                 return Ok(0);
             };
@@ -387,8 +411,14 @@ async fn credential(line: &Line, rest: &[String]) -> Result<i32, String> {
     let project = project_at(line)?;
     let (action, name) = (rest.first().map(String::as_str), rest.get(1).map(String::as_str));
     if action == Some("list") {
-        let lines = list_credentials(&project)?;
-        println!("{}", if lines.is_empty() { "no credentials".to_string() } else { lines.join("\n") });
+        let listed = list_credentials(&project)?;
+        if line.json {
+            let doc = Js::Obj(obj! { "credentials" => Js::Arr(listed.into_iter().map(|c| Js::Obj(c.facts)).collect()) });
+            println!("{}", doc.to_json());
+        } else {
+            let lines: Vec<&str> = listed.iter().map(|c| c.line.as_str()).collect();
+            println!("{}", if lines.is_empty() { "no credentials".to_string() } else { lines.join("\n") });
+        }
         return Ok(0);
     }
     if line.headless && line.public {

@@ -19,7 +19,7 @@ use crate::json::Js;
 use crate::project::Project;
 use crate::protocol::shape_error;
 use crate::schema::describe_external_schema;
-use crate::secrets::{Credentials, load_secrets, missing_credentials};
+use crate::secrets::{Credentials, MissingCredential, load_secrets, missing_credentials};
 use crate::sources::{MovementFile, scan_movements};
 
 /// The one tenant a local project is (`LOCAL_TENANT`).
@@ -45,15 +45,28 @@ pub fn parse(source: &str, language_version: u32) -> Result<Program, ParseError>
 pub struct FileDiagnostic {
     pub line: usize,
     pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
     pub code: String,
     pub message: String,
     pub severity: &'static str,
+    /// The exact rewrite that resolves it, when the checker offers one.
+    pub fix: Option<Js>,
 }
 
 /// Every diagnostic one file has. A file that does not parse has one, its parse refusal.
 pub fn check_file(file: &MovementFile, catalog: &CatalogSnapshot, language_version: u32) -> Result<Vec<FileDiagnostic>, String> {
     if let Err(refused) = parse(&file.source, language_version) {
-        return Ok(vec![FileDiagnostic { line: refused.line, column: refused.column, code: "MOV_PARSE".into(), message: refused.message, severity: "error" }]);
+        return Ok(vec![FileDiagnostic {
+            line: refused.line,
+            column: refused.column,
+            end_line: refused.line,
+            end_column: refused.column,
+            code: "MOV_PARSE".into(),
+            message: refused.message,
+            severity: "error",
+            fix: None,
+        }]);
     }
     let options = CheckOptions { language_version, upgrading_from: None, parse_version: None, zones: &NativeZones };
     let diagnostics = movement_checker::check_source(&file.source, catalog, options)
@@ -63,6 +76,9 @@ pub fn check_file(file: &MovementFile, catalog: &CatalogSnapshot, language_versi
         .map(|d| FileDiagnostic {
             line: d.span.start.line,
             column: d.span.start.col,
+            end_line: d.span.end.line,
+            end_column: d.span.end.col,
+            fix: d.fix.as_ref().and_then(|fix| Js::parse(fix.to_string().as_bytes()).ok()),
             message: external_text(&d.message).into_owned(),
             code: d.code,
             severity: match d.severity {
@@ -85,7 +101,7 @@ pub struct Checking {
 pub enum Opened {
     Ready(Checking),
     /// Credentials the files name that the secrets lack, printed as the check's errors.
-    MissingCredentials(Vec<String>),
+    MissingCredentials(Vec<MissingCredential>),
 }
 
 pub async fn open_checking(project: &Project) -> Result<Opened, String> {
@@ -94,8 +110,7 @@ pub async fn open_checking(project: &Project) -> Result<Opened, String> {
     let files = scan_movements(project)?;
     let missing = missing_credentials(project, &files, &credentials, &env);
     if !missing.is_empty() {
-        let lines = missing.iter().map(|m| format!("{}:{}:{} error MISSING_CREDENTIAL {}", m.file.display(), m.line, m.column, m.message)).collect();
-        return Ok(Opened::MissingCredentials(lines));
+        return Ok(Opened::MissingCredentials(missing));
     }
     let externals = scan_externals(project)?;
     let running = start_externals(project, &externals, &credentials, LOCAL_TENANT).await?;
@@ -152,28 +167,43 @@ fn is_type_descriptor(descriptor: &Js) -> bool {
         && descriptor.get("deletable").is_none_or(|d| matches!(d, Js::Bool(_)))
 }
 
+/// A missing credential, as `check` words it.
+pub fn missing_line(m: &MissingCredential) -> String {
+    format!("{}:{}:{} error MISSING_CREDENTIAL {}", m.file.display(), m.line, m.column, m.message)
+}
+
 /// The command: prints each diagnostic and the count, as `lf check` does.
-pub async fn run(project: &Project, out: &mut impl Write) -> Result<i32, String> {
+pub async fn run(project: &Project, json: bool, out: &mut impl Write) -> Result<i32, String> {
     let checking = match open_checking(project).await? {
-        Opened::MissingCredentials(lines) => {
-            for line in &lines {
-                writeln!(out, "{line}").map_err(|e| e.to_string())?;
+        Opened::MissingCredentials(missing) => {
+            if json {
+                return crate::lfjson::emit(out, &crate::lfjson::check_doc(&[], &missing), 1);
             }
-            writeln!(out, "{} error(s)", lines.len()).map_err(|e| e.to_string())?;
+            for m in &missing {
+                writeln!(out, "{}", missing_line(m)).map_err(|e| e.to_string())?;
+            }
+            writeln!(out, "{} error(s)", missing.len()).map_err(|e| e.to_string())?;
             return Ok(1);
         }
         Opened::Ready(checking) => checking,
     };
     let catalog = CatalogSnapshot::load(&read_json_text(&checking.catalog.to_json())).map_err(|e| format!("the catalog does not load: {e}"))?;
     let mut errors = 0;
+    let mut checked = Vec::new();
     for file in &checking.files {
-        for d in check_file(file, &catalog, project.language_version)? {
-            if d.severity == "error" {
-                errors += 1;
+        let diagnostics = check_file(file, &catalog, project.language_version)?;
+        errors += diagnostics.iter().filter(|d| d.severity == "error").count();
+        if !json {
+            for d in &diagnostics {
+                writeln!(out, "{}:{}:{} {} {} {}", file.path.display(), d.line, d.column, d.severity, d.code, d.message).map_err(|e| e.to_string())?;
             }
-            writeln!(out, "{}:{}:{} {} {} {}", file.path.display(), d.line, d.column, d.severity, d.code, d.message).map_err(|e| e.to_string())?;
         }
+        checked.push((file.path.clone(), diagnostics));
+    }
+    let code = if errors > 0 { 1 } else { 0 };
+    if json {
+        return crate::lfjson::emit(out, &crate::lfjson::check_doc(&checked, &[]), code);
     }
     writeln!(out, "{} file(s), {errors} error(s)", checking.files.len()).map_err(|e| e.to_string())?;
-    Ok(if errors > 0 { 1 } else { 0 })
+    Ok(code)
 }

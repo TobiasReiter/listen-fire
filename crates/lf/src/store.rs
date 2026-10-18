@@ -425,6 +425,12 @@ impl Store {
         })
     }
 
+    pub fn trace_entries(&self, run_id: &str) -> Result<Vec<Js>> {
+        let mut statement = self.db.prepare("select entry from trace where run_id = ? order by seq")?;
+        let texts = statement.query_map(params![run_id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        texts.iter().map(|text| Js::parse(text.as_bytes()).map_err(StoreError::Backend)).collect()
+    }
+
     pub fn run_spent(&self, run_id: &str) -> Result<f64> {
         Ok(self.db.query_row("select spent_microdollars - cost_cap_baseline_microdollars from run where id = ?", params![run_id], |r| r.get(0)).optional()?.unwrap_or(0.0))
     }

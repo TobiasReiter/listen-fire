@@ -8,7 +8,8 @@
 //!   lf run --poll <movement>            poll now the polled sources of the listens that fire it
 //!   lf resume [<run-id>]                step a parked run, or drain due work and every parked run
 //!   lf upgrade [--check] [--all]        rewrite the movement files into the current language version
-//!   lf runs                             the runs, most recent first
+//!   lf runs [show <run-id>]             the runs, most recent first; one run in full
+//!   --json                              (check, catalog, run, resume, runs, call, cancel, connect, credential list) one JSON document
 //!   lf drain [--until-idle] [--max-seconds N]  a worker over the work queue (scale from zero)
 //!   lf serve [--port N]                 the inbound doors, the callback door and the work drain
 //!   lf call <callback-id> [--body <values.json>]
@@ -56,6 +57,7 @@ mod http_out;
 mod inbound;
 mod init;
 mod json;
+mod lfjson;
 mod json_repair;
 mod limiter;
 mod limiter_module;
@@ -101,6 +103,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
        lf serve [--port N]
        lf call <callback-id> [--body <values.json>]
        lf cancel <run-id> [--reason <text>]
+       lf runs [show <run-id>]
        lf --contract-store <state.db|postgres://…> [--team <uuid>]
        lf --contract-store-slot [--dir <project>]
        lf --contract-limiter
@@ -115,7 +118,8 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   run       run <movement>: one manual invocation, to the `listen to manual fire <movement>` listens; --event: route the event file's event to the listens it matches and run each; --poll <movement>: poll now, once, the source of each listen that fires it on a polled source (its manifest declares `poll`), and run the listen on each new event
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
-  runs      the runs in the state file, most recent first (as `lf runs`)
+  runs      the runs in the state file, most recent first (as `lf runs`); `runs show <run-id>`: one run, its event, trace and park
+  --json    check, catalog, run, resume, runs, call, cancel, connect, credential list: one JSON document (docs/lf-json.md); a failure is {\"error\": …}
   drain     fire each cron listen's due tick (once, however many workers drain), then claim due work rows one at a time and run them (a polled listen's row is its next poll, due every interval its source declares); with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds, with --kinds only rows of those kinds (resume_timer, wake_await, fire_event, fire_callback, poll_listen) and the cron ticks only when it names cron
   serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
   call      call a callback, as its url's POST does (the values: a JSON object)
@@ -162,6 +166,7 @@ struct Args {
     kinds: Option<String>,
     start_timeout: Option<std::time::Duration>,
     project_schema: bool,
+    json: bool,
     help: bool,
     version: bool,
 }
@@ -195,6 +200,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         kinds: None,
         start_timeout: None,
         project_schema: false,
+        json: false,
         help: false,
         version: false,
     };
@@ -215,6 +221,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--reason" => args.reason = Some(value("--reason")?),
             "--contract-doors" => args.contract_doors = true,
             "--ephemeral" => args.ephemeral = true,
+            "--json" => args.json = true,
             "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(value("--contract-store")?),
             "--contract-store-slot" => args.contract_store_slot = true,
@@ -299,15 +306,18 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
     };
     match command.as_str() {
         "init" => init::run(&args.rest.first().map(PathBuf::from).unwrap_or_else(|| args.dir.clone()), &mut out),
-        "check" => check::run(&load()?, &mut out).await,
+        "check" => check::run(&load()?, args.json, &mut out).await,
         "catalog" => match check::open_checking(&load()?).await? {
             check::Opened::Ready(checking) => {
                 writeln!(out, "{}", checking.catalog.to_json()).map_err(|e| e.to_string())?;
                 Ok(0)
             }
-            check::Opened::MissingCredentials(lines) => {
-                for line in lines {
-                    writeln!(out, "{line}").map_err(|e| e.to_string())?;
+            check::Opened::MissingCredentials(missing) => {
+                if args.json {
+                    return lfjson::emit(&mut out, &lfjson::missing_doc(&missing), 1);
+                }
+                for m in &missing {
+                    writeln!(out, "{}", check::missing_line(m)).map_err(|e| e.to_string())?;
                 }
                 Ok(1)
             }
@@ -319,13 +329,13 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 let store = store_of(&args, &project)?;
                 let session = runs::open_session(project, args.ephemeral, &store).await?;
                 let delivery = serve::WebhookFile { external, install: args.install.as_deref(), body, headers: &args.headers };
-                return runs::report(&serve::receive_webhook(&session, delivery).await?, &mut out);
+                return report_runs(&serve::receive_webhook(&session, delivery).await?, args.json, &mut out);
             }
             if let Some(movement) = &args.poll {
                 let project = load()?;
                 let store = store_of(&args, &project)?;
                 let session = runs::open_session(project, args.ephemeral, &store).await?;
-                return session.run_poll(movement).await?.report(&mut out);
+                return report_fired(&session.run_poll(movement).await?, args.json, &mut out);
             }
             let Some(event_file) = &args.event else {
                 let Some(movement) = args.rest.first() else {
@@ -335,7 +345,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 let project = load()?;
                 let store = store_of(&args, &project)?;
                 let session = runs::open_session(project, args.ephemeral, &store).await?;
-                return session.run_manual(movement, None, args.dry_run).await?.report(&mut out);
+                return report_fired(&session.run_manual(movement, None, args.dry_run).await?, args.json, &mut out);
             };
             let project = load()?;
             let store = store_of(&args, &project)?;
@@ -345,7 +355,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
             }
             let session = runs::open_session(project, args.ephemeral, &store).await?;
             let (external, event) = runs::read_event_file(event_file)?;
-            session.fire_event(&external, &event, args.dry_run).await?.report(&mut out)
+            report_fired(&session.fire_event(&external, &event, args.dry_run).await?, args.json, &mut out)
         }
         "resume" => {
             let project = load()?;
@@ -356,15 +366,31 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 // A work row that fails is retried later, unlogged.
                 None => session.resume_all(&mut std::io::sink()).await?,
             };
-            if outcomes.is_empty() {
+            if outcomes.is_empty() && !args.json {
                 writeln!(out, "no parked runs").map_err(|e| e.to_string())?;
             }
-            runs::report(&outcomes, &mut out)
+            report_runs(&outcomes, args.json, &mut out)
         }
         "runs" => {
             let project = load()?;
             let store = backend::open_store(&store_of(&args, &project)?)?;
-            for run in store.runs(50).map_err(|e| e.to_string())? {
+            if let Some("show") = args.rest.first().map(String::as_str) {
+                let Some(run_id) = args.rest.get(1) else {
+                    eprintln!("lf runs show needs a run id");
+                    return Ok(2);
+                };
+                let doc = lfjson::run_show_doc(&*store, run_id)?;
+                if args.json {
+                    return lfjson::emit(&mut out, &doc, 0);
+                }
+                writeln!(out, "{}", serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+                return Ok(0);
+            }
+            let rows = store.runs(50).map_err(|e| e.to_string())?;
+            if args.json {
+                return lfjson::emit(&mut out, &lfjson::runs_list_doc(&rows), 0);
+            }
+            for run in rows {
                 writeln!(out, "{} {} {}:{} {}", run.id, run.started_at, run.file, run.movement, run.status).map_err(|e| e.to_string())?;
             }
             Ok(0)
@@ -385,17 +411,25 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         "call" => {
             let project = load()?;
             let store = store_of(&args, &project)?;
-            serve::call_command(project, &store, args.rest.first().map(String::as_str), args.body.as_deref(), &mut out).await
+            serve::call_command(project, &store, serve::CallArgs { id: args.rest.first().map(String::as_str), body: args.body.as_deref(), json: args.json }, &mut out).await
         }
         "cancel" => {
             let project = load()?;
-            serve::cancel_command(&store_of(&args, &project)?, args.rest.first().map(String::as_str), args.reason.as_deref(), &mut out).await
+            serve::cancel_command(&store_of(&args, &project)?, args.rest.first().map(String::as_str), args.reason.as_deref(), args.json, &mut out).await
         }
         other => {
             eprintln!("unknown command \"{other}\"\n{}", USAGE.replace("{CREDENTIAL_USAGE}", credential_cmd::USAGE));
             Ok(2)
         }
     }
+}
+
+fn report_runs(outcomes: &[runs::RunOutcome], json: bool, out: &mut impl Write) -> Result<i32, String> {
+    if json { lfjson::emit(out, &lfjson::runs_doc(outcomes, &[]), lfjson::exit_of(outcomes)) } else { runs::report(outcomes, out) }
+}
+
+fn report_fired(fired: &runs::Fired, json: bool, out: &mut impl Write) -> Result<i32, String> {
+    if json { lfjson::emit(out, &lfjson::fired_doc(fired), lfjson::exit_of(&fired.outcomes)) } else { fired.report(out) }
 }
 
 /// Where a command keeps its run state: `--store`, else the store slot's module.
@@ -405,10 +439,15 @@ fn store_of(args: &Args, project: &project::Project) -> Result<backend::StoreSpe
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    let wants_json = argv.iter().any(|a| a == "--json");
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a tokio runtime");
     // A LocalSet, so a listener's connections run as tasks on this one thread.
     let code = match runtime.block_on(tokio::task::LocalSet::new().run_until(run(argv))) {
         Ok(code) => code,
+        Err(message) if wants_json => {
+            println!("{}", json::Js::Obj(crate::obj! { "error" => json::Js::str(&message) }).to_json());
+            1
+        }
         Err(message) => {
             eprintln!("lf: {message}");
             1
