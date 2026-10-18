@@ -141,10 +141,8 @@ pub fn observe(typing: &mut Typing, expr: &Expression, position: Option<&Positio
                 AggregationFunction::Join => {
                     require_transparent(typing, element.as_ref(), "joined into text");
                 }
-                AggregationFunction::Min | AggregationFunction::Max => {
-                    if !require_transparent(typing, element.as_ref(), "ordered") {
-                        refuse_absent_members(typing, expression, inner, *fn_);
-                    }
+                AggregationFunction::Min | AggregationFunction::Max if !require_transparent(typing, element.as_ref(), "ordered") => {
+                    refuse_absent_members(typing, expression, inner, *fn_);
                 }
                 _ => {}
             }
