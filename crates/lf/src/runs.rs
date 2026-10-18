@@ -377,7 +377,7 @@ impl Session {
     }
 
     /// A `poll_listen` row: poll its listen, and say when it is next due — the
-    /// listen's `pollIntervalSeconds`, else its source's interval. A row whose
+    /// listen's `every` (`pollIntervalSeconds` before language version 5), else its source's interval. A row whose
     /// listen is gone is done, and its checkpoint forgotten.
     async fn poll_row(&self, subscription: &str) -> Result<(Next, Vec<RunOutcome>), String> {
         let Some((listen, running, _)) = self.polled_listens().find(|(_, _, s)| s == subscription) else {
@@ -388,10 +388,12 @@ impl Session {
         for line in &fired.redelivered {
             eprintln!("lf: {line}");
         }
-        let seconds = match listen.config.get("pollIntervalSeconds") {
+        // `every: 5m` from language version 5, `pollIntervalSeconds: 300` before.
+        let every = listen.config.get("every").and_then(Js::as_str).and_then(movement_engine::park::duration_ms).filter(|ms| *ms >= 1000.0).map(|ms| (ms / 1000.0) as u64);
+        let seconds = every.or(match listen.config.get("pollIntervalSeconds") {
             Some(Js::Num(n)) => n.as_u64().filter(|s| *s > 0),
             _ => None,
-        };
+        });
         let interval_ms = seconds.or(running.poll_interval_seconds).unwrap_or(1) as i64 * 1000;
         Ok((Next::DueAt(iso(self.due_offset_ms + interval_ms)), fired.outcomes))
     }

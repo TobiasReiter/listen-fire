@@ -130,6 +130,11 @@ fn trigger_config_vocabulary(supported_triggers: &[String], listen: &Obj) -> Obj
             formats.insert(key.into(), format.clone());
         }
     }
+    // Every polled source takes its listen's own interval (spelled `every`
+    // from language version 5 by the checker, over this key).
+    if supported_triggers.iter().any(|t| t == "poll") && !keys.iter().any(|k| k == "pollIntervalSeconds") {
+        keys.push("pollIntervalSeconds".into());
+    }
     let mut out = Obj::new();
     if !supported_triggers.is_empty() {
         out.insert("canFire".into(), Js::Bool(true));

@@ -42,6 +42,7 @@ A module with no webhooks declares `poll: { intervalSeconds }` in its manifest. 
 - The store keeps each listen's checkpoint, the module's own bookmark, so the next poll asks for what is new since it.
 - One worker at a time polls a listen, however many drain the store (the poll is a row in the store's work queue, held under its lease).
 - Each event runs the listen as a webhook's event does. An event the listen has run before (the same `idempotencyKey`) runs nothing.
+- A listen sets its own interval with `every: <duration>` (`listen to feed { every: 5m } fire seen`); without it, the module's interval applies. From language version 5 this is `every`; versions 1 to 4 spell it `pollIntervalSeconds: 300`.
 - `lf run --poll <movement>` polls now, once.
 
 ## Filling a slot

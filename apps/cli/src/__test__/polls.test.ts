@@ -61,7 +61,7 @@ module.exports = defineModule({
 });
 `;
 
-function feedProject(): string {
+function feedProject(listen = 'listen to f fire seen'): string {
   const dir = project();
   rmSync(join(dir, 'movements'), { recursive: true });
   mkdirSync(join(dir, 'movements'));
@@ -74,7 +74,7 @@ function feedProject(): string {
   ]);
   writeFileSync(
     join(dir, 'movements/notes.mvt'),
-    `import { feed } from adapters\n\nf = connect feed\n\nfunction seen(n: <f-[:Note]->>) {\n  fail("seen \${n.Title}")\n}\n\nlisten to f fire seen\n`,
+    `import { feed } from adapters\n\nf = connect feed\n\nfunction seen(n: <f-[:Note]->>) {\n  fail("seen \${n.Title}")\n}\n\n${listen}\n`,
   );
   return dir;
 }
@@ -180,4 +180,25 @@ test('lf serve polls on the interval and fires each new event', async () => {
   }
   assert.equal(seen(dir), 3);
   assert.equal(polls(dir)[1], 2);
+});
+
+test('a listen\'s `every` is its poll interval, over the source\'s', () => {
+  const dir = feedProject('listen to f { every: 5m } fire seen');
+  const check = lf(dir, 'check');
+  assert.equal(check.code, 0, check.out);
+  lfAt(dir, ['drain', '--until-idle']);
+  assert.deepEqual(polls(dir), [null]);
+  // Two minutes on is past the source's minute, but not the listen's five.
+  lfAt(dir, ['drain', '--until-idle'], 120_000);
+  assert.deepEqual(polls(dir), [null]);
+  lfAt(dir, ['drain', '--until-idle'], 600_000);
+  assert.equal(polls(dir).length, 2);
+});
+
+test('the old `pollIntervalSeconds` spelling is refused from v5, with the fix', () => {
+  const dir = feedProject('listen to f { pollIntervalSeconds: 300 } fire seen');
+  const check = lf(dir, 'check');
+  assert.notEqual(check.code, 0);
+  assert.match(check.out, /MOV_V5_SPELLING/);
+  assert.match(check.out, /every: 5m/);
 });

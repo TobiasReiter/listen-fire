@@ -47,6 +47,7 @@ listen to crm { events: ["company.created"] } fire welcome
 
 A module with no webhooks (Granola, Evertrace, Dealroom) is polled instead: its manifest declares `poll: { intervalSeconds }`, and a listen on it reads like any other (`listen to granola fire summarise`).
 
+- A listen can set its own interval, `listen to granola { every: 5m } fire summarise`; without it the module's interval applies.
 - `lf serve` polls each such listen on the module's interval, and runs the listen on each new event.
 - `lf drain` polls every listen that is due. A poll missed while nothing ran is one poll on the next drain.
 - Each listen keeps its own checkpoint, so a poll asks only for what is new since the last one.

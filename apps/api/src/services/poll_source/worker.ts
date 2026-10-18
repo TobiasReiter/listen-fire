@@ -5,7 +5,7 @@
 // Every movement-derived trigger whose `kind` resolves to a registered
 // PollSource owns one `poll_source:<triggerId>` work row, due once its
 // `poll_last_at` is older than the effective interval
-// (`config.pollIntervalSeconds ?? source default`, P4). A due row pulls the
+// (`config.every` or `config.pollIntervalSeconds`, else the source default, P4). A due row pulls the
 // source's new events, INJECTS each into the same dispatch path a webhook uses
 // (`dispatchTriggerByIdEvent` — the one event pipeline), and re-arms itself one
 // interval later. The opaque `poll_checkpoint` advances only after a successful
@@ -14,6 +14,7 @@
 // keeps exactly one row per poll-source trigger.
 
 import { sql } from 'kysely';
+import { durationToMs, isValidDuration } from 'movement-lang';
 import { z } from 'zod';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
@@ -113,10 +114,19 @@ async function loadCandidate(triggerId: string): Promise<PollTriggerRow | null> 
   return row && isPollSource(row.kind) ? toPollTriggerRow(row) : null;
 }
 
-/** The cadence to gate on: a `listen` option override (P4) or the source default. */
+/**
+ * The cadence to gate on: the listen's own interval or the source default.
+ * From language version 5 the listen spells it `every: 5m`; versions 1-4 spell
+ * it `pollIntervalSeconds: 300`. The trigger row carries whichever it was
+ * written as, and a run of versions 1-4 can never have written `every`.
+ */
 function effectiveIntervalMs(config: unknown, sourceDefaultSeconds: number): number {
-  const override = (config as { pollIntervalSeconds?: unknown } | null | undefined)
-    ?.pollIntervalSeconds;
+  const settings = (config ?? {}) as { every?: unknown; pollIntervalSeconds?: unknown };
+  if (typeof settings.every === 'string' && isValidDuration(settings.every.trim())) {
+    const ms = durationToMs(settings.every.trim());
+    if (ms > 0) return ms;
+  }
+  const override = settings.pollIntervalSeconds;
   const seconds = typeof override === 'number' && override > 0 ? override : sourceDefaultSeconds;
   return seconds * SECOND;
 }

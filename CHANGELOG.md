@@ -50,6 +50,10 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-every
+
+- A polled listen's own poll interval is spelled `every: 5m` from language version 5 (`listen to feed { every: 5m } fire seen`); versions 1 to 4 keep `pollIntervalSeconds: 300`, and under 5 that key is `MOV_V5_SPELLING` with the `every` fix. The platform's poll worker and lf both read it; every polled lf module accepts it.
+
 ### r-poll
 
 - lf polls a module that declares `poll: { intervalSeconds }`: `lf serve` on the interval, `lf drain` when due (a poll missed while no worker ran is one poll; one worker at a time per listen, under the work queue's lease), `lf run --poll <movement>` at once. The module's checkpoint is kept per listen in either store (no migration); each event runs the listen as a webhook's does. A listen with no webhook source (Granola, Evertrace, Dealroom, Gmail's poll) now fires in lf.

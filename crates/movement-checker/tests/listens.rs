@@ -67,3 +67,32 @@ fn a_cron_time_zone_is_the_hosts_to_recognise() {
     assert!(refused[0].message.starts_with("'Narnia/Cair' is not a recognised IANA time zone"), "{}", refused[0].message);
     assert!(with(&OneZone("Narnia/Cair")).is_empty());
 }
+
+const FEED: &str = r#""feed":{"constructionArgs":[],"canFire":true,"triggerConfig":["pollIntervalSeconds"],"schemas":{"":{"positions":{"Note":{"properties":{},"edges":{}}},"collections":{},"writableRoots":{},"eventPosition":"Note","eventPositions":[{"position":"Note"}]}}}"#;
+
+fn check_feed(listen: &str, language_version: u32) -> Vec<Diagnostic> {
+    let snapshot = format!(r#"{{"adapters":{{{FEED}}},"credentials":{{}},"plugins":{{}}}}"#);
+    let catalog = CatalogSnapshot::load(&snapshot).unwrap();
+    let options = CheckOptions { language_version, upgrading_from: None, parse_version: None, zones: &movement_checker::host::native::NativeZones };
+    let (connect, movement) = if language_version >= 5 { ("connect feed", "function") } else { ("feed()", "movement") };
+    let source = format!("import {{ feed }} from adapters\nf = {connect}\n{movement} seen(n: <f-[:Note]->>) {{}}\n{listen}");
+    check_source(&source, &catalog, options).unwrap()
+}
+
+#[test]
+fn from_version_5_a_polled_listens_interval_is_every() {
+    assert_eq!(codes(&check_feed("listen to f { every: 5m } fire seen", 5)), Vec::<&str>::new());
+    let bad = check_feed("listen to f { every: 5 } fire seen", 5);
+    assert_eq!(codes(&bad), ["MOV_LISTEN_BAD_CONFIG"]);
+    assert!(bad[0].message.contains("not a valid poll interval"), "{}", bad[0].message);
+}
+
+#[test]
+fn the_old_poll_interval_key_is_respelled_under_5_and_the_only_spelling_before() {
+    let old = check_feed("listen to f { pollIntervalSeconds: 300 } fire seen", 5);
+    assert_eq!(codes(&old), ["MOV_V5_SPELLING"]);
+    assert!(old[0].message.contains("every: 5m"), "{}", old[0].message);
+    assert_eq!(codes(&check_feed("listen to f { pollIntervalSeconds: 300 } fire seen", 4)), Vec::<&str>::new());
+    // Before 5 `every` is not a key the source takes.
+    assert_eq!(codes(&check_feed("listen to f { every: 5m } fire seen", 4)), ["MOV_LISTEN_BAD_CONFIG"]);
+}

@@ -205,6 +205,13 @@ describe('pollSourceHandler', () => {
     expect(enqueueWork).toHaveBeenCalledWith(armedAt(T1, new Date(NOW.getTime() + 30_000)));
   });
 
+  it('re-arms at the v5 `every` duration from config', async () => {
+    rows = [row({ config: { every: '1m' } })];
+    getEventsMock.mockResolvedValue({ events: [], checkpoint: null });
+    await poll(T1);
+    expect(enqueueWork).toHaveBeenCalledWith(armedAt(T1, new Date(NOW.getTime() + 60_000)));
+  });
+
   it('an early row (poll_last_at within the interval) skips the pull and re-arms', async () => {
     rows = [row({ poll_last_at: new Date(NOW.getTime() - 60_000) })]; // 60s ago, interval 300s
     await poll(T1);
