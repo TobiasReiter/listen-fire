@@ -1403,8 +1403,11 @@ impl Run<'_> {
         if let Some(credential) = &credential_name {
             spelled.push((credential_arg.clone(), credential.clone()));
         }
-        let in_snapshot = spec.is_some()
-            && credential_name
+        // A run host unit is always there, described by the catalog or not.
+        let unit = credential_name.is_none() && movement_parser::version::RUN_HOST_UNITS.contains(&adapter_slug.as_str());
+        let in_snapshot = unit
+            || spec.is_some()
+                && credential_name
                 .as_deref()
                 .is_none_or(|c| self.catalog.credential(c).is_some_and(|spec| spec.adapters.contains(&adapter_slug)));
         if !in_snapshot {
