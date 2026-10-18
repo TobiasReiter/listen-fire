@@ -59,7 +59,10 @@ app.use('/admin', adminRoutes(store));
 app.use('/openai/v1', openAiRoutes());
 app.use('/gemini', geminiRoutes());
 
-app.listen(PORT, () => {
-  console.log(`Fake channel server running on http://localhost:${PORT}`);
+const server = app.listen(PORT, () => {
+  // FAKE_CHANNELS_PORT=0 picks a free port: the line names the one taken.
+  const address = server.address();
+  const port = address !== null && typeof address === 'object' ? address.port : PORT;
+  console.log(`Fake channel server running on http://localhost:${port}`);
   console.log('Routes: /affinity, /attio, /slack, /sheets, /airtable, /granola, /evertrace, /dealroom, /email, /resend, /whatsapp, /telegram, /webhook, /gdrive, /gmail, /dropbox, /oauth, /admin, /openai/v1, /gemini');
 });

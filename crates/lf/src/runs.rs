@@ -236,6 +236,17 @@ impl Session {
         &self.credentials
     }
 
+    /// Read the secrets again, after lf wrote to them (crate::subscriptions).
+    pub fn reload_credentials(&mut self) -> Result<(), String> {
+        self.credentials = load_secrets(&self.project, &std::env::vars().collect::<Vec<_>>())?;
+        Ok(())
+    }
+
+    /// Every `listen` across the project's movements.
+    pub fn listens(&self) -> &[Listen] {
+        &self.listens
+    }
+
     pub fn externals(&self) -> Externals<'_> {
         Externals { project: &self.project, running: &self.running, credentials: &self.credentials, documents: &self.documents, tenant: LOCAL_TENANT }
     }

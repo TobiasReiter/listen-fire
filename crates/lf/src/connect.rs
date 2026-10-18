@@ -16,11 +16,13 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::check::LOCAL_TENANT;
-use crate::externals::{EXTERNAL_MANIFEST, External, ExternalManifest, scan_externals, start_externals};
+use crate::externals::{
+    AUTHORIZE_URL_OVERRIDE_FIELD, BASE_URL_OVERRIDE_FIELD, EXTERNAL_MANIFEST, External, ExternalManifest, TOKEN_URL_OVERRIDE_FIELD, scan_externals, start_externals,
+};
 use crate::http_out::{hex, random_bytes};
 use crate::json::{Js, Obj};
 use crate::obj;
-use crate::oauth2::{Declaration, declarations_of};
+use crate::oauth2::Declaration;
 use crate::oauth_redirect::{loopback_redirect_uri, public_redirect_uri};
 use crate::project::Project;
 use crate::prompt::{Ask, Prompter};
@@ -58,7 +60,7 @@ pub async fn read_manifest(project: &Project, external: &External, install: Opti
     let credentials: Credentials = install.into_iter().cloned().collect();
     let running = start_externals(project, std::slice::from_ref(external), &credentials, LOCAL_TENANT).await?;
     let started = running.into_iter().next().ok_or_else(|| format!("external \"{}\" did not answer its manifest", external.manifest.name))?;
-    Ok(ManifestFacts { declarations: declarations_of(&started.manifest_answer)?, answer: started.manifest_answer.clone() })
+    Ok(ManifestFacts { declarations: started.credential_declarations.clone(), answer: started.manifest_answer.clone() })
 }
 
 /// One module `lf connect` lists: the line it prints, and the same facts as JSON.
@@ -189,7 +191,23 @@ pub fn spread(mut stored: Vec<(String, String)>, next: Vec<(String, String)>) ->
     stored
 }
 
-pub async fn connect_module(project: &Project, reference: &str, prompter: &mut Prompter, url: Option<&str>) -> Result<(), String> {
+/// What `lf connect <module>` was told on its command line.
+#[derive(Default)]
+pub struct ConnectOptions<'a> {
+    /// The server URL of a separately-run module (`--url`).
+    pub url: Option<&'a str>,
+    /// Where the module reaches its provider's API instead of the provider
+    /// itself — a fake, a proxy (`--base-url`); empty clears it.
+    pub base_url: Option<&'a str>,
+    /// Where its OAuth credential signs in and refreshes instead of the
+    /// endpoints its manifest declares (`--oauth-authorize-url`,
+    /// `--oauth-token-url`); empty clears them.
+    pub oauth_authorize_url: Option<&'a str>,
+    pub oauth_token_url: Option<&'a str>,
+}
+
+pub async fn connect_module(project: &Project, reference: &str, prompter: &mut Prompter, options: &ConnectOptions<'_>) -> Result<(), String> {
+    let url = options.url;
     if let Some(module) = crate::core::builtin(reference) {
         return connect_core(project, module, prompter).await;
     }
@@ -202,14 +220,21 @@ pub async fn connect_module(project: &Project, reference: &str, prompter: &mut P
         Some(found) => (found, false),
         None => (install_external(project, reference, prompter, url).await?, true),
     };
-    let outcome = set_up(project, &external, &credentials, &env, prompter).await;
+    let outcome = set_up(project, &external, &credentials, &env, prompter, options).await;
     if outcome.is_err() && created {
         let _ = std::fs::remove_dir_all(&external.dir);
     }
     outcome
 }
 
-async fn set_up(project: &Project, external: &External, credentials: &Credentials, env: &[(String, String)], prompter: &mut Prompter) -> Result<(), String> {
+async fn set_up(
+    project: &Project,
+    external: &External,
+    credentials: &Credentials,
+    env: &[(String, String)],
+    prompter: &mut Prompter,
+    options: &ConnectOptions<'_>,
+) -> Result<(), String> {
     let name = &external.manifest.name;
     let existing = install_of(credentials, name).filter(|c| !matches!(c.binding, Binding::Credential(_)));
     if let Some(existing) = existing
@@ -231,6 +256,26 @@ async fn set_up(project: &Project, external: &External, credentials: &Credential
         let question = format!("the secret {name}'s server checks (field \"{}\")", auth.field);
         let answer = prompter.ask(&question, Ask { secret: true, default: now.as_deref(), ..Ask::default() }).await?;
         put(&mut fields, &auth.field, answer);
+    }
+    // Before the manifest is read: the module is started with its base URL.
+    let overrides = [
+        ("--base-url", BASE_URL_OVERRIDE_FIELD, options.base_url),
+        ("--oauth-authorize-url", AUTHORIZE_URL_OVERRIDE_FIELD, options.oauth_authorize_url),
+        ("--oauth-token-url", TOKEN_URL_OVERRIDE_FIELD, options.oauth_token_url),
+    ];
+    for (flag, field, value) in overrides {
+        match value {
+            None => {}
+            Some("") => {
+                fields.retain(|(k, _)| k != field);
+                cleared.insert(field.to_string());
+            }
+            Some(url) if url::Url::parse(url).is_ok_and(|u| u.scheme() == "http" || u.scheme() == "https") => put(&mut fields, field, url.to_string()),
+            Some(url) => return Err(format!("{flag} must be an http(s) URL, not \"{url}\"")),
+        }
+    }
+    if let Some(url) = current(&fields, BASE_URL_OVERRIDE_FIELD) {
+        prompter.print(&format!("{name} reaches its provider at {url} (lf connect {name} --base-url '' goes back to the provider's own)"));
     }
     let install_name = match existing {
         Some(existing) => existing.name.clone(),
@@ -399,7 +444,7 @@ pub fn core_entry_name(module: &str) -> String {
 /// Install `reference`: a module package the project has, else a module run
 /// separately at a server URL.
 async fn install_external(project: &Project, reference: &str, prompter: &mut Prompter, url: Option<&str>) -> Result<External, String> {
-    let as_package = url.is_none() && resolves_from(&project.root, reference);
+    let as_package = url.is_none() && (resolves_from(&project.root, reference) || crate::externals::bundled_module(reference).is_some());
     let url = match (as_package, url) {
         (true, _) => None,
         (false, Some(url)) => Some(url.to_string()),

@@ -45,16 +45,19 @@ export interface Served {
   stop(): Promise<void>;
 }
 
-/** `lf serve` on a free port, its output collected. */
+/** `lf serve` on a free port (or the `--port` in `args`), its output and
+ *  its error output collected (the errors shown as they come too). */
 export async function served(dir: string, args: string[] = [], env: Record<string, string> = {}): Promise<Served> {
-  const server = spawn(...lfCommand(['serve', '--port', '0', ...args]), {
+  const portArgs = args.includes('--port') ? [] : ['--port', '0'];
+  const server = spawn(...lfCommand(['serve', ...portArgs, ...args]), {
     cwd: dir,
     env: { ...process.env, NODE_NO_WARNINGS: '1', ...env },
-    stdio: ['ignore', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   const lines: string[] = [];
   const waiters: Array<{ pattern: RegExp; resolve: (line: string) => void }> = [];
-  createInterface({ input: server.stdout! }).on('line', (line) => {
+  server.stderr!.on('data', (chunk) => process.stderr.write(chunk));
+  for (const output of [server.stdout!, server.stderr!]) createInterface({ input: output }).on('line', (line) => {
     lines.push(line);
     for (const w of [...waiters]) {
       if (w.pattern.test(line)) {

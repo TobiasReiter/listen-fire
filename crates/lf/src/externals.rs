@@ -19,7 +19,38 @@ use crate::project::Project;
 use crate::credential_calls::{Sending, Target, send};
 use crate::oauth2::{Declaration, declarations_of};
 use crate::protocol::shape_error;
-use crate::secrets::{Credentials, credential_for, signer_of};
+use crate::secrets::{Credential, Credentials, credential_for, install_of, signer_of};
+
+/// The install fields that point a module somewhere other than its
+/// provider (a fake, a proxy), set by `lf connect --base-url` and
+/// `--oauth-authorize-url` / `--oauth-token-url`: the API root the module is
+/// served with (serve-module's MODULE_BASE_URL_OVERRIDE, the module's
+/// `ctx.config.baseUrlOverride`), and the OAuth endpoints its declared
+/// credential signs in and refreshes at.
+pub const BASE_URL_OVERRIDE_FIELD: &str = "base_url_override";
+pub const AUTHORIZE_URL_OVERRIDE_FIELD: &str = "oauth_authorize_url";
+pub const TOKEN_URL_OVERRIDE_FIELD: &str = "oauth_token_url";
+
+fn install_field<'c>(install: Option<&'c Credential>, field: &str) -> Option<&'c str> {
+    install.and_then(|i| i.fields.get(field)).map(String::as_str).filter(|v| !v.is_empty())
+}
+
+/// The declarations with the install's OAuth endpoints in place of the
+/// manifest's, when it names any.
+fn with_install_endpoints(mut declarations: Vec<Declaration>, install: Option<&Credential>) -> Vec<Declaration> {
+    let (authorize, token) = (install_field(install, AUTHORIZE_URL_OVERRIDE_FIELD), install_field(install, TOKEN_URL_OVERRIDE_FIELD));
+    for declaration in &mut declarations {
+        if let crate::oauth2::DeclarationKind::OAuth2(oauth2) = &mut declaration.kind {
+            if let Some(url) = authorize {
+                oauth2.authorize_url = url.to_string();
+            }
+            if let Some(url) = token {
+                oauth2.token_url = url.to_string();
+            }
+        }
+    }
+    declarations
+}
 
 pub const EXTERNAL_MANIFEST: &str = "lf-external.yaml";
 
@@ -265,8 +296,9 @@ async fn call(target: &Target<'_>, credentials: &Credentials, tenant: &str, meth
 pub async fn start_externals(project: &Project, externals: &[External], credentials: &Credentials, tenant: &str) -> Result<Vec<RunningExternal>, String> {
     let mut running = Vec::new();
     for external in externals {
-        let (base_url, child) = reach(project, external).await?;
         let name = &external.manifest.name;
+        let install = install_of(credentials, name);
+        let (base_url, child) = reach(project, external, install_field(install, BASE_URL_OVERRIDE_FIELD)).await?;
         let target = Target { external, base_url: &base_url, declarations: &[], methods: &[], settings: &[], limits: &[] };
         let raw = call(&target, credentials, tenant, "manifest", json!({})).await?;
         let version = raw.get("protocolVersion");
@@ -280,7 +312,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
         if manifest.adapter_type != *name {
             return Err(format!("external folder \"{name}\" serves \"{}\"; the names must agree", manifest.adapter_type));
         }
-        let credential_declarations = declarations_of(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?;
+        let credential_declarations = with_install_endpoints(declarations_of(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?, install);
         let limits = crate::limiter::limits_of(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?;
         if external.manifest.kind == "plugin" && manifest.plugins.is_none() {
             return Err(format!("external \"{name}\" is a plugin external, but its manifest declares no plugins"));
@@ -444,7 +476,7 @@ fn listen_declarations(raw: &Js) -> Result<Obj, String> {
     Ok(out)
 }
 
-async fn reach(project: &Project, external: &External) -> Result<(String, Option<Child>), String> {
+async fn reach(project: &Project, external: &External, base_url_override: Option<&str>) -> Result<(String, Option<Child>), String> {
     let name = &external.manifest.name;
     if let Some(url) = &external.manifest.url {
         return Ok((url.clone(), None));
@@ -472,6 +504,7 @@ async fn reach(project: &Project, external: &External) -> Result<(String, Option
         .env("PORT", "0")
         .envs(crate::serve::externals_host_url().map(|url| ("LF_HOST_URL", url)))
         .envs(crate::serve::host_token().map(|token| ("LF_HOST_TOKEN", token)))
+        .envs(base_url_override.filter(|_| external.manifest.module.is_some()).map(|url| ("MODULE_BASE_URL_OVERRIDE", url)))
         .envs(external.manifest.env.iter().map(|(k, v)| (k, v.replace("{lf}", &lf))))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -511,13 +544,17 @@ fn bundled_modules_root() -> Option<PathBuf> {
     }
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let bin = exe.parent()?;
-    [bin.parent()?.join("share/lf/modules"), bin.join("modules")].into_iter().find(|candidate| candidate.is_dir())
+    let release = [bin.parent()?.join("share/lf/modules"), bin.join("modules")].into_iter().find(|candidate| candidate.is_dir());
+    // A binary built in the workspace (target/<profile>/lf): its modules/.
+    release.or_else(|| {
+        bin.ancestors().skip(1).find(|dir| dir.join("packages/module-kit").is_dir() && dir.join("modules").is_dir()).map(|dir| dir.join("modules"))
+    })
 }
 
 /// `@lf/<name>` names a built-in module of the release: its folder in the
 /// bundle, or None when this install has no such module (the name then goes
 /// to serve-module as written, so a project's own node_modules still works).
-fn bundled_module(module: &str) -> Option<String> {
+pub fn bundled_module(module: &str) -> Option<String> {
     let name = module.strip_prefix("@lf/")?;
     let folder = bundled_modules_root()?.join(name);
     folder.is_dir().then(|| folder.display().to_string())

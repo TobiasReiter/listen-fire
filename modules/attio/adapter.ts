@@ -124,6 +124,18 @@ function normalizeAttioActor(
   return { type, id: raw.id };
 }
 
+/**
+ * The key a redelivery of the same occurrence shares. Attio's body carries no
+ * id per event, but a record is created once and deleted once, so those two
+ * are keyed by the record; an update happens many times and has no key (a
+ * redelivered update runs again).
+ */
+function attioIdempotencyKey(eventType: string, id: { object_id: string; record_id: string }): { idempotencyKey?: string } {
+  const change = attioChangeType(eventType);
+  if (change !== 'create' && change !== 'delete') return {};
+  return { idempotencyKey: `attio:${eventType}:${id.object_id}:${id.record_id}` };
+}
+
 function attioChangeType(eventType: string): 'create' | 'update' | 'delete' | undefined {
   if (eventType.includes('created')) return 'create';
   if (eventType.includes('updated')) return 'update';
@@ -1114,6 +1126,7 @@ export class AttioAdapter extends BaseAdapter {
         recordType: e.id.object_id,
         eventType: e.event_type,
         ...(attioChangeType(e.event_type) ? { changeType: attioChangeType(e.event_type) } : {}),
+        ...attioIdempotencyKey(e.event_type, e.id),
         ...(normalizeAttioActor(e.actor) ? { actor: normalizeAttioActor(e.actor) } : {}),
         ...(e.id.attribute_id ? { changedFields: [e.id.attribute_id] } : {}),
       })),
