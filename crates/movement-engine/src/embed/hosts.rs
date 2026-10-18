@@ -9,6 +9,17 @@
 //! (docs/contracts/host-families.md, crate::host builds each one): the typed
 //! route reads them into these calls (super::serve), so there is one
 //! engine and one request shape.
+//!
+//! Every call is asynchronous, and there is no other shape: a call is made
+//! with the host to itself (`&mut self`) and returns a [`HostFuture`] that
+//! owns whatever it still needs, so the run can lend the host to its next
+//! request while this one is out. The engine asks several things at once
+//! (the arms of an `all(...)`, a concurrent `map`), and the run starts each
+//! as it is asked and reads each answer as it lands, in any order. A host
+//! that answers from memory returns [`ready`].
+
+use std::future::Future;
+use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
@@ -56,8 +67,21 @@ impl From<&str> for HostFailure {
 
 pub type HostResult<T> = Result<T, HostFailure>;
 
-pub(crate) fn unserved<T>(what: &str) -> HostResult<T> {
-    Err(HostFailure::new(format!("this host does not serve {what}")))
+/// One host call's answer, still to come. Runtime-agnostic: any executor
+/// polls it, and nothing here needs one in particular.
+pub type HostFuture<T> = Pin<Box<dyn Future<Output = HostResult<T>>>>;
+
+/// An answer already in hand, as a call's future.
+pub fn ready<T: 'static>(result: HostResult<T>) -> HostFuture<T> {
+    Box::pin(std::future::ready(result))
+}
+
+pub(crate) fn unserved_failure(what: &str) -> HostFailure {
+    HostFailure::new(format!("this host does not serve {what}"))
+}
+
+pub(crate) fn unserved<T: 'static>(what: &str) -> HostFuture<T> {
+    ready(Err(unserved_failure(what)))
 }
 
 /// What a paid service spent on one call, charged to the run.
@@ -139,61 +163,61 @@ pub trait Store {
     fn keeps_parks(&self) -> bool {
         false
     }
-    fn commit_timer_park(&mut self, _park: TimerPark) -> HostResult<()> {
+    fn commit_timer_park(&mut self, _park: TimerPark) -> HostFuture<()> {
         unserved("park.sink.commitTimerPark")
     }
-    fn commit_await_park(&mut self, _park: AwaitPark) -> HostResult<()> {
+    fn commit_await_park(&mut self, _park: AwaitPark) -> HostFuture<()> {
         unserved("park.sink.commitAwaitPark")
     }
-    fn commit_suspension(&mut self, _address: &str, _state: ParkedState) -> HostResult<()> {
+    fn commit_suspension(&mut self, _address: &str, _state: ParkedState) -> HostFuture<()> {
         unserved("park.sink.commitSuspension")
     }
-    fn record_join(&mut self, _frame_address: &str, _parked_children: i64) -> HostResult<()> {
+    fn record_join(&mut self, _frame_address: &str, _parked_children: i64) -> HostFuture<()> {
         unserved("park.sink.recordJoin")
     }
     /// A resumed branch completed: whether that closed its join.
-    fn decrement_join(&mut self, _frame_address: &str, _branch_address: &str, _leaf_address: &str) -> HostResult<bool> {
+    fn decrement_join(&mut self, _frame_address: &str, _branch_address: &str, _leaf_address: &str) -> HostFuture<bool> {
         unserved("park.sink.decrementJoin")
     }
-    fn persist_branch_export(&mut self, _frame_address: &str, _export: BranchExport) -> HostResult<()> {
+    fn persist_branch_export(&mut self, _frame_address: &str, _export: BranchExport) -> HostFuture<()> {
         unserved("park.sink.persistBranchExport")
     }
-    fn collect_branch_exports(&mut self, _frame_address: &str) -> HostResult<Vec<BranchExport>> {
+    fn collect_branch_exports(&mut self, _frame_address: &str) -> HostFuture<Vec<BranchExport>> {
         unserved("park.sink.collectBranchExports")
     }
     /// Every park at or below each prefix withdrawn (a race's losers).
-    fn cancel_subtrees(&mut self, _subtree_addresses: &[String], _exclude_leaf: Option<&str>) -> HostResult<()> {
+    fn cancel_subtrees(&mut self, _subtree_addresses: &[String], _exclude_leaf: Option<&str>) -> HostFuture<()> {
         unserved("park.sink.cancelSubtrees")
     }
     /// "Resume whatever is parked on this key."
-    fn wake(&mut self, _adapter_type: &str, _correlation_key: &serde_json::Value) -> HostResult<()> {
+    fn wake(&mut self, _adapter_type: &str, _correlation_key: &serde_json::Value) -> HostFuture<()> {
         unserved("park.wake")
     }
-    fn mint_callback(&mut self, _mint: CallbackMint) -> HostResult<MintedCallback> {
+    fn mint_callback(&mut self, _mint: CallbackMint) -> HostFuture<MintedCallback> {
         unserved("park.callbacks.mint")
     }
     /// A callback's call ledger.
-    fn callback_calls(&mut self, _callback_id: &serde_json::Value) -> HostResult<Data> {
+    fn callback_calls(&mut self, _callback_id: &serde_json::Value) -> HostFuture<Data> {
         unserved("park.callbacks.calls")
     }
     /// A library's text kept once by its content: answered with its hash.
-    fn save_source(&mut self, _source: &str) -> HostResult<String> {
+    fn save_source(&mut self, _source: &str) -> HostFuture<String> {
         unserved("park.sources.save")
     }
-    fn load_source(&mut self, _hash: &str) -> HostResult<Option<String>> {
+    fn load_source(&mut self, _hash: &str) -> HostFuture<Option<String>> {
         unserved("park.sources.load")
     }
     /// The cross-run write locks: answered with a token once held. One
     /// process running one segment at a time holds a lock as soon as it asks.
-    fn acquire_locks(&mut self, names: &[String]) -> HostResult<String> {
-        Ok(names.join(","))
+    fn acquire_locks(&mut self, names: &[String]) -> HostFuture<String> {
+        ready(Ok(names.join(",")))
     }
-    fn release_locks(&mut self, _token: &str) -> HostResult<()> {
-        Ok(())
+    fn release_locks(&mut self, _token: &str) -> HostFuture<()> {
+        ready(Ok(()))
     }
     /// The cancel gate, asked at statement boundaries.
-    fn cancelled(&mut self) -> HostResult<bool> {
-        Ok(false)
+    fn cancelled(&mut self) -> HostFuture<bool> {
+        ready(Ok(false))
     }
 }
 
@@ -229,7 +253,7 @@ pub struct ModelReply {
 
 /// The models slot.
 pub trait Models {
-    fn call(&mut self, call: ModelCall) -> HostResult<ModelReply>;
+    fn call(&mut self, call: ModelCall) -> HostFuture<ModelReply>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -255,7 +279,7 @@ pub struct Verdict {
 
 /// The judge slot: the fuzzy identity judge for `unique by`.
 pub trait Judge {
-    fn arbitrate(&mut self, arbitration: Arbitration) -> HostResult<Verdict>;
+    fn arbitrate(&mut self, arbitration: Arbitration) -> HostFuture<Verdict>;
 }
 
 // ── files ──
@@ -270,10 +294,10 @@ pub enum FileText {
 /// (`FileRef::id`) and named back to it by that number.
 pub trait Files {
     /// `FILE(content, type)`'s artifact, `kind` "pdf" or "text".
-    fn render(&mut self, _content: &str, _kind: &str) -> HostResult<FileRef> {
+    fn render(&mut self, _content: &str, _kind: &str) -> HostFuture<FileRef> {
         unserved("files.render")
     }
-    fn file_text(&mut self, _file: &FileRef, _budget: &serde_json::Value) -> HostResult<(FileText, Vec<Cost>)> {
+    fn file_text(&mut self, _file: &FileRef, _budget: &serde_json::Value) -> HostFuture<(FileText, Vec<Cost>)> {
         unserved("files.resolveFileText")
     }
 }
@@ -357,11 +381,11 @@ pub struct ActingUser {
 
 /// The adapters slot: every system a movement reads or writes.
 pub trait Adapters {
-    fn resolve(&mut self, request: AdapterRequest) -> HostResult<AdapterInstance>;
-    fn call(&mut self, call: AdapterCall) -> HostResult<AdapterReply>;
+    fn resolve(&mut self, request: AdapterRequest) -> HostFuture<AdapterInstance>;
+    fn call(&mut self, call: AdapterCall) -> HostFuture<AdapterReply>;
     /// `@user_*`: who caused the event, as the source instance says.
-    fn acting_user(&mut self, _instance: &str, _event: &Data) -> HostResult<Option<ActingUser>> {
-        Ok(None)
+    fn acting_user(&mut self, _instance: &str, _event: &Data) -> HostFuture<Option<ActingUser>> {
+        ready(Ok(None))
     }
 }
 
@@ -388,7 +412,7 @@ pub struct PluginReply {
 
 /// The modules slot's plugins: a call a movement makes by name.
 pub trait Modules {
-    fn invoke(&mut self, call: PluginCall) -> HostResult<PluginReply>;
+    fn invoke(&mut self, call: PluginCall) -> HostFuture<PluginReply>;
 }
 
 // ── secrets ──
@@ -396,7 +420,8 @@ pub trait Modules {
 /// The secrets slot: the credential a movement's `using <name>` names, as
 /// the id an adapter is resolved with. The engine never sees a secret.
 pub trait Secrets {
-    fn credential_id(&mut self, name: &str) -> Option<String>;
+    /// `None`: the name is the id.
+    fn credential_id(&mut self, name: &str) -> HostFuture<Option<String>>;
 }
 
 // ── clock and ids ──
@@ -405,9 +430,9 @@ pub trait Secrets {
 /// own.
 pub trait Clock {
     /// Now, an ISO 8601 instant (`Date.toISOString`'s form).
-    fn now_iso(&mut self) -> String;
+    fn now_iso(&mut self) -> HostFuture<String>;
     /// `count` fresh, distinct ids.
-    fn mint_ids(&mut self, count: usize) -> Vec<String>;
+    fn mint_ids(&mut self, count: usize) -> HostFuture<Vec<String>>;
 }
 
 // ── trace ──
@@ -421,6 +446,8 @@ pub struct LogLine {
 
 /// The trace slot: the run's trace entries as they land, and its log lines.
 pub trait Trace {
-    fn append(&mut self, entries: Vec<Data>) -> HostResult<()>;
-    fn log(&mut self, _line: LogLine) {}
+    fn append(&mut self, entries: Vec<Data>) -> HostFuture<()>;
+    fn log(&mut self, _line: LogLine) -> HostFuture<()> {
+        ready(Ok(()))
+    }
 }

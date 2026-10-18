@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 
 use serde_json::{Value as Json, json};
 
+use super::test_time::{Time, block_on};
 use super::*;
 use crate::executor::{Answer, PendingRequest, Step};
 
@@ -80,14 +81,14 @@ impl World {
 }
 
 impl Adapters for World {
-    fn resolve(&mut self, request: AdapterRequest) -> HostResult<AdapterInstance> {
+    fn resolve(&mut self, request: AdapterRequest) -> HostFuture<AdapterInstance> {
         assert_eq!(request.adapter_type, "world");
-        Ok(AdapterInstance { id: "w".into(), methods: ["createRecord", "updateRecord", "resolveEntity", "getFieldValue", "resolveAwait", "describe"].map(String::from).to_vec() })
+        ready(Ok(AdapterInstance { id: "w".into(), methods: ["createRecord", "updateRecord", "resolveEntity", "getFieldValue", "resolveAwait", "describe"].map(String::from).to_vec() }))
     }
 
-    fn call(&mut self, call: AdapterCall) -> HostResult<AdapterReply> {
+    fn call(&mut self, call: AdapterCall) -> HostFuture<AdapterReply> {
         self.calls.push((call.method.clone(), call.args.clone()));
-        Ok(match call.method.as_str() {
+        ready(Ok(match call.method.as_str() {
             "getFieldValue" if call.args.get("fieldId").and_then(Data::as_text) == Some("Scroll") => AdapterReply::ok(Data::File(FileRef::made(
                 1,
                 FileDescriptor { name: Some("scroll.txt".into()), content_type: Some("text/plain".into()), size: Some(12.0), handle: Some("blob-1".into()) },
@@ -129,7 +130,7 @@ impl Adapters for World {
                 }
             }
             other => AdapterReply::error("adapter_error", format!("the world does not answer {other}")),
-        })
+        }))
     }
 }
 
@@ -166,7 +167,8 @@ impl<'a> Wire<'a> {
     /// The outcome of running `input` through the JSON boundary, its segment
     /// entered as `entry` says.
     fn drive(&mut self, input: &RunInput, entry: Entry<'_>, served: &mut Hosts<'_>) -> Outcome {
-        let mut segment = crate::begin(&input_text(served, input, &entry, "segment")).unwrap();
+        let credential_ids = input.catalog.snapshot.credential_names().into_iter().map(|name| (name.to_string(), json!(name))).collect();
+        let mut segment = crate::begin(&input_text(&served.serves(), input, &entry, credential_ids, "segment")).unwrap();
         let mut queue = VecDeque::new();
         let mut step = segment.start().unwrap();
         let done = loop {
@@ -294,44 +296,48 @@ impl Store for Parks {
     fn keeps_parks(&self) -> bool {
         true
     }
-    fn commit_timer_park(&mut self, park: TimerPark) -> HostResult<()> {
+    fn commit_timer_park(&mut self, park: TimerPark) -> HostFuture<()> {
         self.timers.push(park);
-        Ok(())
+        ready(Ok(()))
     }
-    fn commit_await_park(&mut self, park: AwaitPark) -> HostResult<()> {
+    fn commit_await_park(&mut self, park: AwaitPark) -> HostFuture<()> {
         self.awaits.push(park);
-        Ok(())
+        ready(Ok(()))
     }
-    fn record_join(&mut self, frame: &str, parked_children: i64) -> HostResult<()> {
+    fn record_join(&mut self, frame: &str, parked_children: i64) -> HostFuture<()> {
         self.joins.push((frame.into(), parked_children));
-        Ok(())
+        ready(Ok(()))
     }
-    fn decrement_join(&mut self, frame: &str, _branch: &str, _leaf: &str) -> HostResult<bool> {
-        let join = self.joins.iter_mut().find(|(f, _)| f == frame).ok_or("no such join")?;
-        join.1 -= 1;
-        Ok(join.1 == 0)
+    fn decrement_join(&mut self, frame: &str, _branch: &str, _leaf: &str) -> HostFuture<bool> {
+        ready(match self.joins.iter_mut().find(|(f, _)| f == frame) {
+            Some(join) => {
+                join.1 -= 1;
+                Ok(join.1 == 0)
+            }
+            None => Err("no such join".into()),
+        })
     }
-    fn persist_branch_export(&mut self, frame: &str, export: BranchExport) -> HostResult<()> {
+    fn persist_branch_export(&mut self, frame: &str, export: BranchExport) -> HostFuture<()> {
         self.exports.push((frame.into(), export));
-        Ok(())
+        ready(Ok(()))
     }
-    fn collect_branch_exports(&mut self, frame: &str) -> HostResult<Vec<BranchExport>> {
-        Ok(self.exports.iter().filter(|(f, _)| f == frame).map(|(_, e)| e.clone()).collect())
+    fn collect_branch_exports(&mut self, frame: &str) -> HostFuture<Vec<BranchExport>> {
+        ready(Ok(self.exports.iter().filter(|(f, _)| f == frame).map(|(_, e)| e.clone()).collect()))
     }
-    fn cancel_subtrees(&mut self, prefixes: &[String], exclude: Option<&str>) -> HostResult<()> {
+    fn cancel_subtrees(&mut self, prefixes: &[String], exclude: Option<&str>) -> HostFuture<()> {
         self.awaits.retain(|a| Some(a.address.as_str()) == exclude || !prefixes.iter().any(|p| a.address.starts_with(p.as_str())));
-        Ok(())
+        ready(Ok(()))
     }
-    fn wake(&mut self, adapter_type: &str, key: &serde_json::Value) -> HostResult<()> {
+    fn wake(&mut self, adapter_type: &str, key: &serde_json::Value) -> HostFuture<()> {
         self.wakes.push((adapter_type.into(), key.clone()));
-        Ok(())
+        ready(Ok(()))
     }
-    fn mint_callback(&mut self, mint: CallbackMint) -> HostResult<MintedCallback> {
+    fn mint_callback(&mut self, mint: CallbackMint) -> HostFuture<MintedCallback> {
         self.mints.push(mint);
-        Ok(MintedCallback { id: "cb1".into(), url: "https://example.test/cb/cb1".into() })
+        ready(Ok(MintedCallback { id: "cb1".into(), url: "https://example.test/cb/cb1".into() }))
     }
-    fn callback_calls(&mut self, _callback_id: &serde_json::Value) -> HostResult<Data> {
-        Ok(Data::List(self.calls.clone()))
+    fn callback_calls(&mut self, _callback_id: &serde_json::Value) -> HostFuture<Data> {
+        ready(Ok(Data::List(self.calls.clone())))
     }
 }
 
@@ -344,9 +350,9 @@ struct Model {
 }
 
 impl Models for Model {
-    fn call(&mut self, call: ModelCall) -> HostResult<ModelReply> {
+    fn call(&mut self, call: ModelCall) -> HostFuture<ModelReply> {
         self.calls.push(call);
-        Ok(ModelReply { parsed_json: self.reply.clone(), raw_text: None, cost: vec![Cost { source: "model:test".into(), microdollars: 7.0 }] })
+        ready(Ok(ModelReply { parsed_json: self.reply.clone(), raw_text: None, cost: vec![Cost { source: "model:test".into(), microdollars: 7.0 }] }))
     }
 }
 
@@ -360,7 +366,7 @@ fn an_ai_call_runs_the_same_through_the_typed_and_the_json_route() {
     assert_eq!(errors(&source), vec![]);
     let reply = Data::map([("value", Data::text("A fine line.")), ("has_value", Data::Bool(true))]);
     let (mut world, mut model) = (World::default(), Model { reply, calls: Vec::new() });
-    let typed = run(&mut Hosts::new().adapters(&mut world).models(&mut model), &input(&source)).unwrap();
+    let typed = block_on(run(&mut Hosts::new().adapters(&mut world).models(&mut model), &input(&source))).unwrap();
     assert_eq!(titles(&world), vec!["A fine line."]);
     assert_eq!(model.calls.len(), 1);
     assert_eq!((model.calls[0].label.as_str(), model.calls[0].prompt.clone()), ("movement-ai-expression", Prompt::Message("Describe Dragon".into())));
@@ -396,7 +402,7 @@ fn an_extraction_runs_the_same_through_the_typed_and_the_json_route() {
     let field = |value: &str| json!({ "value": value, "evidence": { "item": 0, "quote": value } });
     let reply = json!({ "records": [{ "name": field("Dragon") }, { "name": field("Ada") }] });
     let (mut world, mut model) = (World::default(), Model { reply: Data::from(reply.clone()), calls: Vec::new() });
-    let typed = run(&mut Hosts::new().adapters(&mut world).models(&mut model), &input(&source)).unwrap();
+    let typed = block_on(run(&mut Hosts::new().adapters(&mut world).models(&mut model), &input(&source))).unwrap();
     assert_eq!(titles(&world), vec!["Dragon", "Ada"]);
     assert_eq!(model.calls.len(), 1);
     assert_eq!(model.calls[0].label, "movement_extract_call");
@@ -414,12 +420,12 @@ fn an_extraction_runs_the_same_through_the_typed_and_the_json_route() {
 struct Judging(Verdict, usize);
 
 impl Judge for Judging {
-    fn arbitrate(&mut self, arbitration: Arbitration) -> HostResult<Verdict> {
+    fn arbitrate(&mut self, arbitration: Arbitration) -> HostFuture<Verdict> {
         self.1 += 1;
         assert_eq!(arbitration.record_type, "Note");
         assert_eq!(arbitration.asserted.get("Title"), Some(&Data::text("Dragon")));
         assert_eq!(arbitration.candidates.as_list().map(<[Data]>::len), Some(2));
-        Ok(self.0.clone())
+        ready(Ok(self.0.clone()))
     }
 }
 
@@ -435,7 +441,7 @@ fn the_identity_judge_picks_the_record_a_fuzzy_write_is_the_same_through_both_ro
     assert_eq!(errors(&source), vec![]);
     let verdict = Verdict { index: Some(1), judge_unavailable: None, cost: vec![Cost { source: "model:judge".into(), microdollars: 11.0 }] };
     let (mut world, mut judge) = (World { candidates: candidates(), ..World::default() }, Judging(verdict, 0));
-    let typed = run(&mut Hosts::new().adapters(&mut world).judge(&mut judge), &input(&source)).unwrap();
+    let typed = block_on(run(&mut Hosts::new().adapters(&mut world).judge(&mut judge), &input(&source))).unwrap();
     assert_eq!(judge.1, 1);
     assert_eq!(world.updated, vec![("note-92".to_string(), "Dragon".to_string())], "the judge's pick is updated, nothing created");
     assert!(world.notes.is_empty());
@@ -459,7 +465,7 @@ fn a_judge_that_declines_or_is_unavailable_leaves_the_write_creating() {
     ] {
         let reason = verdict.judge_unavailable.clone();
         let (mut world, mut judge) = (World { candidates: candidates(), ..World::default() }, Judging(verdict, 0));
-        let typed = run(&mut Hosts::new().adapters(&mut world).judge(&mut judge), &input(&source)).unwrap();
+        let typed = block_on(run(&mut Hosts::new().adapters(&mut world).judge(&mut judge), &input(&source))).unwrap();
         assert_eq!(titles(&world), vec!["Dragon"], "{typed:?}");
         let mut json = Wire::new(WireWorld { candidates: candidates(), ..WireWorld::default() }, |label, _| {
             (label == "llm.arbitrateEntities").then(|| match &reason {
@@ -478,13 +484,13 @@ struct Library {
 }
 
 impl Files for Library {
-    fn render(&mut self, content: &str, kind: &str) -> HostResult<FileRef> {
+    fn render(&mut self, content: &str, kind: &str) -> HostFuture<FileRef> {
         self.rendered.push((content.into(), kind.into()));
-        Ok(FileRef::made(2, FileDescriptor { name: Some("made.txt".into()), content_type: Some("text/plain".into()), size: Some(content.len() as f64), handle: Some("blob-2".into()) }))
+        ready(Ok(FileRef::made(2, FileDescriptor { name: Some("made.txt".into()), content_type: Some("text/plain".into()), size: Some(content.len() as f64), handle: Some("blob-2".into()) })))
     }
-    fn file_text(&mut self, file: &FileRef, _budget: &Json) -> HostResult<(FileText, Vec<Cost>)> {
+    fn file_text(&mut self, file: &FileRef, _budget: &Json) -> HostFuture<(FileText, Vec<Cost>)> {
         self.read.push(file.clone());
-        Ok((FileText::Text { text: "The scroll says hi".into(), raw_text_id: None }, vec![Cost { source: "file:ocr".into(), microdollars: 3.0 }]))
+        ready(Ok((FileText::Text { text: "The scroll says hi".into(), raw_text_id: None }, vec![Cost { source: "file:ocr".into(), microdollars: 3.0 }])))
     }
 }
 
@@ -493,7 +499,7 @@ fn a_file_is_read_and_a_file_is_made_the_same_through_both_routes() {
     let source = movement("", "  text = File.read(monster.Scroll)\n  doc = File.from(\"copy: ${text}\", \"text\")\n  write game-[:notes]-> { Title: coalesce(text, \"\"), Attachment: doc }\n");
     assert_eq!(errors(&source), vec![]);
     let (mut world, mut library) = (World::default(), Library { read: Vec::new(), rendered: Vec::new() });
-    let typed = run(&mut Hosts::new().adapters(&mut world).files(&mut library), &input(&source)).unwrap();
+    let typed = block_on(run(&mut Hosts::new().adapters(&mut world).files(&mut library), &input(&source))).unwrap();
     assert_eq!(library.read.iter().map(|f| f.id).collect::<Vec<_>>(), vec![1], "the host is handed back the file it made");
     assert_eq!(library.rendered, vec![("copy: The scroll says hi".to_string(), "text".to_string())]);
     assert_eq!(titles(&world), vec!["The scroll says hi"]);
@@ -513,9 +519,9 @@ fn a_file_is_read_and_a_file_is_made_the_same_through_both_routes() {
 struct Plugins(Vec<PluginCall>);
 
 impl Modules for Plugins {
-    fn invoke(&mut self, call: PluginCall) -> HostResult<PluginReply> {
+    fn invoke(&mut self, call: PluginCall) -> HostFuture<PluginReply> {
         self.0.push(call);
-        Ok(PluginReply { text: Some("looked up".into()), cost: vec![Cost { source: "plugin:lookup".into(), microdollars: 5.0 }], ..PluginReply::default() })
+        ready(Ok(PluginReply { text: Some("looked up".into()), cost: vec![Cost { source: "plugin:lookup".into(), microdollars: 5.0 }], ..PluginReply::default() }))
     }
 }
 
@@ -524,7 +530,7 @@ fn a_plugin_call_runs_the_same_through_both_routes() {
     let source = movement("import { lookup } from plugins\n", "  hit = lookup(monster.Name)\n  write game-[:notes]-> { Title: hit }\n");
     assert_eq!(errors(&source), vec![]);
     let (mut world, mut plugins) = (World::default(), Plugins(Vec::new()));
-    let typed = run(&mut Hosts::new().adapters(&mut world).modules(&mut plugins), &input(&source)).unwrap();
+    let typed = block_on(run(&mut Hosts::new().adapters(&mut world).modules(&mut plugins), &input(&source))).unwrap();
     assert_eq!(titles(&world), vec!["looked up"]);
     assert_eq!(plugins.0.len(), 1);
     assert_eq!((plugins.0[0].plugin.as_str(), plugins.0[0].config.get("q")), ("lookup", Some(&Data::text("Dragon"))));
@@ -542,8 +548,8 @@ fn a_plugin_call_runs_the_same_through_both_routes() {
 struct Broke;
 
 impl Models for Broke {
-    fn call(&mut self, _call: ModelCall) -> HostResult<ModelReply> {
-        Err(HostFailure::budget("no budget left for this call"))
+    fn call(&mut self, _call: ModelCall) -> HostFuture<ModelReply> {
+        ready(Err(HostFailure::budget("no budget left for this call")))
     }
 }
 
@@ -551,7 +557,7 @@ impl Models for Broke {
 fn a_model_that_refuses_on_budget_fails_the_run_as_the_json_route_does() {
     let source = movement("", "  line = ai(\"Describe ${monster.Name}\")\n  write game-[:notes]-> { Title: line }\n");
     let (mut world, mut broke) = (World::default(), Broke);
-    let typed = run(&mut Hosts::new().adapters(&mut world).models(&mut broke), &input(&source)).unwrap();
+    let typed = block_on(run(&mut Hosts::new().adapters(&mut world).models(&mut broke), &input(&source))).unwrap();
     assert!(world.notes.is_empty());
     let mut json = Wire::new(WireWorld::default(), |label, _| {
         (label == "llm.client.call").then(|| o(vec![("error", o(vec![("kind", json!("budget")), ("message", json!("no budget left for this call"))]))]))
@@ -569,7 +575,7 @@ fn an_await_on_an_adapter_record_parks_and_resumes_when_the_reply_arrives() {
     let source = movement("", TICKET);
     assert_eq!(errors(&source), vec![]);
     let (mut world, mut parks) = (World::default(), Parks::default());
-    let parked = run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source)).unwrap();
+    let parked = block_on(run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source))).unwrap();
     assert!(matches!(&parked, Outcome::Parked(ran) if ran.parked_address.is_some()), "{parked:?}");
     assert!(world.notes.is_empty() && parks.timers.is_empty());
     let [park] = parks.awaits.as_slice() else { panic!("{:?}", parks.awaits) };
@@ -582,7 +588,7 @@ fn an_await_on_an_adapter_record_parks_and_resumes_when_the_reply_arrives() {
     world.replies.push((ticket.clone(), "Thanks".into()));
     let park = parks.awaits.remove(0);
     let calls_before_resume = world.calls.len();
-    let resumed = resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &park.state, Wake::Arrival).unwrap();
+    let resumed = block_on(resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &park.state, Wake::Arrival)).unwrap();
     assert_eq!(titles(&world), vec!["Thanks"]);
     assert!(matches!(resumed, Outcome::Finished(_)), "{resumed:?}");
 
@@ -606,9 +612,9 @@ fn an_await_on_an_adapter_record_parks_and_resumes_when_the_reply_arrives() {
 fn an_await_woken_early_parks_again_instead_of_stepping_past() {
     let source = movement("", TICKET);
     let (mut world, mut parks) = (World::default(), Parks::default());
-    run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source)).unwrap();
+    block_on(run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source))).unwrap();
     let park = parks.awaits.remove(0);
-    let again = resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &park.state, Wake::Arrival).unwrap();
+    let again = block_on(resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &park.state, Wake::Arrival)).unwrap();
     assert!(matches!(again, Outcome::Parked(_)), "{again:?}");
     assert_eq!(parks.awaits.len(), 1);
     assert!(world.notes.is_empty());
@@ -621,7 +627,7 @@ fn a_callback_is_minted_fired_and_its_awaiter_resumed() {
     let source = movement("", CALLBACK);
     assert_eq!(errors(&source), vec![]);
     let (mut world, mut parks) = (World::default(), Parks::default());
-    let parked = run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source)).unwrap();
+    let parked = block_on(run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source))).unwrap();
     assert!(matches!(parked, Outcome::Parked(_)), "{parked:?}");
     let [mint] = parks.mints.as_slice() else { panic!("{:?}", parks.mints) };
     assert_eq!(mint.params, vec![("who".to_string(), "text".to_string())]);
@@ -634,11 +640,11 @@ fn a_callback_is_minted_fired_and_its_awaiter_resumed() {
     parks.calls.push(Data::map([("at", Data::text("2026-03-12T12:05:00.000Z")), ("values", call.values.clone())]));
     let (mint_state, await_state) = (mint.state.clone(), park.state.clone());
     let calls_before_fire = world.calls.len();
-    let fired = fire(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &mint_state, &call).unwrap();
+    let fired = block_on(fire(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &mint_state, &call)).unwrap();
     assert!(matches!(fired, Outcome::Finished(_)), "{fired:?}");
     assert_eq!(titles(&world), vec!["approved by Bo"]);
     let calls_before_resume = world.calls.len();
-    let resumed = resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &await_state, Wake::Arrival).unwrap();
+    let resumed = block_on(resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &await_state, Wake::Arrival)).unwrap();
     assert!(matches!(resumed, Outcome::Finished(_)), "{resumed:?}");
     assert_eq!(titles(&world), vec!["approved by Bo", "tapped by Bo at 2026-03-12T12:05:00.000Z"]);
 
@@ -670,7 +676,7 @@ fn a_join_with_a_parked_arm_closes_when_the_arm_resumes() {
     let source = movement("", JOIN);
     assert_eq!(errors(&source), vec![]);
     let (mut world, mut parks) = (World::default(), Parks::default());
-    let parked = run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source)).unwrap();
+    let parked = block_on(run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source))).unwrap();
     assert!(matches!(parked, Outcome::Parked(_)), "{parked:?}");
     assert!(world.notes.is_empty());
     assert_eq!(parks.joins.len(), 1, "the join recorded one parked arm: {:?}", parks.joins);
@@ -680,7 +686,7 @@ fn a_join_with_a_parked_arm_closes_when_the_arm_resumes() {
     let (ticket, state) = (park.correlation_key.as_str().unwrap().to_string(), park.state.clone());
 
     world.replies.push((ticket, "Thanks".into()));
-    let resumed = resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &state, Wake::Arrival).unwrap();
+    let resumed = block_on(resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&source), &state, Wake::Arrival)).unwrap();
     assert!(matches!(resumed, Outcome::Finished(_)), "{resumed:?}");
     assert_eq!(titles(&world), vec!["Thanks+fast"]);
 }
@@ -692,21 +698,55 @@ fn a_timer_wake_retests_an_until_and_steps_past_a_sleep() {
     let until = movement("", "  await until(monster.Name == \"Wyrm\", { every: 15m })\n  write game-[:notes]-> { Title: \"done\" }\n");
     assert_eq!(errors(&until), vec![]);
     let (mut world, mut parks) = (World::default(), Parks::default());
-    let parked = run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&until)).unwrap();
+    let parked = block_on(run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&until))).unwrap();
     assert!(matches!(parked, Outcome::Parked(_)), "{parked:?}");
     let timer = parks.timers.remove(0);
     assert_eq!(timer.wake_at, "2026-03-12T12:15:00.000Z");
     assert!(timer.state.is_until());
-    let again = resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&until), &timer.state, Wake::Timer).unwrap();
+    let again = block_on(resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&until), &timer.state, Wake::Timer)).unwrap();
     assert!(matches!(again, Outcome::Parked(_)), "the condition is still false: {again:?}");
     assert_eq!(parks.timers.len(), 1);
     assert!(world.notes.is_empty());
 
     let sleep = movement("", "  await sleep(1h)\n  write game-[:notes]-> { Title: \"done\" }\n");
-    run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&sleep)).unwrap();
+    block_on(run(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&sleep))).unwrap();
     let timer = parks.timers.pop().unwrap();
     assert!(!timer.state.is_until());
-    let done = resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&sleep), &timer.state, Wake::Timer).unwrap();
+    let done = block_on(resume(&mut Hosts::new().adapters(&mut world).store(&mut parks), &input(&sleep), &timer.state, Wake::Timer)).unwrap();
     assert!(matches!(done, Outcome::Finished(_)), "{done:?}");
     assert_eq!(titles(&world), vec!["done"]);
+}
+
+/// A model whose every call takes `ms` of the test clock to answer.
+struct Slow {
+    time: Time,
+    ms: u64,
+    started_at: Vec<u64>,
+}
+
+impl Models for Slow {
+    fn call(&mut self, call: ModelCall) -> HostFuture<ModelReply> {
+        self.started_at.push(self.time.now_ms());
+        let Prompt::Message(prompt) = call.prompt else { return ready(Err("a message, not blocks".into())) };
+        let landed = self.time.sleep(self.ms);
+        Box::pin(async move {
+            landed.await;
+            Ok(ModelReply { parsed_json: Data::map([("value", Data::text(prompt)), ("has_value", Data::Bool(true))]), raw_text: None, cost: Vec::new() })
+        })
+    }
+}
+
+/// The arms of an `all(...)` ask at once, so two 100 ms calls take 100 ms,
+/// not 200: the second is started before the first has answered.
+#[test]
+fn the_arms_of_an_all_are_served_at_once() {
+    let source = movement("", "  r = all(\n    () => { return ai(\"one\") },\n    () => { return ai(\"two\") },\n  )\n  write game-[:notes]-> { Title: \"${r[0]}+${r[1]}\" }\n");
+    assert_eq!(errors(&source), vec![]);
+    let time = Time::default();
+    let (mut world, mut model) = (World::default(), Slow { time: time.clone(), ms: 100, started_at: Vec::new() });
+    let outcome = time.block_on(run(&mut Hosts::new().adapters(&mut world).models(&mut model), &input(&source)));
+    finished(outcome);
+    assert_eq!(titles(&world), vec!["one+two"]);
+    assert_eq!(model.started_at, vec![0, 0], "both calls started before either answered");
+    assert_eq!(time.now_ms(), 100);
 }

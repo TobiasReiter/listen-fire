@@ -2,10 +2,10 @@
 //! its requests answered by host traits you implement, its outcome typed.
 //!
 //! ```text
-//! check(source, &catalog)            -> problems, before anything runs
-//! run(&mut hosts, RunInput)          -> Outcome (finished, parked, failed…)
-//! resume(&mut hosts, RunInput, state, wake) -> Outcome, when a park is due
-//! fire(&mut hosts, RunInput, state, call)   -> Outcome, a callback called
+//! check(source, &catalog)                         -> problems, before anything runs
+//! run(&mut hosts, RunInput).await                  -> Outcome (finished, parked, failed…)
+//! resume(&mut hosts, RunInput, state, wake).await  -> Outcome, when a park is due
+//! fire(&mut hosts, RunInput, state, call).await    -> Outcome, a callback called
 //! ```
 //!
 //! This is the same engine the JSON boundary drives (crate::begin, the WASM
@@ -13,14 +13,20 @@
 //! the ones crate::host builds, read into typed host calls (serve.rs). The
 //! families a host leaves unfilled refuse what they are asked.
 //!
-//! A host call is synchronous: the driver answers each request in the order
-//! the engine made it.
+//! Every host call is asynchronous, in one shape (hosts.rs): the engine may
+//! have several requests out at once (the arms of an `all(...)`, the members
+//! of a concurrent `map`), and the run starts each as soon as it is made and
+//! hands each answer back as it lands, in whatever order that is, as `lf`
+//! does over the JSON route. The run is a plain future: any executor drives
+//! it, and a host that answers from memory finishes it on its first poll.
 
 mod data;
 #[cfg(test)]
 mod end_to_end;
 mod hosts;
 mod serve;
+#[cfg(test)]
+mod test_time;
 
 pub use data::{Data, FileDescriptor, FileRef, RecordRef};
 pub use hosts::*;
@@ -409,8 +415,8 @@ impl From<ProtocolError> for EmbedError {
 }
 
 /// Run `input` to its end against `hosts`.
-pub fn run(hosts: &mut Hosts<'_>, input: &RunInput) -> Result<Outcome, EmbedError> {
-    drive(hosts, input, Entry::Run)
+pub async fn run(hosts: &mut Hosts<'_>, input: &RunInput) -> Result<Outcome, EmbedError> {
+    drive(hosts, input, Entry::Run).await
 }
 
 /// Why a parked flow is run again.
@@ -426,9 +432,9 @@ pub enum Wake {
 
 /// Resume a parked flow of `input`'s run from its state, woken as `wake`
 /// says.
-pub fn resume(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState, wake: Wake) -> Result<Outcome, EmbedError> {
+pub async fn resume(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState, wake: Wake) -> Result<Outcome, EmbedError> {
     let reenter = wake == Wake::Arrival || state.is_until();
-    drive(hosts, input, Entry::Resume { state, reenter })
+    drive(hosts, input, Entry::Resume { state, reenter }).await
 }
 
 /// A callback called: the values the caller supplied for its parameters
@@ -443,8 +449,8 @@ pub struct CallbackCall {
 /// Run a called callback's body against the state it was minted with
 /// ([`CallbackMint::state`]). The flow awaiting the callback is woken by
 /// [`resume`] with [`Wake::Arrival`], once the call is on the ledger.
-pub fn fire(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState, call: &CallbackCall) -> Result<Outcome, EmbedError> {
-    drive(hosts, input, Entry::Fire { state, call })
+pub async fn fire(hosts: &mut Hosts<'_>, input: &RunInput, state: &ParkedState, call: &CallbackCall) -> Result<Outcome, EmbedError> {
+    drive(hosts, input, Entry::Fire { state, call }).await
 }
 
 enum Entry<'a> {
@@ -453,37 +459,82 @@ enum Entry<'a> {
     Fire { state: &'a ParkedState, call: &'a CallbackCall },
 }
 
-fn drive(hosts: &mut Hosts<'_>, input: &RunInput, entry: Entry<'_>) -> Result<Outcome, EmbedError> {
-    let segment_id = "segment";
-    let mut segment = crate::begin(&input_text(hosts, input, &entry, segment_id))?;
+async fn drive(hosts: &mut Hosts<'_>, input: &RunInput, entry: Entry<'_>) -> Result<Outcome, EmbedError> {
+    let credential_ids = match credential_ids(hosts, input).await {
+        Ok(ids) => ids,
+        Err(failure) => return Ok(Outcome::Failed(RunFailure { code: None, message: failure.message.clone(), host: Some(failure) })),
+    };
+    let mut segment = crate::begin(&input_text(&hosts.serves(), input, &entry, credential_ids, "segment"))?;
     let mut session = serve::Session::new(input.now.clone());
-    let mut queue = std::collections::VecDeque::new();
+    let mut in_flight = InFlight::default();
     let mut step = segment.start()?;
     let done = loop {
         match step {
             Step::Done(done) => break done,
             Step::Pending(pending) => {
-                queue.extend(pending);
-                let request = queue.pop_front().ok_or_else(|| EmbedError("the engine is waiting with no request in flight".into()))?;
-                let answer = session.serve(hosts, &request);
-                step = segment.answer(request.id, answer)?;
+                for request in pending {
+                    let serving = session.start(hosts, &request);
+                    in_flight.push(request.id, format!("{}.{}", request.family, request.method), serving);
+                }
+                let Some((id, label, reply)) = in_flight.next().await else { return Err(EmbedError("the engine is waiting with no request in flight".into())) };
+                step = segment.answer(id, session.finish(&label, reply))?;
             }
         }
     };
+    // A call still out when the run ends (a race's loser) settles first, so
+    // none outlives the run; its answer is no longer wanted.
+    while in_flight.next().await.is_some() {}
     Ok(outcome(&done, &session.failures))
 }
 
-fn input_text(hosts: &mut Hosts<'_>, input: &RunInput, entry: &Entry<'_>, segment_id: &str) -> String {
-    let credential_ids: serde_json::Map<String, Json> = input
-        .catalog
-        .snapshot
-        .credential_names()
-        .into_iter()
-        .map(|name| {
-            let id = hosts.secrets.as_deref_mut().and_then(|s| s.credential_id(name)).unwrap_or_else(|| name.to_string());
-            (name.to_string(), json!(id))
-        })
-        .collect();
+/// The requests in flight, polled together and taken as each lands. Polled
+/// in the order they were made, so answers already in hand reach the engine
+/// in that order.
+#[derive(Default)]
+struct InFlight {
+    serving: Vec<(u32, String, serve::Serving)>,
+}
+
+impl InFlight {
+    fn push(&mut self, id: u32, label: String, serving: serve::Serving) {
+        self.serving.push((id, label, serving));
+    }
+
+    /// The next to land, or `None` with nothing in flight.
+    async fn next(&mut self) -> Option<(u32, String, Result<serve::Reply, HostFailure>)> {
+        if self.serving.is_empty() {
+            return None;
+        }
+        Some(
+            std::future::poll_fn(|cx| {
+                for i in 0..self.serving.len() {
+                    if let std::task::Poll::Ready(reply) = self.serving[i].2.as_mut().poll(cx) {
+                        let (id, label, _) = self.serving.remove(i);
+                        return std::task::Poll::Ready((id, label, reply));
+                    }
+                }
+                std::task::Poll::Pending
+            })
+            .await,
+        )
+    }
+}
+
+/// Each credential the catalog names, as the id the secrets host gives it
+/// (the name itself without one).
+async fn credential_ids(hosts: &mut Hosts<'_>, input: &RunInput) -> HostResult<serde_json::Map<String, Json>> {
+    let mut ids = serde_json::Map::new();
+    for name in input.catalog.snapshot.credential_names() {
+        let id = match hosts.secrets.as_deref_mut() {
+            Some(secrets) => secrets.credential_id(name).await?,
+            None => None,
+        };
+        ids.insert(name.to_string(), json!(id.unwrap_or_else(|| name.to_string())));
+    }
+    Ok(ids)
+}
+
+fn input_text(serves: &[&str], input: &RunInput, entry: &Entry<'_>, credential_ids: serde_json::Map<String, Json>, segment_id: &str) -> String {
     let mut spend = json!({ "priorMicrodollars": 0, "capBaselineMicrodollars": 0 });
     if let Some(cap) = input.cost_cap_microdollars {
         spend["capMicrodollars"] = json!(cap);
@@ -497,7 +548,7 @@ fn input_text(hosts: &mut Hosts<'_>, input: &RunInput, entry: &Entry<'_>, segmen
         "credentialIds": credential_ids,
         "spend": spend,
         "now": input.now,
-        "serves": hosts.serves(),
+        "serves": serves,
         "nativeCheck": true,
         "snapshotModels": input.catalog.snapshot.models().map(|m| json!(m)).unwrap_or(Json::Null),
     });
@@ -561,6 +612,7 @@ fn outcome(done: &Json, failures: &[HostFailure]) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_time::block_on;
 
     const CATALOG: &str = r#"{"adapters":{"email":{"constructionArgs":[],"canFire":true,"schemas":{"":{"positions":{"message":{"properties":{"subject":"text"},"edges":{}}},"collections":{},"eventPosition":"message"}}}},"credentials":{},"plugins":{}}"#;
     const SOURCE: &str = "import { email } from adapters\ninbox = connect email\nfunction m(msg: <inbox-[:message]->>) {\n  s = msg.`subject`\n  await sleep(1h)\n}\nlisten to inbox fire m\n";
@@ -568,14 +620,14 @@ mod tests {
     struct Inbox;
 
     impl Adapters for Inbox {
-        fn resolve(&mut self, _request: AdapterRequest) -> HostResult<AdapterInstance> {
-            Ok(AdapterInstance { id: "i1".into(), methods: Vec::new() })
+        fn resolve(&mut self, _request: AdapterRequest) -> HostFuture<AdapterInstance> {
+            ready(Ok(AdapterInstance { id: "i1".into(), methods: Vec::new() }))
         }
-        fn call(&mut self, call: AdapterCall) -> HostResult<AdapterReply> {
-            Ok(match call.method.as_str() {
+        fn call(&mut self, call: AdapterCall) -> HostFuture<AdapterReply> {
+            ready(Ok(match call.method.as_str() {
                 "getFieldValue" => AdapterReply::ok(Data::text("Hi")),
                 _ => AdapterReply::nothing(),
-            })
+            }))
         }
     }
 
@@ -591,7 +643,7 @@ mod tests {
         assert!(check(SOURCE, &Catalog::from_json(CATALOG).unwrap(), LANGUAGE_VERSION).iter().all(|p| p.severity != Severity::Error));
         assert_eq!(listens(SOURCE, LANGUAGE_VERSION).unwrap(), vec![Listen { adapter: "email".into(), function: "m".into(), events: Vec::new() }]);
         let mut inbox = Inbox;
-        let outcome = run(&mut Hosts::new().adapters(&mut inbox), &input()).unwrap();
+        let outcome = block_on(run(&mut Hosts::new().adapters(&mut inbox), &input())).unwrap();
         let Outcome::Failed(failure) = outcome else { panic!("{outcome:?}") };
         assert!(failure.message.contains("sleep") || failure.message.contains("park"), "{failure:?}");
     }
@@ -605,17 +657,17 @@ mod tests {
             fn keeps_parks(&self) -> bool {
                 true
             }
-            fn commit_timer_park(&mut self, park: TimerPark) -> HostResult<()> {
+            fn commit_timer_park(&mut self, park: TimerPark) -> HostFuture<()> {
                 self.0.push(park);
-                Ok(())
+                ready(Ok(()))
             }
         }
         let (mut inbox, mut timers) = (Inbox, Timers::default());
-        let outcome = run(&mut Hosts::new().adapters(&mut inbox).store(&mut timers), &input()).unwrap();
+        let outcome = block_on(run(&mut Hosts::new().adapters(&mut inbox).store(&mut timers), &input())).unwrap();
         assert!(matches!(&outcome, Outcome::Parked(ran) if ran.function == "m"), "{outcome:?}");
         assert_eq!(timers.0[0].wake_at, "2026-03-12T13:00:00.000Z");
         let state = timers.0[0].state.clone();
-        let outcome = resume(&mut Hosts::new().adapters(&mut inbox).store(&mut timers), &input(), &state, Wake::Timer).unwrap();
+        let outcome = block_on(resume(&mut Hosts::new().adapters(&mut inbox).store(&mut timers), &input(), &state, Wake::Timer)).unwrap();
         assert!(matches!(outcome, Outcome::Finished(_)), "{outcome:?}");
     }
 }
