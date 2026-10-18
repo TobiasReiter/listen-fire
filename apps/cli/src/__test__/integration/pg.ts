@@ -42,7 +42,8 @@ export function freshTeam(): { team: string; clear(): void } {
             delete from lf.work where team_id = '${team}';
             delete from lf.park_library_source where team_id = '${team}';
             delete from lf.inbound_checkpoint where team_id = '${team}';
-            delete from lf.event_receipt where team_id = '${team}';`);
+            delete from lf.event_receipt where team_id = '${team}';
+            delete from lf.write_echo where team_id = '${team}';`);
     },
   };
 }

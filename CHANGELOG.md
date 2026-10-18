@@ -50,6 +50,9 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-loopguard
+
+- **A movement's own write echoing back runs nothing.** When a run writes a record to a source that sends webhooks or is polled, lf reads the record back and remembers it for an hour (record, writing movement, fingerprint) in the store slot (SQLite `write_echo`, Postgres migration 3 `lf.write_echo`, store wire `writes.remember` / `writes.remembered`), so every `lf serve` / `lf drain` sharing the store knows it. An event naming that record while it is still exactly as the write left it fires none of that movement's listens; someone else's change, or another movement's listen, fires as usual. The Attio example now listens to `record.updated` too.
 ### r-attio-walk
 
 - **`lf serve` registers a source's webhook itself.** On start, each module that registers webhooks (`ensureEventSubscription`, e.g. `@lf/attio`) gets one for the events its live listens name, at `<publicUrl>/api/public/webhook-sync/<provider>/<credential>`; the id, events, URL and the secret the source issues are kept on that credential, so a restart changes nothing and a removed listen removes the webhook. `lf connect <module> --base-url / --oauth-authorize-url / --oauth-token-url` point a module and its sign-in at a fake or proxy. `@lf/<name>` resolves in the workspace lf was built in. Attio's `record.created` and `record.deleted` carry an idempotency key, so a redelivery runs nothing. Walkthrough: [examples/lf-attio](examples/lf-attio/README.md).

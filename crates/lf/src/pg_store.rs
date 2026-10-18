@@ -16,6 +16,7 @@
 //!   callbacks     lf.callback
 //!   pull cursors  lf.inbound_checkpoint
 //!   receipts      lf.event_receipt
+//!   write echoes  lf.write_echo
 //!   lf's runs     lf.trigger_run (below)
 //!
 //! Held to the hosted backend's meaning by the run host's contract suite
@@ -46,6 +47,7 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row};
 
 use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore};
+use crate::echoes::{Remembered, Wrote};
 use crate::json::Js;
 use crate::obj;
 use crate::store::{BranchExport, ClaimDue, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError, WORK_KINDS};
@@ -119,7 +121,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 /// The store's own schema, in order. Each runs once, in its own
 /// transaction, under an advisory lock so two setups never race; the
 /// applied ones are recorded in `lf.schema_migration`.
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("pg_store_schema_1.sql")), (2, include_str!("pg_store_schema_2.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("pg_store_schema_1.sql")), (2, include_str!("pg_store_schema_2.sql")), (3, include_str!("pg_store_schema_3.sql"))];
 
 /// The advisory lock the migrations run under: "lf-store" as a number.
 const MIGRATION_LOCK: i64 = 0x6c66_2d73_746f_7265;
@@ -998,6 +1000,28 @@ impl RunHostStore for PgStore {
             &[&self.tenant, &listen, &key],
         )?;
         Ok(inserted == 1)
+    }
+
+    fn remember_write(&self, wrote: &Wrote, writer: &str, expires_at: &str) -> Result<()> {
+        self.execute("delete from lf.write_echo where team_id = $1::text::uuid and expires_at <= now()", &[&self.tenant])?;
+        self.execute(
+            "insert into lf.write_echo (team_id, adapter, external_id, writer, record_type, fingerprint, expires_at)
+             values ($1::text::uuid, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text::timestamptz)
+             on conflict (team_id, adapter, external_id, writer)
+             do update set record_type = excluded.record_type, fingerprint = excluded.fingerprint, expires_at = excluded.expires_at",
+            &[&self.tenant, &wrote.adapter, &wrote.external_id, &writer, &wrote.record_type, &wrote.fingerprint, &expires_at],
+        )?;
+        Ok(())
+    }
+
+    fn remembered_writes(&self, adapter: &str, external_id: &str, now: &str) -> Result<Vec<Remembered>> {
+        let rows = self.query(
+            "select writer, record_type, fingerprint from lf.write_echo
+             where team_id = $1::text::uuid and adapter = $2::text and external_id = $3::text and expires_at > $4::text::timestamptz
+             order by writer",
+            &[&self.tenant, &adapter, &external_id, &now],
+        )?;
+        Ok(rows.iter().map(|r| Remembered { writer: r.get(0), record_type: r.get(1), fingerprint: r.get(2) }).collect())
     }
 }
 

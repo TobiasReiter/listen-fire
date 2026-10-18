@@ -3,9 +3,11 @@ import { henry_attio } from credentials
 
 crm = connect attio using henry_attio
 
-# A company created in Attio gets a description; the write finds it by
-# name, so it updates that record rather than making another.
-function stamp(ev: <crm-[e:`Webhook Event` WHERE e.action == "record.created"]->>) {
+# A company created or changed in Attio gets a description; the write finds
+# it by name, so it updates that record rather than making another. The
+# update comes back from Attio as record.updated: lf knows it for this
+# movement's own write and runs nothing, while someone else's change runs it.
+function stamp(ev: <crm-[e:`Webhook Event`]->>) {
   ev-[company:Companies]-> {
     write crm-[:Companies]-> {
       unique by (Name)
@@ -15,4 +17,4 @@ function stamp(ev: <crm-[e:`Webhook Event` WHERE e.action == "record.created"]->
   }
 }
 
-listen to crm { events: ["record.created"] } fire stamp
+listen to crm { events: ["record.created", "record.updated"] } fire stamp

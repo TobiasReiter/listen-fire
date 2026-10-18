@@ -110,6 +110,16 @@ impl Wire for ClaimedWork {
     }
 }
 
+impl Wire for crate::echoes::Remembered {
+    fn to_wire(&self) -> Js {
+        Js::from(obj! { "writer" => Js::str(&self.writer), "recordType" => Js::str(&self.record_type), "fingerprint" => Js::str(&self.fingerprint) })
+    }
+
+    fn from_wire(v: &Js) -> Option<Self> {
+        Some(crate::echoes::Remembered { writer: text(v, "writer")?, record_type: text(v, "recordType")?, fingerprint: text(v, "fingerprint")? })
+    }
+}
+
 fn correlated_obj(c: &CorrelatedAwait) -> Obj {
     obj! { "runId" => Js::str(&c.run_id), "teamId" => Js::str(&c.team_id), "address" => Js::str(&c.address) }
 }

@@ -23,6 +23,7 @@
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::backend::{MintCallback, RunHostStore, StoreSpec, open_store};
+use crate::echoes::Wrote;
 use crate::json::{Js, Obj};
 use crate::obj;
 use crate::store::{ClaimDue, StoreError, iso};
@@ -344,6 +345,18 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
         }
 
         "events.claim" => Ok(Js::Bool(store.claim_event(p.str("listen")?, p.str("key")?)?)),
+
+        "writes.remember" => {
+            let wrote = Wrote {
+                adapter: p.str("adapter")?.to_string(),
+                record_type: p.str("recordType")?.to_string(),
+                external_id: p.str("externalId")?.to_string(),
+                fingerprint: p.str("fingerprint")?.to_string(),
+            };
+            store.remember_write(&wrote, p.str("writer")?, p.str("expiresAt")?)?;
+            none
+        }
+        "writes.remembered" => Ok(to_rows(&store.remembered_writes(p.str("adapter")?, p.str("externalId")?, p.str("now")?)?)),
 
         _ => Err(Failure::Unknown),
     }

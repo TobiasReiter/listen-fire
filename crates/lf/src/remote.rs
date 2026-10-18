@@ -184,6 +184,8 @@ pub struct SegmentAdapters<'s> {
     minted: RefCell<HashSet<String>>,
     /// The writes a rehearsed instance captured (`CapturedWrite`), in order.
     pub captured: RefCell<Vec<Js>>,
+    /// The record writes made to sources that can echo them (crate::echoes).
+    pub wrote: RefCell<Vec<crate::echoes::Wrote>>,
 }
 
 impl<'s> SegmentAdapters<'s> {
@@ -201,6 +203,7 @@ impl<'s> SegmentAdapters<'s> {
             calls: Cell::new(0),
             minted: RefCell::new(HashSet::new()),
             captured: RefCell::new(Vec::new()),
+            wrote: RefCell::new(Vec::new()),
         }
     }
 
@@ -381,7 +384,7 @@ impl<'s> SegmentAdapters<'s> {
         }
         let plain = args.js();
         let member = |key: &str| plain.get(key).cloned();
-        Ok(Some(match method {
+        let answer = match method {
             "listEntryPoints" | "listEventTypes" => self.rpc(&instance, method, Js::Obj(Obj::new())).await?,
             "describe" => self.describe(&instance, member("typeId").as_ref().and_then(Js::as_str).unwrap_or_default()).await?,
             "edgesFrom" => {
@@ -423,16 +426,43 @@ impl<'s> SegmentAdapters<'s> {
                 }
                 self.rpc(&instance, method, Js::Obj(params)).await?
             }
-            "ensureEventSubscription" => match self.rpc(&instance, method, plain).await? {
+            "ensureEventSubscription" => match self.rpc(&instance, method, plain.clone()).await? {
                 Js::Null => return Ok(None),
                 registered => registered,
             },
             "removeEventSubscription" => {
-                self.rpc(&instance, method, plain).await?;
+                self.rpc(&instance, method, plain.clone()).await?;
                 Js::Null
             }
-            _ => self.rpc(&instance, method, plain).await?,
-        }))
+            _ => self.rpc(&instance, method, plain.clone()).await?,
+        };
+        if matches!(method, "createRecord" | "updateRecord" | "deleteRecord") {
+            self.note_write(&instance, &plain, &answer).await;
+        }
+        Ok(Some(answer))
+    }
+
+    /// A record write to a source that can echo it back (it sends webhooks
+    /// or is polled): the record read back as the write left it, kept for
+    /// the store slot (crate::echoes). A source that can not read a record
+    /// back is not compared, and a failed read only means its echo fires.
+    async fn note_write(&self, instance: &Instance, plain: &Js, answer: &Js) {
+        let running = self.running(instance);
+        if (running.inbound.is_none() && running.poll_interval_seconds.is_none()) || !self.has(instance, "readRecord") || answer.get("notFound").is_some() {
+            return;
+        }
+        let Some(record_type) = plain.get("recordType").and_then(Js::as_str) else { return };
+        let Some(external_id) = answer.get("externalId").or_else(|| plain.get("externalId")).and_then(Js::as_str) else { return };
+        let params = Js::Obj(obj! { "recordType" => Js::str(record_type), "externalId" => Js::str(external_id) });
+        match self.rpc(instance, "readRecord", params).await {
+            Ok(record) => self.wrote.borrow_mut().push(crate::echoes::Wrote {
+                adapter: running.external.manifest.name.clone(),
+                record_type: record_type.to_string(),
+                external_id: external_id.to_string(),
+                fingerprint: crate::echoes::fingerprint(&record),
+            }),
+            Err(failure) => eprintln!("lf: {}: reading {record_type} {external_id} back after writing it: {} (its echo will fire)", running.external.manifest.name, failure.message()),
+        }
     }
 
     /// `describe`, remembered per type for the instance (a failure is not).

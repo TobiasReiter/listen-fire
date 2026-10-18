@@ -51,6 +51,7 @@ mod credential_cmd;
 mod doors;
 mod documents;
 mod drain;
+mod echoes;
 mod externals;
 mod file_ref;
 mod http;

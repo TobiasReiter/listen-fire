@@ -18,6 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::echoes::{Remembered, Wrote};
 use crate::json::Js;
 use crate::pg_store::PgStore;
 use crate::core;
@@ -244,6 +245,13 @@ pub trait RunHostStore {
     /// first time, false for a redelivery, which runs nothing (the
     /// platform's `trigger_event` unique on trigger and external event id).
     fn claim_event(&self, listen: &str, key: &str) -> Result<bool>;
+
+    // ── Write echoes (crate::echoes) ────────────────────────────────────────
+    /// Remember a record write for `writer`'s listens until `expires_at`; the
+    /// writer's later write to the same record replaces it.
+    fn remember_write(&self, wrote: &Wrote, writer: &str, expires_at: &str) -> Result<()>;
+    /// The writes to `external_id` on `adapter` still remembered at `now`.
+    fn remembered_writes(&self, adapter: &str, external_id: &str, now: &str) -> Result<Vec<Remembered>>;
 }
 
 impl RunHostStore for Store {
@@ -410,6 +418,13 @@ impl RunHostStore for Store {
 
     fn claim_event(&self, listen: &str, key: &str) -> Result<bool> {
         Store::claim_event(self, listen, key)
+    }
+
+    fn remember_write(&self, wrote: &Wrote, writer: &str, expires_at: &str) -> Result<()> {
+        Store::remember_write(self, wrote, writer, expires_at)
+    }
+    fn remembered_writes(&self, adapter: &str, external_id: &str, now: &str) -> Result<Vec<Remembered>> {
+        Store::remembered_writes(self, adapter, external_id, now)
     }
 }
 

@@ -6,8 +6,9 @@
 //   lf init → lf connect @lf/attio (pointed at the fake) → lf credential add
 //   --headless → the example's movement → lf check → lf run --event --dry-run
 //   → publicUrl → lf serve (registers the webhook) → a signed delivery runs
-//   the movement, a duplicate runs nothing → lf runs → restarts keep the
-//   webhook, a removed listen removes it.
+//   the movement, a duplicate runs nothing, the movement's own write echoing
+//   back as record.updated runs nothing, a second user's update runs it →
+//   lf runs → restarts keep the webhook, a removed listen removes it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,6 +62,14 @@ async function freePort(): Promise<number> {
   assert.ok(address !== null && typeof address === 'object');
   await new Promise<void>((done) => server.close(() => done()));
   return address.port;
+}
+
+/** Wait, up to 20s, for `holds` to hold over the server's output. */
+async function until(holds: () => boolean, lines: string[]): Promise<void> {
+  for (const deadline = Date.now() + 20_000; !holds(); ) {
+    if (Date.now() > deadline) throw new Error(`timed out; saw:\n${lines.join('\n')}`);
+    await new Promise((done) => setTimeout(done, 50));
+  }
 }
 
 interface Webhook {
@@ -135,11 +144,11 @@ test('the Attio walkthrough, end to end against the fake Attio', async () => {
     // 8. lf serve registers the webhook, and a signed delivery runs the movement.
     let serving = await served(dir, ['--port', String(port)]);
     try {
-      await serving.waitFor(/^attio: registered webhook fake-webhook-\d+ for record\.created at /);
+      await serving.waitFor(/^attio: registered webhook fake-webhook-\d+ for record\.created,record\.updated at /);
       const registered = await webhooks();
       assert.equal(registered.length, 1);
       assert.equal(registered[0]?.target_url, door);
-      assert.deepEqual(registered[0]?.subscriptions.map((s) => s.event_type), ['record.created']);
+      assert.deepEqual(registered[0]?.subscriptions.map((s) => s.event_type), ['record.created', 'record.updated']);
 
       const northwind = ((await fake.json('/attio/v2/objects/companies/records', { data: { values: { name: 'Northwind Labs' } } })) as { data: Company }).data;
       const created = { events: [{ event_type: 'record.created', id: { object_id: 'companies', record_id: northwind.id.record_id } }] };
@@ -154,6 +163,31 @@ test('the Attio walkthrough, end to end against the fake Attio', async () => {
       await serving.waitFor(/sync:stamp has run the event attio:record\.created:companies:\S+ before: this delivery runs nothing/);
       assert.equal(serving.lines.filter((l) => /^run \S+ sync:stamp/.test(l)).length, 1);
 
+      // The movement's own write comes back as record.updated (Attio says a
+      // workspace member, as it may): the record is as the write left it, so
+      // it is only the echo, and runs nothing.
+      const updated = { events: [{ event_type: 'record.updated', id: { object_id: 'companies', record_id: northwind.id.record_id } }] };
+      const echo = (await fake.json('/attio/control/deliver', updated)) as { deliveries: Array<{ status: number }> };
+      assert.deepEqual(echo.deliveries.map((d) => d.status), [200]);
+      await serving.waitFor(/sync:stamp wrote the record \S+ and it is unchanged since: this event is that write's echo and runs nothing/);
+      assert.equal(serving.lines.filter((l) => /^run \S+ sync:stamp/.test(l)).length, 1);
+
+      // A second user changes the description: the same event now runs the
+      // movement, which writes its description back; that write's echo runs
+      // nothing again.
+      const edited = await fetch(`${F}/attio/v2/objects/companies/records/${northwind.id.record_id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ data: { values: { description: 'Edited by Bob' } } }),
+      });
+      assert.equal(edited.status, 200, await edited.clone().text());
+      await fake.json('/attio/control/deliver', { events: [{ ...updated.events[0], actor: { type: 'workspace-member', id: 'fake-member-2' } }] });
+      await until(() => serving.lines.filter((l) => /^run \S+ sync:stamp completed$/.test(l)).length === 2, serving.lines);
+      assert.equal((await named('Northwind Labs'))?.values.description?.[0]?.value, 'Seen by lf');
+      await fake.json('/attio/control/deliver', updated);
+      await until(() => serving.lines.filter((l) => /this event is that write's echo and runs nothing/.test(l)).length === 2, serving.lines);
+      assert.equal(serving.lines.filter((l) => /^run \S+ sync:stamp/.test(l)).length, 2);
+
       // A delivery not signed by the webhook's secret is refused.
       const forged = await fetch(door, { method: 'POST', headers: { 'content-type': 'application/json', 'attio-signature': 'f00d' }, body: JSON.stringify({ webhook_id: 'x', events: [] }) });
       assert.equal(forged.status, 401);
@@ -161,15 +195,15 @@ test('the Attio walkthrough, end to end against the fake Attio', async () => {
       await serving.stop();
     }
 
-    // 9. The runs: the dry run and the one delivery.
+    // 9. The runs: the dry run, the created company, and the second user's update.
     const runs = lfSync(dir, 'runs');
     assert.equal(runs.code, 0, runs.out);
-    assert.equal(runs.out.split('\n').filter((l) => /sync:stamp completed/.test(l)).length, 2, runs.out);
+    assert.equal(runs.out.split('\n').filter((l) => /sync:stamp completed/.test(l)).length, 3, runs.out);
 
     // A restart keeps the webhook it registered.
     serving = await served(dir, ['--port', String(port)]);
     try {
-      await serving.waitFor(/^attio: webhook fake-webhook-\d+ is registered for record\.created at /);
+      await serving.waitFor(/^attio: webhook fake-webhook-\d+ is registered for record\.created,record\.updated at /);
       assert.equal((await webhooks()).length, 1);
     } finally {
       await serving.stop();
