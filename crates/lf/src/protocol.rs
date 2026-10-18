@@ -154,13 +154,27 @@ fn target_of(base_url: &str) -> Result<Target, String> {
 /// declared credential it carries it (the request's `credential`), and the
 /// answer's `credentialUpdate` comes back beside the result — read on a
 /// failed answer too, since a rotated refresh token must be stored either way.
-pub async fn post_rpc_carrying(call: Call<'_>, carried: Carried) -> (Result<Js, RpcError>, Option<Js>) {
-    let mut update = None;
-    let answer = post(call, carried, &mut update).await;
-    (answer, update)
+/// A call's answer, and what rode beside it: a `credentialUpdate`, and the
+/// provider's throttle (`retryAfter`, here in milliseconds).
+pub struct Answered {
+    pub answer: Result<Js, RpcError>,
+    pub update: Option<Js>,
+    pub retry_after_ms: Option<u64>,
 }
 
-async fn post(call: Call<'_>, carried: Carried, update: &mut Option<Js>) -> Result<Js, RpcError> {
+pub async fn post_rpc_carrying(call: Call<'_>, carried: Carried) -> Answered {
+    let mut beside = Beside::default();
+    let answer = post(call, carried, &mut beside).await;
+    Answered { answer, update: beside.update, retry_after_ms: beside.retry_after_ms }
+}
+
+#[derive(Default)]
+struct Beside {
+    update: Option<Js>,
+    retry_after_ms: Option<u64>,
+}
+
+async fn post(call: Call<'_>, carried: Carried, beside: &mut Beside) -> Result<Js, RpcError> {
     let target = target_of(call.base_url).map_err(RpcError::Unreachable)?;
     let unreachable = |e: &dyn std::fmt::Display| {
         RpcError::Unreachable(format!("Remote adapter at {} could not be reached for method \"{}\": {e}", call.base_url, call.method))
@@ -198,7 +212,11 @@ async fn post(call: Call<'_>, carried: Carried, update: &mut Option<Js>) -> Resu
     let envelope = Js::parse(&bytes).map_err(|e| {
         RpcError::Shape(format!("Remote adapter \"{}\" answered \"{}\" with a body that is not JSON: {e}", call.base_url, call.method))
     })?;
-    *update = envelope.get("credentialUpdate").cloned();
+    beside.update = envelope.get("credentialUpdate").cloned();
+    beside.retry_after_ms = match envelope.get("retryAfter") {
+        Some(Js::Num(seconds)) => seconds.as_f64().filter(|s| s.is_finite() && *s >= 0.0).map(|s| (s * 1000.0).ceil() as u64),
+        _ => None,
+    };
     record_cost(&envelope);
     match envelope.get("ok") {
         Some(Js::Bool(true)) => Ok(envelope.get("result").cloned().unwrap_or(Js::Null)),

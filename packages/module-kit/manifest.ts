@@ -50,7 +50,12 @@ function adapterManifest(definition: AdapterModuleDefinition, instance: AdapterM
     ...(definition.inbound !== undefined ? { inbound: definition.inbound } : {}),
     ...(definition.poll !== undefined ? { poll: definition.poll } : {}),
     ...(definition.periodic !== undefined && definition.periodic.length > 0 ? { periodic: [...definition.periodic] } : {}),
+    ...declaredLimits(definition),
   };
+}
+
+function declaredLimits(definition: ModuleDefinition): { limits?: unknown[] } {
+  return definition.limits !== undefined && definition.limits.length > 0 ? { limits: [...definition.limits] } : {};
 }
 
 function pluginManifest(definition: PluginModuleDefinition, instance: PluginModuleMethods): unknown {
@@ -61,6 +66,7 @@ function pluginManifest(definition: PluginModuleDefinition, instance: PluginModu
     runtimeCapabilities: BASE_RUNTIME_CAPABILITIES,
     methods: ['manifest', ...moduleMethods(instance, ['invokePlugin', 'refreshCredential'])],
     ...(definition.credentials.length > 0 ? { credentials: [...definition.credentials] } : {}),
+    ...declaredLimits(definition),
     plugins: {
       package: definition.name,
       plugins: definition.plugins.map((declaration) => ({ name: declaration.signature.name, spec: pluginSpecOf(declaration) })),

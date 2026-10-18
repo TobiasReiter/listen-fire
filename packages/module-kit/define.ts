@@ -15,6 +15,7 @@ import type {
   FileRef,
   WireCostLineShape,
   WireCredentialDeclarationShape,
+  WireDeclaredLimitShape,
   WireInboundDeclarationShape,
   WirePluginResultShape,
 } from 'engine-contracts';
@@ -201,6 +202,8 @@ interface Common {
   name: string;
   /** The credential it needs; the first is the one each call carries. */
   credentials: readonly WireCredentialDeclarationShape[];
+  /** The provider's limits on calls, kept by the host's limiter. */
+  limits?: readonly WireDeclaredLimitShape[];
 }
 
 export interface AdapterModuleDefinition extends Common {

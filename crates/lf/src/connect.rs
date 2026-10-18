@@ -348,6 +348,7 @@ async fn connect_core(project: &Project, module: &crate::core::CoreModule, promp
         crate::core::Slot::Models => &project.core.models,
         crate::core::Slot::Judge => &project.core.judge,
         crate::core::Slot::Files => &project.core.files,
+        crate::core::Slot::Limiter => &project.core.limiter,
     };
     if filling.name != module.name {
         prompter.print(&format!("to use it, name it in lf.yaml: core: {{ {}: \"{}\" }}", module.slot.name(), module.name));

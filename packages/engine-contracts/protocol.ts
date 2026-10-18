@@ -101,21 +101,29 @@ export type RpcErrorShape = z.infer<typeof RpcError>;
  *  credential and retries the call once. */
 export const CREDENTIAL_REFUSED_CODE = 'credential_refused';
 
+/** The provider's throttle signal, in seconds: it asked for no further call
+ *  on this credential (or install) for that long. The host's limiter holds
+ *  every call there until then. */
+export const WireRetryAfter = z.number().nonnegative();
+
 // `credentialUpdate` rides a failure too: a module that refreshed and was then
 // refused must still hand back the rotated refresh token, or it is lost.
-// `cost` rides a failure too: money spent is spent.
+// `cost` rides a failure too: money spent is spent. `retryAfter` rides either:
+// a provider may say "slow down" on a call it answered.
 export const RpcResponse = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     result: z.unknown(),
     credentialUpdate: WireCredentialUpdate.optional(),
     cost: z.array(WireCostLine).optional(),
+    retryAfter: WireRetryAfter.optional(),
   }),
   z.object({
     ok: z.literal(false),
     error: RpcError,
     credentialUpdate: WireCredentialUpdate.optional(),
     cost: z.array(WireCostLine).optional(),
+    retryAfter: WireRetryAfter.optional(),
   }),
 ]);
 export type RpcResponseShape = z.infer<typeof RpcResponse>;
@@ -808,7 +816,7 @@ export type WireModuleKindShape = z.infer<typeof WireModuleKind>;
 /** The host's core services a `core` module can fill. Each slot's contract
  *  is its family's contract suite (the run host's store cases for `store`,
  *  and so on); the host names one module per slot. */
-export const CORE_SLOTS = ['models', 'judge', 'store', 'files'] as const;
+export const CORE_SLOTS = ['models', 'judge', 'store', 'files', 'limiter'] as const;
 export const WireCoreSlot = z.enum(CORE_SLOTS);
 export type WireCoreSlotShape = z.infer<typeof WireCoreSlot>;
 
@@ -824,6 +832,38 @@ export const WireModuleSetting = z.object({
 });
 export type WireModuleSettingShape = z.infer<typeof WireModuleSetting>;
 
+/** What a declared limit is counted per: the credential a call is made as
+ *  (one user's grant), the module across every install of it on the host,
+ *  one install of it, or one team's installs. */
+export const LIMIT_SCOPES = ['credential', 'module', 'install', 'team'] as const;
+export const WireLimitScope = z.enum(LIMIT_SCOPES);
+export type WireLimitScopeShape = z.infer<typeof WireLimitScope>;
+
+/** A duration, a whole number and its unit: `500ms`, `10s`, `1m`, `1h`, `1d`. */
+export const WireLimitDuration = z.string().regex(/^[1-9][0-9]*(ms|s|m|h|d)$/, 'a duration: a whole number and ms, s, m, h or d');
+
+/** One limit the provider puts on calls, declared so the host's limiter
+ *  slot can keep to it: at most `calls` per `per`, and at most `concurrent`
+ *  at once, counted per `scope`. The declaration describes the provider, not
+ *  a limiter: the host's limiter (in process, or a shared one) reads it from
+ *  each request, so no limiter needs the manifest. */
+export const WireDeclaredLimit = z
+  .object({
+    scope: WireLimitScope,
+    calls: z.number().int().positive().optional(),
+    per: WireLimitDuration.optional(),
+    concurrent: z.number().int().positive().optional(),
+  })
+  .superRefine((limit, ctx) => {
+    if ((limit.calls === undefined) !== (limit.per === undefined)) {
+      ctx.addIssue({ code: 'custom', message: '`calls` and `per` go together' });
+    }
+    if (limit.calls === undefined && limit.concurrent === undefined) {
+      ctx.addIssue({ code: 'custom', message: 'a limit declares `calls` and `per`, or `concurrent`, or both' });
+    }
+  });
+export type WireDeclaredLimitShape = z.infer<typeof WireDeclaredLimit>;
+
 export const WireModuleDeclarations = z.object({
   kind: WireModuleKind.optional(),
   /** The slot a `core` module fills; only with `kind: core`. */
@@ -836,6 +876,8 @@ export const WireModuleDeclarations = z.object({
   poll: WirePollDeclaration.optional(),
   periodic: z.array(WirePeriodicDeclaration).optional(),
   plugins: WirePluginsDeclaration.optional(),
+  /** The provider's limits on calls (an adapter's API, a models provider's). */
+  limits: z.array(WireDeclaredLimit).optional(),
 });
 export type WireModuleDeclarationsShape = z.infer<typeof WireModuleDeclarations>;
 

@@ -12,7 +12,8 @@
 //! fills the store slot as a process: a folder in the externals folder whose
 //! lf-external.yaml says `kind: core`, `slot: store` and its `command`,
 //! driven over the store wire (docs/contracts/store-slot.md,
-//! crate::store_module). The other slots take only a built-in: their
+//! crate::store_module); the limiter slot likewise, over the limiter wire
+//! (docs/contracts/limiter-slot.md, crate::limiter_module). The other slots take only a built-in: their
 //! families are lf's own code paths (a model call's streaming and pricing,
 //! the judge's question, the file folder), with no wire to drive a process
 //! over yet.
@@ -31,10 +32,11 @@ pub enum Slot {
     Judge,
     Store,
     Files,
+    Limiter,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 4] = [Slot::Models, Slot::Judge, Slot::Store, Slot::Files];
+    pub const ALL: [Slot; 5] = [Slot::Models, Slot::Judge, Slot::Store, Slot::Files, Slot::Limiter];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -42,6 +44,7 @@ impl Slot {
             Slot::Judge => "judge",
             Slot::Store => "store",
             Slot::Files => "files",
+            Slot::Limiter => "limiter",
         }
     }
 
@@ -56,8 +59,14 @@ impl Slot {
             Slot::Judge => JUDGE,
             Slot::Store => SQLITE_STORE,
             Slot::Files => LOCAL_FILES,
+            Slot::Limiter => MEMORY_LIMITER,
         };
         builtin(name).expect("every slot's default is a built-in")
+    }
+
+    /// A slot a third-party module may fill as a process, over its wire.
+    pub fn takes_a_process(self) -> bool {
+        matches!(self, Slot::Store | Slot::Limiter)
     }
 }
 
@@ -106,6 +115,7 @@ pub const JUDGE: &str = "@lf/judge";
 pub const SQLITE_STORE: &str = "@lf/sqlite-store";
 pub const POSTGRES_STORE: &str = "@lf/postgres-store";
 pub const LOCAL_FILES: &str = "@lf/local-files";
+pub const MEMORY_LIMITER: &str = "@lf/memory-limiter";
 
 const ANTHROPIC_SETTINGS: &[Setting] = &[
     setting("api_key", "your Anthropic API key", true, false),
@@ -121,6 +131,8 @@ pub const BUILTIN: &[CoreModule] = &[
     built_in(SQLITE_STORE, Slot::Store, SQLITE_SETTINGS),
     built_in(POSTGRES_STORE, Slot::Store, POSTGRES_SETTINGS),
     built_in(LOCAL_FILES, Slot::Files, &[]),
+    // Keeps the limits in this process: one lf's calls, not a fleet's.
+    built_in(MEMORY_LIMITER, Slot::Limiter, &[]),
 ];
 
 pub fn builtin(name: &str) -> Option<&'static CoreModule> {
@@ -134,6 +146,7 @@ pub struct CoreChoice {
     pub judge: CoreModule,
     pub store: CoreModule,
     pub files: CoreModule,
+    pub limiter: CoreModule,
 }
 
 impl Default for CoreChoice {
@@ -143,6 +156,7 @@ impl Default for CoreChoice {
             judge: Slot::Judge.default_module().clone(),
             store: Slot::Store.default_module().clone(),
             files: Slot::Files.default_module().clone(),
+            limiter: Slot::Limiter.default_module().clone(),
         }
     }
 }
@@ -163,9 +177,9 @@ impl CoreChoice {
                 Some(module) if module.slot != slot => {
                     return Err(format!("{at}: core.{slot_name}: {module_name} fills the {} slot, not {slot_name}", module.slot.name()));
                 }
-                Some(module) if module.process.is_some() && slot != Slot::Store => {
+                Some(module) if module.process.is_some() && !slot.takes_a_process() => {
                     return Err(format!(
-                        "{at}: core.{slot_name}: {module_name} is a core module run as a process; lf fills only the store slot with one, and the {slot_name} slot takes a built-in ({})",
+                        "{at}: core.{slot_name}: {module_name} is a core module run as a process; lf fills only the store and limiter slots with one, and the {slot_name} slot takes a built-in ({})",
                         builtin_names(slot)
                     ));
                 }
@@ -182,6 +196,7 @@ impl CoreChoice {
                 Slot::Judge => choice.judge = module,
                 Slot::Store => choice.store = module,
                 Slot::Files => choice.files = module,
+                Slot::Limiter => choice.limiter = module,
             }
         }
         Ok(choice)
@@ -214,6 +229,10 @@ pub fn required<'a>(settings: &'a BTreeMap<String, String>, module: &CoreModule,
 /// A module's setup, run by `lf connect` once its settings are written: what
 /// it did, line by line.
 pub fn set_up(project: &Project, module: &CoreModule, settings: &BTreeMap<String, String>) -> Result<Vec<String>, String> {
+    if let (Some(process), Slot::Limiter) = (&module.process, module.slot) {
+        crate::limiter_module::ProcessLimiter::start(&module.name, process, settings)?;
+        return Ok(vec![format!("{} answered as a limiter", module.name)]);
+    }
     if let Some(process) = &module.process {
         // A store module sets itself up when it is opened.
         let opened = crate::store_module::ProcessStore::start(&module.name, process, settings).map_err(|e| e.to_string())?;
@@ -275,7 +294,10 @@ mod tests {
     #[test]
     fn every_slot_has_a_built_in_default() {
         let choice = CoreChoice::of(&BTreeMap::new(), &[], "lf.yaml").unwrap();
-        assert_eq!([choice.models.name, choice.judge.name, choice.store.name, choice.files.name], [ANTHROPIC, JUDGE, SQLITE_STORE, LOCAL_FILES]);
+        assert_eq!(
+            [choice.models.name, choice.judge.name, choice.store.name, choice.files.name, choice.limiter.name],
+            [ANTHROPIC, JUDGE, SQLITE_STORE, LOCAL_FILES, MEMORY_LIMITER]
+        );
     }
 
     #[test]
@@ -304,11 +326,12 @@ mod tests {
     }
 
     #[test]
-    fn a_process_module_fills_the_store_slot_and_only_it() {
-        let installed = [process_module("acme_store", Slot::Store), process_module("acme_llm", Slot::Models)];
-        let choice = CoreChoice::of(&named(&[("store", "acme_store")]), &installed, "lf.yaml").unwrap();
+    fn a_process_module_fills_the_store_and_limiter_slots_and_only_them() {
+        let installed = [process_module("acme_store", Slot::Store), process_module("acme_llm", Slot::Models), process_module("acme_limits", Slot::Limiter)];
+        let choice = CoreChoice::of(&named(&[("store", "acme_store"), ("limiter", "acme_limits")]), &installed, "lf.yaml").unwrap();
         assert_eq!(choice.store, installed[0]);
-        assert!(CoreChoice::of(&named(&[("models", "acme_llm")]), &installed, "lf.yaml").unwrap_err().contains("only the store slot"));
+        assert_eq!(choice.limiter, installed[2]);
+        assert!(CoreChoice::of(&named(&[("models", "acme_llm")]), &installed, "lf.yaml").unwrap_err().contains("only the store and limiter slots"));
         assert!(CoreChoice::of(&named(&[("models", "acme_store")]), &installed, "lf.yaml").unwrap_err().contains("fills the store slot"));
     }
 }

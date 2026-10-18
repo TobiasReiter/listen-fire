@@ -195,6 +195,9 @@ pub struct RunningExternal {
     /// The settings its manifest declares (`settings`), by name: sent on each
     /// call from its install entry.
     pub settings: Vec<String>,
+    /// The limits its manifest declares on calls (`limits`), kept by the
+    /// limiter slot (crate::limiter).
+    pub limits: Vec<crate::limiter::DeclaredLimit>,
     /// Its manifest answer as it came (what `lf connect` reads of it).
     pub manifest_answer: Js,
     /// How its manifest says its webhooks are signed (crate::doors).
@@ -247,6 +250,7 @@ pub async fn rpc(running: &RunningExternal, credentials: &Credentials, tenant: &
         declarations: &running.credential_declarations,
         methods: &running.methods,
         settings: &running.settings,
+        limits: &running.limits,
     };
     call(&target, credentials, tenant, method, params).await
 }
@@ -263,7 +267,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
     for external in externals {
         let (base_url, child) = reach(project, external).await?;
         let name = &external.manifest.name;
-        let target = Target { external, base_url: &base_url, declarations: &[], methods: &[], settings: &[] };
+        let target = Target { external, base_url: &base_url, declarations: &[], methods: &[], settings: &[], limits: &[] };
         let raw = call(&target, credentials, tenant, "manifest", json!({})).await?;
         let version = raw.get("protocolVersion");
         if !matches!(version, Some(Js::Num(n)) if n.as_f64() == Some(MANIFEST_PROTOCOL_VERSION as f64)) {
@@ -277,6 +281,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             return Err(format!("external folder \"{name}\" serves \"{}\"; the names must agree", manifest.adapter_type));
         }
         let credential_declarations = declarations_of(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?;
+        let limits = crate::limiter::limits_of(&raw).map_err(|expected| shape_error("manifest", name, &raw, &expected))?;
         if external.manifest.kind == "plugin" && manifest.plugins.is_none() {
             return Err(format!("external \"{name}\" is a plugin external, but its manifest declares no plugins"));
         }
@@ -291,6 +296,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             plugins: manifest.plugins,
             credential_declarations,
             settings: setting_names(&raw),
+            limits,
             manifest_answer: raw,
             inbound: manifest.inbound,
             poll_interval_seconds: manifest.poll_interval_seconds,

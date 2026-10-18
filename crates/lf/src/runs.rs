@@ -110,6 +110,8 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
         return Err(missing.iter().map(|m| format!("{}:{}:{} {}", m.file.display(), m.line, m.column, m.message)).collect::<Vec<_>>().join("\n"));
     }
     let externals = scan_externals(&project)?;
+    // Before any call: the manifest calls below ask it too.
+    crate::limiter::install(crate::limiter::of_project(&project, &env)?);
     // Before the externals start, so they are told where it is.
     crate::serve::open_models_door(&credentials).await?;
     let running = start_externals(&project, &externals, &credentials, LOCAL_TENANT).await?;

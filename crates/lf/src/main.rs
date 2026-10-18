@@ -19,6 +19,8 @@
 //!   lf completion <bash|zsh|fish>       the shell's tab completion
 //!   lf --contract-store <state.db|postgres://…> [--team <uuid>]  the run host's backend over stdio JSON-RPC
 //!   lf --contract-store-slot [--dir <project>]                   the same, over the project's store slot
+//!   lf --contract-limiter                                        the built-in limiter over stdio JSON-RPC
+//!   lf --contract-limiter-slot [--dir <project>]                 the same, over the project's limiter slot
 //!   lf --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
 //!   lf --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!
@@ -39,6 +41,7 @@ mod completion;
 mod connect;
 mod contract_doors;
 mod contract_secrets;
+mod contract_limiter;
 mod contract_store;
 mod core;
 mod credential_calls;
@@ -54,6 +57,8 @@ mod inbound;
 mod init;
 mod json;
 mod json_repair;
+mod limiter;
+mod limiter_module;
 mod llm_calls;
 mod models;
 mod oauth2;
@@ -98,6 +103,8 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
        lf cancel <run-id> [--reason <text>]
        lf --contract-store <state.db|postgres://…> [--team <uuid>]
        lf --contract-store-slot [--dir <project>]
+       lf --contract-limiter
+       lf --contract-limiter-slot [--dir <project>]
        lf --contract-secrets <secrets file | env>
        lf --contract-doors
        lf --project-schema
@@ -118,6 +125,8 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   --start-timeout  seconds a started external has to print `listening <port>` (default 30, or lf.yaml's `startTimeout`)
   --contract-store  serve the run host's backend over stdin/stdout JSON-RPC (the contract suite's bridge)
   --contract-store-slot  the same, over the store module the project's store slot names
+  --contract-limiter  serve lf's built-in limiter over stdin/stdout JSON-RPC (the limiter contract suite's bridge)
+  --contract-limiter-slot  the same, over the limiter module the project's limiter slot names
   --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
   --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
@@ -143,6 +152,8 @@ struct Args {
     reason: Option<String>,
     contract_store: Option<String>,
     contract_store_slot: bool,
+    contract_limiter: bool,
+    contract_limiter_slot: bool,
     contract_doors: bool,
     store: Option<String>,
     team: Option<String>,
@@ -174,6 +185,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         reason: None,
         contract_store: None,
         contract_store_slot: false,
+        contract_limiter: false,
+        contract_limiter_slot: false,
         contract_doors: false,
         store: None,
         team: None,
@@ -205,6 +218,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--dry-run" => args.dry_run = true,
             "--contract-store" => args.contract_store = Some(value("--contract-store")?),
             "--contract-store-slot" => args.contract_store_slot = true,
+            "--contract-limiter" => args.contract_limiter = true,
+            "--contract-limiter-slot" => args.contract_limiter_slot = true,
             "--store" => args.store = Some(value("--store")?),
             "--team" => args.team = Some(value("--team")?),
             "--until-idle" => args.until_idle = true,
@@ -248,6 +263,14 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         let project = project::load_project(&args.dir)?;
         let env: Vec<(String, String)> = std::env::vars().collect();
         return contract_store::serve(&backend::StoreSpec::of_command(None, &project, args.team.as_deref(), &env)?).await.map(|()| 0);
+    }
+    if args.contract_limiter {
+        return contract_limiter::serve(std::sync::Arc::new(limiter::MemoryLimiter::default())).await.map(|()| 0);
+    }
+    if args.contract_limiter_slot {
+        let project = project::load_project(&args.dir)?;
+        let env: Vec<(String, String)> = std::env::vars().collect();
+        return contract_limiter::serve(limiter::of_project(&project, &env)?).await.map(|()| 0);
     }
     if args.contract_doors {
         return contract_doors::serve().await.map(|()| 0);

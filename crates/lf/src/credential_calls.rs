@@ -21,7 +21,8 @@ use serde_json::json;
 use crate::externals::External;
 use crate::json::Js;
 use crate::oauth2::{ClientApp, ClientAuth, Declaration, accepted_fields, client_from_fields, declared_fields, refresh_grant};
-use crate::protocol::{CREDENTIAL_REFUSED_CODE, Call, Carried, RpcError, post_rpc_carrying};
+use crate::limiter::{Caller, DeclaredLimit};
+use crate::protocol::{Answered, CREDENTIAL_REFUSED_CODE, Call, Carried, RpcError, post_rpc_carrying};
 use crate::remote::CallFailure;
 use crate::secret_stores::{current_fields, secrets_of};
 use crate::secrets::{Binding, Credential, Credentials, install_of};
@@ -36,6 +37,8 @@ pub struct Target<'a> {
     pub methods: &'a [String],
     /// The settings the manifest declares, by name.
     pub settings: &'a [String],
+    /// The limits the manifest declares on calls (crate::limiter).
+    pub limits: &'a [DeclaredLimit],
 }
 
 #[derive(Debug)]
@@ -90,7 +93,7 @@ pub async fn send(
 ) -> Result<Js, SendError> {
     let Some(credential) = credential else {
         let bearer = bearer_of(target.external, signer.map(|s| (s.name.as_str(), current_fields(s)))).map_err(SendError::Before)?;
-        return post(target, credentials, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
+        return post(target, credentials, &sending, bearer.as_deref(), Presented::default()).await.answer.map_err(SendError::Rpc);
     };
     let family = secrets_of(credential);
     let bearer_for = |record: &Record| -> Result<Option<String>, SendError> {
@@ -123,14 +126,14 @@ pub async fn send(
     let Some(declaration) = declared else {
         let Some(refresher) = fields_refresher(credential) else {
             let bearer = bearer_for(&Record::of(current_fields(credential)))?;
-            return post(target, credentials, &sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc);
+            return post(target, credentials, &sending, bearer.as_deref(), Presented::entry(credential)).await.answer.map_err(SendError::Rpc);
         };
         let refresher = Some(refresher);
         return with_secret(&family, &credential.name, refresher.as_deref(), unauthorized, |record| {
             let sending = &sending;
             async move {
                 let bearer = bearer_for(&record)?;
-                post(target, credentials, sending, bearer.as_deref(), None).await.0.map_err(SendError::Rpc)
+                post(target, credentials, sending, bearer.as_deref(), Presented::entry(credential)).await.answer.map_err(SendError::Rpc)
             }
         })
         .await;
@@ -148,7 +151,7 @@ pub async fn send(
         async move {
             let bearer = bearer_for(&record)?;
             let sent = json!({ "name": declaration.name, "fields": declared_fields(declaration, &record.fields) });
-            let (answer, update) = post(target, credentials, sending, bearer.as_deref(), Some(sent)).await;
+            let Answered { answer, update, .. } = post(target, credentials, sending, bearer.as_deref(), Presented { sent: Some(sent), ..Presented::entry(credential) }).await;
             if let Some(update) = update {
                 store_update(family, &credential.name, adapter_type, declaration, &update, &record.version).await?;
             }
@@ -158,14 +161,39 @@ pub async fn send(
     .await
 }
 
-async fn post(target: &Target<'_>, credentials: &Credentials, sending: &Sending<'_>, bearer: Option<&str>, credential: Option<serde_json::Value>) -> (Result<Js, RpcError>, Option<Js>) {
+/// The credential a call is made as: the entry (which the limiter counts a
+/// `credential` limit by) and what of it is sent, for a declared one.
+#[derive(Default)]
+struct Presented<'a> {
+    entry: Option<&'a str>,
+    sent: Option<serde_json::Value>,
+}
+
+impl<'a> Presented<'a> {
+    fn entry(credential: &'a Credential) -> Presented<'a> {
+        Presented { entry: Some(&credential.name), sent: None }
+    }
+}
+
+/// One request, once the limiter slot grants it (crate::limiter): the
+/// module's declared limits, and any throttle its provider reported, hold it
+/// until then. A throttle it answers is reported back for the calls after it.
+async fn post(target: &Target<'_>, credentials: &Credentials, sending: &Sending<'_>, bearer: Option<&str>, presented: Presented<'_>) -> Answered {
     let name = &target.external.manifest.name;
-    let settings = install_of(credentials, name).map(|install| {
+    let install = install_of(credentials, name);
+    let caller = Caller { module: name, install: install.map(|i| i.name.as_str()), credential: presented.entry, team: sending.tenant };
+    let request = caller.request(target.limits);
+    let limiter = crate::limiter::slot();
+    let held = match crate::limiter::acquire(&limiter, &request).await {
+        Ok(held) => held,
+        Err(message) => return Answered { answer: Err(RpcError::Unreachable(format!("the limiter refused a call to \"{name}\": {message}"))), update: None, retry_after_ms: None },
+    };
+    let settings = install.map(|install| {
         let fields = current_fields(install);
         serde_json::Value::Object(target.settings.iter().filter_map(|s| fields.get(s).map(|v| (s.clone(), json!(v)))).collect())
     });
     let carried = Carried {
-        credential,
+        credential: presented.sent,
         settings: settings.filter(|s| s.as_object().is_some_and(|o| !o.is_empty())),
     };
     let call = Call {
@@ -176,7 +204,14 @@ async fn post(target: &Target<'_>, credentials: &Credentials, sending: &Sending<
         cache_scope_id: sending.cache_scope_id,
         params: sending.params.clone(),
     };
-    post_rpc_carrying(call, carried).await
+    let answered = post_rpc_carrying(call, carried).await;
+    drop(held);
+    if let Some(after) = answered.retry_after_ms
+        && let Err(message) = limiter.throttle(&request.key, crate::limiter::now_ms().saturating_add(i64::try_from(after).unwrap_or(i64::MAX)))
+    {
+        eprintln!("lf: the limiter did not take \"{name}\"'s throttle: {message}");
+    }
+    answered
 }
 
 /// The `Authorization` secret: the named field of the signing entry (externals.ts `callSecret`).
@@ -232,12 +267,15 @@ fn declared_refresher<'a>(
     bearer_for: &'a (dyn Fn(&Record) -> Result<Option<String>, SendError> + 'a),
 ) -> Option<Box<Refresher<'a>>> {
     if target.methods.iter().any(|m| m == "refreshCredential") {
+        let entry = credential.name.clone();
         return Some(Box::new(move |current: Record| -> LocalFuture<'a, Result<Fields, String>> {
+            let entry = entry.clone();
             Box::pin(async move {
                 let bearer = bearer_for(&current).map_err(String::from)?;
                 let sent = json!({ "name": declaration.name, "fields": declared_fields(declaration, &current.fields) });
                 let refreshing = Sending { tenant: sending.tenant, method: "refreshCredential", cache_scope_id: sending.cache_scope_id, params: json!({}) };
-                let (answer, update) = post(target, credentials, &refreshing, bearer.as_deref(), Some(sent)).await;
+                let presented = Presented { entry: Some(entry.as_str()), sent: Some(sent) };
+                let Answered { answer, update, .. } = post(target, credentials, &refreshing, bearer.as_deref(), presented).await;
                 let result = answer.map_err(|e| e.message())?;
                 let mut changed = match update {
                     Some(update) => update_of(&target.external.manifest.name, &update)?.1,

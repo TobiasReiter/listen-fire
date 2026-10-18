@@ -24,7 +24,7 @@ use hyper_util::rt::TokioIo;
 use serde_json::{Value as Json, json};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio::sync::Semaphore;
+use crate::limiter::{Caller, DeclaredLimit, Limiter, Scope};
 
 use crate::models::{ProviderKey, TokenCounts};
 
@@ -34,10 +34,11 @@ const API_VERSION: &str = "2023-06-01";
 /// default timeout).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Model requests one process has in flight at once (the TypeScript client's
-/// `rateLimitQueue`). A request holds its slot through its retries.
-const MAX_REQUESTS_IN_FLIGHT: usize = 8;
-static REQUEST_SLOTS: Semaphore = Semaphore::const_new(MAX_REQUESTS_IN_FLIGHT);
+/// Model requests in flight at once (the TypeScript client's
+/// `rateLimitQueue`): `@lf/anthropic`'s own declared limit, kept by the
+/// limiter slot. A request holds its place through its retries.
+const MAX_REQUESTS_IN_FLIGHT: u64 = 8;
+const LIMITS: &[DeclaredLimit] = &[DeclaredLimit { scope: Scope::Module, calls: None, concurrent: Some(MAX_REQUESTS_IN_FLIGHT) }];
 
 /// `MAX_CHAT_CONTINUATIONS`.
 pub const MAX_CHAT_CONTINUATIONS: u32 = 5;
@@ -152,14 +153,14 @@ fn uses_adaptive_thinking(model: &str) -> bool {
 pub struct Provider {
     pub key: ProviderKey,
     pub backoff: Backoff,
-    /// The slots its requests wait for: the process's, except in a test that
+    /// The limiter its requests ask: the slot's, except in a test that
     /// counts its own.
-    slots: &'static Semaphore,
+    limiter: Arc<dyn Limiter>,
 }
 
 impl Provider {
     pub fn new(key: ProviderKey) -> Provider {
-        Provider { key, backoff: Backoff::default(), slots: &REQUEST_SLOTS }
+        Provider { key, backoff: Backoff::default(), limiter: crate::limiter::slot() }
     }
 
     /// `anthropicChatDetailed`. `budget_open` is asked before every request:
@@ -260,8 +261,8 @@ impl Provider {
     }
 
     async fn request_with_backoff(&self, body: &Json) -> Result<Message, RequestError> {
-        // The slots are never closed, so acquiring only waits.
-        let _slot = self.slots.acquire().await.map_err(|e| RequestError::Connection(e.to_string()))?;
+        let caller = Caller { module: crate::core::ANTHROPIC, install: None, credential: None, team: "" };
+        let _held = crate::limiter::acquire(&self.limiter, &caller.request(LIMITS)).await.map_err(RequestError::Connection)?;
         let backoff = self.backoff;
         let mut attempt = 1;
         loop {
@@ -627,7 +628,7 @@ pub mod tests {
 
     fn quick(url: String) -> Provider {
         let backoff = Backoff { attempts: 4, initial: Duration::ZERO, multiple: 4, rate_limit_wait: Duration::ZERO };
-        Provider { key: ProviderKey { api_key: "test-key".into(), base_url: Some(url) }, backoff, slots: &REQUEST_SLOTS }
+        Provider { key: ProviderKey { api_key: "test-key".into(), base_url: Some(url) }, backoff, limiter: Arc::new(crate::limiter::MemoryLimiter::default()) }
     }
 
     fn options(effort: Option<&str>, model: &str) -> ChatOptions {
@@ -727,8 +728,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn at_most_eight_requests_are_in_flight_at_once() {
-        // Its own slots, so another test's requests cannot hold one.
-        static SLOTS: Semaphore = Semaphore::const_new(MAX_REQUESTS_IN_FLIGHT);
+        // Its own limiter, so another test's requests cannot hold a place.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (in_flight, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
@@ -747,11 +747,11 @@ pub mod tests {
             }
         });
         let mut provider = quick(url);
-        provider.slots = &SLOTS;
+        provider.limiter = Arc::new(crate::limiter::MemoryLimiter::default());
         let options = options(None, "claude-sonnet-5");
         let replies = join_all((0..12).map(|_| provider.chat_detailed(&options, &|| true)).collect()).await;
         assert!(replies.iter().all(|reply| reply.as_ref().is_ok_and(|r| r.text == "ok")));
-        assert_eq!(peak.load(Ordering::SeqCst), MAX_REQUESTS_IN_FLIGHT);
+        assert_eq!(peak.load(Ordering::SeqCst) as u64, MAX_REQUESTS_IN_FLIGHT);
     }
 
     #[test]

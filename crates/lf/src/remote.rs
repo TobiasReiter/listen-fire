@@ -341,6 +341,7 @@ impl<'s> SegmentAdapters<'s> {
             declarations: &running.credential_declarations,
             methods: &running.methods,
             settings: &running.settings,
+            limits: &running.limits,
         };
         let sending = Sending { tenant: ext.tenant, method, cache_scope_id: &instance.cache_scope, params: json_of_js(&params) };
         // The install's server secret signs a call made as a user credential.

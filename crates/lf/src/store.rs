@@ -237,7 +237,11 @@ pub struct BranchExport {
 
 /// `Date.prototype.toISOString` of now plus `offset_ms`.
 pub fn iso(offset_ms: i64) -> String {
-    let at = jiff::Timestamp::now().as_millisecond() + offset_ms;
+    iso_at(jiff::Timestamp::now().as_millisecond() + offset_ms)
+}
+
+/// The instant `at` (epoch milliseconds), as `iso` writes it.
+pub fn iso_at(at: i64) -> String {
     let ts = jiff::Timestamp::from_millisecond(at).expect("an instant within range");
     format!("{}.{:03}Z", ts.strftime("%Y-%m-%dT%H:%M:%S"), at.rem_euclid(1000))
 }
