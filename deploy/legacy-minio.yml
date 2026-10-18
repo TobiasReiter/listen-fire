@@ -52,7 +52,9 @@ services:
     profiles: ['copy-from-minio']
     image: rclone/rclone:1.75.1
     volumes:
-      - listen-fire-config:/config:ro
+      # Writable for one file: the record that the copy finished, which stops
+      # the init step warning about an unmoved MinIO on every boot.
+      - listen-fire-config:/config
     depends_on:
       minio:
         condition: service_healthy
@@ -73,6 +75,7 @@ services:
         RCLONE_CONFIG_NEW_SECRET_ACCESS_KEY="$$(cat /config/objectstore_password)" &&
         rclone copy old:listen-fire new:listen-fire --stats-one-line -v &&
         rclone check old:listen-fire new:listen-fire --one-way --size-only &&
+        touch /config/minio_copy_done &&
         echo "copy-from-minio: every object in MinIO's listen-fire bucket is in the bundled store"
 
 volumes:

@@ -83,10 +83,10 @@ primary_region = "lhr"
 
 ```toml
 [deploy]
-  release_command = "pnpm schema:migrate \"$DATABASE_URL\""
+  release_command = "pnpm schema:migrate"
 ```
 
-The migration runner takes the database as an **argument** and does not read the ambient environment, which is why the URL is passed explicitly.
+The migration runner reads `DATABASE_URL` from the environment. Do not pass the URL as an argument: pnpm echoes its command line into the log, password included.
 
 **Secrets.** Off compose nothing mints them for you: the compose stack generates its own on first boot, and here you supply the same set by hand ([`SELF_HOSTING.md`](../SELF_HOSTING.md), "What the installation generates for itself"). Never rotate the two encryption keys.
 

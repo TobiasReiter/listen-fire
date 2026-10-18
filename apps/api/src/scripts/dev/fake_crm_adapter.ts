@@ -646,8 +646,11 @@ export async function startFakeCrmServer(options: {
   secret: string;
   port?: number;
   host?: FakeCrmHost;
+  /** The interface to bind. Loopback unless the server runs in a container and
+   *  a sibling container must reach it (the deploy compose's `demo` profile). */
+  bindAddress?: string;
 }): Promise<FakeCrmServer> {
-  const { secret, port: requestedPort = 0, host } = options;
+  const { secret, port: requestedPort = 0, host, bindAddress = '127.0.0.1' } = options;
   const adapter = createFakeCrmAdapter();
 
   const handler = createAdapterProtocolHandler({
@@ -666,7 +669,7 @@ export async function startFakeCrmServer(options: {
     void handler(req, res);
   });
 
-  await new Promise<void>((resolve) => server.listen(requestedPort, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => server.listen(requestedPort, bindAddress, resolve));
   const address = server.address();
   if (typeof address !== 'object' || address === null) {
     throw new Error('fake CRM: the server is not listening on a TCP port.');

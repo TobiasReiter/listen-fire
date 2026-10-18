@@ -215,7 +215,9 @@ services:
           fi
           sleep 2
         done
-        pnpm schema:migrate "$$DATABASE_URL"
+        # No argument: the runner reads DATABASE_URL itself, because pnpm echoes its
+        # command line into this container's log and the URL carries the password.
+        pnpm schema:migrate
         # The deploy check: once per release, re-validate every saved automation
         # and advance the language version pins that are clean under this
         # release (apps/api/src/scripts/deploy_check.ts). HERE because this
@@ -414,6 +416,32 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # The demo's stand-in CRM (`acme_crm`), a remote adapter the seed installs.
+  # The seed refuses to continue without it. In the api's image because the
+  # fixture is a dev script; bound to all interfaces so the api and seed
+  # containers can reach it (nothing is published to the host).
+  fake-crm:
+    <<: [*node-app, *api-image]
+    profiles: ['demo']
+    working_dir: /srv/listen-fire/apps/api
+    command: ['pnpm', 'dev:fake-crm']
+    environment:
+      NODE_ENV: development
+      LISTEN_FIRE_DEMO: '1'
+      FAKE_REMOTE_ADAPTER_PORT: '5557'
+      FAKE_CRM_BIND_ADDRESS: 0.0.0.0
+      API_BASE_URL: http://api:3000
+    healthcheck:
+      test:
+        - 'CMD'
+        - 'node'
+        - '-e'
+        - "fetch('http://127.0.0.1:5557/',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(()=>process.exit(0)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   # The demo dataset: the team and its `vc-dealflow` ontology, a graph of
   # sample organisations, one working automation, one valuation case. Runs after
   # the API is healthy because the sample data goes through the real surfaces.
@@ -457,6 +485,7 @@ services:
       API_BASE_URL: http://api:3000
       WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:8080}
       FAKE_CHANNELS_URL: http://fake-channels:5556
+      FAKE_REMOTE_ADAPTER_URL: http://fake-crm:5557/
       MOCK_OUTPUT_ADAPTERS: 'true'
       # The seed provisions a movement that imports `email`; without the
       # address that import is a configuration gap and the seed refuses.
@@ -469,6 +498,8 @@ services:
       api:
         condition: service_healthy
       fake-channels:
+        condition: service_healthy
+      fake-crm:
         condition: service_healthy
     restart: 'no'
 

@@ -33,7 +33,12 @@ async function main(): Promise<void> {
   const apiBaseUrl = process.env.API_BASE_URL;
   const teamId = process.env.TEST_HARNESS_TEAM_ID;
   const host = apiBaseUrl ? { apiBaseUrl, ...(teamId ? { teamId } : {}) } : undefined;
-  const server = await startFakeCrmServer({ secret: FAKE_CRM_SECRET, port, ...(host ? { host } : {}) });
+  const server = await startFakeCrmServer({
+    secret: FAKE_CRM_SECRET,
+    port,
+    ...(host ? { host } : {}),
+    ...(process.env.FAKE_CRM_BIND_ADDRESS ? { bindAddress: process.env.FAKE_CRM_BIND_ADDRESS } : {}),
+  });
   console.log(`[fake-crm] '${FAKE_CRM_ADAPTER_TYPE}' listening at ${server.baseUrl}`);
   console.log(
     host

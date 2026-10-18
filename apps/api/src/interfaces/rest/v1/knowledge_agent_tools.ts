@@ -1371,9 +1371,14 @@ const runMovementHandler: RequestHandler = jsonHandler(runMovementSchema, 'body'
   // those references simply resolve to nothing, which is the honest answer.
   const runBy = actingUserId();
   const user = runBy === undefined ? undefined : await UserService.getById(runBy);
+  const teamId = await resolveToolTeam(input.team);
+  // Names are accepted everywhere else; the run path alone compared the raw
+  // string against a uuid column, which surfaced as a 500.
+  const movementId = await resolveMovementIdInTeam({ teamId, idOrName: input.automation });
+  if (movementId === null) return { error: `No automation '${input.automation}'.` };
   const result = await runMovementAsync({
-    teamId: await resolveToolTeam(input.team),
-    movementId: input.automation,
+    teamId,
+    movementId,
     ...(input.text !== undefined ? { text: input.text } : {}),
     ...(input.files !== undefined ? { files: input.files } : {}),
     ...(user === undefined
@@ -1412,6 +1417,16 @@ const getMovementRunHandler: RequestHandler = jsonHandler(
     return { error: `run ${input.runId} not found` };
   },
 );
+
+async function resolveMovementIdInTeam(input: {
+  teamId: string;
+  idOrName: string;
+}): Promise<string | null> {
+  const byId = await getMovement({ teamId: input.teamId, id: input.idOrName }).catch(() => null);
+  if (byId) return byId.id;
+  const named = (await listMovements(input.teamId)).find((m) => m.name === input.idOrName);
+  return named?.id ?? null;
+}
 
 // Resolve a movement reference (id or exact name) to its (teamId, movementId)
 // across the teams the connection covers — the same lookup getMovementHandler

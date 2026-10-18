@@ -74,10 +74,10 @@ The Dockerfile says so in its own header, and a build context set to `deploy/` c
 **Migrations are a separate one-shot run that must finish before the new task serves.** The compose file expresses this as a service that must exit 0 first; ECS has no equivalent, so it is a step in your deploy pipeline: a `RunTask` on the same image with the command
 
 ```
-pnpm schema:migrate "$DATABASE_URL"
+pnpm schema:migrate   # reads DATABASE_URL from the environment; an argument would be echoed, password included
 ```
 
-waited on to exit 0 before the service is updated. The migration runner takes the database as an **argument** and does not read the ambient environment, which is why the URL is passed explicitly. Migrations are forward-only, applied by file name, tracked in `_migrations.migrations`; back up before an upgrade, because there is no down-migration path.
+waited on to exit 0 before the service is updated. The migration runner reads `DATABASE_URL` from the environment (pnpm echoes an argument into the log, password included, so the URL is not passed as one). Migrations are forward-only, applied by file name, tracked in `_migrations.migrations`; back up before an upgrade, because there is no down-migration path.
 
 **Sizing.** Roughly 1–2 GB of memory for a single-product API at rest, around 2 GB for the composed shape, plus your database. Give the task more than the floor: the authoring agent and the extraction paths are the spiky ones.
 

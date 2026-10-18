@@ -50,6 +50,9 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-rehearsal-fixes
+
+- **The `migrate` log no longer shows the database password** (the runner reads `DATABASE_URL` from the environment; the AWS and Fly guides stop passing it as an argument). **The MinIO warning ends once the copy is done:** a successful `copy-from-minio` records `minio_copy_done` in the config volume. **`up.sh --demo`** now starts the fake CRM the seed needs. **`POST /automations/run`** accepts an automation name.
 ### r-guardslot
 
 - **The loop guard is a core slot, off by default.** What `r-loopguard` built into the run host is now the `loopGuard` slot, filled by `@lf/fingerprint-guard` when `lf.yaml` says `core: { loopGuard: "@lf/fingerprint-guard" }`. With no guard, neither lf nor the platform suppresses anything and a movement's own write echoing back runs it again (the platform's `suppress_self` flag is unchanged). The guard's memory moved out of the store: its own file `.lf/guard.db`, or a shared Postgres database (`url`, schema `lf_guard`); the store wire's `writes.*` methods and Postgres migration 3 are gone. Wire and contract suite: [loop-guard-slot.md](docs/contracts/loop-guard-slot.md). `examples/lf-attio` opts in.

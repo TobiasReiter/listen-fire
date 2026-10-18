@@ -6,6 +6,9 @@
 # single-quoted by the generator, so `.` is safe for base64 and for URLs.
 set -e
 
+# Overridable only so the test can point at a scratch directory.
+CONFIG_DIR="${LF_CONFIG_DIR:-/config}"
+
 # The generated file names the BUNDLED database, so sourcing it blindly would
 # overwrite a database the operator named themselves — the one thing that must
 # not happen, because that variable is also what tells compose not to start the
@@ -14,9 +17,9 @@ set -e
 OPERATOR_DATABASE_URL="${DATABASE_URL:-}"
 OPERATOR_DATABASE_URL_READONLY="${DATABASE_URL_READONLY:-}"
 
-if [ -f /config/generated.env ]; then
+if [ -f "$CONFIG_DIR/generated.env" ]; then
   set -a
-  . /config/generated.env
+  . "$CONFIG_DIR/generated.env"
   set +a
 fi
 
@@ -41,21 +44,23 @@ fi
 # generator will never rewrite.
 # The test is AWS_S3_ENDPOINT, the same variable that tells compose not to start
 # the bundled store, so the two can never disagree about which store is in use.
-if [ -z "${AWS_S3_ENDPOINT:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && [ -f /config/objectstore_password ]; then
+if [ -z "${AWS_S3_ENDPOINT:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && [ -f "$CONFIG_DIR/objectstore_password" ]; then
   export AWS_S3_ENDPOINT=http://objectstore:8333
   export AWS_ACCESS_KEY_ID=listenfire
-  AWS_SECRET_ACCESS_KEY="$(cat /config/objectstore_password)"
+  AWS_SECRET_ACCESS_KEY="$(cat "$CONFIG_DIR/objectstore_password")"
   export AWS_SECRET_ACCESS_KEY
   export AWS_DOCUMENT_S3_BUCKET="${AWS_DOCUMENT_S3_BUCKET:-listen-fire}"
   export AWS_REGION="${AWS_REGION:-auto}"
   export AWS_S3_FORCE_PATH_STYLE=true
   # A config volume that still holds minio_password belongs to an installation
   # that ran the bundled MinIO. A container cannot see the host's volumes, so it
-  # cannot tell whether the files were moved; say so in the log. This never
-  # blocks: ./up.sh holds the real guard, and a bare `docker compose up` must
-  # keep working for installations that have already copied or never had files.
-  if [ -f /config/minio_password ] && [ "${LF_FRESH_OBJECTSTORE:-}" != 1 ]; then
-    echo "WARNING: this installation ran the bundled MinIO (/config/minio_password exists). If its files were not copied into the new SeaweedFS store they are NOT visible here: see SELF_HOSTING.md, 'Upgrading from the bundled MinIO'. Set LF_FRESH_OBJECTSTORE=1 to silence this." >&2
+  # cannot tell whether the files were moved -- except that the documented copy
+  # (legacy-minio.yml's copy-from-minio) records minio_copy_done here when it
+  # succeeds. Warn only while a copy is still owed. This never blocks: ./up.sh
+  # holds the real guard, and a bare `docker compose up` must keep working for
+  # installations that never had files.
+  if [ -f "$CONFIG_DIR/minio_password" ] && [ ! -f "$CONFIG_DIR/minio_copy_done" ] && [ "${LF_FRESH_OBJECTSTORE:-}" != 1 ]; then
+    echo "WARNING: this installation ran the bundled MinIO ($CONFIG_DIR/minio_password exists) and no copy of its files into the new SeaweedFS store has been recorded. If they were not copied they are NOT visible here: see SELF_HOSTING.md, 'Upgrading from the bundled MinIO'. Set LF_FRESH_OBJECTSTORE=1 to silence this." >&2
   fi
 fi
 
