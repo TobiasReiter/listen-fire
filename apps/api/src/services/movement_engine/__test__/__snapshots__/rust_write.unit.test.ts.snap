@@ -2341,6 +2341,13 @@ exports[`parks in the Rust engine parks a dict holding a handle, whose kind name
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -2362,6 +2369,13 @@ exports[`parks in the Rust engine parks a dict holding a handle, whose kind name
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -2562,6 +2576,13 @@ exports[`parks in the Rust engine parks a program with file-level declarations, 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -2588,6 +2609,13 @@ exports[`parks in the Rust engine parks a program with file-level declarations, 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
                 "rules": {
                   "kind": "value",
@@ -2745,7 +2773,7 @@ exports[`parks in the Rust engine parks a program with file-level declarations, 
 }
 `;
 
-exports[`parks in the Rust engine parks a program with file-level declarations, and resumes it 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"fetch":{"kind":"opaque","what":"a plugin","name":"fetch"},"rules":{"kind":"value","value":"route infra","provenance":{"origins":[{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}}],"direct":{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}}}},"Lead":{"kind":"shape","name":"Lead"},"tag":{"kind":"value","value":"ROUTE INFRA!","provenance":{"origins":[{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}},{"kind":"literal","span":{"end":{"col":30,"line":12},"start":{"col":7,"line":12}}}]}}}},{"bindings":{"msg":{"kind":"event"},"label":{"kind":"value","value":"Acme ROUTE INFRA!","provenance":{"origins":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"},{"kind":"literal","span":{"end":{"col":36,"line":14},"start":{"col":11,"line":14}}},{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}},{"kind":"literal","span":{"end":{"col":30,"line":12},"start":{"col":7,"line":12}}}]}}}}]}"`;
+exports[`parks in the Rust engine parks a program with file-level declarations, and resumes it 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"fetch":{"kind":"opaque","what":"a plugin","name":"fetch"},"rules":{"kind":"value","value":"route infra","provenance":{"origins":[{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}}],"direct":{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}}}},"Lead":{"kind":"shape","name":"Lead"},"tag":{"kind":"value","value":"ROUTE INFRA!","provenance":{"origins":[{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}},{"kind":"literal","span":{"end":{"col":30,"line":12},"start":{"col":7,"line":12}}}]}}}},{"bindings":{"msg":{"kind":"event"},"label":{"kind":"value","value":"Acme ROUTE INFRA!","provenance":{"origins":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"},{"kind":"literal","span":{"end":{"col":36,"line":14},"start":{"col":11,"line":14}}},{"kind":"literal","span":{"end":{"col":22,"line":7},"start":{"col":9,"line":7}}},{"kind":"literal","span":{"end":{"col":30,"line":12},"start":{"col":7,"line":12}}}]}}}}]}"`;
 
 exports[`parks in the Rust engine parks a program with file-level declarations, and resumes it 3`] = `
 {
@@ -2986,6 +3014,13 @@ exports[`parks in the Rust engine parks and resumes a bound block that returned 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -3007,6 +3042,13 @@ exports[`parks in the Rust engine parks and resumes a bound block that returned 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -3059,7 +3101,7 @@ exports[`parks in the Rust engine parks and resumes a bound block that returned 
 }
 `;
 
-exports[`parks in the Rust engine parks and resumes a bound block that returned nothing (no returned records) 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"rows":{"kind":"positions","landings":[]}}}]}"`;
+exports[`parks in the Rust engine parks and resumes a bound block that returned nothing (no returned records) 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"rows":{"kind":"positions","landings":[]}}}]}"`;
 
 exports[`parks in the Rust engine parks and resumes a bound block that returned nothing (no returned records) 3`] = `
 {
@@ -3331,6 +3373,13 @@ exports[`parks in the Rust engine parks at a sleep with the state the engine wri
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -3352,6 +3401,13 @@ exports[`parks in the Rust engine parks at a sleep with the state the engine wri
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -3491,7 +3547,7 @@ exports[`parks in the Rust engine parks at a sleep with the state the engine wri
 }
 `;
 
-exports[`parks in the Rust engine parks at a sleep with the state the engine writes 2`] = `"{"version":2,"address":"s2.b0.s0","bindingName":"waited","presenceBind":true,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"co":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","created":true,"committed":true,"externalId":"attio-1","writtenValues":{"name":"Acme"},"resultData":{"url":"https://x/1","minted":1},"outcome":"create","provenance":{"name":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]},"bindingName":"co","origin":{"kind":"write","writeIndex":0,"externalId":"attio-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}},"label":{"kind":"value","value":"Acme (attio-1)","provenance":{"origins":[{"kind":"write","writeIndex":0,"externalId":"attio-1","field":"name"},{"kind":"literal","span":{"end":{"col":44,"line":7},"start":{"col":11,"line":7}}},{"kind":"write","writeIndex":0,"externalId":"attio-1","field":"externalId"},{"kind":"literal","span":{"end":{"col":44,"line":7},"start":{"col":11,"line":7}}}]}}}},{"bindings":{}}]}"`;
+exports[`parks in the Rust engine parks at a sleep with the state the engine writes 2`] = `"{"version":2,"address":"s2.b0.s0","bindingName":"waited","presenceBind":true,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"co":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","created":true,"committed":true,"externalId":"attio-1","writtenValues":{"name":"Acme"},"resultData":{"url":"https://x/1","minted":1},"outcome":"create","provenance":{"name":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]},"bindingName":"co","origin":{"kind":"write","writeIndex":0,"externalId":"attio-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}},"label":{"kind":"value","value":"Acme (attio-1)","provenance":{"origins":[{"kind":"write","writeIndex":0,"externalId":"attio-1","field":"name"},{"kind":"literal","span":{"end":{"col":44,"line":7},"start":{"col":11,"line":7}}},{"kind":"write","writeIndex":0,"externalId":"attio-1","field":"externalId"},{"kind":"literal","span":{"end":{"col":44,"line":7},"start":{"col":11,"line":7}}}]}}}},{"bindings":{}}]}"`;
 
 exports[`parks in the Rust engine resumes a parked object in the order it was stored, not sorted 1`] = `
 {
@@ -4271,6 +4327,13 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -4292,6 +4355,13 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -4433,7 +4503,7 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
 }
 `;
 
-exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a bound block returning values over three landings: parked as one string, and resumed 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"names":{"kind":"value","value":["Initech/Acme","Globex/Acme","Acme/Acme"],"provenance":{"origins":[{"kind":"source_field","instance":"crm","adapterType":"attio","recordType":"company","externalId":"co-3","field":"name"},{"kind":"literal","span":{"end":{"col":42,"line":7},"start":{"col":12,"line":7}}},{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"},{"kind":"source_field","instance":"crm","adapterType":"attio","recordType":"company","externalId":"co-2","field":"name"},{"kind":"literal","span":{"end":{"col":42,"line":7},"start":{"col":12,"line":7}}},{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"},{"kind":"source_field","instance":"crm","adapterType":"attio","recordType":"company","externalId":"co-1","field":"name"},{"kind":"literal","span":{"end":{"col":42,"line":7},"start":{"col":12,"line":7}}},{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]}}}}]}"`;
+exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a bound block returning values over three landings: parked as one string, and resumed 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"names":{"kind":"value","value":["Initech/Acme","Globex/Acme","Acme/Acme"],"provenance":{"origins":[{"kind":"source_field","instance":"crm","adapterType":"attio","recordType":"company","externalId":"co-3","field":"name"},{"kind":"literal","span":{"end":{"col":42,"line":7},"start":{"col":12,"line":7}}},{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"},{"kind":"source_field","instance":"crm","adapterType":"attio","recordType":"company","externalId":"co-2","field":"name"},{"kind":"literal","span":{"end":{"col":42,"line":7},"start":{"col":12,"line":7}}},{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"},{"kind":"source_field","instance":"crm","adapterType":"attio","recordType":"company","externalId":"co-1","field":"name"},{"kind":"literal","span":{"end":{"col":42,"line":7},"start":{"col":12,"line":7}}},{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]}}}}]}"`;
 
 exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a bound block returning values over three landings: parked as one string, and resumed 3`] = `
 {
@@ -4837,6 +4907,13 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -4858,6 +4935,13 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -4935,7 +5019,7 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
 }
 `;
 
-exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a match: parked as one string, and resumed 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"co":{"kind":"handle","handle":{"kind":"match","adapterType":"attio","recordType":"company","created":false,"committed":false,"externalId":"co-1","writtenValues":{},"resultData":{"url":"https://x/co-1","name":"Acme","stage":"Seed","domain":"acme.dev"},"provenance":{},"bindingName":"co","origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}}}]}"`;
+exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a match: parked as one string, and resumed 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"co":{"kind":"handle","handle":{"kind":"match","adapterType":"attio","recordType":"company","created":false,"committed":false,"externalId":"co-1","writtenValues":{},"resultData":{"url":"https://x/co-1","name":"Acme","stage":"Seed","domain":"acme.dev"},"provenance":{},"bindingName":"co","origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}}}]}"`;
 
 exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a match: parked as one string, and resumed 3`] = `
 {
@@ -5275,6 +5359,13 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -5296,6 +5387,13 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -5413,7 +5511,7 @@ exports[`parks in the Rust engine the park state of every binding a record verb 
 }
 `;
 
-exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a write with a target WHERE, bound: parked as one string, and resumed 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"co":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","created":false,"committed":true,"externalId":"co-1","writtenValues":{"name":"Acme"},"resultData":{"updated":true},"foundData":{"url":"https://x/co-1","name":"Acme","stage":"Seed"},"outcome":"update","provenance":{"name":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]},"bindingName":"co","origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"old":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","externalId":"co-1","created":false,"committed":false,"writtenValues":{},"resultData":{"url":"https://x/co-1","name":"Acme","stage":"Seed"},"provenance":{},"snapshot":true},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}}}}]}"`;
+exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a write with a target WHERE, bound: parked as one string, and resumed 2`] = `"{"version":2,"address":"s1","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"co":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","created":false,"committed":true,"externalId":"co-1","writtenValues":{"name":"Acme"},"resultData":{"updated":true},"foundData":{"url":"https://x/co-1","name":"Acme","stage":"Seed"},"outcome":"update","provenance":{"name":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]},"bindingName":"co","origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"old":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","externalId":"co-1","created":false,"committed":false,"writtenValues":{},"resultData":{"url":"https://x/co-1","name":"Acme","stage":"Seed"},"provenance":{},"snapshot":true},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}}}}]}"`;
 
 exports[`parks in the Rust engine the park state of every binding a record verb or a bound block makes a write with a target WHERE, bound: parked as one string, and resumed 3`] = `
 {
@@ -6252,6 +6350,13 @@ exports[`the cost cap in the Rust engine fails on the cap where the sink cannot 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -6273,6 +6378,13 @@ exports[`the cost cap in the Rust engine fails on the cap where the sink cannot 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -6464,6 +6576,13 @@ exports[`the cost cap in the Rust engine joins a pause that holds: a woken flow 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -6485,6 +6604,13 @@ exports[`the cost cap in the Rust engine joins a pause that holds: a woken flow 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -6906,6 +7032,13 @@ exports[`the cost cap in the Rust engine meets a cap the run has spent exactly, 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -6927,6 +7060,13 @@ exports[`the cost cap in the Rust engine meets a cap the run has spent exactly, 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -7517,6 +7657,13 @@ exports[`the cost cap in the Rust engine meets a cap the run has spent exactly, 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -7538,6 +7685,13 @@ exports[`the cost cap in the Rust engine meets a cap the run has spent exactly, 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -7777,6 +7931,13 @@ exports[`the cost cap in the Rust engine pauses at a capped PLAIN write whose se
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -7798,6 +7959,13 @@ exports[`the cost cap in the Rust engine pauses at a capped PLAIN write whose se
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -8152,6 +8320,13 @@ exports[`the cost cap in the Rust engine pauses at the cap: the pause, suspensio
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -8173,6 +8348,13 @@ exports[`the cost cap in the Rust engine pauses at the cap: the pause, suspensio
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -8295,7 +8477,7 @@ exports[`the cost cap in the Rust engine pauses at the cap: the pause, suspensio
 }
 `;
 
-exports[`the cost cap in the Rust engine pauses at the cap: the pause, suspension, trace and partial effects 2`] = `"{"version":2,"address":"s2.b0.s0","bindingName":null,"suspended":true,"journal":[],"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"earlier":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","created":false,"committed":true,"externalId":"co-1","writtenValues":{"name":"Acme"},"resultData":{"updated":true},"foundData":{"name":"Acme Inc"},"outcome":"update","provenance":{"name":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]},"bindingName":"earlier","origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"old":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","externalId":"co-1","created":false,"committed":false,"writtenValues":{},"resultData":{"name":"Acme Inc"},"provenance":{},"snapshot":true},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},"label":{"kind":"value","value":"Acme","provenance":{"origins":[{"kind":"write","writeIndex":0,"externalId":"co-1","field":"name"}]}}}},{"bindings":{}}]}"`;
+exports[`the cost cap in the Rust engine pauses at the cap: the pause, suspension, trace and partial effects 2`] = `"{"version":2,"address":"s2.b0.s0","bindingName":null,"suspended":true,"journal":[],"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"earlier":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","created":false,"committed":true,"externalId":"co-1","writtenValues":{"name":"Acme"},"resultData":{"updated":true},"foundData":{"name":"Acme Inc"},"outcome":"update","provenance":{"name":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}]},"bindingName":"earlier","origin":{"kind":"write","writeIndex":0,"externalId":"co-1"}},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"old":{"kind":"handle","handle":{"adapterType":"attio","recordType":"company","externalId":"co-1","created":false,"committed":false,"writtenValues":{},"resultData":{"name":"Acme Inc"},"provenance":{},"snapshot":true},"targetType":"company","graph":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},"label":{"kind":"value","value":"Acme","provenance":{"origins":[{"kind":"write","writeIndex":0,"externalId":"co-1","field":"name"}]}}}},{"bindings":{}}]}"`;
 
 exports[`the cost cap in the Rust engine resumes from its operator what it suspended 1`] = `
 {
@@ -8649,6 +8831,13 @@ exports[`the cost cap in the Rust engine resumes from its operator what it suspe
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -8670,6 +8859,13 @@ exports[`the cost cap in the Rust engine resumes from its operator what it suspe
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -9165,6 +9361,13 @@ exports[`the cost cap in the Rust engine suspends at a suspendAt address, once, 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -9186,6 +9389,13 @@ exports[`the cost cap in the Rust engine suspends at a suspendAt address, once, 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -12990,6 +13200,13 @@ exports[`the graphs a run builds, in the Rust engine parks a node with a declare
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -13011,6 +13228,13 @@ exports[`the graphs a run builds, in the Rust engine parks a node with a declare
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -13121,7 +13345,7 @@ exports[`the graphs a run builds, in the Rust engine parks a node with a declare
 }
 `;
 
-exports[`the graphs a run builds, in the Rust engine parks a node with a declared edge, and resumes it 2`] = `"{"version":2,"address":"s2","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"Company":{"kind":"shape","name":"Company"}}},{"bindings":{"msg":{"kind":"event"},"deduped":{"kind":"nodePosition","id":0,"fields":{},"fieldOrder":[],"fieldProvenance":{},"edges":{"companies":{"kind":"landed","landings":[{"kind":"nodePosition","id":1,"fields":{"name":"Acme"},"fieldOrder":["name","stage"],"fieldProvenance":{"name":{"origins":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}],"direct":{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}}},"landedOn":"companies","edges":{"founder":{"kind":"landed","landings":[],"landing":{"fields":["first"],"edges":{}}}}}],"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}}}},"a":{"kind":"nodeRef","id":1}}}]}"`;
+exports[`the graphs a run builds, in the Rust engine parks a node with a declared edge, and resumes it 2`] = `"{"version":2,"address":"s2","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}},"Company":{"kind":"shape","name":"Company"}}},{"bindings":{"msg":{"kind":"event"},"deduped":{"kind":"nodePosition","id":0,"fields":{},"fieldOrder":[],"fieldProvenance":{},"edges":{"companies":{"kind":"landed","landings":[{"kind":"nodePosition","id":1,"fields":{"name":"Acme"},"fieldOrder":["name","stage"],"fieldProvenance":{"name":{"origins":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}],"direct":{"kind":"source_field","instance":"inbox","adapterType":"email","field":"subject"}}},"landedOn":"companies","edges":{"founder":{"kind":"landed","landings":[],"landing":{"fields":["first"],"edges":{}}}}}],"landing":{"fields":["name","stage"],"edges":{"founder":{"fields":["first"],"edges":{}}}}}}},"a":{"kind":"nodeRef","id":1}}}]}"`;
 
 exports[`the graphs a run builds, in the Rust engine parks a node with a declared edge, and resumes it 3`] = `
 {
@@ -14839,6 +15063,13 @@ exports[`writes in the Rust engine builds a graph: a reference entry is an edge 
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -14860,6 +15091,13 @@ exports[`writes in the Rust engine builds a graph: a reference entry is an edge 
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -16873,6 +17111,13 @@ exports[`writes in the Rust engine reads a \`Date\` the event or an adapter answ
                   },
                   "kind": "instance",
                 },
+                "cron": {
+                  "instance": {
+                    "adapterSlug": "cron",
+                    "name": "cron",
+                  },
+                  "kind": "instance",
+                },
                 "dealflow_inbox": {
                   "kind": "opaque",
                   "name": "dealflow_inbox",
@@ -16894,6 +17139,13 @@ exports[`writes in the Rust engine reads a \`Date\` the event or an adapter answ
                 "m": {
                   "kind": "movement",
                   "name": "m",
+                },
+                "manual": {
+                  "instance": {
+                    "adapterSlug": "manual",
+                    "name": "manual",
+                  },
+                  "kind": "instance",
                 },
               },
             },
@@ -16966,7 +17218,7 @@ exports[`writes in the Rust engine reads a \`Date\` the event or an adapter answ
 }
 `;
 
-exports[`writes in the Rust engine reads a \`Date\` the event or an adapter answers as its ISO text: interpolated, compared, parked 2`] = `"[{"version":2,"address":"s3","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"when":{"kind":"value","value":"2026-01-01T09:00:00.000Z","provenance":{"origins":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"when"}],"direct":{"kind":"source_field","instance":"inbox","adapterType":"email","field":"when"}}}}}]}]"`;
+exports[`writes in the Rust engine reads a \`Date\` the event or an adapter answers as its ISO text: interpolated, compared, parked 2`] = `"[{"version":2,"address":"s3","bindingName":null,"scopeChain":[{"bindings":{"m":{"kind":"movement","name":"m"},"cron":{"kind":"instance","instance":{"name":"cron","adapterSlug":"cron"}},"manual":{"kind":"instance","instance":{"name":"manual","adapterSlug":"manual"}},"email":{"kind":"opaque","what":"import","name":"email"},"attio":{"kind":"opaque","what":"import","name":"attio"},"dealflow_inbox":{"kind":"opaque","what":"import","name":"dealflow_inbox"},"acme_main":{"kind":"opaque","what":"import","name":"acme_main"},"inbox":{"kind":"instance","instance":{"name":"inbox","adapterSlug":"email","credentialName":"dealflow_inbox"}},"crm":{"kind":"instance","instance":{"name":"crm","adapterSlug":"attio","credentialName":"acme_main"}}}},{"bindings":{"msg":{"kind":"event"},"when":{"kind":"value","value":"2026-01-01T09:00:00.000Z","provenance":{"origins":[{"kind":"source_field","instance":"inbox","adapterType":"email","field":"when"}],"direct":{"kind":"source_field","instance":"inbox","adapterType":"email","field":"when"}}}}}]}]"`;
 
 exports[`writes in the Rust engine rehearses: the host captures the writes, in program order, and nothing commits 1`] = `
 {
