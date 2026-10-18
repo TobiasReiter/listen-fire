@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from 'node:crypto';
 import express, { Router } from 'express';
 import type { EntityStore } from '../store';
 
@@ -100,6 +101,12 @@ function normalizeValues(values: Record<string, unknown>): Record<string, unknow
     }
   }
   return out;
+}
+
+/** A webhook as Attio lists it: its secret is shown once, at creation. */
+function publicWebhook(data: Record<string, unknown>): Record<string, unknown> {
+  const { secret: _secret, ...shown } = data;
+  return shown;
 }
 
 export function attioRoutes(store: EntityStore): Router {
@@ -572,17 +579,76 @@ export function attioRoutes(store: EntityStore): Router {
     res.json({ data: rows, pagination: { next_cursor: null } });
   });
 
-  // Webhooks (no-op for test)
-  r.post('/v2/webhooks', (_req, res) => {
-    res.json({ data: { id: { workspace_id: 'test', webhook_id: 'fake' }, status: 'active', secret: 'fake-secret' } });
+  // Webhooks — kept, so a host's registration is visible
+  // (`/admin/attio/webhook/state`), each with the secret Attio issues for it
+  // at creation. PATCH keeps the id and the secret, as Attio's does.
+  r.get('/v2/webhooks', (_req, res) => {
+    res.json({ data: store.list(SVC, 'webhook').map((w) => publicWebhook(w.data)) });
+  });
+
+  r.post('/v2/webhooks', (req, res) => {
+    const id = `fake-webhook-${store.nextId(SVC, 'webhook')}`;
+    const webhook = {
+      id: { workspace_id: 'test', webhook_id: id },
+      target_url: String(req.body?.data?.target_url ?? ''),
+      subscriptions: req.body?.data?.subscriptions ?? [],
+      status: 'active',
+      secret: randomBytes(24).toString('hex'),
+      created_at: new Date().toISOString(),
+    };
+    store.create(SVC, 'webhook', webhook, id);
+    res.json({ data: webhook });
   });
 
   r.patch('/v2/webhooks/:webhookId', (req, res) => {
-    res.json({ data: { id: { workspace_id: 'test', webhook_id: req.params.webhookId }, status: 'active', subscriptions: req.body?.data?.subscriptions ?? [] } });
+    const found = store.get(SVC, 'webhook', req.params.webhookId);
+    if (!found) return res.status(404).json({ status_code: 404, type: 'invalid_request_error', code: 'not_found', message: 'Webhook not found' });
+    const patch = req.body?.data ?? {};
+    const next = {
+      ...found.data,
+      ...(patch.target_url !== undefined ? { target_url: String(patch.target_url) } : {}),
+      ...(patch.subscriptions !== undefined ? { subscriptions: patch.subscriptions } : {}),
+    };
+    store.update(SVC, 'webhook', req.params.webhookId, next);
+    res.json({ data: publicWebhook(next) });
   });
 
-  r.delete('/v2/webhooks/:webhookId', (_req, res) => {
+  r.delete('/v2/webhooks/:webhookId', (req, res) => {
+    if (!store.get(SVC, 'webhook', req.params.webhookId)) {
+      return res.status(404).json({ status_code: 404, type: 'invalid_request_error', code: 'not_found', message: 'Webhook not found' });
+    }
+    store.delete(SVC, 'webhook', req.params.webhookId);
     res.json({});
+  });
+
+  // What Attio does when records change: POST `{ webhook_id, events }` to
+  // every registered webhook subscribed to the event's type, signed with that
+  // webhook's secret (`attio-signature`: hex HMAC-SHA256 of the body). The
+  // fake never fires on its own writes, so a movement that writes on
+  // record.created cannot loop. Each delivery's answer comes back.
+  //   POST /attio/control/deliver { events: [{ event_type, id: { object_id, record_id }, actor? }] }
+  r.post('/control/deliver', async (req, res) => {
+    const events: Array<Record<string, unknown>> = Array.isArray(req.body?.events) ? req.body.events : [];
+    const deliveries: Array<{ webhookId: string; targetUrl: string; status: number; body: string }> = [];
+    for (const { data } of store.list(SVC, 'webhook')) {
+      const subscribed = new Set(((data.subscriptions as Array<{ event_type?: string }>) ?? []).map((s) => s.event_type));
+      const mine = events.filter((e) => subscribed.has(String(e.event_type)));
+      if (mine.length === 0) continue;
+      const webhookId = (data.id as { webhook_id: string }).webhook_id;
+      const body = JSON.stringify({
+        webhook_id: webhookId,
+        events: mine.map((e) => ({
+          ...e,
+          id: { workspace_id: 'test', ...(e.id as object) },
+          actor: e.actor ?? { type: 'workspace-member', id: 'fake-member-1' },
+        })),
+      });
+      const signature = createHmac('sha256', String(data.secret)).update(body).digest('hex');
+      const targetUrl = String(data.target_url);
+      const answer = await fetch(targetUrl, { method: 'POST', headers: { 'content-type': 'application/json', 'attio-signature': signature }, body });
+      deliveries.push({ webhookId, targetUrl, status: answer.status, body: await answer.text() });
+    }
+    res.json({ deliveries });
   });
 
   return r;

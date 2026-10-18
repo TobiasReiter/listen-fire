@@ -60,6 +60,11 @@ pub struct Served {
     pub push_field: Option<String>,
 }
 
+/// How the external's deliveries are verified, when it takes any.
+pub fn inbound_of(running: &RunningExternal) -> Option<InboundSetup> {
+    served_of(running).inbound
+}
+
 /// `inboundSetupOf`: the manifest's `inbound`, else the `webhook:` block as
 /// the protocol's own scheme.
 fn served_of(running: &RunningExternal) -> Served {

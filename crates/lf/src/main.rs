@@ -87,6 +87,7 @@ mod sources;
 mod store;
 mod store_module;
 mod store_wire;
+mod subscriptions;
 mod units;
 mod upgrade;
 mod wire;

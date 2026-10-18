@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::completion;
-use crate::connect::{CLIENT_ID_FIELD, CLIENT_SECRET_FIELD, REDIRECT_PORT_FIELD, connect_module, entry_content, find_external, known_modules, process_env, public_url, read_manifest};
+use crate::connect::{CLIENT_ID_FIELD, CLIENT_SECRET_FIELD, ConnectOptions, REDIRECT_PORT_FIELD, connect_module, entry_content, find_external, known_modules, process_env, public_url, read_manifest};
 use crate::json::{Js, Obj};
 use crate::obj;
 use crate::oauth2::{ClientApp, Declaration, DeclarationKind};
@@ -311,6 +311,7 @@ fn user_name() -> String {
 pub const COMMANDS: &[&str] = &["connect", "credential", "completion"];
 
 pub const USAGE: &str = "  lf connect [<module>] [--url <server url>]     set a module up: install it, its server and webhook secrets, its OAuth app (no module: list the ones known; --json: as JSON)
+    pointing it elsewhere (a fake, a proxy): --base-url <its API root>  --oauth-authorize-url <url>  --oauth-token-url <url>  ('' goes back to the provider's own)
   lf credential add --module <module> [<name>] [--credential <declared>]   a user credential for the module: sign in at the provider, or its fields
   lf credential update <name> [--no-reauthorize]   sign in again and edit its fields
   lf credential delete <name>
@@ -325,6 +326,9 @@ struct Line {
     module: Option<String>,
     credential: Option<String>,
     url: Option<String>,
+    base_url: Option<String>,
+    oauth_authorize_url: Option<String>,
+    oauth_token_url: Option<String>,
     redirect_port: Option<String>,
     list: Option<String>,
     no_browser: bool,
@@ -348,6 +352,9 @@ fn parse(argv: &[String]) -> Result<Line, String> {
             "--module" => line.module = Some(value("--module")?),
             "--credential" => line.credential = Some(value("--credential")?),
             "--url" => line.url = Some(value("--url")?),
+            "--base-url" => line.base_url = Some(value("--base-url")?),
+            "--oauth-authorize-url" => line.oauth_authorize_url = Some(value("--oauth-authorize-url")?),
+            "--oauth-token-url" => line.oauth_token_url = Some(value("--oauth-token-url")?),
             "--redirect-port" => line.redirect_port = Some(value("--redirect-port")?),
             "--list" => line.list = Some(value("--list")?),
             "--no-browser" => line.no_browser = true,
@@ -400,7 +407,13 @@ async fn run(argv: &[String]) -> Result<i32, String> {
                 }
                 return Ok(0);
             };
-            connect_module(&project, reference, &mut Prompter::terminal(), line.url.as_deref()).await?;
+            let options = ConnectOptions {
+                url: line.url.as_deref(),
+                base_url: line.base_url.as_deref(),
+                oauth_authorize_url: line.oauth_authorize_url.as_deref(),
+                oauth_token_url: line.oauth_token_url.as_deref(),
+            };
+            connect_module(&project, reference, &mut Prompter::terminal(), &options).await?;
             Ok(0)
         }
         _ => credential(&line, rest).await,

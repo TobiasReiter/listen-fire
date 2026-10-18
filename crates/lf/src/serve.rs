@@ -103,7 +103,13 @@ pub async fn run(project: Project, ephemeral: bool, store: &StoreSpec, port: Opt
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let _ = HOST_URL.set(format!("http://127.0.0.1:{port}"));
     let _ = HOST_TOKEN.set(crate::http_out::hex(&crate::http_out::random_bytes(24)?));
-    let session = Rc::new(open_session(project, ephemeral, store).await?);
+    let mut session = open_session(project, ephemeral, store).await?;
+    // Before the doors answer, so a delivery is verified by the secret the
+    // source issued.
+    for line in crate::subscriptions::reconcile(&mut session).await {
+        println!("{line}");
+    }
+    let session = Rc::new(session);
     // A file exposed to an external is fetched from this listener.
     session.documents.serve_at(port);
     let poke = Rc::new(Notify::new());
