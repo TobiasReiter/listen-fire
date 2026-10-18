@@ -15,6 +15,7 @@ core:
 | `judge` | settles whether a written record is one already there, when the rules cannot | `@lf/judge` (declines every question, so an ambiguous match creates a new record) | |
 | `store` | where run state lives: runs, parks, callbacks, work to drain | `@lf/sqlite-store` (`.lf/state.db`) | `@lf/postgres-store` |
 | `files` | where documents a run stores are kept | `@lf/local-files` (`.lf/files/`) | |
+| `limiter` | keeps calls to modules and models inside the providers' limits | `@lf/memory-limiter` (in lf's own process) | |
 
 A slot accepts only a module of its own kind; `lf check` and `lf run` refuse anything else, naming the slots.
 
@@ -44,6 +45,25 @@ A module with no webhooks declares `poll: { intervalSeconds }` in its manifest. 
 - Each event runs the listen as a webhook's event does. An event the listen has run before (the same `idempotencyKey`) runs nothing.
 - `lf run --poll <movement>` polls now, once.
 
+## The limiter
+
+Before every call to a module and every model request, the host asks the limiter slot. The call waits until it is granted.
+
+- A module declares its provider's limits in its manifest. Each counts per credential, per module, per install or per team:
+
+  ```json
+  "limits": [
+    { "scope": "credential", "calls": 100, "per": "10s" },
+    { "scope": "module", "concurrent": 4 }
+  ]
+  ```
+
+- An answer may carry `retryAfter` (seconds): the provider asked for quiet. Every call as that credential then waits that long.
+- `@lf/anthropic` declares its own limit: 8 requests in flight at once, held through each request's retries.
+- `@lf/memory-limiter` keeps the limits in one lf process. Two lf workers draining one store each keep their own count.
+- A limiter shared by all your workers is a module filling the slot over [its wire](contracts/limiter-slot.md). Name it in `core:`, like a store module.
+- The engine never sees a limit. A movement means the same under any limiter; it only waits longer.
+
 ## Filling a slot
 
 1. Name the module in `lf.yaml`'s `core:` (not needed for a default).
@@ -64,7 +84,7 @@ LF_SECRET__POSTGRES_STORE__URL=postgres://…?sslmode=verify-full
 
 `lf --store <state.db | postgres://…>` overrides the store slot for one command.
 
-Only lf's built-in modules fill a slot today. A module of your own, served as a process, is not loaded yet.
+A module of your own, served as a process, fills the `store` or `limiter` slot (`kind: core` in its `lf-external.yaml`; see [the store's wire](contracts/store-slot.md) and [the limiter's](contracts/limiter-slot.md)). The other slots take only lf's built-ins.
 
 ## Embedding
 

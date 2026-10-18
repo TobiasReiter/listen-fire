@@ -127,6 +127,7 @@ export async function resolveAdapter(input: {
     runtimeCapabilities: manifestFile.runtimeCapabilities,
     methods: manifestFile.methods,
     ...(manifestFile.credentials !== undefined ? { credentials: manifestFile.credentials } : {}),
+    ...(manifestFile.limits !== undefined ? { limits: manifestFile.limits } : {}),
   };
 
   // One cache scope per resolved instance = per evaluation / role (P2). Minting

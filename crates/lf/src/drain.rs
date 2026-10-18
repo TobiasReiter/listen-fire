@@ -71,24 +71,6 @@ impl Pool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_pool_names_work_kinds_and_cron() {
-        let pool = Pool::of("poll_listen, cron").unwrap();
-        assert!(pool.fires_cron() && pool.takes("poll_listen") && !pool.takes("resume_timer"));
-        assert_eq!(pool.work_kinds(), Some(&["poll_listen".to_string()][..]));
-        let runs = Pool::of("fire_event,resume_timer").unwrap();
-        assert!(!runs.fires_cron() && !runs.takes("poll_listen"));
-        assert!(Pool::of("poll").unwrap_err().contains("not a kind of work"));
-        assert!(Pool::of(",").is_err());
-        let all = Pool::default();
-        assert!(all.fires_cron() && all.takes("fire_callback") && all.work_kinds().is_none());
-    }
-}
-
 pub struct DrainOptions {
     pub until_idle: bool,
     pub max_seconds: Option<u64>,
@@ -117,4 +99,22 @@ pub async fn drain(session: &Session, options: &DrainOptions, out: &mut impl Wri
         tokio::time::sleep(wait).await;
     }
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pool_names_work_kinds_and_cron() {
+        let pool = Pool::of("poll_listen, cron").unwrap();
+        assert!(pool.fires_cron() && pool.takes("poll_listen") && !pool.takes("resume_timer"));
+        assert_eq!(pool.work_kinds(), Some(&["poll_listen".to_string()][..]));
+        let runs = Pool::of("fire_event,resume_timer").unwrap();
+        assert!(!runs.fires_cron() && !runs.takes("poll_listen"));
+        assert!(Pool::of("poll").unwrap_err().contains("not a kind of work"));
+        assert!(Pool::of(",").is_err());
+        let all = Pool::default();
+        assert!(all.fires_cron() && all.takes("fire_callback") && all.work_kinds().is_none());
+    }
 }

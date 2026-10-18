@@ -19,6 +19,7 @@ jest.mock('movement-engine/services/translation_graph/protocol/client', () => {
 
 import { postRpc } from 'movement-engine/services/translation_graph/protocol/client';
 import { RemoteAdapter, createRemoteAdapter, fetchRemoteManifest } from 'movement-engine/services/translation_graph/adapters/remote';
+import { limitRequest, MemoryLimiter } from 'movement-engine/services/limiter/limiter';
 
 import type { TeamId } from '../../../../../generated/kysely/core/Team';
 
@@ -861,5 +862,37 @@ describe('RemoteAdapter files by envelope', () => {
     const ref = await adapter.getFieldValue({ position: samplePosition, fieldId: 'from' });
     expect(ref).toMatchObject({ source: { adapterType: 'remote-email', credentialId: 'cred-1' } });
     expect(calledMethods()).toEqual(['getFieldValue', 'describe', 'getFieldValue', 'describe']);
+  });
+});
+
+describe('RemoteAdapter — the limiter slot', () => {
+  beforeEach(() => postRpcMock.mockReset());
+
+  it('holds calls past a declared concurrency limit until one ends, and reports a provider throttle', async () => {
+    const limiter = new MemoryLimiter();
+    const adapter = createRemoteAdapter({
+      documents: hostedDocumentStore,
+      config,
+      secret: 's',
+      cacheScopeId: CACHE_SCOPE,
+      manifest: { ...manifest(), limits: [{ scope: 'module', concurrent: 1 }] },
+      limiter,
+    });
+    let inFlight = 0;
+    let peak = 0;
+    let calls = 0;
+    postRpcMock.mockImplementation(async (opts) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight--;
+      // The last call's answer says to slow down.
+      if (++calls === 2) await opts.onThrottle?.(60);
+      return [];
+    });
+    await Promise.all([adapter.listEntryPoints(), adapter.listEntryPoints()]);
+    expect(peak).toBe(1);
+    // The provider asked for a minute's quiet: the next call is refused until then.
+    const grant = await limiter.acquire(limitRequest({ module: 'remote-email', install: 'cred-1', team: CONFIG_TEAM_ID }, []));
+    expect(grant.granted).toBe(false);
   });
 });

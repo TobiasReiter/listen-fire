@@ -127,6 +127,9 @@ export async function postRpc(opts: {
    *  too, before the result is returned or the failure thrown: a rotated
    *  refresh token must be stored either way. */
   onCredentialUpdate?: (update: WireCredentialUpdateShape) => Promise<void>;
+  /** Called with the response's `retryAfter` (seconds), on a failed
+   *  response too: the provider asked for no call for that long. */
+  onThrottle?: (retryAfterSeconds: number) => Promise<void>;
 }): Promise<unknown> {
   const res = await fetch(opts.baseUrl, {
     method: 'POST',
@@ -153,6 +156,7 @@ export async function postRpc(opts: {
   if (body.credentialUpdate !== undefined && opts.onCredentialUpdate !== undefined) {
     await opts.onCredentialUpdate(body.credentialUpdate);
   }
+  if (body.retryAfter !== undefined && opts.onThrottle !== undefined) await opts.onThrottle(body.retryAfter);
   // What the module spent on paid services is the run's, whether or not the
   // call then failed: charged to the call being served, so the run's cost
   // cap counts it.

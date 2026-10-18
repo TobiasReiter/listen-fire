@@ -914,12 +914,14 @@ page = web.fetchUrl(u)
 
 - **Kind.** The manifest may say what the module is: `"kind": "adapter"`,
   `"plugin"` or `"core"`. A `core` module fills one of the host's core
-  services and names it in `"slot"`: `models`, `judge`, `store` or `files`.
+  services and names it in `"slot"`: `models`, `judge`, `store`, `files` or
+  `limiter`.
   The host names one module per slot (lf.yaml's `core:`); a slot's contract
   is its family's contract suite (the run host's store cases for `store`).
   A `store` module may be a process the host speaks to over the
   [store slot's wire](store-slot.md) (JSON-RPC on its stdin and stdout)
-  rather than over HTTP.
+  rather than over HTTP; a `limiter` module likewise, over
+  [the limiter slot's wire](limiter-slot.md).
   Without `kind`, a module is an adapter, or a plugin package when it
   declares `plugins`.
 - **Settings.** Construction arguments the install supplies (an Airtable
@@ -962,6 +964,25 @@ page = web.fetchUrl(u)
   `toolName` and `toolDescription`) asks for the reply as `data`. The door
   bills no run itself: add its `cost` to the `cost` of the answer whose work
   asked it. The module kit does both for you.
+- **Limits.** The manifest may declare the provider's limits on calls, so the
+  host never sends more than it allows:
+
+  ```json
+  "limits": [{ "scope": "credential", "calls": 100, "per": "10s" }, { "scope": "module", "concurrent": 4 }]
+  ```
+
+  Each limit counts per `scope`: `credential` (one user's grant), `module`
+  (every install on the host), `install` or `team`. `calls` and `per` (a
+  duration: `500ms`, `10s`, `1m`, `1h`, `1d`) go together; `concurrent` caps
+  calls at once. The host holds a call until it is within all of them (its
+  [limiter slot](limiter-slot.md)).
+- **Throttle.** An answer (on success or failure) may carry `retryAfter`, in
+  seconds: the provider asked for quiet. The host sends no further call as
+  that credential (or install, without one) until then.
+
+  ```json
+  { "ok": false, "error": { "code": "rate_limited", "message": "429", "retryable": true }, "retryAfter": 30 }
+  ```
 - **Event idempotency.** An event (`emit`, `poll`, `preprocessInbound`) may
   carry `idempotencyKey`, the provider's own id for the occurrence; a host
   that sees one key twice runs it once. A file ref's `size` (bytes) is kept
@@ -1241,4 +1262,9 @@ from the root, so no automation can walk the collection.
   them and is unchanged, and an older host ignores them. See
   [Kinds, settings, spend and the host's models](#kinds-settings-spend-and-the-hosts-models).
   A store module may be a process speaking [the store slot's wire](store-slot.md).
+- **Limits and throttles** (within version 2, no bump; 2026-10-18). The
+  manifest may declare `limits`; an answer may carry `retryAfter`; the
+  `limiter` core slot and [its wire](limiter-slot.md); the store wire's
+  `work.claimDue` takes `kinds`. All additive: an older server declares and
+  sends none of them and is unchanged, and an older host ignores them.
 - **Version 1**: the first protocol. Not supported: an install that answers it is refused, naming the version.

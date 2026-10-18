@@ -35,7 +35,7 @@ import {
   webChatTools,
   WEB_FETCH_MAX_CONTENT_TOKENS,
 } from './web_tools';
-import { Queue } from '../utils/queue';
+import { limited, limiterSlot, limitRequest } from '../../services/limiter/limiter';
 import { neverAsAny } from '../utils/types';
 import { logger } from '../../services/logger';
 import { assertRunBudget } from '../run_spend';
@@ -70,7 +70,10 @@ interface ModelAccess {
   logFields(): Record<string, unknown>;
 }
 
-const rateLimitQueue = new Queue<any>({ concurrency: 8 });
+/** Requests in flight at once: `@lf/anthropic`'s own declared limit, kept by
+ *  the limiter slot (services/limiter), as lf's Rust client keeps it. A
+ *  request holds its place through its retries. */
+const MODELS_REQUEST = limitRequest({ module: '@lf/anthropic', team: '' }, [{ scope: 'module', concurrent: 8 }]);
 
 const RETRY_LIMIT = 4;
 const INITIAL_DELAY = 1 * SECOND;
@@ -82,7 +85,7 @@ async function enqueueQuery<T>(fn: () => Promise<T>, signal?: AbortSignal) {
   // whether its run has spent its cost cap. Here, in the caller's own async
   // context: the queued job may be started from another job's.
   assertRunBudget();
-  return rateLimitQueue.enqueue(async () => {
+  return limited(limiterSlot(), MODELS_REQUEST, async () => {
     return backOff(fn, {
       jitter: 'none',
       numOfAttempts: RETRY_LIMIT,

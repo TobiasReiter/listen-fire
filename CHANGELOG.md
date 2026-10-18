@@ -50,6 +50,11 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-limits
+
+- Drain pools: `lf drain --kinds poll_listen` (or `resume_timer,wake_await,fire_event,fire_callback`, and `cron` for the cron ticks) claims only work of those kinds, so polls and run steps can be drained by separately sized fleets. Both stores and the store wire (`work.claimDue`'s `kinds`) take the filter; the run host contract holds every store to it.
+- Provider limits: a module (and a models provider) may declare `limits` in its manifest (`{ scope: credential | module | install | team, calls, per, concurrent }`) and answer `retryAfter`. A new core slot, `limiter`, keeps them: lf and the platform ask it before every module call and model request and wait in process while it refuses. The default, `@lf/memory-limiter`, counts in one process (the 8-requests-in-flight model cap is now `@lf/anthropic`'s declared limit); a limiter shared by many hosts is a module filling the slot over [its wire](docs/contracts/limiter-slot.md). The engine knows nothing of limits.
+
 ### r-async
 
 - Embedding the engine in Rust: the typed host interface is always asynchronous, in one shape. Every host trait method returns a future (`HostFuture`; an in-memory host returns `embed::ready(…)`), and `embed::run`, `resume` and `fire` are async. A run starts every request the engine has pending at once and answers each as it lands, in any order, as `lf` does over the JSON route: two 100 ms calls in the arms of an `all(...)` take 100 ms, not 200. Plain futures, no runtime dependency. **Breaking** for an embedder of 0.11.0's synchronous traits (not yet published).

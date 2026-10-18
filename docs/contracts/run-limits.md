@@ -31,6 +31,16 @@ type SegmentLimits = {          // on the segment's input, beside maxCallDepth
 
 lf and the TypeScript host read each engine limit from the environment, as they read the call depth: `MOVEMENT_MAX_STEPS`, `MOVEMENT_MAX_TEXT_BYTES`, `MOVEMENT_MAX_COLLECTION_ITEMS`, `MOVEMENT_MAX_RESULT_BYTES`. A value that is set but is not a positive whole number refuses the run; it is never read as no limit. On the TypeScript host a run's own `limits` override the environment's, one limit at a time.
 
+## Provider limits
+
+Separate from the bounds above: what keeps a host's calls to modules and models inside what the provider allows. These never fail a run. They make a call wait.
+
+- A module declares its provider's limits in its manifest (`limits`: at most `calls` per `per`, at most `concurrent` at once, counted per credential, module, install or team). See [the adapter protocol](adapter-protocol.md#kinds-settings-spend-and-the-hosts-models).
+- An answer's `retryAfter` (seconds) holds every later call made as that credential (or install) until then.
+- The host keeps them through its limiter slot, not the engine ([the limiter slot's wire](limiter-slot.md)). lf's default, `@lf/memory-limiter`, counts in one process; a shared limiter is a module filling the slot.
+- A refused call waits in the host's process, holding its segment's place. The segment's wall clock still runs, so a long wait can end the segment with `MOVENG_LIMIT_WALL_CLOCK`.
+- Model requests: `@lf/anthropic` allows 8 in flight at once per process, on lf and on the platform alike.
+
 ## How each is kept
 
 - **Steps are the CPU bound.** The engine reads no clock (it runs as WASM, and must stay deterministic), so it counts work instead: one step per statement, one per expression evaluated. Members of a collection op are expressions, so a loop over a list pays per member.

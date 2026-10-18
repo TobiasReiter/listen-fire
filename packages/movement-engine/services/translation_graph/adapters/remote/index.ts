@@ -86,9 +86,10 @@ import type {
 import type { TriggerEvent, TriggerType } from '../../triggers/types';
 import type { Expression } from '#shared/expression/types';
 import type { AuthStrategy } from '../../protocol/client';
-import type { MethodName, WireCredentialDeclarationShape, WireCredentialShape, WireCredentialUpdateShape, WirePluginResultShape } from 'engine-contracts';
+import type { MethodName, WireCredentialDeclarationShape, WireCredentialShape, WireCredentialUpdateShape, WireDeclaredLimitShape, WirePluginResultShape } from 'engine-contracts';
 
 import { authHeader, postRpc, parseWireResult, RemoteProtocolError } from '../../protocol/client';
+import { limited, limiterSlot, limitRequest, type Limiter } from '../../../limiter/limiter';
 import { SecretVersionConflict, withSecret, type Refresher, type SecretsFamily } from '../../../secrets/family';
 import { declaredFields, declaredRefresher, OAUTH2_TOKEN_FIELDS, type OAuth2ClientApp } from '../../../secrets/oauth2';
 import { DOCUMENT_STORE_OWNER, type DocumentStore } from '../../engine/files/document_store';
@@ -142,6 +143,8 @@ export interface RemoteManifest {
   webhookEventTypeId?: string;
   /** The credentials the module declares it needs (protocol `credentials`). */
   credentials?: readonly WireCredentialDeclarationShape[];
+  /** The provider's limits on calls (protocol `limits`), kept by the limiter slot. */
+  limits?: readonly WireDeclaredLimitShape[];
 }
 
 /**
@@ -246,6 +249,7 @@ export async function fetchRemoteManifest(
     methods: result.methods,
     webhookEventTypeId: result.webhookEventTypeId,
     ...(result.credentials !== undefined ? { credentials: result.credentials } : {}),
+    ...(result.limits !== undefined ? { limits: result.limits } : {}),
   };
 }
 
@@ -265,6 +269,8 @@ export interface RemoteAdapterInput {
   authorize?: <T>(call: (secret: string) => Promise<T>) => Promise<T>;
   /** The install's credential, when the manifest declares one. */
   credential?: RemoteCredentialBinding;
+  /** The limiter slot every call asks first; the process's by default. */
+  limiter?: Limiter;
 }
 
 /** How a bound credential travels with each call. */
@@ -295,8 +301,12 @@ export class RemoteAdapter implements Adapter {
   private readonly advertised: ReadonlySet<string>;
   private readonly documents: DocumentStore;
   private readonly bound: BoundCredential | undefined;
+  private readonly limiter: Limiter;
+  private readonly limits: readonly WireDeclaredLimitShape[];
 
   constructor(input: RemoteAdapterInput) {
+    this.limiter = input.limiter ?? limiterSlot();
+    this.limits = input.manifest.limits ?? [];
     this.config = input.config;
     const { secret } = input;
     this.authorize = input.authorize ?? ((call) => call(secret));
@@ -419,9 +429,19 @@ export class RemoteAdapter implements Adapter {
     params: unknown,
   ): Promise<ReturnType<(typeof METHODS)[M]['result']['parse']>> {
     countAdapterCall('remote');
+    const caller = {
+      module: this.adapterType,
+      install: this.config.credentialsId,
+      ...(this.bound !== undefined ? { credential: this.bound.binding.ref } : {}),
+      team: this.config.teamId,
+    };
+    const request = limitRequest(caller, this.limits);
+    // A throttle the provider answers holds this caller's next calls.
+    const onThrottle = (retryAfterSeconds: number) =>
+      this.limiter.throttle({ key: request.key, until: new Date(Date.now() + retryAfterSeconds * 1000).toISOString() });
     const result = await this.withCredential((credential, onCredentialUpdate) =>
       this.authorize((secret) =>
-        postRpc({
+        limited(this.limiter, request, () => postRpc({
           baseUrl: this.config.baseUrl,
           auth: authHeader(this.config.authStrategy, secret),
           teamId: this.config.teamId,
@@ -430,7 +450,8 @@ export class RemoteAdapter implements Adapter {
           params,
           ...(credential !== undefined ? { credential } : {}),
           ...(onCredentialUpdate !== undefined ? { onCredentialUpdate } : {}),
-        }),
+          onThrottle,
+        })),
       ),
     );
     return parseWireResult(METHODS[method].result, result, {
