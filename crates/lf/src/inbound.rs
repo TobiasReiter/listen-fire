@@ -150,8 +150,7 @@ fn to_hex(bytes: &[u8]) -> String {
 /// `Buffer.from(text, 'hex')`: pairs decoded up to the first that is not
 /// hex, so a malformed signature decodes short.
 fn hex_prefix(text: &str) -> Vec<u8> {
-    let (pairs, _) = text.as_bytes().as_chunks::<2>();
-    pairs.iter().map_while(|pair| std::str::from_utf8(pair).ok().and_then(|p| u8::from_str_radix(p, 16).ok())).collect()
+    text.as_bytes().chunks_exact(2).map_while(|pair| std::str::from_utf8(pair).ok().and_then(|p| u8::from_str_radix(p, 16).ok())).collect()
 }
 
 /// `Buffer.from(text, 'base64')`: lenient, either alphabet, padding optional,
