@@ -4,7 +4,11 @@ The movement engine. Embed it in a Rust program with `embed`: implement the
 host traits your movements need (`Adapters` for the systems they read and
 write, `Store` to park a `sleep`, `Models`, `Judge`, `Files`, `Modules`,
 `Secrets`, `Clock`, `Trace`), then `embed::check` a movement and
-`embed::run` it on an event. `examples/rust-embed` in the repository is a toy
+`embed::run` it on an event. Every host call returns a future (an
+in-memory host returns `ready(…)`), and the run starts every request the
+engine has pending at once and answers each as it lands, so the arms of an
+`all(...)` are served concurrently; the run is a plain future, driven by
+any executor. `examples/rust-embed` in the repository is a toy
 game loop doing exactly that; the `listen-fire` crate's docs carry a short
 example. The rest of this file is the engine's internals.
 

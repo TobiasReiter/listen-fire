@@ -50,6 +50,10 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-async
+
+- Embedding the engine in Rust: the typed host interface is always asynchronous, in one shape. Every host trait method returns a future (`HostFuture`; an in-memory host returns `embed::ready(…)`), and `embed::run`, `resume` and `fire` are async. A run starts every request the engine has pending at once and answers each as it lands, in any order, as `lf` does over the JSON route: two 100 ms calls in the arms of an `all(...)` take 100 ms, not 200. Plain futures, no runtime dependency. **Breaking** for an embedder of 0.11.0's synchronous traits (not yet published).
+
 ### r-poll
 
 - lf polls a module that declares `poll: { intervalSeconds }`: `lf serve` on the interval, `lf drain` when due (a poll missed while no worker ran is one poll; one worker at a time per listen, under the work queue's lease), `lf run --poll <movement>` at once. The module's checkpoint is kept per listen in either store (no migration); each event runs the listen as a webhook's does. A listen with no webhook source (Granola, Evertrace, Dealroom, Gmail's poll) now fires in lf.

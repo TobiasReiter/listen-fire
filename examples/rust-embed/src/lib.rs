@@ -3,10 +3,16 @@
 //! herald announces it. The game's world is the movement's one adapter;
 //! every other host the engine needs (its parks, its clock, its trace) is a
 //! few lines of memory here.
+//!
+//! The engine's host calls are asynchronous. Every host here answers from
+//! memory, so each call is a ready future and a run finishes on its first
+//! poll: [`block_on`], a few lines below, is all the executor the game needs.
+//! A game whose world answers over the network would hand the run to its
+//! own executor instead.
 
 use listen_fire::engine::embed::{
-    self, AdapterCall, AdapterInstance, AdapterReply, AdapterRequest, Adapters, Catalog, Clock, Data, Event, HostResult, Hosts, Outcome, ParkedState,
-    RunInput, Store, TimerPark, Trace,
+    self, AdapterCall, AdapterInstance, AdapterReply, AdapterRequest, Adapters, Catalog, Clock, Data, Event, HostFuture, HostResult, Hosts, Outcome, ParkedState,
+    RunInput, Store, TimerPark, Trace, ready,
 };
 
 /// The movement the game ships with, as a level designer would write it.
@@ -60,14 +66,20 @@ pub struct World {
 }
 
 impl Adapters for World {
-    fn resolve(&mut self, request: AdapterRequest) -> HostResult<AdapterInstance> {
-        match request.adapter_type.as_str() {
+    fn resolve(&mut self, request: AdapterRequest) -> HostFuture<AdapterInstance> {
+        ready(match request.adapter_type.as_str() {
             "world" => Ok(AdapterInstance { id: "world".into(), methods: vec!["createRecord".into()] }),
             other => Err(format!("the game has no adapter {other}").into()),
-        }
+        })
     }
 
-    fn call(&mut self, call: AdapterCall) -> HostResult<AdapterReply> {
+    fn call(&mut self, call: AdapterCall) -> HostFuture<AdapterReply> {
+        ready(self.answer(call))
+    }
+}
+
+impl World {
+    fn answer(&mut self, call: AdapterCall) -> HostResult<AdapterReply> {
         match call.method.as_str() {
             // The event's own record is the position the movement reads.
             "getFieldValue" => {
@@ -110,16 +122,16 @@ impl Store for Parks {
     fn keeps_parks(&self) -> bool {
         true
     }
-    fn commit_timer_park(&mut self, park: TimerPark) -> HostResult<()> {
+    fn commit_timer_park(&mut self, park: TimerPark) -> HostFuture<()> {
         self.timers.push(park);
-        Ok(())
+        ready(Ok(()))
     }
-    fn cancel_subtrees(&mut self, prefixes: &[String], exclude: Option<&str>) -> HostResult<()> {
+    fn cancel_subtrees(&mut self, prefixes: &[String], exclude: Option<&str>) -> HostFuture<()> {
         self.timers.retain(|t| Some(t.address.as_str()) == exclude || !prefixes.iter().any(|p| t.address.starts_with(p.as_str())));
-        Ok(())
+        ready(Ok(()))
     }
-    fn save_source(&mut self, source: &str) -> HostResult<String> {
-        Ok(format!("src-{}", source.len()))
+    fn save_source(&mut self, source: &str) -> HostFuture<String> {
+        ready(Ok(format!("src-{}", source.len())))
     }
 }
 
@@ -143,16 +155,17 @@ pub fn iso(minutes: u32) -> String {
 }
 
 impl Clock for GameClock {
-    fn now_iso(&mut self) -> String {
-        self.iso()
+    fn now_iso(&mut self) -> HostFuture<String> {
+        ready(Ok(self.iso()))
     }
-    fn mint_ids(&mut self, count: usize) -> Vec<String> {
-        (0..count)
+    fn mint_ids(&mut self, count: usize) -> HostFuture<Vec<String>> {
+        let ids = (0..count)
             .map(|_| {
                 self.next_id += 1;
                 format!("g{}", self.next_id)
             })
-            .collect()
+            .collect();
+        ready(Ok(ids))
     }
 }
 
@@ -162,9 +175,9 @@ pub struct Log {
 }
 
 impl Trace for Log {
-    fn append(&mut self, entries: Vec<Data>) -> HostResult<()> {
+    fn append(&mut self, entries: Vec<Data>) -> HostFuture<()> {
         self.entries += entries.len();
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -226,8 +239,8 @@ impl Game {
     fn settle(&mut self, input: &RunInput, state: Option<ParkedState>) {
         let mut hosts = Hosts::new().adapters(&mut self.world).store(&mut self.parks).clock(&mut self.clock).trace(&mut self.log);
         let outcome = match &state {
-            None => embed::run(&mut hosts, input),
-            Some(state) => embed::resume(&mut hosts, input, state, embed::Wake::Timer),
+            None => block_on(embed::run(&mut hosts, input)),
+            Some(state) => block_on(embed::resume(&mut hosts, input, state, embed::Wake::Timer)),
         };
         match outcome {
             Ok(Outcome::Parked(ran)) => self.parked.push((ran.parked_address.unwrap_or_default(), input.clone())),
@@ -236,5 +249,24 @@ impl Game {
             Ok(Outcome::Refused(reason)) => self.failures.push(format!("refused: {reason}")),
             Err(error) => self.failures.push(error.to_string()),
         }
+    }
+}
+
+/// Drive a future to its end on this thread, parking while it waits.
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    struct Unpark(std::thread::Thread);
+    impl std::task::Wake for Unpark {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = std::task::Waker::from(std::sync::Arc::new(Unpark(std::thread::current())));
+    let mut cx = std::task::Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        if let std::task::Poll::Ready(out) = future.as_mut().poll(&mut cx) {
+            return out;
+        }
+        std::thread::park();
     }
 }

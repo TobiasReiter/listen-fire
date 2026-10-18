@@ -10,7 +10,10 @@
 //!
 //! To embed the engine in your own program, depend on this crate without its
 //! `cli` feature (`listen-fire = { version = "…", default-features = false }`)
-//! and fill [`engine::embed::Hosts`] with your implementations:
+//! and fill [`engine::embed::Hosts`] with your implementations. Every host
+//! call returns a future, so a host may answer over the network; one that
+//! answers from memory returns `ready(…)`, and the run is a plain future any
+//! executor drives:
 //!
 //! ```
 //! use listen_fire::engine::embed::{self, *};
@@ -18,15 +21,15 @@
 //! // Your system, as the movement's one adapter.
 //! struct Inbox;
 //! impl Adapters for Inbox {
-//!     fn resolve(&mut self, _: AdapterRequest) -> HostResult<AdapterInstance> {
-//!         Ok(AdapterInstance { id: "inbox".into(), methods: vec![] })
+//!     fn resolve(&mut self, _: AdapterRequest) -> HostFuture<AdapterInstance> {
+//!         ready(Ok(AdapterInstance { id: "inbox".into(), methods: vec![] }))
 //!     }
-//!     fn call(&mut self, call: AdapterCall) -> HostResult<AdapterReply> {
+//!     fn call(&mut self, call: AdapterCall) -> HostFuture<AdapterReply> {
 //!         // The event's record answers the fields the movement reads.
-//!         Ok(match call.method.as_str() {
+//!         ready(Ok(match call.method.as_str() {
 //!             "getFieldValue" => AdapterReply::ok(Data::text("Hello")),
 //!             _ => AdapterReply::nothing(),
-//!         })
+//!         }))
 //!     }
 //! }
 //!
@@ -42,8 +45,11 @@
 //! let event = Event::new("email", Data::map([("subject", Data::text("Hello"))]));
 //! let input = RunInput::new(source, event, "2026-10-17T12:00:00.000Z").function("seen").catalog(catalog);
 //! let mut inbox = Inbox;
-//! let outcome = embed::run(&mut Hosts::new().adapters(&mut inbox), &input).unwrap();
-//! assert!(matches!(outcome, Outcome::Finished(_)));
+//! let mut hosts = Hosts::new().adapters(&mut inbox);
+//! let run = std::pin::pin!(embed::run(&mut hosts, &input));
+//! // Every answer is ready, so the run finishes on its first poll.
+//! let std::task::Poll::Ready(outcome) = run.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) else { unreachable!() };
+//! assert!(matches!(outcome.unwrap(), Outcome::Finished(_)));
 //! ```
 
 pub use movement_checker as checker;
