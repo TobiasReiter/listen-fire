@@ -88,8 +88,6 @@ The first request is always `store.open`. The others are the run host's store fa
 | `inbound.checkpoint` | `{ subscriptionId }` | `{ checkpoint }`, or `null` |
 | `inbound.saveCheckpoint` | `{ subscriptionId, checkpoint }` | `null` |
 | `events.claim` | `{ listen, key }` | `true` the first time this event key reaches this listen; `false` for a redelivery, which runs nothing |
-| `writes.remember` | `{ adapter, recordType, externalId, writer, fingerprint, expiresAt }`: a run's write to a record, for the writing movement's listens (`writer`, `listen:<file>:<movement>`), with the record's fingerprint as the write left it; the same writer's later write to the record replaces it | `null` |
-| `writes.remembered` | `{ adapter, externalId, now }` | `[{ writer, recordType, fingerprint }]`, those not expired at `now`. An inbound event naming the record while it still has the fingerprint is that write's echo and fires none of the writer's listens |
 
 The rows:
 
@@ -106,6 +104,5 @@ type CallbackRow = {
 
 ## Changes
 
-- **2026-10-18** (within adapter protocol 2): `writes.remember` and `writes.remembered`, so a movement's own write echoing back from the source it listens to runs nothing, across every lf process sharing the store.
 - **2026-10-18** (within adapter protocol 2): `work.claimDue` takes `kinds`, for drain pools (`lf drain --kinds`).
 - **2026-10-17** (within adapter protocol 2): the store slot's wire, and process modules filling the store slot.

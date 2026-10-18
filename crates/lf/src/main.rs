@@ -23,6 +23,8 @@
 //!   lf --contract-store-slot [--dir <project>]                   the same, over the project's store slot
 //!   lf --contract-limiter                                        the built-in limiter over stdio JSON-RPC
 //!   lf --contract-limiter-slot [--dir <project>]                 the same, over the project's limiter slot
+//!   lf --contract-guard                                          the built-in loop guard over stdio JSON-RPC
+//!   lf --contract-guard-slot [--dir <project>]                   the same, over the project's loopGuard slot
 //!   lf --contract-secrets <file|env>    a secrets store over stdio JSON-RPC
 //!   lf --contract-doors                 the inbound doors over HTTP, their world arranged over stdio JSON-RPC
 //!
@@ -43,6 +45,7 @@ mod completion;
 mod connect;
 mod contract_doors;
 mod contract_secrets;
+mod contract_guard;
 mod contract_limiter;
 mod contract_store;
 mod core;
@@ -51,7 +54,6 @@ mod credential_cmd;
 mod doors;
 mod documents;
 mod drain;
-mod echoes;
 mod externals;
 mod file_ref;
 mod http;
@@ -61,8 +63,10 @@ mod init;
 mod json;
 mod lfjson;
 mod json_repair;
+mod guard_module;
 mod limiter;
 mod limiter_module;
+mod loop_guard;
 mod llm_calls;
 mod lsp;
 mod models;
@@ -112,6 +116,8 @@ const USAGE: &str = "usage: lf <init|check|catalog|lsp|run|resume|runs|drain|ser
        lf --contract-store-slot [--dir <project>]
        lf --contract-limiter
        lf --contract-limiter-slot [--dir <project>]
+       lf --contract-guard
+       lf --contract-guard-slot [--dir <project>]
        lf --contract-secrets <secrets file | env>
        lf --contract-doors
        lf --project-schema
@@ -136,6 +142,8 @@ const USAGE: &str = "usage: lf <init|check|catalog|lsp|run|resume|runs|drain|ser
   --contract-store-slot  the same, over the store module the project's store slot names
   --contract-limiter  serve lf's built-in limiter over stdin/stdout JSON-RPC (the limiter contract suite's bridge)
   --contract-limiter-slot  the same, over the limiter module the project's limiter slot names
+  --contract-guard  serve lf's built-in loop guard over stdin/stdout JSON-RPC (the loop guard contract suite's bridge)
+  --contract-guard-slot  the same, over the loop guard module the project's loopGuard slot names
   --contract-doors  serve the inbound doors over HTTP, their world arranged over stdin/stdout JSON-RPC (the inbound contract suite's bridge)
   --project-schema  project one adapter introspection (JSON on stdin) into its schema and notes (the projection's parity probe)
   --contract-secrets  serve one secrets store over stdin/stdout JSON-RPC (the secrets contract suite's bridge)
@@ -163,6 +171,8 @@ struct Args {
     contract_store_slot: bool,
     contract_limiter: bool,
     contract_limiter_slot: bool,
+    contract_guard: bool,
+    contract_guard_slot: bool,
     contract_doors: bool,
     store: Option<String>,
     team: Option<String>,
@@ -197,6 +207,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         contract_store_slot: false,
         contract_limiter: false,
         contract_limiter_slot: false,
+        contract_guard: false,
+        contract_guard_slot: false,
         contract_doors: false,
         store: None,
         team: None,
@@ -232,6 +244,8 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--contract-store-slot" => args.contract_store_slot = true,
             "--contract-limiter" => args.contract_limiter = true,
             "--contract-limiter-slot" => args.contract_limiter_slot = true,
+            "--contract-guard" => args.contract_guard = true,
+            "--contract-guard-slot" => args.contract_guard_slot = true,
             "--store" => args.store = Some(value("--store")?),
             "--team" => args.team = Some(value("--team")?),
             "--until-idle" => args.until_idle = true,
@@ -283,6 +297,15 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         let project = project::load_project(&args.dir)?;
         let env: Vec<(String, String)> = std::env::vars().collect();
         return contract_limiter::serve(limiter::of_project(&project, &env)?).await.map(|()| 0);
+    }
+    if args.contract_guard {
+        return contract_guard::serve(contract_guard::Serving::BuiltIn(None)).await.map(|()| 0);
+    }
+    if args.contract_guard_slot {
+        let project = project::load_project(&args.dir)?;
+        let env: Vec<(String, String)> = std::env::vars().collect();
+        let guard = loop_guard::of_project(&project, &env)?.ok_or("the project's loopGuard slot is empty: name a module in lf.yaml's core:")?;
+        return contract_guard::serve(contract_guard::Serving::Slot(guard)).await.map(|()| 0);
     }
     if args.contract_doors {
         return contract_doors::serve().await.map(|()| 0);

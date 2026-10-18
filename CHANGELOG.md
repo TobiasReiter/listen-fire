@@ -50,9 +50,9 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
-### r-loopguard
+### r-guardslot
 
-- **A movement's own write echoing back runs nothing.** When a run writes a record to a source that sends webhooks or is polled, lf reads the record back and remembers it for an hour (record, writing movement, fingerprint) in the store slot (SQLite `write_echo`, Postgres migration 3 `lf.write_echo`, store wire `writes.remember` / `writes.remembered`), so every `lf serve` / `lf drain` sharing the store knows it. An event naming that record while it is still exactly as the write left it fires none of that movement's listens; someone else's change, or another movement's listen, fires as usual. The Attio example now listens to `record.updated` too.
+- **The loop guard is a core slot, off by default.** What `r-loopguard` built into the run host is now the `loopGuard` slot, filled by `@lf/fingerprint-guard` when `lf.yaml` says `core: { loopGuard: "@lf/fingerprint-guard" }`. With no guard, neither lf nor the platform suppresses anything and a movement's own write echoing back runs it again (the platform's `suppress_self` flag is unchanged). The guard's memory moved out of the store: its own file `.lf/guard.db`, or a shared Postgres database (`url`, schema `lf_guard`); the store wire's `writes.*` methods and Postgres migration 3 are gone. Wire and contract suite: [loop-guard-slot.md](docs/contracts/loop-guard-slot.md). `examples/lf-attio` opts in.
 - **Who issues a webhook's signing secret** is declared: a module's `inbound` may say `secretIssuedBy: provider` (adapter protocol 2, additive; absent means `installer`). `lf connect` then asks for no webhook secret, and `lf serve` (and the platform's listen reconciliation, for a built-in) withdraws a registration that returns none while none is held. `@lf/attio` and `@lf/airtable` declare it.
 ### r-attio-walk
 

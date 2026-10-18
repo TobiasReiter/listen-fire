@@ -14,7 +14,7 @@ use crate::callbacks::{CALLBACK_AWAIT_TYPE, CallFor, CallOutcome, queue_body, re
 use crate::catalog::catalog_of;
 use crate::check::{LOCAL_TENANT, describe_external};
 use crate::documents::Documents;
-use crate::echoes::{Remembered, Wrote};
+use crate::loop_guard::{Answer, Asked, Current, LoopGuard, Wrote};
 use crate::externals::{RunningExternal, rpc, scan_externals, start_externals};
 use crate::json::{Js, Obj};
 use crate::obj;
@@ -67,6 +67,8 @@ pub struct Session {
     /// The work this session's drains take (`lf drain --kinds`): all of it,
     /// unless a pool is named.
     pub pool: crate::drain::Pool,
+    /// The loopGuard slot's module; None unless lf.yaml names one.
+    loop_guard: Option<std::sync::Arc<dyn LoopGuard>>,
 }
 
 impl Drop for Session {
@@ -112,6 +114,7 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
         return Err(missing.iter().map(|m| format!("{}:{}:{} {}", m.file.display(), m.line, m.column, m.message)).collect::<Vec<_>>().join("\n"));
     }
     let externals = scan_externals(&project)?;
+    let loop_guard = crate::loop_guard::of_project(&project, &env)?;
     // Before any call: the manifest calls below ask it too.
     crate::limiter::install(crate::limiter::of_project(&project, &env)?);
     // Before the externals start, so they are told where it is.
@@ -141,7 +144,7 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
         .clone()
         .or_else(|| crate::serve::host_url().map(str::to_string))
         .unwrap_or_else(|| format!("http://127.0.0.1:{DEFAULT_PORT}"));
-    Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, public_url, ephemeral_dir, pool: Default::default() })
+    Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, public_url, ephemeral_dir, pool: Default::default(), loop_guard })
 }
 
 /// What firing one event came to: the runs it started, and a line per
@@ -250,7 +253,7 @@ impl Session {
     }
 
     pub fn externals(&self) -> Externals<'_> {
-        Externals { project: &self.project, running: &self.running, credentials: &self.credentials, documents: &self.documents, tenant: LOCAL_TENANT }
+        Externals { project: &self.project, running: &self.running, credentials: &self.credentials, documents: &self.documents, tenant: LOCAL_TENANT, loop_guard: self.loop_guard.as_deref() }
     }
 
     fn due_by(&self) -> String {
@@ -269,10 +272,6 @@ impl Session {
     async fn fire_to(&self, external: &str, event: &Js, dry_run: bool, to: impl Fn(&Listen) -> bool) -> Result<Fired, String> {
         let event_types = self.event_types_of(external).await?;
         let key = event.get("idempotencyKey").and_then(Js::as_str).filter(|k| !k.is_empty());
-        let remembered = match crate::echoes::event_record(event) {
-            Some(external_id) if !dry_run => self.store.remembered_writes(external, external_id, &iso(0)).map_err(|e| e.to_string())?,
-            _ => Vec::new(),
-        };
         let now_reads = RefCell::new(HashMap::new());
         let mut fired = Fired::default();
         for listen in self.listens.iter().filter(|l| l.adapter == external && event_matches_trigger_scope(event, &l.config) && to(l)) {
@@ -286,8 +285,8 @@ impl Session {
                 fired.redelivered.push(format!("{}:{} has run the event {key} before: this delivery runs nothing", file.name, listen.movement_name));
                 continue;
             }
-            if self.is_own_echo(external, event, &pipeline, &remembered, &now_reads).await {
-                let record = crate::echoes::event_record(event).unwrap_or_default();
+            if !dry_run && self.is_own_echo(external, event, &pipeline, &now_reads).await {
+                let record = crate::loop_guard::event_record(event).unwrap_or_default();
                 fired.redelivered.push(format!("{}:{} wrote the record {record} and it is unchanged since: this event is that write's echo and runs nothing", file.name, listen.movement_name));
                 continue;
             }
@@ -564,48 +563,57 @@ impl Session {
         ran
     }
 
-    /// The record writes a segment made, remembered for its movement's
-    /// listens (crate::echoes), whether or not the segment then failed: the
-    /// writes were made. Failing to remember only means their echoes fire.
+    /// The record writes a segment made, told to the loop guard for its
+    /// movement's listens (crate::loop_guard), whether or not the segment
+    /// then failed: the writes were made. Failing to tell it only means
+    /// their echoes fire.
     fn remember_writes(&self, run_id: &str, wrote: &[Wrote]) {
-        if wrote.is_empty() {
-            return;
-        }
+        let (Some(guard), false) = (&self.loop_guard, wrote.is_empty()) else { return };
         let remembering = || -> Result<(), String> {
             let row = self.store.run(run_id).map_err(|e| e.to_string())?.ok_or_else(|| format!("no run {run_id}"))?;
             let writer = format!("listen:{}:{}", row.file, row.movement);
-            let expires_at = iso(crate::echoes::REMEMBERED_MS);
-            for one in wrote {
-                self.store.remember_write(one, &writer, &expires_at).map_err(|e| e.to_string())?;
-            }
-            Ok(())
+            wrote.iter().try_for_each(|one| guard.record_write(one, &writer))
         };
         if let Err(message) = remembering() {
-            eprintln!("lf: remembering run {run_id}'s writes: {message} (their echoes will fire)");
+            eprintln!("lf: telling the loop guard run {run_id}'s writes: {message} (their echoes will fire)");
         }
     }
 
-    /// Whether `event` is only the echo of `writer`'s own write: the record
-    /// it names was written by that movement, and still stands exactly as
-    /// the write left it (crate::echoes). The record is read once per event,
-    /// into `now_reads`. Any doubt (no readRecord, a failed read) fires.
-    async fn is_own_echo(&self, external: &str, event: &Js, writer: &str, remembered: &[Remembered], now_reads: &RefCell<HashMap<String, Option<String>>>) -> bool {
-        let Some(mine) = remembered.iter().find(|r| r.writer == writer) else { return false };
-        let Some(external_id) = crate::echoes::event_record(event) else { return false };
-        let read = now_reads.borrow().get(&mine.record_type).cloned();
-        let now = match read {
-            Some(now) => now,
+    /// Whether `event` is only the echo of `writer`'s own write, as the loop
+    /// guard says (crate::loop_guard). When the guard needs the record as it
+    /// stands, it is read once per event and type, into `now_reads`. Any
+    /// doubt (no guard, no readRecord, a failed read or answer) fires.
+    async fn is_own_echo(&self, external: &str, event: &Js, writer: &str, now_reads: &RefCell<HashMap<String, Option<Js>>>) -> bool {
+        let (Some(guard), Some(external_id)) = (&self.loop_guard, crate::loop_guard::event_record(event)) else { return false };
+        let asked = Asked { adapter: external, external_id, writer, current: None };
+        let record_type = match guard.is_echo(&asked) {
+            Ok(Answer::Echo(echo)) => return echo,
+            Ok(Answer::Read { record_type }) => record_type,
+            Err(message) => return self.guard_failed(&message),
+        };
+        let read = now_reads.borrow().get(&record_type).cloned();
+        let record = match read {
+            Some(record) => record,
             None => {
-                let now = self.read_fingerprint(external, &mine.record_type, external_id).await;
-                now_reads.borrow_mut().insert(mine.record_type.clone(), now.clone());
-                now
+                let record = self.read_record(external, &record_type, external_id).await;
+                now_reads.borrow_mut().insert(record_type.clone(), record.clone());
+                record
             }
         };
-        now.as_deref() == Some(mine.fingerprint.as_str())
+        let Some(record) = record else { return false };
+        match guard.is_echo(&Asked { current: Some(Current { record_type: &record_type, record: &record }), ..asked }) {
+            Ok(answer) => answer == Answer::Echo(true),
+            Err(message) => self.guard_failed(&message),
+        }
     }
 
-    /// The record's fingerprint as it stands now, or None when it can not be read.
-    async fn read_fingerprint(&self, external: &str, record_type: &str, external_id: &str) -> Option<String> {
+    fn guard_failed(&self, message: &str) -> bool {
+        eprintln!("lf: the loop guard: {message} (the event fires)");
+        false
+    }
+
+    /// The record as it stands now, or None when it can not be read.
+    async fn read_record(&self, external: &str, record_type: &str, external_id: &str) -> Option<Js> {
         let running = self.running.iter().find(|r| !r.is_plugin() && r.external.manifest.name == external)?;
         if !running.methods.iter().any(|m| m == "readRecord") {
             return None;
@@ -616,7 +624,7 @@ impl Session {
             Err(message) => Err(message),
         };
         match read {
-            Ok(record) => Some(crate::echoes::fingerprint(&record)),
+            Ok(record) => Some(record),
             Err(message) => {
                 eprintln!("lf: {external}: reading {record_type} {external_id} to tell an echo of a write from a change: {message} (it fires)");
                 None

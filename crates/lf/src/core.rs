@@ -13,7 +13,9 @@
 //! lf-external.yaml says `kind: core`, `slot: store` and its `command`,
 //! driven over the store wire (docs/contracts/store-slot.md,
 //! crate::store_module); the limiter slot likewise, over the limiter wire
-//! (docs/contracts/limiter-slot.md, crate::limiter_module). The other slots take only a built-in: their
+//! (docs/contracts/limiter-slot.md, crate::limiter_module), and the loopGuard
+//! slot — empty unless named — over the guard wire (docs/contracts/
+//! loop-guard-slot.md, crate::guard_module). The other slots take only a built-in: their
 //! families are lf's own code paths (a model call's streaming and pricing,
 //! the judge's question, the file folder), with no wire to drive a process
 //! over yet.
@@ -33,10 +35,11 @@ pub enum Slot {
     Store,
     Files,
     Limiter,
+    LoopGuard,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 5] = [Slot::Models, Slot::Judge, Slot::Store, Slot::Files, Slot::Limiter];
+    pub const ALL: [Slot; 6] = [Slot::Models, Slot::Judge, Slot::Store, Slot::Files, Slot::Limiter, Slot::LoopGuard];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -45,6 +48,7 @@ impl Slot {
             Slot::Store => "store",
             Slot::Files => "files",
             Slot::Limiter => "limiter",
+            Slot::LoopGuard => "loopGuard",
         }
     }
 
@@ -52,21 +56,23 @@ impl Slot {
         Slot::ALL.into_iter().find(|s| s.name() == name)
     }
 
-    /// The module a project gets when lf.yaml names none for the slot.
-    pub fn default_module(self) -> &'static CoreModule {
+    /// The module a project gets when lf.yaml names none for the slot; None
+    /// for a slot that stays empty unless filled (the loop guard).
+    pub fn default_module(self) -> Option<&'static CoreModule> {
         let name = match self {
             Slot::Models => ANTHROPIC,
             Slot::Judge => JUDGE,
             Slot::Store => SQLITE_STORE,
             Slot::Files => LOCAL_FILES,
             Slot::Limiter => MEMORY_LIMITER,
+            Slot::LoopGuard => return None,
         };
-        builtin(name).expect("every slot's default is a built-in")
+        Some(builtin(name).expect("a slot's default is a built-in"))
     }
 
     /// A slot a third-party module may fill as a process, over its wire.
     pub fn takes_a_process(self) -> bool {
-        matches!(self, Slot::Store | Slot::Limiter)
+        matches!(self, Slot::Store | Slot::Limiter | Slot::LoopGuard)
     }
 }
 
@@ -116,12 +122,17 @@ pub const SQLITE_STORE: &str = "@lf/sqlite-store";
 pub const POSTGRES_STORE: &str = "@lf/postgres-store";
 pub const LOCAL_FILES: &str = "@lf/local-files";
 pub const MEMORY_LIMITER: &str = "@lf/memory-limiter";
+pub const FINGERPRINT_GUARD: &str = "@lf/fingerprint-guard";
 
 const ANTHROPIC_SETTINGS: &[Setting] = &[
     setting("api_key", "your Anthropic API key", true, false),
     setting("base_url", "another endpoint speaking the Messages API (empty: Anthropic's)", false, true),
 ];
 const SQLITE_SETTINGS: &[Setting] = &[setting("path", "the state file, from the project folder (empty: .lf/state.db)", false, true)];
+const FINGERPRINT_GUARD_SETTINGS: &[Setting] = &[
+    setting("path", "the guard's file, from the project folder (empty: .lf/guard.db)", false, true),
+    setting("url", "a Postgres database every lf worker shares, instead of a file (postgres://…)", true, true),
+];
 const POSTGRES_SETTINGS: &[Setting] = &[setting("url", "the database URL (postgres://…; add ?sslmode=verify-full for verified TLS)", true, false)];
 
 pub const BUILTIN: &[CoreModule] = &[
@@ -133,6 +144,8 @@ pub const BUILTIN: &[CoreModule] = &[
     built_in(LOCAL_FILES, Slot::Files, &[]),
     // Keeps the limits in this process: one lf's calls, not a fleet's.
     built_in(MEMORY_LIMITER, Slot::Limiter, &[]),
+    // Remembers what a run wrote for an hour, so the write's echo runs nothing.
+    built_in(FINGERPRINT_GUARD, Slot::LoopGuard, FINGERPRINT_GUARD_SETTINGS),
 ];
 
 pub fn builtin(name: &str) -> Option<&'static CoreModule> {
@@ -147,16 +160,19 @@ pub struct CoreChoice {
     pub store: CoreModule,
     pub files: CoreModule,
     pub limiter: CoreModule,
+    /// None: no guard runs, and a movement's own write echoing back fires it again.
+    pub loop_guard: Option<CoreModule>,
 }
 
 impl Default for CoreChoice {
     fn default() -> Self {
         CoreChoice {
-            models: Slot::Models.default_module().clone(),
-            judge: Slot::Judge.default_module().clone(),
-            store: Slot::Store.default_module().clone(),
-            files: Slot::Files.default_module().clone(),
-            limiter: Slot::Limiter.default_module().clone(),
+            models: Slot::Models.default_module().expect("models has a default").clone(),
+            judge: Slot::Judge.default_module().expect("judge has a default").clone(),
+            store: Slot::Store.default_module().expect("store has a default").clone(),
+            files: Slot::Files.default_module().expect("files has a default").clone(),
+            limiter: Slot::Limiter.default_module().expect("limiter has a default").clone(),
+            loop_guard: None,
         }
     }
 }
@@ -179,7 +195,7 @@ impl CoreChoice {
                 }
                 Some(module) if module.process.is_some() && !slot.takes_a_process() => {
                     return Err(format!(
-                        "{at}: core.{slot_name}: {module_name} is a core module run as a process; lf fills only the store and limiter slots with one, and the {slot_name} slot takes a built-in ({})",
+                        "{at}: core.{slot_name}: {module_name} is a core module run as a process; lf fills only the store, limiter and loopGuard slots with one, and the {slot_name} slot takes a built-in ({})",
                         builtin_names(slot)
                     ));
                 }
@@ -197,6 +213,7 @@ impl CoreChoice {
                 Slot::Store => choice.store = module,
                 Slot::Files => choice.files = module,
                 Slot::Limiter => choice.limiter = module,
+                Slot::LoopGuard => choice.loop_guard = Some(module),
             }
         }
         Ok(choice)
@@ -229,6 +246,10 @@ pub fn required<'a>(settings: &'a BTreeMap<String, String>, module: &CoreModule,
 /// A module's setup, run by `lf connect` once its settings are written: what
 /// it did, line by line.
 pub fn set_up(project: &Project, module: &CoreModule, settings: &BTreeMap<String, String>) -> Result<Vec<String>, String> {
+    if let (Some(process), Slot::LoopGuard) = (&module.process, module.slot) {
+        crate::guard_module::ProcessGuard::start(&module.name, process, settings)?;
+        return Ok(vec![format!("{} answered as a loop guard", module.name)]);
+    }
     if let (Some(process), Slot::Limiter) = (&module.process, module.slot) {
         crate::limiter_module::ProcessLimiter::start(&module.name, process, settings)?;
         return Ok(vec![format!("{} answered as a limiter", module.name)]);
@@ -252,6 +273,10 @@ pub fn set_up(project: &Project, module: &CoreModule, settings: &BTreeMap<String
             let path = sqlite_path(project, settings)?;
             crate::store::Store::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             Ok(vec![format!("the state file is {}", path.display())])
+        }
+        FINGERPRINT_GUARD => {
+            crate::loop_guard::FingerprintGuard::open(settings, &project.root, &project.lf_dir)?;
+            Ok(vec![format!("the guard keeps its memory {}", if settings.contains_key("url") { "in the Postgres database" } else { "in a file in the project's .lf folder" })])
         }
         _ => Ok(Vec::new()),
     }
@@ -298,6 +323,14 @@ mod tests {
             [choice.models.name, choice.judge.name, choice.store.name, choice.files.name, choice.limiter.name],
             [ANTHROPIC, JUDGE, SQLITE_STORE, LOCAL_FILES, MEMORY_LIMITER]
         );
+        assert_eq!(choice.loop_guard, None, "no guard runs unless lf.yaml names one");
+    }
+
+    #[test]
+    fn the_loop_guard_is_filled_only_when_named() {
+        let choice = CoreChoice::of(&named(&[("loopGuard", FINGERPRINT_GUARD)]), &[], "lf.yaml").unwrap();
+        assert_eq!(choice.loop_guard.unwrap().name, FINGERPRINT_GUARD);
+        assert!(CoreChoice::of(&named(&[("loopGuard", MEMORY_LIMITER)]), &[], "lf.yaml").unwrap_err().contains("fills the limiter slot"));
     }
 
     #[test]
@@ -326,12 +359,13 @@ mod tests {
     }
 
     #[test]
-    fn a_process_module_fills_the_store_and_limiter_slots_and_only_them() {
-        let installed = [process_module("acme_store", Slot::Store), process_module("acme_llm", Slot::Models), process_module("acme_limits", Slot::Limiter)];
-        let choice = CoreChoice::of(&named(&[("store", "acme_store"), ("limiter", "acme_limits")]), &installed, "lf.yaml").unwrap();
+    fn a_process_module_fills_the_store_limiter_and_loop_guard_slots_and_only_them() {
+        let installed = [process_module("acme_store", Slot::Store), process_module("acme_llm", Slot::Models), process_module("acme_limits", Slot::Limiter), process_module("acme_guard", Slot::LoopGuard)];
+        let choice = CoreChoice::of(&named(&[("store", "acme_store"), ("limiter", "acme_limits"), ("loopGuard", "acme_guard")]), &installed, "lf.yaml").unwrap();
         assert_eq!(choice.store, installed[0]);
         assert_eq!(choice.limiter, installed[2]);
-        assert!(CoreChoice::of(&named(&[("models", "acme_llm")]), &installed, "lf.yaml").unwrap_err().contains("only the store and limiter slots"));
+        assert_eq!(choice.loop_guard, Some(installed[3].clone()));
+        assert!(CoreChoice::of(&named(&[("models", "acme_llm")]), &installed, "lf.yaml").unwrap_err().contains("only the store, limiter and loopGuard slots"));
         assert!(CoreChoice::of(&named(&[("models", "acme_store")]), &installed, "lf.yaml").unwrap_err().contains("fills the store slot"));
     }
 }

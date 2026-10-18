@@ -426,13 +426,14 @@ async fn connect_core(project: &Project, module: &crate::core::CoreModule, promp
     change_entry(&file, &install_name, EntryChange::Replace(&|_| Ok(content.clone()))).await?;
     prompter.print(&format!("connected {}: its settings are \"{install_name}\" in {}", module.name, file.path.display()));
     let filling = match module.slot {
-        crate::core::Slot::Store => &project.core.store,
-        crate::core::Slot::Models => &project.core.models,
-        crate::core::Slot::Judge => &project.core.judge,
-        crate::core::Slot::Files => &project.core.files,
-        crate::core::Slot::Limiter => &project.core.limiter,
+        crate::core::Slot::Store => Some(&project.core.store),
+        crate::core::Slot::Models => Some(&project.core.models),
+        crate::core::Slot::Judge => Some(&project.core.judge),
+        crate::core::Slot::Files => Some(&project.core.files),
+        crate::core::Slot::Limiter => Some(&project.core.limiter),
+        crate::core::Slot::LoopGuard => project.core.loop_guard.as_ref(),
     };
-    if filling.name != module.name {
+    if filling.is_none_or(|filling| filling.name != module.name) {
         prompter.print(&format!("to use it, name it in lf.yaml: core: {{ {}: \"{}\" }}", module.slot.name(), module.name));
     }
     Ok(())

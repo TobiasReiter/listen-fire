@@ -2,9 +2,11 @@
 
 One movement: when a company is created or changed in Attio, it is found
 again by its name and given a description. Its own update comes back from
-Attio as `record.updated`; lf knows that for the movement's own write (the
-record is just as it left it) and runs nothing, so it never loops, while a
-change by someone else runs it again. `lf serve` registers Attio's webhook itself, so
+Attio as `record.updated`. With the loop guard in `lf.yaml` (`core: { loopGuard:
+"@lf/fingerprint-guard" }`, off by default) lf knows that for the movement's own
+write (the record is just as it left it) and runs nothing, so it never loops,
+while a change by someone else runs it again. Without the guard the echo runs
+the movement again. `lf serve` registers Attio's webhook itself, so
 a company created in Attio runs the movement.
 
 The files here are what the walkthrough below ends with (no secrets: those are
@@ -73,7 +75,9 @@ lf runs
 Delivering the same event again runs nothing: a record is created once, so its
 `record.created` is run once.
 
-The movement's own update echoes back as `record.updated` and runs nothing:
+Add the guard to `lf.yaml` (`core:` / `  loopGuard: "@lf/fingerprint-guard"`; this folder's
+`lf.yaml` has it), restart `lf serve`, and the movement's own update echoes back as
+`record.updated` and runs nothing ([the slot](../../docs/contracts/loop-guard-slot.md)):
 
 ```
 curl -s -XPOST $F/attio/control/deliver -H 'content-type: application/json' \

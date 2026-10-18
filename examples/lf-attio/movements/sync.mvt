@@ -5,8 +5,9 @@ crm = connect attio using henry_attio
 
 # A company created or changed in Attio gets a description; the write finds
 # it by name, so it updates that record rather than making another. The
-# update comes back from Attio as record.updated: lf knows it for this
-# movement's own write and runs nothing, while someone else's change runs it.
+# update comes back from Attio as record.updated: with the loop guard in
+# lf.yaml's core:, lf knows it for this movement's own write and runs
+# nothing, while someone else's change runs it.
 function stamp(ev: <crm-[e:`Webhook Event`]->>) {
   ev-[company:Companies]-> {
     write crm-[:Companies]-> {

@@ -14,7 +14,6 @@ use std::sync::Mutex;
 
 use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore};
 use crate::core::ProcessModule;
-use crate::echoes::{Remembered, Wrote};
 use crate::json::{Js, Obj};
 use crate::obj;
 use crate::store::{BranchExport, ClaimDue, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError};
@@ -369,22 +368,5 @@ impl RunHostStore for ProcessStore {
 
     fn claim_event(&self, listen: &str, key: &str) -> Result<bool> {
         self.flag("events.claim", obj! { "listen" => s(listen), "key" => s(key) })
-    }
-
-    fn remember_write(&self, wrote: &Wrote, writer: &str, expires_at: &str) -> Result<()> {
-        self.unit(
-            "writes.remember",
-            obj! {
-                "adapter" => s(&wrote.adapter),
-                "recordType" => s(&wrote.record_type),
-                "externalId" => s(&wrote.external_id),
-                "writer" => s(writer),
-                "fingerprint" => s(&wrote.fingerprint),
-                "expiresAt" => s(expires_at),
-            },
-        )
-    }
-    fn remembered_writes(&self, adapter: &str, external_id: &str, now: &str) -> Result<Vec<Remembered>> {
-        self.rows("writes.remembered", obj! { "adapter" => s(adapter), "externalId" => s(external_id), "now" => s(now) })
     }
 }

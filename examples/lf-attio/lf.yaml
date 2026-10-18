@@ -1,6 +1,11 @@
 engine: 0.11.0
 movements: movements
 externals: externals
+# The movement's own update comes back from Attio as record.updated. With this
+# guard in the loopGuard slot (empty by default) lf knows that echo and runs
+# nothing; without it the echo runs the movement again.
+core:
+  loopGuard: "@lf/fingerprint-guard"
 # Where Attio reaches `lf serve` (a tunnel to it, or a host). `lf serve`
 # registers Attio's webhook at <publicUrl>/api/public/webhook-sync/attio/<credential>.
 # publicUrl: https://lf.example.com

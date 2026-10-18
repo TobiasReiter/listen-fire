@@ -11,7 +11,6 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
-use crate::echoes::{Remembered, Wrote};
 use crate::json::Js;
 
 /// The state file's tables, created when missing on every open.
@@ -111,15 +110,6 @@ create table if not exists event_receipt (
   key text not null,
   received_at text not null,
   primary key (listen, key)
-);
-create table if not exists write_echo (
-  adapter text not null,
-  external_id text not null,
-  writer text not null,
-  record_type text not null,
-  fingerprint text not null,
-  expires_at text not null,
-  primary key (adapter, external_id, writer)
 );
 create table if not exists work (
   id integer primary key autoincrement,
@@ -795,24 +785,6 @@ impl Store {
         let inserted = self.db.execute("insert into event_receipt (listen, key, received_at) values (?, ?, ?) on conflict do nothing", params![listen, key, iso(0)])?;
         Ok(inserted == 1)
     }
-
-    /// crate::backend::RunHostStore::remember_write; the expired go with it.
-    pub fn remember_write(&self, wrote: &Wrote, writer: &str, expires_at: &str) -> Result<()> {
-        self.db.execute("delete from write_echo where expires_at <= ?", params![iso(0)])?;
-        self.db.execute(
-            "insert into write_echo (adapter, external_id, writer, record_type, fingerprint, expires_at) values (?, ?, ?, ?, ?, ?) \
-             on conflict (adapter, external_id, writer) do update set record_type = excluded.record_type, fingerprint = excluded.fingerprint, expires_at = excluded.expires_at",
-            params![wrote.adapter, wrote.external_id, writer, wrote.record_type, wrote.fingerprint, expires_at],
-        )?;
-        Ok(())
-    }
-
-    /// crate::backend::RunHostStore::remembered_writes.
-    pub fn remembered_writes(&self, adapter: &str, external_id: &str, now: &str) -> Result<Vec<Remembered>> {
-        let mut statement = self.db.prepare("select writer, record_type, fingerprint from write_echo where adapter = ? and external_id = ? and expires_at > ? order by writer")?;
-        let rows = statement.query_map(params![adapter, external_id, now], |r| Ok(Remembered { writer: r.get(0)?, record_type: r.get(1)?, fingerprint: r.get(2)? }))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
 }
 
 /// `Number(work.id)`: the row id a claim names.
@@ -855,20 +827,6 @@ mod tests {
         assert!(store.claim_event("listen:a:other", "delivery-1").unwrap());
         // Kept in the state file: another handle sees the receipt.
         assert!(!Store::open(&path).unwrap().claim_event("listen:a:welcome", "delivery-1").unwrap());
-    }
-
-    #[test]
-    fn a_write_is_remembered_per_writer_until_it_expires() {
-        let (store, path) = state_file();
-        let wrote = |fingerprint: &str| Wrote { adapter: "attio".into(), record_type: "Companies".into(), external_id: "r1".into(), fingerprint: fingerprint.into() };
-        store.remember_write(&wrote("f1"), "listen:sync:stamp", "2999-01-01T00:00:00.000Z").unwrap();
-        store.remember_write(&wrote("f2"), "listen:sync:stamp", "2999-01-01T00:00:00.000Z").unwrap();
-        store.remember_write(&wrote("f3"), "listen:other:audit", "2000-01-01T00:00:00.000Z").unwrap();
-        let now = iso(0);
-        // Another handle (another lf process) sees it; the expired one is gone.
-        let remembered = Store::open(&path).unwrap().remembered_writes("attio", "r1", &now).unwrap();
-        assert_eq!(remembered, vec![Remembered { writer: "listen:sync:stamp".into(), record_type: "Companies".into(), fingerprint: "f2".into() }]);
-        assert!(store.remembered_writes("attio", "r2", &now).unwrap().is_empty());
     }
 
     fn work_row(store: &Store, key: &str) -> (String, Option<String>) {

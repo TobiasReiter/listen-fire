@@ -16,6 +16,7 @@ core:
 | `store` | where run state lives: runs, parks, callbacks, work to drain | `@lf/sqlite-store` (`.lf/state.db`) | `@lf/postgres-store` |
 | `files` | where documents a run stores are kept | `@lf/local-files` (`.lf/files/`) | |
 | `limiter` | keeps calls to modules and models inside the providers' limits | `@lf/memory-limiter` (in lf's own process) | |
+| `loopGuard` | tells a movement's own write echoing back from a real change | none: the slot is empty and nothing is suppressed | `@lf/fingerprint-guard` (opt in) |
 
 A slot accepts only a module of its own kind; `lf check` and `lf run` refuse anything else, naming the slots.
 
@@ -65,6 +66,22 @@ Before every call to a module and every model request, the host asks the limiter
 - A limiter shared by all your workers is a module filling the slot over [its wire](contracts/limiter-slot.md). Name it in `core:`, like a store module.
 - The engine never sees a limit. A movement means the same under any limiter; it only waits longer.
 
+## The loop guard
+
+A movement that writes to the source it listens to hears its own write come back. By default nothing stops that: the echo runs the movement again. Name a guard to stop it:
+
+```yaml
+core:
+  loopGuard: "@lf/fingerprint-guard"
+```
+
+- After a run writes a record to a source that sends webhooks or is polled (and can read a record back), the host reads the record back and tells the guard.
+- An event naming a record is asked of the guard; if it is the echo of that movement's own write, none of that movement's listens fire.
+- `@lf/fingerprint-guard` remembers a hash of the record as the write left it for an hour. While the record still hashes the same, the event is the echo. Someone else's edit changes the record, so it runs. Another movement's listens hear the write as usual.
+- Its memory is a file of its own (`.lf/guard.db`), or a Postgres database every worker shares (`url` setting, `lf_guard` schema). It is not in the store slot.
+- The platform's listen flag `suppress_self` is separate and unchanged.
+- The wire a guard module of your own speaks: [loop-guard-slot.md](contracts/loop-guard-slot.md).
+
 ## Filling a slot
 
 1. Name the module in `lf.yaml`'s `core:` (not needed for a default).
@@ -85,7 +102,7 @@ LF_SECRET__POSTGRES_STORE__URL=postgres://…?sslmode=verify-full
 
 `lf --store <state.db | postgres://…>` overrides the store slot for one command.
 
-A module of your own, served as a process, fills the `store` or `limiter` slot (`kind: core` in its `lf-external.yaml`; see [the store's wire](contracts/store-slot.md) and [the limiter's](contracts/limiter-slot.md)). The other slots take only lf's built-ins.
+A module of your own, served as a process, fills the `store`, `limiter` or `loopGuard` slot (`kind: core` in its `lf-external.yaml`; see [the store's wire](contracts/store-slot.md), [the limiter's](contracts/limiter-slot.md) and [the guard's](contracts/loop-guard-slot.md)). The other slots take only lf's built-ins.
 
 ## Embedding
 

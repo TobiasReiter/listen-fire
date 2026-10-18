@@ -16,7 +16,6 @@
 //!   callbacks     lf.callback
 //!   pull cursors  lf.inbound_checkpoint
 //!   receipts      lf.event_receipt
-//!   write echoes  lf.write_echo
 //!   lf's runs     lf.trigger_run (below)
 //!
 //! Held to the hosted backend's meaning by the run host's contract suite
@@ -47,7 +46,6 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row};
 
 use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore};
-use crate::echoes::{Remembered, Wrote};
 use crate::json::Js;
 use crate::obj;
 use crate::store::{BranchExport, ClaimDue, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError, WORK_KINDS};
@@ -79,7 +77,7 @@ fn lf_status(status: String) -> String {
     if status == "success" { "completed".into() } else { status }
 }
 
-fn failed(error: tokio_postgres::Error) -> StoreError {
+pub(crate) fn failed(error: tokio_postgres::Error) -> StoreError {
     StoreError::Backend(match error.as_db_error() {
         Some(db) => format!("postgres: {}", db.message()),
         // The cause too: a refused certificate says why only there.
@@ -97,7 +95,7 @@ fn parse_text(text: &str) -> Result<Js> {
 /// Polls one future to its end on this thread. The client's futures only
 /// wait on channels its connection thread answers, so nothing here needs
 /// this thread's runtime.
-fn block_on<F: Future>(future: F) -> F::Output {
+pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     struct Unpark(std::thread::Thread);
     impl Wake for Unpark {
         fn wake(self: Arc<Self>) {
@@ -121,7 +119,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 /// The store's own schema, in order. Each runs once, in its own
 /// transaction, under an advisory lock so two setups never race; the
 /// applied ones are recorded in `lf.schema_migration`.
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("pg_store_schema_1.sql")), (2, include_str!("pg_store_schema_2.sql")), (3, include_str!("pg_store_schema_3.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("pg_store_schema_1.sql")), (2, include_str!("pg_store_schema_2.sql"))];
 
 /// The advisory lock the migrations run under: "lf-store" as a number.
 const MIGRATION_LOCK: i64 = 0x6c66_2d73_746f_7265;
@@ -176,6 +174,39 @@ fn run_of(row: &Row) -> Result<RunRow> {
     })
 }
 
+/// A connection to a Postgres database, served from its own thread until the
+/// client drops: the store's, and any module of lf keeping its own tables there.
+pub(crate) fn connect_client(url: &str) -> Result<Client> {
+    let (sent, connected) = std::sync::mpsc::channel();
+    let url = url.to_string();
+    std::thread::Builder::new()
+        .name("lf postgres".into())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(runtime) => runtime,
+                Err(e) => return drop(sent.send(Err(StoreError::Backend(format!("no runtime for the connection: {e}"))))),
+            };
+            runtime.block_on(async move {
+                let (config, tls) = match crate::pg_tls::config_of(&url) {
+                    Ok(read) => read,
+                    Err(message) => return drop(sent.send(Err(StoreError::Backend(message)))),
+                };
+                match config.connect(tls).await {
+                    Ok((client, connection)) => {
+                        if sent.send(Ok(client)).is_ok() {
+                            // Ends when the client drops (or the server goes).
+                            let _ = connection.await;
+                        }
+                    }
+                    Err(error) => drop(sent.send(Err(failed(error)))),
+                }
+            });
+        })
+        .map_err(|e| StoreError::Backend(format!("no thread for the connection: {e}")))?;
+    let client = connected.recv().map_err(|_| StoreError::Backend("the connection thread ended before it connected".into()))??;
+    Ok(client)
+}
+
 pub struct PgStore {
     client: Client,
     tenant: String,
@@ -193,33 +224,7 @@ impl PgStore {
     }
 
     fn connect_unchecked(url: &str, tenant: &str) -> Result<PgStore> {
-        let (sent, connected) = std::sync::mpsc::channel();
-        let url = url.to_string();
-        std::thread::Builder::new()
-            .name("lf postgres".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                    Ok(runtime) => runtime,
-                    Err(e) => return drop(sent.send(Err(StoreError::Backend(format!("no runtime for the connection: {e}"))))),
-                };
-                runtime.block_on(async move {
-                    let (config, tls) = match crate::pg_tls::config_of(&url) {
-                        Ok(read) => read,
-                        Err(message) => return drop(sent.send(Err(StoreError::Backend(message)))),
-                    };
-                    match config.connect(tls).await {
-                        Ok((client, connection)) => {
-                            if sent.send(Ok(client)).is_ok() {
-                                // Ends when the client drops (or the server goes).
-                                let _ = connection.await;
-                            }
-                        }
-                        Err(error) => drop(sent.send(Err(failed(error)))),
-                    }
-                });
-            })
-            .map_err(|e| StoreError::Backend(format!("no thread for the connection: {e}")))?;
-        let client = connected.recv().map_err(|_| StoreError::Backend("the connection thread ended before it connected".into()))??;
+        let client = connect_client(url)?;
         Ok(PgStore {
             client,
             tenant: tenant.to_string(),
@@ -1000,28 +1005,6 @@ impl RunHostStore for PgStore {
             &[&self.tenant, &listen, &key],
         )?;
         Ok(inserted == 1)
-    }
-
-    fn remember_write(&self, wrote: &Wrote, writer: &str, expires_at: &str) -> Result<()> {
-        self.execute("delete from lf.write_echo where team_id = $1::text::uuid and expires_at <= now()", &[&self.tenant])?;
-        self.execute(
-            "insert into lf.write_echo (team_id, adapter, external_id, writer, record_type, fingerprint, expires_at)
-             values ($1::text::uuid, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text::timestamptz)
-             on conflict (team_id, adapter, external_id, writer)
-             do update set record_type = excluded.record_type, fingerprint = excluded.fingerprint, expires_at = excluded.expires_at",
-            &[&self.tenant, &wrote.adapter, &wrote.external_id, &writer, &wrote.record_type, &wrote.fingerprint, &expires_at],
-        )?;
-        Ok(())
-    }
-
-    fn remembered_writes(&self, adapter: &str, external_id: &str, now: &str) -> Result<Vec<Remembered>> {
-        let rows = self.query(
-            "select writer, record_type, fingerprint from lf.write_echo
-             where team_id = $1::text::uuid and adapter = $2::text and external_id = $3::text and expires_at > $4::text::timestamptz
-             order by writer",
-            &[&self.tenant, &adapter, &external_id, &now],
-        )?;
-        Ok(rows.iter().map(|r| Remembered { writer: r.get(0), record_type: r.get(1), fingerprint: r.get(2) }).collect())
     }
 }
 

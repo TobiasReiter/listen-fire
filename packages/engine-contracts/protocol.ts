@@ -821,8 +821,9 @@ export type WireModuleKindShape = z.infer<typeof WireModuleKind>;
 
 /** The host's core services a `core` module can fill. Each slot's contract
  *  is its family's contract suite (the run host's store cases for `store`,
- *  and so on); the host names one module per slot. */
-export const CORE_SLOTS = ['models', 'judge', 'store', 'files', 'limiter'] as const;
+ *  and so on); the host names one module per slot, and every slot has a
+ *  default module but `loopGuard`, which stays empty unless named. */
+export const CORE_SLOTS = ['models', 'judge', 'store', 'files', 'limiter', 'loopGuard'] as const;
 export const WireCoreSlot = z.enum(CORE_SLOTS);
 export type WireCoreSlotShape = z.infer<typeof WireCoreSlot>;
 
