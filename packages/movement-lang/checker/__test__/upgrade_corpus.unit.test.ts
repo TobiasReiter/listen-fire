@@ -58,8 +58,10 @@ const ORACLE = path.join(__dirname, '../../../../crates/movement-engine/tests/or
  *  programs no test writes were dropped (with the checks of catalogs no test
  *  builds any more): 4,732 of 5,515 (85.8%). Lowered when version 5 refused
  *  arithmetic on a value that may be absent (MOV_ABSENT_REQUIRED, a person
- *  picks the guard or fallback): 4,732 of 5,518 (85.76%). */
-const FLOOR = 0.857;
+ *  picks the guard or fallback): 4,732 of 5,518 (85.76%). Lowered when the
+ *  committed checker was rebuilt from source and four more programs showed
+ *  the same refusal: 4,728 of 5,518 (85.68%). */
+const FLOOR = 0.856;
 
 interface Program {
   source: string;
