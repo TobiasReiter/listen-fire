@@ -25,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::backend::{MintCallback, RunHostStore, StoreSpec, open_store};
 use crate::json::{Js, Obj};
 use crate::obj;
-use crate::store::{StoreError, iso};
+use crate::store::{ClaimDue, StoreError, iso};
 use crate::store_wire::{Wire, num, opt, to_rows};
 
 const LEASE_LOST: i64 = -32001;
@@ -122,6 +122,15 @@ impl Params<'_> {
             None | Some(Js::Null) => Ok(None),
             Some(Js::Str(s)) => Ok(Some(s)),
             Some(_) => Err(Failure::Params(format!("{key}: expected a string"))),
+        }
+    }
+
+    /// An optional list of strings; `null` reads as absent.
+    fn opt_strings(&self, key: &str) -> Result<Option<Vec<String>>, Failure> {
+        match self.0.get(key) {
+            None | Some(Js::Null) => Ok(None),
+            Some(Js::Arr(items)) => items.iter().map(|i| i.as_str().map(str::to_string)).collect::<Option<Vec<_>>>().map(Some).ok_or_else(|| Failure::Params(format!("{key}: expected a list of strings"))),
+            Some(_) => Err(Failure::Params(format!("{key}: expected a list of strings"))),
         }
     }
 
@@ -305,7 +314,11 @@ fn dispatch(store: &dyn RunHostStore, method: &str, p: &Params) -> Result<Js, Fa
             store.enqueue(p.str("kind")?, p.str("key")?, &p.value("payload"), p.opt_str("dueAt")?, p.opt_str("teamId")?)?;
             none
         }
-        "work.claimDue" => Ok(to_rows(&store.claim_due(p.int("limit")?, p.int("leaseMs")?, p.opt_str("dueBy")?)?)),
+        "work.claimDue" => {
+            let kinds = p.opt_strings("kinds")?;
+            let claim = ClaimDue { limit: p.int("limit")?, lease_ms: p.int("leaseMs")?, due_by: p.opt_str("dueBy")?, kinds: kinds.as_deref() };
+            Ok(to_rows(&store.claim_due(&claim)?))
+        }
         "work.complete" => {
             store.complete(p.str("id")?, p.str("claim")?)?;
             none

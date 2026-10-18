@@ -224,12 +224,13 @@ export function memoryRunHostStore(options: { now?: () => number } = {}): RunHos
         if (teamId !== undefined) row.teamId = teamId;
         row.armed += 1;
       },
-      async claimDue({ limit, leaseMs, dueBy }) {
+      async claimDue({ limit, leaseMs, dueBy, kinds }) {
         const by = dueBy !== undefined ? Date.parse(dueBy) : now();
         const claimed: ClaimedWork[] = [];
         for (const row of [...work.values()].sort((a, b) => a.dueAt - b.dueAt)) {
           if (claimed.length >= limit) break;
           if (row.dueAt > by || (row.claim !== undefined && row.leasedUntil > now())) continue;
+          if (kinds !== undefined && !kinds.includes(row.kind)) continue;
           row.claim = randomUUID();
           row.leasedUntil = now() + leaseMs;
           row.armedAtClaim = row.armed;

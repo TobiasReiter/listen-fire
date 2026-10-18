@@ -22,7 +22,7 @@ use crate::json::Js;
 use crate::pg_store::PgStore;
 use crate::core;
 use crate::project::Project;
-use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, Store};
+use crate::store::{BranchExport, ClaimDue, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, Store};
 
 /// The tenant a SQLite state file's rows belong to (`LOCAL_TENANT`).
 pub const SQLITE_TENANT: &str = "local";
@@ -211,7 +211,7 @@ pub trait RunHostStore {
     // ── The work queue ──────────────────────────────────────────────────────
     /// `team_id` absent: the store's own tenant's row.
     fn enqueue(&self, kind: &str, key: &str, payload: &Js, due_at: Option<&str>, team_id: Option<&str>) -> Result<()>;
-    fn claim_due(&self, limit: i64, lease_ms: i64, due_by: Option<&str>) -> Result<Vec<ClaimedWork>>;
+    fn claim_due(&self, claim: &ClaimDue<'_>) -> Result<Vec<ClaimedWork>>;
     fn complete(&self, id: &str, claim: &str) -> Result<()>;
     fn release_work(&self, id: &str, claim: &str, due_at: Option<&str>) -> Result<()>;
 
@@ -357,8 +357,8 @@ impl RunHostStore for Store {
     fn enqueue(&self, kind: &str, key: &str, payload: &Js, due_at: Option<&str>, _team_id: Option<&str>) -> Result<()> {
         Store::enqueue(self, kind, key, payload, due_at)
     }
-    fn claim_due(&self, limit: i64, lease_ms: i64, due_by: Option<&str>) -> Result<Vec<ClaimedWork>> {
-        Store::claim_due(self, limit, lease_ms, due_by)
+    fn claim_due(&self, claim: &ClaimDue<'_>) -> Result<Vec<ClaimedWork>> {
+        Store::claim_due(self, claim)
     }
     fn complete(&self, id: &str, claim: &str) -> Result<()> {
         Store::complete(self, id, claim)

@@ -16,7 +16,7 @@ use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore};
 use crate::core::ProcessModule;
 use crate::json::{Js, Obj};
 use crate::obj;
-use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError};
+use crate::store::{BranchExport, ClaimDue, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError};
 use crate::store_wire::{Wire, int, num, opt, rows};
 
 /// The error a fenced write answers when the run's lease is gone (`RunLeaseLost`).
@@ -300,8 +300,13 @@ impl RunHostStore for ProcessStore {
     fn enqueue(&self, kind: &str, key: &str, payload: &Js, due_at: Option<&str>, team_id: Option<&str>) -> Result<()> {
         self.unit("work.enqueue", obj! { "kind" => s(kind), "key" => s(key), "payload" => payload.clone(), "dueAt" => opt(due_at), "teamId" => opt(team_id) })
     }
-    fn claim_due(&self, limit: i64, lease_ms: i64, due_by: Option<&str>) -> Result<Vec<ClaimedWork>> {
-        self.rows("work.claimDue", obj! { "limit" => Js::Num(limit.into()), "leaseMs" => Js::Num(lease_ms.into()), "dueBy" => opt(due_by) })
+    fn claim_due(&self, claim: &ClaimDue<'_>) -> Result<Vec<ClaimedWork>> {
+        let mut params = obj! { "limit" => Js::Num(claim.limit.into()), "leaseMs" => Js::Num(claim.lease_ms.into()), "dueBy" => opt(claim.due_by) };
+        // Absent, not null, for every kind: a module written before pools reads the same claim.
+        if let Some(kinds) = claim.kinds {
+            params.insert("kinds".into(), Js::strings(kinds));
+        }
+        self.rows("work.claimDue", params)
     }
     fn complete(&self, id: &str, claim: &str) -> Result<()> {
         self.unit("work.complete", obj! { "id" => s(id), "claim" => s(claim) })

@@ -12,6 +12,7 @@ import { cpSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { companies, project } from '../example';
+import { polls, withFeed } from '../feed';
 import { lfBinary } from '../lf_bin';
 import { freshTeam, POSTGRES_URL, psql } from './pg';
 
@@ -68,6 +69,51 @@ test('two drain workers resume every parked run exactly once', async () => {
     const sqliteTrace = /^run \S+ companies:welcome completed .* (\d+) trace entr/m.exec(resumedLocally.stdout)?.[1];
     assert.ok(sqliteTrace !== undefined && Number(sqliteTrace) > 0, resumedLocally.stdout);
     assert.deepEqual(traced, Array(RUNS).fill(sqliteTrace), drained.map((w) => w.out).join('\n---\n'));
+  } finally {
+    clear();
+  }
+});
+
+test('a poll pool and a run pool on one store split the work by kind', async () => {
+  const { team, clear } = freshTeam();
+  const store = ['--store', POSTGRES_URL, '--team', team];
+  try {
+    const dir = withFeed(project());
+    const fired: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const run = spawnSync(lfBinary(), ['run', '--event', 'events/company_created.json', ...store], { cwd: dir, encoding: 'utf8' });
+      assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+      const id = /^run (\S+) companies:welcome parked/m.exec(run.stdout)?.[1];
+      assert.ok(id !== undefined, run.stdout);
+      fired.push(id);
+    }
+    // Each pool on its own machine (its own copy of the project), as two fleets would be.
+    const runMachine = join(mkdtempSync(join(tmpdir(), 'lf-pool-')), 'p');
+    cpSync(dir, runMachine, { recursive: true });
+    const pools: Array<[string, string]> = [
+      [dir, 'poll_listen'],
+      [runMachine, 'resume_timer,wake_await,fire_event,fire_callback,cron'],
+    ];
+    const [pollPool, runPool] = await Promise.all(
+      pools.map(([machine, kinds]) =>
+        lfHost(machine, ['drain', ...store, '--kinds', kinds, '--until-idle', '--max-seconds', '120'], { LF_CLOCK_AHEAD_MS: TWO_HOURS_MS }),
+      ),
+    );
+    // The notes movement fails by design, naming each note: so the poll pool exits 1.
+    assert.equal(pollPool!.code, 1, pollPool!.out);
+    assert.equal(runPool!.code, 0, runPool!.out);
+
+    // The poll pool polled the feed once and ran its notes; it resumed no run.
+    assert.deepEqual(polls(dir), [null]);
+    assert.match(pollPool!.out, /notes:seen/);
+    assert.doesNotMatch(pollPool!.out, /companies:welcome/);
+    // The run pool resumed every parked run, and polled nothing.
+    assert.deepEqual(polls(runMachine), []);
+    const resumed = [...runPool!.out.matchAll(/^run (\S+) companies:welcome completed/gm)].map((m) => m[1]);
+    assert.deepEqual([...resumed].sort(), [...fired].sort(), runPool!.out);
+    assert.doesNotMatch(runPool!.out, /notes:seen/);
+    // What is left is the feed's next poll, due an interval on.
+    assert.deepEqual(psql(`select kind from lf.work where team_id = '${team}'`), [['poll_listen']]);
   } finally {
     clear();
   }

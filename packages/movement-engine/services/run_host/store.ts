@@ -135,8 +135,9 @@ export interface WorkQueue {
    *  a leased row the new one does (a re-arm during the work). The payload is
    *  always the new one. */
   enqueue(input: { kind: string; key: string; payload: unknown; dueAt?: string; teamId?: string }): Promise<void>;
-  /** Lease up to `limit` rows due by `dueBy`, unleased or with a lapsed lease. */
-  claimDue(input: { limit: number; leaseMs: number; dueBy?: string }): Promise<ClaimedWork[]>;
+  /** Lease up to `limit` rows due by `dueBy`, unleased or with a lapsed lease;
+   *  only rows of `kinds` when it is given (a drain pool's), else every kind. */
+  claimDue(input: { limit: number; leaseMs: number; dueBy?: string; kinds?: readonly string[] }): Promise<ClaimedWork[]>;
   /** Done: delete the row, unless it was re-armed since the claim (it stays,
    *  unleased, due at its new time). A stale claim changes nothing. */
   complete(work: ClaimedWork): Promise<void>;

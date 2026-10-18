@@ -74,7 +74,7 @@ The first request is always `store.open`. The others are the run host's store fa
 | `leases.release` | `{ runId, token }` | `null` |
 | `leases.dropRunState` | `{ runId, fence }` | boolean |
 | `work.enqueue` | `{ kind, key, payload, dueAt, teamId }` | `null` |
-| `work.claimDue` | `{ limit, leaseMs, dueBy }` | `[{ id, kind, key, payload, claim }]` |
+| `work.claimDue` | `{ limit, leaseMs, dueBy, kinds? }`; `kinds` (a drain pool's) leases only rows of those kinds, absent every kind | `[{ id, kind, key, payload, claim }]` |
 | `work.complete` | `{ id, claim }` | `null` |
 | `work.release` | `{ id, claim, dueAt }` | `null` |
 | `sources.put` | `{ teamId, hash, source }` | `null` |
@@ -104,4 +104,5 @@ type CallbackRow = {
 
 ## Changes
 
+- **2026-10-18** (within adapter protocol 2): `work.claimDue` takes `kinds`, for drain pools (`lf drain --kinds`).
 - **2026-10-17** (within adapter protocol 2): the store slot's wire, and process modules filling the store slot.

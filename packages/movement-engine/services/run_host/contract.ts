@@ -146,6 +146,21 @@ export const runHostContractCases: ContractCase[] = [
     },
   },
   {
+    name: 'work: a claim naming kinds leases only rows of those kinds',
+    async run({ store }) {
+      const timer = uniqueKey('resume_timer');
+      const wake = uniqueKey('wake_await');
+      await store.work.enqueue({ kind: 'resume_timer', key: timer, payload: {}, dueAt: PAST(1) });
+      await store.work.enqueue({ kind: 'wake_await', key: wake, payload: {}, dueAt: PAST(1) });
+      const wakes = await store.work.claimDue({ limit: 1000, leaseMs: 60_000, kinds: ['wake_await'] });
+      assert.ok(wakes.some((w) => w.key === wake));
+      assert.ok(!wakes.some((w) => w.key === timer), 'a row of another kind is left for its own pool');
+      const rest = await store.work.claimDue({ limit: 1000, leaseMs: 60_000 });
+      assert.ok(rest.some((w) => w.key === timer));
+      for (const w of [...wakes, ...rest]) if (w.key === timer || w.key === wake) await store.work.complete(w);
+    },
+  },
+  {
     name: 'work: a lapsed lease is claimable again, and the stale claim can neither complete nor release it',
     async run({ store }) {
       const key = uniqueKey('wake_await');

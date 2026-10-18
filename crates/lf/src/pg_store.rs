@@ -48,7 +48,7 @@ use tokio_postgres::{Client, Row};
 use crate::backend::{CallbackClaim, CallbackRecord, MintCallback, RunHostStore};
 use crate::json::Js;
 use crate::obj;
-use crate::store::{BranchExport, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError, WORK_KINDS};
+use crate::store::{BranchExport, ClaimDue, ClaimedWork, CorrelatedAwait, LeafRow, Result, RunRow, StoreError, WORK_KINDS};
 
 type Params<'a> = [&'a (dyn ToSql + Sync)];
 
@@ -774,8 +774,9 @@ impl RunHostStore for PgStore {
 
     /// One statement, so two drainers cannot race: SKIP LOCKED hands each a
     /// disjoint set, and MATERIALIZED fixes the selection before the update.
-    fn claim_due(&self, limit: i64, lease_ms: i64, due_by: Option<&str>) -> Result<Vec<ClaimedWork>> {
-        let kinds: Vec<String> = WORK_KINDS.iter().map(|k| k.to_string()).collect();
+    fn claim_due(&self, claim: &ClaimDue<'_>) -> Result<Vec<ClaimedWork>> {
+        let kinds = claim.kinds()?;
+        let (due_by, limit, lease_ms) = (claim.due_by, claim.limit, claim.lease_ms);
         let rows = self.query(
             &format!(
                 "with c as materialized (

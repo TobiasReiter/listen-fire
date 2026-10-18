@@ -92,7 +92,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
        lf run --poll <movement>
        lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
        lf resume [<run-id>]
-       lf drain [--until-idle] [--max-seconds <n>]
+       lf drain [--until-idle] [--max-seconds <n>] [--kinds <kind,…>]
        lf serve [--port N]
        lf call <callback-id> [--body <values.json>]
        lf cancel <run-id> [--reason <text>]
@@ -109,7 +109,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   runs      the runs in the state file, most recent first (as `lf runs`)
-  drain     fire each cron listen's due tick (once, however many workers drain), then claim due work rows one at a time and run them (a polled listen's row is its next poll, due every interval its source declares); with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
+  drain     fire each cron listen's due tick (once, however many workers drain), then claim due work rows one at a time and run them (a polled listen's row is its next poll, due every interval its source declares); with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds, with --kinds only rows of those kinds (resume_timer, wake_await, fire_event, fire_callback, poll_listen) and the cron ticks only when it names cron
   serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
   call      call a callback, as its url's POST does (the values: a JSON object)
   cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
@@ -148,6 +148,7 @@ struct Args {
     team: Option<String>,
     until_idle: bool,
     max_seconds: Option<u64>,
+    kinds: Option<String>,
     start_timeout: Option<std::time::Duration>,
     project_schema: bool,
     help: bool,
@@ -178,6 +179,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         team: None,
         until_idle: false,
         max_seconds: None,
+        kinds: None,
         start_timeout: None,
         project_schema: false,
         help: false,
@@ -206,6 +208,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--store" => args.store = Some(value("--store")?),
             "--team" => args.team = Some(value("--team")?),
             "--until-idle" => args.until_idle = true,
+            "--kinds" => args.kinds = Some(value("--kinds")?),
             "--max-seconds" => {
                 let raw = value("--max-seconds")?;
                 args.max_seconds = Some(raw.parse().map_err(|_| format!("--max-seconds {raw}: a whole number of seconds"))?);
@@ -346,7 +349,9 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
         "drain" => {
             let project = load()?;
             let store = store_of(&args, &project)?;
-            let session = runs::open_session(project, false, &store).await?;
+            let pool = args.kinds.as_deref().map(drain::Pool::of).transpose()?.unwrap_or_default();
+            let mut session = runs::open_session(project, false, &store).await?;
+            session.pool = pool;
             drain::drain(&session, &drain::DrainOptions { until_idle: args.until_idle, max_seconds: args.max_seconds }, &mut out).await
         }
         "serve" => {

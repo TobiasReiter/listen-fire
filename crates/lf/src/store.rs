@@ -193,6 +193,28 @@ pub struct LeafRow {
     pub wake_at: Option<String>,
 }
 
+/// One claim of due work rows (`work.claimDue`).
+pub struct ClaimDue<'a> {
+    pub limit: i64,
+    pub lease_ms: i64,
+    /// None: now.
+    pub due_by: Option<&'a str>,
+    /// Only rows of these kinds (a drain pool's, `lf drain --kinds`); None:
+    /// every kind lf drains.
+    pub kinds: Option<&'a [String]>,
+}
+
+impl ClaimDue<'_> {
+    /// The kinds the claim takes, each one lf drains.
+    pub fn kinds(&self) -> Result<Vec<String>> {
+        let Some(kinds) = self.kinds else { return Ok(WORK_KINDS.iter().map(|k| k.to_string()).collect()) };
+        match kinds.iter().find(|k| !WORK_KINDS.contains(&k.as_str())) {
+            Some(other) => Err(StoreError::Invalid(format!("not a work kind: {other} (the kinds: {})", WORK_KINDS.join(", ")))),
+            None => Ok(kinds.to_vec()),
+        }
+    }
+}
+
 pub struct ClaimedWork {
     pub id: String,
     pub kind: String,
@@ -684,15 +706,19 @@ impl Store {
         Ok(())
     }
 
-    pub fn claim_due(&self, limit: i64, lease_ms: i64, due_by: Option<&str>) -> Result<Vec<ClaimedWork>> {
+    pub fn claim_due(&self, claim: &ClaimDue<'_>) -> Result<Vec<ClaimedWork>> {
         let now = iso(0);
-        let due_by = due_by.map(str::to_string).unwrap_or_else(|| now.clone());
+        let due_by = claim.due_by.map(str::to_string).unwrap_or_else(|| now.clone());
+        let kinds = Js::strings(claim.kinds()?).to_json();
+        let lease_ms = claim.lease_ms;
         self.transaction(|db| {
             let mut select = db.prepare(
-                "select id, kind, key, payload, version from work where due_at <= ? and (lease_until is null or lease_until < ?) order by due_at, id limit ?",
+                "select id, kind, key, payload, version from work
+                 where due_at <= ? and (lease_until is null or lease_until < ?) and kind in (select value from json_each(?))
+                 order by due_at, id limit ?",
             )?;
             let due = select
-                .query_map(params![due_by, now, limit], |r| {
+                .query_map(params![due_by, now, kinds, claim.limit], |r| {
                     Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, i64>(4)?))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -797,6 +823,10 @@ mod tests {
         store.db.query_row("select due_at, lease_token from work where key = ?", params![key], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
     }
 
+    fn claim(limit: i64, lease_ms: i64) -> ClaimDue<'static> {
+        ClaimDue { limit, lease_ms, due_by: None, kinds: None }
+    }
+
     fn no_payload() -> Js {
         Js::Obj(crate::json::Obj::new())
     }
@@ -807,7 +837,7 @@ mod tests {
         let due = iso(-60_000);
         store.enqueue("resume_timer", "k", &no_payload(), Some(&due)).unwrap();
         // Claimed under a lease that has already lapsed.
-        assert_eq!(store.claim_due(10, -1, None).unwrap().len(), 1);
+        assert_eq!(store.claim_due(&claim(10, -1)).unwrap().len(), 1);
         store.enqueue("resume_timer", "k", &no_payload(), Some(&iso(3_600_000))).unwrap();
         assert_eq!(work_row(&store, "k").0, due);
     }
@@ -817,7 +847,7 @@ mod tests {
         let (store, _) = state_file();
         let due = iso(-60_000);
         store.enqueue("wake_await", "k", &no_payload(), Some(&due)).unwrap();
-        let claimed = store.claim_due(10, 60_000, None).unwrap().pop().unwrap();
+        let claimed = store.claim_due(&claim(10, 60_000)).unwrap().pop().unwrap();
         assert!(work_row(&store, "k").1.is_some());
         store.release_work(&claimed.id, &claimed.claim, None).unwrap();
         assert_eq!(work_row(&store, "k"), (due, None));
@@ -830,11 +860,27 @@ mod tests {
         for i in 0..6 {
             store.enqueue("wake_await", &format!("k{i}"), &no_payload(), Some(&iso(-1_000))).unwrap();
         }
-        let mut keys: Vec<String> = store.claim_due(3, 60_000, None).unwrap().into_iter().map(|w| w.key).collect();
-        keys.extend(other.claim_due(3, 60_000, None).unwrap().into_iter().map(|w| w.key));
+        let mut keys: Vec<String> = store.claim_due(&claim(3, 60_000)).unwrap().into_iter().map(|w| w.key).collect();
+        keys.extend(other.claim_due(&claim(3, 60_000)).unwrap().into_iter().map(|w| w.key));
         keys.sort();
         keys.dedup();
         assert_eq!(keys.len(), 6);
+    }
+
+    #[test]
+    fn a_claim_naming_kinds_leases_only_rows_of_those_kinds() {
+        let (store, _) = state_file();
+        for (kind, key) in [("poll_listen", "p1"), ("resume_timer", "t1"), ("poll_listen", "p2"), ("fire_event", "e1")] {
+            store.enqueue(kind, key, &no_payload(), Some(&iso(-1_000))).unwrap();
+        }
+        let polls = [String::from("poll_listen")];
+        let mut keys: Vec<String> = store.claim_due(&ClaimDue { kinds: Some(&polls), ..claim(10, 60_000) }).unwrap().into_iter().map(|w| w.key).collect();
+        keys.sort();
+        assert_eq!(keys, ["p1", "p2"]);
+        let rest: Vec<String> = store.claim_due(&claim(10, 60_000)).unwrap().into_iter().map(|w| w.key).collect();
+        assert_eq!(rest, ["t1", "e1"]);
+        let unknown = [String::from("resume_callback")];
+        assert!(matches!(store.claim_due(&ClaimDue { kinds: Some(&unknown), ..claim(10, 60_000) }), Err(StoreError::Invalid(_))));
     }
 
     #[test]

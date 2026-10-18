@@ -27,7 +27,7 @@ use crate::secrets::{Credentials, load_secrets, missing_credentials};
 use crate::segment::{Ended, Entry, Ran, SegmentHost, SegmentHostParts, SegmentInput, run_segment};
 use crate::sources::{MovementFile, scan_movements};
 use crate::backend::{RunHostStore, StoreSpec, open_store};
-use crate::store::iso;
+use crate::store::{ClaimDue, iso};
 use crate::wire_results;
 
 /// A polled listen's row in the work queue: its next poll.
@@ -62,6 +62,9 @@ pub struct Session {
     public_url: String,
     /// The temporary folder an ephemeral session's state lives in.
     ephemeral_dir: Option<std::path::PathBuf>,
+    /// The work this session's drains take (`lf drain --kinds`): all of it,
+    /// unless a pool is named.
+    pub pool: crate::drain::Pool,
 }
 
 impl Drop for Session {
@@ -134,7 +137,7 @@ pub async fn open_session(project: Project, ephemeral: bool, store: &StoreSpec) 
         .clone()
         .or_else(|| crate::serve::host_url().map(str::to_string))
         .unwrap_or_else(|| format!("http://127.0.0.1:{DEFAULT_PORT}"));
-    Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, public_url, ephemeral_dir })
+    Ok(Session { project, store, credentials, running, documents, files, catalog, listens, due_offset_ms, user, public_url, ephemeral_dir, pool: Default::default() })
 }
 
 /// What firing one event came to: the runs it started, and a line per
@@ -648,9 +651,13 @@ impl Session {
     /// elsewhere or they failed). How many rows were claimed, and what the
     /// runs they stepped came to.
     pub async fn drain_work(&self, limit: i64, log: &mut impl Write) -> Result<(usize, Vec<RunOutcome>), String> {
-        let mut outcomes = self.fire_due_ticks(log).await?;
-        self.arm_polls()?;
-        let due = self.store.claim_due(limit, WORK_LEASE_MS, Some(&self.due_by())).map_err(|e| e.to_string())?;
+        let mut outcomes = if self.pool.fires_cron() { self.fire_due_ticks(log).await? } else { Vec::new() };
+        if self.pool.takes(POLL_WORK_KIND) {
+            self.arm_polls()?;
+        }
+        let due_by = self.due_by();
+        let claim = ClaimDue { limit, lease_ms: WORK_LEASE_MS, due_by: Some(&due_by), kinds: self.pool.work_kinds() };
+        let due = self.store.claim_due(&claim).map_err(|e| e.to_string())?;
         let claimed_rows = due.len();
         for claimed in due {
             match self.do_work(&claimed.kind, &claimed.payload).await {

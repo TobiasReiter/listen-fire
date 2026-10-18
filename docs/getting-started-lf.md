@@ -90,7 +90,7 @@ lf resume [<run-id>]                           # step a parked run, or every due
 lf serve [--port N]
 ```
 
-`lf serve` receives webhooks and callbacks, fires `cron` listens on their schedule, polls polled sources on their interval, and drains due work, so listens fire on their own. `lf drain` does the same work once and exits (`--until-idle`): a tick or poll missed while nothing ran happens once on the next drain, and two workers never poll one listen at once. Set `publicUrl` in `lf.yaml` when the outside world reaches it at another address. `lf call <callback-id>` and `lf cancel <run-id>` act on a parked or running run.
+`lf serve` receives webhooks and callbacks, fires `cron` listens on their schedule, polls polled sources on their interval, and drains due work, so listens fire on their own. `lf drain` does the same work once and exits (`--until-idle`): a tick or poll missed while nothing ran happens once on the next drain, and two workers never poll one listen at once. `lf drain --kinds poll_listen` is a pool: it claims only work of those kinds (`resume_timer`, `wake_await`, `fire_event`, `fire_callback`, `poll_listen`, and `cron` for the cron ticks), so polls and run steps can be drained by separate fleets. Set `publicUrl` in `lf.yaml` when the outside world reaches it at another address. `lf call <callback-id>` and `lf cancel <run-id>` act on a parked or running run.
 
 ## 7. Upgrade a project
 

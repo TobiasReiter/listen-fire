@@ -488,8 +488,14 @@ export const postgresRunHostStore: RunHostStore = {
       await enqueueWork({ kind, key, payload, ...(teamId !== undefined ? { teamId } : {}), ...(dueAt !== undefined ? { dueAt: new Date(dueAt) } : {}) });
     },
 
-    async claimDue({ limit, leaseMs, dueBy }) {
-      const rows = await claimDueWork({ owner: LEASE_OWNER, limit, leaseMs, ...(dueBy !== undefined ? { now: new Date(dueBy) } : {}) });
+    async claimDue({ limit, leaseMs, dueBy, kinds }) {
+      const rows = await claimDueWork({
+        owner: LEASE_OWNER,
+        limit,
+        leaseMs,
+        ...(dueBy !== undefined ? { now: new Date(dueBy) } : {}),
+        ...(kinds !== undefined ? { kinds } : {}),
+      });
       return rows.map((row) => ({
         id: row.id,
         kind: row.kind,

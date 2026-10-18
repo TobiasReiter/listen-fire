@@ -6,92 +6,12 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { lf, lfCommand, project, served } from './example';
-
-const MODULE_KIT = resolve(__dirname, '../../../../packages/module-kit');
-
-interface Note {
-  id: string;
-  title: string;
-  at: number;
-}
-
-/** A notes feed, polled: `feed.json` is what the provider holds, `polls.log`
- *  the checkpoint each poll was handed, and `replay` makes it forget the
- *  checkpoint (an overlapping poll's duplicates), `fast` polls it every
- *  second rather than every minute. Each poll takes 300ms. */
-const FEED_MODULE = `const { readFileSync, appendFileSync, existsSync } = require('node:fs');
-const { join } = require('node:path');
-const { defineModule } = require(${JSON.stringify(join(MODULE_KIT, 'define.ts'))});
-const at = (name) => join(__dirname, name);
-const note = { typeId: 'note', displayName: 'Note', fields: [{ fieldId: 'title', displayName: 'Title', kind: 'string', writable: false, required: false }], references: [] };
-module.exports = defineModule({
-  kind: 'adapter',
-  name: 'feed',
-  credentials: [],
-  manifest: { adapterType: 'feed', displayName: 'Feed', supportedTriggers: ['poll'], methods: [], webhookEventTypeId: 'note' },
-  poll: { intervalSeconds: existsSync(at('fast')) ? 1 : 60 },
-  create: () => ({
-    adapterType: 'feed',
-    supportedTriggers: ['poll'],
-    runtimeCapabilities: () => ({ traversal: { incoming: false, edgeProperties: false }, resources: false }),
-    listEntryPoints: async () => [{ typeId: 'note', displayName: 'Note', readable: false, writable: false, fires: true }],
-    describe: async (typeId) => (typeId === 'note' || typeId === 'Note' ? note : null),
-    resolveEntity: async () => ({ candidates: [] }),
-    getFieldValue: async ({ position, fieldId }) => position.identity.data?.[fieldId.toLowerCase()] ?? null,
-    getRelated: async () => [],
-    createRecord: async () => { throw new Error('read-only'); },
-    updateRecord: async () => { throw new Error('read-only'); },
-    deleteRecord: async () => { throw new Error('read-only'); },
-    poll: async ({ checkpoint }) => {
-      appendFileSync(at('polls.log'), JSON.stringify(checkpoint ?? null) + '\\n');
-      await new Promise((done) => setTimeout(done, 300));
-      const since = existsSync(at('replay')) || typeof checkpoint !== 'number' ? 0 : checkpoint;
-      const notes = JSON.parse(readFileSync(at('feed.json'), 'utf8')).filter((n) => n.at > since);
-      return {
-        events: notes.map((n) => ({ payload: n, externalId: n.id, idempotencyKey: n.id })),
-        checkpoint: notes.reduce((high, n) => Math.max(high, n.at), since),
-      };
-    },
-  }),
-});
-`;
-
-function feedProject(): string {
-  const dir = project();
-  rmSync(join(dir, 'movements'), { recursive: true });
-  mkdirSync(join(dir, 'movements'));
-  mkdirSync(join(dir, 'externals/feed'));
-  writeFileSync(join(dir, 'externals/feed/lf-external.yaml'), 'name: feed\nmodule: ./feed.ts\n');
-  writeFileSync(join(dir, 'externals/feed/feed.ts'), FEED_MODULE);
-  feed(dir, [
-    { id: 'n1', title: 'First', at: 1 },
-    { id: 'n2', title: 'Second', at: 2 },
-  ]);
-  writeFileSync(
-    join(dir, 'movements/notes.mvt'),
-    `import { feed } from adapters\n\nf = connect feed\n\nfunction seen(n: <f-[:Note]->>) {\n  fail("seen \${n.Title}")\n}\n\nlisten to f fire seen\n`,
-  );
-  return dir;
-}
-
-function feed(dir: string, notes: Note[]): void {
-  writeFileSync(join(dir, 'externals/feed/feed.json'), JSON.stringify(notes));
-}
-
-/** The checkpoint each poll so far was handed. */
-function polls(dir: string): unknown[] {
-  const log = join(dir, 'externals/feed/polls.log');
-  if (!existsSync(log)) return [];
-  return readFileSync(log, 'utf8')
-    .split('\n')
-    .filter((l) => l !== '')
-    .map((l) => JSON.parse(l) as unknown);
-}
+import { lf, lfCommand, served } from './example';
+import { feed, feedProject, polls } from './feed';
 
 function seen(dir: string): number {
   return lf(dir, 'runs').out.split('\n').filter((l) => l.includes('notes:seen')).length;

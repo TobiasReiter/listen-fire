@@ -105,8 +105,11 @@ export async function claimDueWork(input: {
   leaseMs: number;
   now?: Date;
   teamId?: string;
+  /** Only rows of these kinds (a drain pool's); absent, every claimable kind. */
+  kinds?: readonly string[];
 }): Promise<WorkRow[]> {
   const now = input.now ?? new Date();
+  const kinds = input.kinds === undefined ? claimableWorkKinds() : input.kinds.filter((kind) => claimableWorkKinds().includes(kind));
   const ofTeam = input.teamId === undefined ? sql`` : sql`AND team_id = ${input.teamId}::uuid`;
   // One statement so two drainers cannot race: SKIP LOCKED hands each a disjoint
   // set. MATERIALIZED fixes the locked selection before the update; as an inlined
@@ -115,7 +118,7 @@ export async function claimDueWork(input: {
     WITH c AS MATERIALIZED (
       SELECT id FROM automations.work
       WHERE due_at <= ${now} AND (lease_until IS NULL OR lease_until < now())
-        AND kind = ANY(${claimableWorkKinds()}::text[])
+        AND kind = ANY(${kinds}::text[])
         ${ofTeam}
       ORDER BY due_at
       LIMIT ${input.limit}
