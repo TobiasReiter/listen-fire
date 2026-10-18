@@ -92,14 +92,16 @@ test('the Attio walkthrough, end to end against the fake Attio', async () => {
     // 1. A project.
     assert.equal(lfSync(join(dir, '..'), 'init', 'attio-sync').code, 0);
 
-    // 2. The module, pointed at the fake: enter generates the webhook secret.
+    // 2. The module, pointed at the fake. Attio issues each webhook's secret
+    //    when lf serve registers it, so none is asked for here.
     const connected = await ok(
       lf(dir, ['connect', '@lf/attio', '--base-url', `${F}/attio`, '--oauth-authorize-url', `${F}/oauth/authorize`, '--oauth-token-url', `${F}/oauth/token`], {
-        answers: ['', 'lf-attio-app', 'lf-attio-secret', '8976'],
+        answers: ['lf-attio-app', 'lf-attio-secret', '8976'],
       }),
     );
     assert.match(connected, /installed @lf\/attio as externals\/attio/);
     assert.match(connected, /http:\/\/127\.0\.0\.1:8976\/callback/);
+    assert.doesNotMatch(connected, /webhooks are signed with/);
 
     // 3. Henry signs in, headless: the browser's redirect pasted back.
     const adding = lf(dir, ['credential', 'add', '--module', '@lf/attio', 'henry_attio', '--headless'], { answers: ['', ''] });

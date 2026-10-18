@@ -76,7 +76,7 @@ fn served_of(running: &RunningExternal) -> Served {
             secret_field: yaml.map(|w| w.secret_field.clone()).unwrap_or_else(|| DEFAULT_WEBHOOK_SECRET_FIELD.into()),
         }),
         None => yaml.map(|w| InboundSetup {
-            declaration: Declaration { provider_key: manifest.name.clone(), scheme: Scheme::Remote, signature_headers: vec![w.header.to_lowercase()], intercepts: Vec::new() },
+            declaration: Declaration { provider_key: manifest.name.clone(), scheme: Scheme::Remote, signature_headers: vec![w.header.to_lowercase()], intercepts: Vec::new(), secret_from_provider: false },
             secret_field: w.secret_field.clone(),
         }),
     };

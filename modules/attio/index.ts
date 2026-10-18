@@ -50,6 +50,8 @@ export const attioModule = defineModule({
     providerKey: 'attio',
     scheme: 'attio',
     signatureHeaders: ['attio-signature', 'x-attio-signature', 'x-airtable-content-mac', 'x-webhook-signature'],
+    // Attio issues each webhook's secret when it is registered.
+    secretIssuedBy: 'provider',
   },
   create: (ctx) =>
     new AttioAdapter({ tenant: ctx.config.tenant, client: attioClientFrom(ctx), files: ctx.files, fetch: ctx.fetch }),

@@ -544,6 +544,18 @@ export function builtinModuleInboundVerifier(providerKey: string): InboundVerifi
   return undefined;
 }
 
+/**
+ * Whether a built-in's inbound declares that its provider issues the webhook
+ * secret at registration (`secretIssuedBy: 'provider'`): its registration
+ * must then return one, as a remote's must.
+ */
+export function builtinInboundSecretIssuedByProvider(providerKey: string): boolean {
+  return adapterModuleLines().some((entry) => {
+    const declared = entry.load().inbound;
+    return declared?.providerKey.toUpperCase() === providerKey.toUpperCase() && declared.secretIssuedBy === 'provider';
+  });
+}
+
 // ── Periodic tasks ──────────────────────────────────────────────────────────
 // A module's `periodic` declarations, as work kinds: one periodic kind per
 // declared task, run once per install (each connected credential of the

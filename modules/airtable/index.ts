@@ -66,6 +66,8 @@ export const airtableModule = defineModule({
     providerKey: 'airtable',
     scheme: 'airtable_mac',
     signatureHeaders: ['attio-signature', 'x-attio-signature', 'x-airtable-content-mac', 'x-webhook-signature'],
+    // Airtable issues each webhook's MAC secret when it is registered.
+    secretIssuedBy: 'provider',
   },
   create: (ctx) => {
     const base = ctx.config.constructionArgs.base;

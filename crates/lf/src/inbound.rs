@@ -95,6 +95,9 @@ pub struct Declaration {
     /// Lower case; the first one present carries the signature.
     pub signature_headers: Vec<String>,
     pub intercepts: Vec<Intercept>,
+    /// Whether the provider issues the secret when the webhook is registered
+    /// (`secretIssuedBy: provider`), rather than the installer setting it.
+    pub secret_from_provider: bool,
 }
 
 impl Declaration {
@@ -128,7 +131,15 @@ impl Declaration {
                 })
                 .collect::<Result<_, _>>()?,
         };
-        Ok(Declaration { provider_key: provider_key.to_string(), scheme, signature_headers, intercepts })
+        let secret_from_provider = match value.get("secretIssuedBy") {
+            None => false,
+            Some(issuer) => match issuer.as_str() {
+                Some("installer") => false,
+                Some("provider") => true,
+                _ => return Err("secretIssuedBy: expected installer or provider".into()),
+            },
+        };
+        Ok(Declaration { provider_key: provider_key.to_string(), scheme, signature_headers, intercepts, secret_from_provider })
     }
 }
 
@@ -646,7 +657,7 @@ mod tests {
 
     #[test]
     fn a_declaration_holds_the_signed_inbound_rule() {
-        let declared = Declaration { provider_key: "crm".into(), scheme: Scheme::Attio, signature_headers: vec!["x-sig".into()], intercepts: Vec::new() };
+        let declared = Declaration { provider_key: "crm".into(), scheme: Scheme::Attio, signature_headers: vec!["x-sig".into()], intercepts: Vec::new(), secret_from_provider: false };
         let unsigned_key = to_hex(&hmac_sha256(b"", BODY));
         assert!(verify_with_scheme(Scheme::Attio, BODY, &headers(&[("x-sig", &unsigned_key)]), "", &declared.signature_headers), "attio is lenient alone");
         assert!(!verify_declared(&declared, BODY, &headers(&[("x-sig", &unsigned_key)]), ""), "never under a declaration");
@@ -671,5 +682,10 @@ mod tests {
         assert!(read(r#"{"providerKey":"acme","scheme":"nope","signatureHeaders":["x"]}"#).is_err());
         assert!(read(r#"{"providerKey":"acme","scheme":"remote","signatureHeaders":[]}"#).is_err());
         assert!(read(r#"{"providerKey":"acme","scheme":"remote","signatureHeaders":["X-Upper"]}"#).is_err());
+        // Who sets the secret: the installer unless the provider issues it.
+        assert!(!ok.secret_from_provider);
+        assert!(read(r#"{"providerKey":"attio","scheme":"attio","signatureHeaders":["x"],"secretIssuedBy":"provider"}"#).unwrap().secret_from_provider);
+        assert!(!read(r#"{"providerKey":"attio","scheme":"attio","signatureHeaders":["x"],"secretIssuedBy":"installer"}"#).unwrap().secret_from_provider);
+        assert!(read(r#"{"providerKey":"attio","scheme":"attio","signatureHeaders":["x"],"secretIssuedBy":"someone"}"#).is_err());
     }
 }

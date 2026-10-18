@@ -825,6 +825,12 @@ host verifies each delivery before `preprocessInbound` sees it:
   `x-slack-request-timestamp`, which the scheme fixes.
 - `intercepts` (optional) names requests the host answers itself, unsigned,
   before verifying: `slack_url_verification` echoes Slack's `challenge`.
+- `secretIssuedBy` (optional) says who sets the key deliveries are signed
+  with. `installer`, the default: whoever installs the module sets it (`lf
+  connect` generates one or takes the one typed). `provider`: the provider
+  issues it when the webhook is registered, as `ensureEventSubscription`'s
+  `secret`; nobody is asked for it, and a registration that returns none is
+  refused (and withdrawn). Attio and Airtable issue theirs.
 - One host rule for every scheme: a delivery is refused when the key it
   should be signed with is missing, blank or still the placeholder a
   subscription holds before its registration returns a secret, and when its
@@ -1241,6 +1247,7 @@ from the root, so no automation can walk the collection.
   - New: awaits (`resolveAwait`, `wakeKeys`), the two push doors (`emit`, `wake`), paging (`iterateRelatedPage`), and files by URL.
   - A webhook subscription must return a secret, and deliveries are signed.
   - Clarified within version 2 (no bump; the reference adapter declares no file field, and conformance is unchanged for it): a file is read only at a field the catalog declares `kind: "file"` or in a resource's `fileRef`; a file ref anywhere else is data. File refs Listen-Fire sends (in a write, a position's resources, evidence) name no credential. The CLI gains `files-declared`.
+- **`inbound.secretIssuedBy`** (within version 2, no bump; additive, absent means `installer`). A module says whether the installer sets its webhook signing secret or the provider issues it at registration; for `provider`, `lf connect` asks for none ([Declared inbound signatures](#declared-inbound-signatures)).
 - **`deletable` on a type** (within version 2, no bump; language version 5, Dancing Wren). A type's `describe` may say `"deletable": true` when `deleteRecord` removes one. The field is additive: an older server that never sends it still installs, speaks version 2 and passes conformance, and an automation pinned to language version 4 or earlier deletes as before. The ruling: no protocol version bump. Under language version 5 an adapter that omits it has every `delete` of its types refused when the automation is checked (`MOV_DELETE_NOT_DECLARED`); declare it to allow them.
 - **Modules** (within version 2, no bump). The manifest may declare
   `credentials`, `inbound`, `poll` and `periodic`; a request may carry

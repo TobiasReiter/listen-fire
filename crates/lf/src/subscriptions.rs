@@ -106,8 +106,10 @@ async fn reconcile_one(session: &Session, name: &str) -> Result<Option<(String, 
         return Ok((!wanted.is_empty()).then(|| (format!("no credential to register its webhook under: lf credential add --module {name} <name>"), false)));
     };
     let registered = Registered::of(credential);
-    let provider = inbound_of(running).ok_or("it takes no webhooks")?.declaration.provider_key;
-    let secret_field = inbound_of(running).map(|s| s.secret_field).unwrap_or_default();
+    let setup = inbound_of(running).ok_or("it takes no webhooks")?;
+    let provider = setup.declaration.provider_key.clone();
+    let issued_by_provider = setup.declaration.secret_from_provider;
+    let secret_field = setup.secret_field;
     let call = |method: &'static str, params: serde_json::Value| async move {
         let raw = rpc(running, session.credentials(), LOCAL_TENANT, method, params).await?;
         crate::wire_results::check(method, name, &raw)
@@ -138,6 +140,7 @@ async fn reconcile_one(session: &Session, name: &str) -> Result<Option<(String, 
     if let Some((id, events)) = &current {
         params["current"] = serde_json::json!({ "externalId": id, "events": events });
     }
+    let had_webhook = current.is_some();
     let answer = call("ensureEventSubscription", params).await?;
     let events = wanted.join(",");
     if answer == Js::Null {
@@ -146,7 +149,15 @@ async fn reconcile_one(session: &Session, name: &str) -> Result<Option<(String, 
     }
     let id = answer.get("externalId").and_then(Js::as_str).map(str::to_string).or(current.map(|(id, _)| id)).unwrap_or_default();
     let mut fields = vec![(WEBHOOK_ID_FIELD.to_string(), id.clone()), (WEBHOOK_EVENTS_FIELD.to_string(), events.clone()), (WEBHOOK_URL_FIELD.to_string(), callback.clone())];
-    if let Some(secret) = answer.get("secret").and_then(Js::as_str) {
+    let issued = answer.get("secret").and_then(Js::as_str).filter(|s| !s.is_empty());
+    // The provider issues the secret (`secretIssuedBy: provider`) and none is
+    // held: nothing could verify a delivery, so the webhook is withdrawn.
+    let held = credential.fields.get(&secret_field).is_some_and(|s| !s.is_empty()) && had_webhook;
+    if issued_by_provider && issued.is_none() && !held {
+        call("removeEventSubscription", serde_json::json!({ "callbackUrl": callback, "externalId": id })).await?;
+        return Ok(Some((format!("registering its webhook returned no secret, and {name} issues the secret deliveries are signed with: withdrawn, as none could be verified"), false)));
+    }
+    if let Some(secret) = issued {
         fields.push((secret_field, secret.to_string()));
     }
     keep(credential, fields).await?;

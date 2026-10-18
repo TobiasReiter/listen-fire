@@ -124,6 +124,8 @@ jest.mock('../../adapters/registry', () => {
   };
 });
 
+jest.mock('../../adapters/builtin_modules', () => ({ builtinInboundSecretIssuedByProvider: jest.fn(() => false) }));
+
 const ensureCalls: Array<{
   events: string[];
   callbackUrl: string;
@@ -157,6 +159,7 @@ import type { TeamId } from '../../../../generated/kysely/core/Team';
 
 import { syncListenSubscriptions } from '../listen_subscriptions';
 import { resolveAdapter } from '../../adapters/resolve';
+import { builtinInboundSecretIssuedByProvider } from '../../adapters/builtin_modules';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const kyselyMock = require('../../../../lib/kysely') as {
@@ -188,6 +191,50 @@ beforeEach(() => {
   kyselyMock.__reset();
   ensureCalls.length = 0;
   removeCalls.length = 0;
+});
+
+describe('syncListenSubscriptions — a built-in whose provider issues the webhook secret', () => {
+  const pantryListen = (events: string[]) =>
+    triggerRow({ name: 'issued', config: { shelf: 'shf_north', crate: 'crt_apples', events } });
+  const secretlessOnce = () =>
+    (resolveAdapter as jest.Mock).mockResolvedValueOnce({
+      ensureEventSubscription: async (input: { events: string[]; callbackUrl: string }) => {
+        ensureCalls.push(input);
+        return { externalId: `wh-${ensureCalls.length}` };
+      },
+      removeEventSubscription: async (input: { callbackUrl: string; externalId?: string }) => {
+        removeCalls.push(input);
+      },
+    });
+
+  beforeEach(() => (builtinInboundSecretIssuedByProvider as jest.Mock).mockReturnValue(true));
+  afterEach(() => (builtinInboundSecretIssuedByProvider as jest.Mock).mockReturnValue(false));
+
+  it('a registration that returns no secret is refused and withdrawn', async () => {
+    kyselyMock.__tables.trigger.push(pantryListen(['thing.created']));
+    secretlessOnce();
+
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([
+      'pantry: event-subscription provisioning failed (the provider issues the webhook secret but its registration returned none; deliveries cannot be verified)',
+    ]);
+    expect(kyselyMock.__tables.webhook_subscription).toEqual([]);
+    expect(removeCalls).toHaveLength(1);
+  });
+
+  it('a change answered without a secret keeps the one the provider issued before', async () => {
+    kyselyMock.__tables.trigger.push(pantryListen(['thing.created']));
+    await syncListenSubscriptions({ teamId: TEAM });
+    kyselyMock.__tables.trigger[0].config = { shelf: 'shf_north', crate: 'crt_apples', events: ['thing.created', 'thing.deleted'] };
+    secretlessOnce();
+
+    const { notes } = await syncListenSubscriptions({ teamId: TEAM });
+
+    expect(notes).toEqual([]);
+    expect(removeCalls).toEqual([]);
+    expect(kyselyMock.__tables.webhook_subscription[0]).toMatchObject({ status: 'active', webhook_secret: 'secret-1' });
+  });
 });
 
 describe('syncListenSubscriptions — channel identity is the resolved address', () => {

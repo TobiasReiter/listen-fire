@@ -1,7 +1,10 @@
 # Attio sync with `lf`
 
-One movement: when a company is created in Attio, it is found again by its
-name and given a description. `lf serve` registers Attio's webhook itself, so
+One movement: when a company is created or changed in Attio, it is found
+again by its name and given a description. Its own update comes back from
+Attio as `record.updated`; lf knows that for the movement's own write (the
+record is just as it left it) and runs nothing, so it never loops, while a
+change by someone else runs it again. `lf serve` registers Attio's webhook itself, so
 a company created in Attio runs the movement.
 
 The files here are what the walkthrough below ends with (no secrets: those are
@@ -15,7 +18,7 @@ URI, and the scopes for records and webhooks (read-write).
 
 ```
 lf init attio-sync && cd attio-sync
-lf connect @lf/attio          # enter (generates the webhook secret), client id, client secret, 8976
+lf connect @lf/attio          # client id, client secret, 8976 (Attio issues the webhook secret itself)
 lf credential add --module @lf/attio henry_attio     # enter, enter; signs you in in the browser
 cp <this folder>/movements/sync.mvt movements/
 lf check
@@ -30,7 +33,7 @@ publicUrl: https://<your tunnel>
 ```
 
 ```
-lf serve --port 4400   # prints: attio: registered webhook <id> for record.created at <publicUrl>/api/public/webhook-sync/attio/henry_attio
+lf serve --port 4400   # prints: attio: registered webhook <id> for record.created,record.updated at <publicUrl>/api/public/webhook-sync/attio/henry_attio
 lf runs                # after you create a company in Attio
 ```
 
@@ -50,7 +53,7 @@ F=http://127.0.0.1:5556
 ```
 lf init attio-sync && cd attio-sync
 lf connect @lf/attio --base-url $F/attio --oauth-authorize-url $F/oauth/authorize --oauth-token-url $F/oauth/token
-#   enter, any client id, any client secret, 8976
+#   any client id, any client secret, 8976
 lf credential add --module @lf/attio henry_attio --headless
 #   enter, enter; open the printed URL (curl -si '<url>' shows the Location), paste the Location back
 cp <this folder>/movements/sync.mvt movements/ && mkdir -p events && cp <this folder>/events/created.json events/
@@ -69,3 +72,15 @@ lf runs
 
 Delivering the same event again runs nothing: a record is created once, so its
 `record.created` is run once.
+
+The movement's own update echoes back as `record.updated` and runs nothing:
+
+```
+curl -s -XPOST $F/attio/control/deliver -H 'content-type: application/json' \
+  -d '{"events":[{"event_type":"record.updated","id":{"object_id":"companies","record_id":"<id>"}}]}'
+#   lf serve prints: sync:stamp wrote the record <id> and it is unchanged since: this event is that write's echo and runs nothing
+```
+
+Change the description as someone else would (`PATCH $F/attio/v2/objects/companies/records/<id>`
+with `{"data":{"values":{"description":"Edited by Bob"}}}`) and deliver the same event: the
+movement runs and writes its description back.

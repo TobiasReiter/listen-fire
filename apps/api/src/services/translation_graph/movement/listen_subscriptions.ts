@@ -40,6 +40,7 @@ import { buildWebhookTargetUrl, webhookProviderKey } from '../../webhook_sync/ur
 import { UNREGISTERED_SECRET } from 'movement-engine/public/inbound';
 import { hasAdapter, resolveAdapterSlug } from '../adapters/registry';
 import { resolveAdapter } from '../adapters/resolve';
+import { builtinInboundSecretIssuedByProvider } from '../adapters/builtin_modules';
 import { teamAdapterManifestSet } from '../adapters/team_manifests';
 import { eventConfigList } from 'movement-engine/public/inbound';
 import { canonicalAddress, resolvedAddressOfJson } from './listen_address';
@@ -257,6 +258,12 @@ async function provisionedRows(teamId: TeamId): Promise<SubscriptionRow[]> {
 }
 
 const NO_SECRET_REFUSAL = 'remote adapter returned no secret; deliveries cannot be verified';
+const NO_ISSUED_SECRET_REFUSAL = 'the provider issues the webhook secret but its registration returned none; deliveries cannot be verified';
+
+/** A secret a delivery can be verified against (not the placeholder). */
+function usableSecret(secret: string | null): boolean {
+  return secret !== null && secret.trim() !== '' && secret !== UNREGISTERED_SECRET;
+}
 
 /**
  * A remote's deliveries are verified only by the secret its registration
@@ -322,6 +329,10 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
     // restart, a wiped store), and an idempotent re-ensure is the only way this
     // side finds out. A built-in's registration is trusted until it changes.
     const remote = remoteSlugs.has(channel.slug);
+    // A built-in whose provider issues the secret at registration
+    // (`inbound.secretIssuedBy: 'provider'`) must return one, unless the
+    // row already holds the one it issued (a PATCH keeps it).
+    const issuedByProvider = !remote && builtinInboundSecretIssuedByProvider(channel.providerKey);
     if (settled && !remote) continue;
     try {
       const adapter = await resolveAdapter({
@@ -347,7 +358,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
         const refused =
-          remote &&
+          (remote || (issuedByProvider && !usableSecret(row.secret))) &&
           (await withdrawIfSecretless({
             adapter,
             registration,
@@ -368,7 +379,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
             })
             .where('id', '=', row.id as WebhookSubscriptionId)
             .execute();
-          notes.push(`${channel.slug}: event-subscription provisioning failed (${NO_SECRET_REFUSAL})`);
+          notes.push(`${channel.slug}: event-subscription provisioning failed (${remote ? NO_SECRET_REFUSAL : NO_ISSUED_SECRET_REFUSAL})`);
           continue;
         }
         // The remote confirmed what this side already holds: nothing to write.
@@ -425,7 +436,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
           ...(Object.keys(channel.scope).length > 0 ? { scope: channel.scope } : {}),
         });
         if (
-          remoteSlugs.has(channel.slug) &&
+          (remote || issuedByProvider) &&
           (await withdrawIfSecretless({
             adapter,
             registration,
@@ -433,7 +444,7 @@ export async function syncListenSubscriptions(input: { teamId: TeamId }): Promis
             scope: channel.scope,
           }))
         ) {
-          throw new Error(NO_SECRET_REFUSAL);
+          throw new Error(remote ? NO_SECRET_REFUSAL : NO_ISSUED_SECRET_REFUSAL);
         }
         await getAutomationsQb(['webhook_subscription'])
           .updateTable('webhook_subscription')

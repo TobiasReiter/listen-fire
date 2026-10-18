@@ -148,14 +148,18 @@ pub fn module_packages(root: &Path) -> Vec<String> {
     names
 }
 
-/// The secret field the external's inbound deliveries are signed with, when
-/// it takes any (doors.ts `inboundSetupOf`): declared in its manifest answer,
-/// or by the `webhook` block of its lf-external.yaml.
+/// The secret field the installer sets for the external's inbound deliveries,
+/// when it takes any (doors.ts `inboundSetupOf`): declared in its manifest
+/// answer, or by the `webhook` block of its lf-external.yaml. None for a
+/// provider that issues its own when the webhook is registered.
 fn inbound_secret_field(external: &External, answer: &Js) -> Option<String> {
     let file: Option<serde_yaml::Value> = std::fs::read_to_string(external.dir.join(EXTERNAL_MANIFEST)).ok().and_then(|t| serde_yaml::from_str(&t).ok());
     let webhook = file.as_ref().and_then(|f| f.get("webhook")).filter(|w| !w.is_null());
     let secret_field = webhook.and_then(|w| w.get("secretField")).and_then(|f| f.as_str()).map(str::to_string);
-    if answer.get("inbound").is_some() {
+    if let Some(inbound) = answer.get("inbound") {
+        if inbound.get("secretIssuedBy").and_then(Js::as_str) == Some("provider") {
+            return None;
+        }
         return Some(secret_field.unwrap_or_else(|| DEFAULT_WEBHOOK_SECRET_FIELD.into()));
     }
     webhook.and(secret_field)

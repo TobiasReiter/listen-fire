@@ -748,6 +748,12 @@ export const WireInboundDeclaration = z.object({
     .array(z.string().regex(HEADER_NAME, 'a signature header is a lower-case header name'))
     .min(1),
   intercepts: z.array(WireInboundIntercept).optional(),
+  /** Who sets the secret deliveries are signed with. `installer` (the
+   *  default): whoever installs the module sets it (`lf connect` generates or
+   *  asks for it). `provider`: the provider issues it when the webhook is
+   *  registered (`ensureEventSubscription` returns it), so nobody is asked,
+   *  and a registration that returns none is refused. */
+  secretIssuedBy: z.enum(['installer', 'provider']).optional(),
 });
 export type WireInboundDeclarationShape = z.infer<typeof WireInboundDeclaration>;
 
