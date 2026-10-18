@@ -35,9 +35,9 @@ import './_profile_loader';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 import { anthropicToolLoop, type TurnEvent } from '../../lib/anthropic';
-import { parseChatModelName } from 'movement-engine/lib/models/registry';
+import { parseChatModelName } from 'movement-engine/public/models';
 
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatModelName } from 'movement-engine/public/models';
 
 import {
   createMovementAgentTools,

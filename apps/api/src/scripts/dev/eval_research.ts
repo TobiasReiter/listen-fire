@@ -73,9 +73,9 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { anthropicChatStructured } from '../../lib/anthropic';
-import { parseChatModelName } from 'movement-engine/lib/models/registry';
+import { parseChatModelName } from 'movement-engine/public/models';
 
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
+import type { ChatModelName } from 'movement-engine/public/models';
 
 import { runInContext } from '../../services/context/utils';
 import { research, usageWasNotMeasured } from '../../services/translation_graph/engine/transforms/research';

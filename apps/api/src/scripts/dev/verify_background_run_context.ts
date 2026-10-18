@@ -34,7 +34,7 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
 import { ensureDevLoopTeam } from './_lib';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { getAutomationsQb, getKnowledgeQb } from '../../lib/kysely';
 import { saveMovement } from '../../services/translation_graph/movement/provision';
 import { dispatchTriggerByIdEvent } from '../../services/translation_graph/triggers/router';
@@ -42,7 +42,7 @@ import { unsafeCurrentContext } from '../../services/context';
 
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { TriggerId } from '../../generated/kysely/automations/Trigger';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 
 // ── The page the movement loads ───────────────────────────────────────────
 

@@ -67,7 +67,7 @@ import { embed } from '../../lib/models/embedding';
 import { embeddingDestinations } from 'movement-engine/lib/models/embedding/destinations';
 import { generateImage } from '../../lib/models/image';
 import { assertModelMapConfigured, resolveModel } from 'movement-engine/lib/models/map';
-import { parseChatModelName } from 'movement-engine/lib/models/registry';
+import { parseChatModelName } from 'movement-engine/public/models';
 
 import type {
   ChatModelName,
@@ -75,7 +75,7 @@ import type {
   ImageModelName,
   ModelName,
   TranscriptionModelName,
-} from 'movement-engine/lib/models/registry';
+} from 'movement-engine/public/models';
 
 import { transcribe } from '../../lib/models/transcription';
 

@@ -29,8 +29,8 @@ import {
   type InstanceSchema,
 } from 'movement-lang';
 
-import type { SourcePosition } from 'movement-engine/services/translation_graph/types';
-import type { EdgesFromResult } from 'movement-engine/services/translation_graph/adapter';
+import type { SourcePosition } from 'movement-engine/public/catalog';
+import type { EdgesFromResult } from 'movement-engine/public/adapter';
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
@@ -39,9 +39,9 @@ import { AffinityAdapter } from '@listen-fire/affinity';
 import { hostedModels } from '../../services/translation_graph/adapters/module_host';
 import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
 import { AFFINITY_MANIFEST } from '@listen-fire/affinity';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 import { refineInstanceSchema } from '../../services/translation_graph/movement/refinements';
-import { makeMetaPosition, positionLabel } from 'movement-engine/services/translation_graph/types';
+import { makeMetaPosition, positionLabel } from 'movement-engine/public/catalog';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 

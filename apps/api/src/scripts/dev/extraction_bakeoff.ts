@@ -53,17 +53,17 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ExtractExpression } from 'movement-lang';
-import type { ChatModelName } from 'movement-engine/lib/models/registry';
-import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import type { ChatModelName } from 'movement-engine/public/models';
+import type { MovementTraceEntry } from 'movement-engine/public/trace';
 import type {
   LlmCallInput,
   LlmClient,
 } from '../../services/translation_graph/engine/batched_extraction';
 
-import { BARE_HOST } from 'movement-engine/services/movement_engine/host_kit';
+import { BARE_HOST } from 'movement-engine/public/host';
 import { anthropicChatDetailed } from '../../lib/anthropic';
 import { parseJsonReply } from '../../lib/prompts/execute';
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { makeAnthropicLlmClient } from '../../services/translation_graph/movement/llm_clients';
 import {
   buildExtractSpec,

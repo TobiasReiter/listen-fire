@@ -56,10 +56,10 @@ import { pollTriggerNow } from '../../services/poll_source/worker';
 import { EVERTRACE_API_VERSION } from '@listen-fire/evertrace/api_client';
 import { dispatchTriggerByIdEvent } from '../../services/translation_graph/triggers/router';
 import { dispatchMutationEvent } from '../../services/translation_graph/triggers/mutation_dispatch';
-import { userEditContext } from 'movement-engine/services/translation_graph/mutation_context';
+import { userEditContext } from 'movement-engine/public/adapter';
 
 import type { RecordMutationEvent } from '../../services/translation_graph/triggers/record_mutation_event';
-import type { TriggerEvent } from 'movement-engine/services/translation_graph/triggers/types';
+import type { TriggerEvent } from 'movement-engine/public/inbound';
 import type { NodeId } from '../../generated/kysely/knowledge/Node';
 import type { NodeTypeId } from '../../generated/kysely/knowledge/NodeType';
 

@@ -45,7 +45,7 @@ import './_profile_loader';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { logger } from 'movement-engine/services/logger';
+import { logger } from 'movement-engine/public/log';
 import { LlmUsageContext } from '../../lib/llm_usage';
 import {
   runUnifiedAgent,

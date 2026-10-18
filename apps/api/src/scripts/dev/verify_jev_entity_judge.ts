@@ -8,7 +8,7 @@
  *
  * Usage: JEV_KEY=... npx tsx apps/api/src/scripts/dev/verify_jev_entity_judge.ts
  */
-import type { ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import type { ExternalRecordRef } from 'movement-engine/public/adapter';
 
 import { judgeEntityMatchViaJev } from '../../services/translation_graph/engine/entity_match';
 

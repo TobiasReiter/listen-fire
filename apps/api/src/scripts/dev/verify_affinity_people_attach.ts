@@ -45,7 +45,7 @@ import type { WriteRecord } from 'movement-engine/services/movement_engine/expre
 import type { TeamId } from '../../generated/kysely/core/Team';
 import type { ExternalServiceCredentialsId } from '../../generated/kysely/automations/ExternalServiceCredentials';
 
-import { runMovement } from 'movement-engine/services/movement_engine/run';
+import { runMovement } from 'movement-engine/public/movement-engine';
 import { AffinityAPIClient } from '@listen-fire/affinity/api_client';
 import {
   AffinityAdapter,
@@ -53,7 +53,7 @@ import {
 } from '@listen-fire/affinity';
 import { hostedModels } from '../../services/translation_graph/adapters/module_host';
 import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
 import { everyCredential, probeEngineHost } from './lib/probe_host';
 import { tenantOfTeam } from '../../services/translation_graph/movement/tenant';
 

@@ -32,7 +32,7 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import type { ExternalRecordRef } from 'movement-engine/services/translation_graph/adapter';
+import type { ExternalRecordRef } from 'movement-engine/public/adapter';
 
 import {
   GENERATIVE_MATCH_THRESHOLD,

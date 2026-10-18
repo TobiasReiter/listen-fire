@@ -53,16 +53,16 @@ import type {
   UpdateResult,
   WriteInput,
   WriteResult,
-} from 'movement-engine/services/translation_graph/adapter';
-import type { AwaitPoint, AwaitResolution } from 'movement-engine/services/translation_graph/awaitable';
+} from 'movement-engine/public/adapter';
+import type { AwaitPoint, AwaitResolution } from 'movement-engine/public/adapter';
 import type {
   SchemaEntryPoint,
   SchemaTypeDescriptor,
-} from 'movement-engine/services/translation_graph/types';
+} from 'movement-engine/public/catalog';
 import type { RemoteAdapterManifestFile } from '../../services/translation_graph/adapters/remote/manifest';
 
-import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from 'movement-engine/services/translation_graph/adapter';
-import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/services/translation_graph/types';
+import { BASE_RUNTIME_CAPABILITIES, containerAssociation } from 'movement-engine/public/adapter';
+import { META_RECORD_TYPE, makeStablePosition, positionData } from 'movement-engine/public/catalog';
 import { AdapterBadRequestError, createAdapterProtocolHandler } from 'module-kit';
 
 

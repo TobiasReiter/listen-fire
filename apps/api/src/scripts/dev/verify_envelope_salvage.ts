@@ -19,9 +19,9 @@
  */
 
 import type { ExtractExpression, Span } from 'movement-lang';
-import type { MovementTraceEntry } from 'movement-engine/services/movement_engine/expression';
+import type { MovementTraceEntry } from 'movement-engine/public/trace';
 
-import { BARE_HOST } from 'movement-engine/services/movement_engine/host_kit';
+import { BARE_HOST } from 'movement-engine/public/host';
 import {
   ROOT_EXTRACT_DESCRIPTION,
   materializeExtract,

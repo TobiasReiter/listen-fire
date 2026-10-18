@@ -5,9 +5,9 @@
 
 import type { CatalogSnapshot } from 'movement-lang';
 import type { TeamId } from '../../../generated/kysely/core/Team';
-import type { EngineHost } from 'movement-engine/services/movement_engine/host';
-import type { LiveAdapterResolver } from 'movement-engine/services/translation_graph/engine/adapter_table';
-import type { DryRunWriteSink } from 'movement-engine/services/translation_graph/engine/dry_run_adapter';
+import type { EngineHost } from 'movement-engine/public/host';
+import type { LiveAdapterResolver } from 'movement-engine/public/host';
+import type { DryRunWriteSink } from 'movement-engine/public/adapter';
 
 import { productionEngineHost } from '../../../services/translation_graph/movement/engine_host';
 

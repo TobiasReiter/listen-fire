@@ -30,8 +30,8 @@ import { AffinityAdapter } from '@listen-fire/affinity';
 import { hostedModels } from '../../services/translation_graph/adapters/module_host';
 import { platformModuleFiles } from '../../services/translation_graph/engine/files/module_files';
 import { AFFINITY_MANIFEST } from '@listen-fire/affinity';
-import { instanceSchemaFromDescriptors } from 'movement-engine/services/translation_graph/movement/schema_projection';
-import { makeStablePosition } from 'movement-engine/services/translation_graph/types';
+import { instanceSchemaFromDescriptors } from 'movement-engine/public/catalog';
+import { makeStablePosition } from 'movement-engine/public/catalog';
 
 const BASE = process.env.FAKE_BASE ?? 'http://localhost:6291/affinity';
 
