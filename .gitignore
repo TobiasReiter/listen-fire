@@ -85,3 +85,4 @@ HEALTH.md
 packages/*/dist/
 modules/*/dist/
 package.json.unpacked
+/site/

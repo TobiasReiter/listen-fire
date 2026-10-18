@@ -14,3 +14,15 @@ Deployment documentation lives under [`deploy/`](../deploy):
 - [`deploy/guides/`](../deploy/guides/README.md): the same runbook translated onto a specific platform: Render, AWS, Vercel plus a container host, and bringing your own identity provider.
 
 The reference for the movement language itself is the handbook the authoring agents read, under [`apps/api/src/lib/knowledge/movement_handbook/chapters`](../apps/api/src/lib/knowledge/movement_handbook/chapters).
+
+## The documentation site
+
+`pnpm docs:build` builds a static site into `site/` (gitignored) from the handbook chapters and the guides and contracts above, then checks every internal link. The generator is [`scripts/docs/build.mjs`](../scripts/docs/build.mjs); it needs no install. The [`docs` workflow](../.github/workflows/docs.yml) publishes it to GitHub Pages on a `docs-v*` tag or a manual run, never on a branch push.
+
+URL scheme (stable; the language server links to it):
+
+- `/docs/v<N>/<page>#<anchor>`, where `N` is the language version (`/docs/v5/` is version 5, Dancing Wren).
+- `<page>` is a handbook chapter id (`foundations`, `anatomy`, `expressions`, `writes`, `traversal`, `extraction`, `branching`, `listeners`, `asks`, `patterns`, `use-cases`, `runs`, `reference`, `builtins`), a guide (`getting-started-lf`, `core-slots`, `embedding`, `adapter-protocol`, `dancing-wren-migration`), or `contracts` and `contracts-<name>`.
+- `<anchor>` is the heading's GitHub style slug: the handbook's `###` section names (`writes#identity`) are the same anchors the in-app handbook routes use.
+- Pages are files, so `.html` also works (`/docs/v5/writes.html#identity`).
+- A new language version adds an entry to `VERSIONS` in the generator; the older sections stay at their URLs.

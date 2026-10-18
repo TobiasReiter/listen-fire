@@ -62,6 +62,10 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 
 - A polled listen's own poll interval is spelled `every: 5m` from language version 5 (`listen to feed { every: 5m } fire seen`); versions 1 to 4 keep `pollIntervalSeconds: 300`, and under 5 that key is `MOV_V5_SPELLING` with the `every` fix. The platform's poll worker and lf both read it; every polled lf module accepts it.
 
+### r-docsite
+
+- A static documentation site built from the repo's handbook, guides and contracts: `pnpm docs:build` writes `site/docs/v5/<page>.html` (anchors stable, URL scheme in `docs/README.md`) and checks its links; the `docs` workflow publishes to GitHub Pages on a `docs-v*` tag or manual run only.
+
 ### r-poll
 
 - lf polls a module that declares `poll: { intervalSeconds }`: `lf serve` on the interval, `lf drain` when due (a poll missed while no worker ran is one poll; one worker at a time per listen, under the work queue's lease), `lf run --poll <movement>` at once. The module's checkpoint is kept per listen in either store (no migration); each event runs the listen as a webhook's does. A listen with no webhook source (Granola, Evertrace, Dealroom, Gmail's poll) now fires in lf.
