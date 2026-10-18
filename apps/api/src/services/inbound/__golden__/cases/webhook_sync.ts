@@ -342,7 +342,7 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
   },
   {
     id: 'affinity-unset-key-refused',
-    note: 'A subscription with no signature key refuses every delivery: 401. (Before Affinity became a module that declares its signed inbound, URL secrecy carried it and the delivery was accepted.)',
+    note: 'A new subscription with no signature key refuses every delivery: 401. (Only a grandfathered one, from before signed inbound, still lets it in.)',
     arrange: () => {
       givenSubscription({ provider: 'AFFINITY', webhook_secret: '' });
       givenTrigger({ kind: 'AFFINITY' });
@@ -362,6 +362,63 @@ export const webhookSyncCases: GoldenCase[] = define('webhook_sync', [
     request: post(PATH('affinity'), json({ type: 'list_entry.created' }), (body) => ({
       'attio-signature': hmacHex(SECRETS.affinity, body),
     })),
+  },
+
+  // ── Grandfathered subscriptions: rows that predate signed inbound keep their door's old leniency ─
+  {
+    id: 'attio-grandfathered-empty-secret-accepted',
+    note: 'A grandfathered Attio subscription with no secret verifies against an empty key, as the door always did: 200.',
+    arrange: () => {
+      givenSubscription({ webhook_secret: '', grandfathered_unsigned: true });
+      givenTrigger();
+    },
+    request: post(PATH('attio'), json(ATTIO_BODY), (body) => ({ 'attio-signature': hmacHex('', body) })),
+  },
+  {
+    id: 'attio-new-empty-secret-refused',
+    note: 'A new Attio subscription with no secret refuses even a delivery signed with the empty key: 401.',
+    arrange: () => {
+      givenSubscription({ webhook_secret: '' });
+      givenTrigger();
+    },
+    request: post(PATH('attio'), json(ATTIO_BODY), (body) => ({ 'attio-signature': hmacHex('', body) })),
+  },
+  {
+    id: 'airtable-grandfathered-empty-secret-accepted',
+    note: 'A grandfathered Airtable subscription with no secret verifies against an empty key: 200.',
+    arrange: () => {
+      givenSubscription({ provider: 'AIRTABLE', webhook_secret: '', grandfathered_unsigned: true });
+      givenTrigger({ kind: 'AIRTABLE' });
+    },
+    request: post(PATH('airtable'), json({ base: { id: 'app1' }, webhook: { id: 'wh1' } }), (body) => ({
+      'x-airtable-content-mac': `hmac-sha256=${createHmac('sha256', Buffer.from('', 'base64')).update(body).digest('hex')}`,
+    })),
+  },
+  {
+    id: 'airtable-new-empty-secret-refused',
+    note: 'A new Airtable subscription with no secret refuses even a delivery signed with the empty key: 401.',
+    arrange: () => {
+      givenSubscription({ provider: 'AIRTABLE', webhook_secret: '' });
+      givenTrigger({ kind: 'AIRTABLE' });
+    },
+    request: post(PATH('airtable'), json({ base: { id: 'app1' }, webhook: { id: 'wh1' } }), (body) => ({
+      'x-airtable-content-mac': `hmac-sha256=${createHmac('sha256', Buffer.from('', 'base64')).update(body).digest('hex')}`,
+    })),
+  },
+  {
+    id: 'affinity-grandfathered-unset-key-accepted',
+    note: 'A grandfathered Affinity subscription with no key lets any delivery in, as the door always did: 200.',
+    arrange: () => {
+      givenSubscription({ provider: 'AFFINITY', webhook_secret: '', grandfathered_unsigned: true });
+      givenTrigger({ kind: 'AFFINITY' });
+    },
+    request: post(PATH('affinity'), json({ type: 'list_entry.created', body: { id: 7 } })),
+  },
+  {
+    id: 'affinity-grandfathered-key-set-unsigned-rejected',
+    note: 'Setting the key ends the exemption: a grandfathered Affinity subscription with a key refuses an unsigned delivery, 401.',
+    arrange: () => givenSubscription({ provider: 'AFFINITY', webhook_secret: SECRETS.affinity, grandfathered_unsigned: true }),
+    request: post(PATH('affinity'), json({ type: 'list_entry.created', body: { id: 7 } })),
   },
 
   // ── Slack (bring-your-own app): challenge and two-header signature ───────

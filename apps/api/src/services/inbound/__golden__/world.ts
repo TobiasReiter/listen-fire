@@ -12,6 +12,7 @@ export interface FakeSubscription {
   provider: string;
   credentials_id: string | null;
   webhook_secret: string;
+  grandfathered_unsigned: boolean;
   external_webhook_id: string | null;
   inbound_checkpoint: unknown;
 }

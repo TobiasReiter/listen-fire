@@ -9,7 +9,7 @@
 // longer read for built-ins. It headed every chain, so a bad value in it
 // shadowed a good provider signature; it now verifies remote installs only.
 
-import type { InboundIntercept, InboundVerifier } from 'movement-engine/public/inbound';
+import { isUsableInboundSecret, type InboundIntercept, type InboundVerifier } from 'movement-engine/public/inbound';
 
 import { NATIVE_KNOWLEDGE_PROVIDER_KEY } from '../webhook_sync/providers/native_knowledge';
 
@@ -39,3 +39,25 @@ export const LEGACY_SIGNATURE_HEADERS: Readonly<Record<string, InboundVerifier>>
 export const LEGACY_INTERCEPTS: Readonly<Record<string, readonly InboundIntercept[]>> = Object.freeze({
   SLACK: ['slack_url_verification'],
 });
+
+/**
+ * Which verifier checks a built-in's delivery. A provider whose module
+ * declares its inbound is held to the host's signed-inbound rule, except a
+ * grandfathered subscription (one that existed before that rule) while it has
+ * no usable secret: that one keeps its door's old leniency (Attio and Airtable
+ * verifying against an empty key, Affinity letting anything in). Setting a
+ * secret ends the exemption.
+ */
+export function builtInVerifierFor(input: {
+  providerKey: string;
+  secret: string;
+  grandfatheredUnsigned: boolean;
+  /** The verifier the provider's module declares, if it declares one. */
+  declared: InboundVerifier | undefined;
+}): InboundVerifier | undefined {
+  const legacy = LEGACY_SIGNATURE_HEADERS[input.providerKey];
+  if (input.declared !== undefined && input.grandfatheredUnsigned && !isUsableInboundSecret(input.secret) && legacy !== undefined) {
+    return legacy;
+  }
+  return input.declared ?? legacy;
+}

@@ -33,7 +33,7 @@ import { assertEngineConfigured } from 'movement-engine/public/movement-engine';
 import { recordRunEnginesOnRows } from '../services/movement_engine/run_engine_record';
 import { registerExposedFileWork } from '../services/exposed_file/worker';
 import { adapterWorkKinds } from '../services/translation_graph/adapters/packages';
-import { logRefusedModuleInbounds } from '../services/translation_graph/adapters/module_inbound_audit';
+import { logGrandfatheredUnsignedInbounds } from '../services/translation_graph/adapters/module_inbound_audit';
 import { registerLinkedObjectWork } from '../services/webhook_sync/linked_object_refresh';
 import { ensureAutomationsPeriodicWork, registerCoreWork } from '../services/work/register';
 
@@ -163,8 +163,8 @@ async function registerAutomationsWork(): Promise<void> {
   registerLinkedObjectWork();
   await ensureAutomationsPeriodicWork();
   // A report, never a reason not to start.
-  logRefusedModuleInbounds().catch((error: unknown) =>
-    console.warn(`[startup] could not count the webhook subscriptions signed inbound refuses: ${error instanceof Error ? error.message : String(error)}`),
+  logGrandfatheredUnsignedInbounds().catch((error: unknown) =>
+    console.warn(`[startup] could not count the grandfathered unsigned webhook subscriptions: ${error instanceof Error ? error.message : String(error)}`),
   );
 }
 

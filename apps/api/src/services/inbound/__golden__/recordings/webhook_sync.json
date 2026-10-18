@@ -1508,7 +1508,7 @@
   {
     "id": "affinity-unset-key-refused",
     "door": "webhook_sync",
-    "note": "A subscription with no signature key refuses every delivery: 401. (Before Affinity became a module that declares its signed inbound, URL secrecy carried it and the delivery was accepted.)",
+    "note": "A new subscription with no signature key refuses every delivery: 401. (Only a grandfathered one, from before signed inbound, still lets it in.)",
     "request": {
       "method": "POST",
       "path": "/api/public/webhook-sync/affinity/sub-1",
@@ -1561,6 +1561,299 @@
         "content-type": "application/json"
       },
       "body": "{\"type\":\"list_entry.created\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "attio-grandfathered-empty-secret-accepted",
+    "door": "webhook_sync",
+    "note": "A grandfathered Attio subscription with no secret verifies against an empty key, as the door always did: 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "fd473cd834b30742f2bc49f65cff5b4ae0014a70b1d346aa34cf7e2292936127",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "attio",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "ATTIO",
+          "attio"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "attio",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "evt-attio-1",
+          "payload": {
+            "events": [
+              {
+                "event_type": "record.created",
+                "id": {
+                  "record_id": "rec-1"
+                }
+              }
+            ],
+            "event_id": "evt-attio-1"
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "attio",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "attio-new-empty-secret-refused",
+    "door": "webhook_sync",
+    "note": "A new Attio subscription with no secret refuses even a delivery signed with the empty key: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/attio/sub-1",
+      "headers": {
+        "attio-signature": "fd473cd834b30742f2bc49f65cff5b4ae0014a70b1d346aa34cf7e2292936127",
+        "content-type": "application/json"
+      },
+      "body": "{\"events\":[{\"event_type\":\"record.created\",\"id\":{\"record_id\":\"rec-1\"}}],\"event_id\":\"evt-attio-1\"}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "airtable-grandfathered-empty-secret-accepted",
+    "door": "webhook_sync",
+    "note": "A grandfathered Airtable subscription with no secret verifies against an empty key: 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/airtable/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-airtable-content-mac": "hmac-sha256=ed49aa37436060277e8d562fcf2cdeff4f4ad6164e4d1976f6aea3394f54c6d1"
+      },
+      "body": "{\"base\":{\"id\":\"app1\"},\"webhook\":{\"id\":\"wh1\"}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "airtable",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "AIRTABLE",
+          "airtable"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "airtable",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "base": {
+              "id": "app1"
+            },
+            "webhook": {
+              "id": "wh1"
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "airtable",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "airtable-new-empty-secret-refused",
+    "door": "webhook_sync",
+    "note": "A new Airtable subscription with no secret refuses even a delivery signed with the empty key: 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/airtable/sub-1",
+      "headers": {
+        "content-type": "application/json",
+        "x-airtable-content-mac": "hmac-sha256=ed49aa37436060277e8d562fcf2cdeff4f4ad6164e4d1976f6aea3394f54c6d1"
+      },
+      "body": "{\"base\":{\"id\":\"app1\"},\"webhook\":{\"id\":\"wh1\"}}"
+    },
+    "response": {
+      "status": 401,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "29"
+      },
+      "body": "{\"error\":\"signature_invalid\"}"
+    },
+    "effects": []
+  },
+  {
+    "id": "affinity-grandfathered-unset-key-accepted",
+    "door": "webhook_sync",
+    "note": "A grandfathered Affinity subscription with no key lets any delivery in, as the door always did: 200.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "31"
+      },
+      "body": "{\"ok\":true,\"eventsProcessed\":1}"
+    },
+    "effects": [
+      {
+        "kind": "adapter_preprocess",
+        "adapterType": "affinity",
+        "teamId": "team-1"
+      },
+      {
+        "kind": "find_triggers",
+        "teamId": "team-1",
+        "kinds": [
+          "AFFINITY",
+          "affinity"
+        ]
+      },
+      {
+        "kind": "capture_receipt",
+        "triggerId": "trigger-1",
+        "movementId": "movement-1",
+        "teamId": "team-1",
+        "adapterType": "affinity",
+        "triggerType": "webhook",
+        "event": {
+          "eventType": "inbound",
+          "externalId": "rec-1",
+          "idempotencyKey": "delivery-1",
+          "payload": {
+            "type": "list_entry.created",
+            "body": {
+              "id": 7
+            }
+          }
+        }
+      },
+      {
+        "kind": "enqueue_receipts",
+        "receipts": [
+          {
+            "receiptId": "receipt-trigger-1"
+          }
+        ]
+      },
+      {
+        "kind": "enqueue_wakes",
+        "adapterType": "affinity",
+        "teamId": "team-1",
+        "correlationKeys": []
+      },
+      {
+        "kind": "notify_work"
+      }
+    ]
+  },
+  {
+    "id": "affinity-grandfathered-key-set-unsigned-rejected",
+    "door": "webhook_sync",
+    "note": "Setting the key ends the exemption: a grandfathered Affinity subscription with a key refuses an unsigned delivery, 401.",
+    "request": {
+      "method": "POST",
+      "path": "/api/public/webhook-sync/affinity/sub-1",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"type\":\"list_entry.created\",\"body\":{\"id\":7}}"
     },
     "response": {
       "status": 401,

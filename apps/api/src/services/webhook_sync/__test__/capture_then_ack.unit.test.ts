@@ -140,7 +140,7 @@ async function loadHandler(options: {
   }));
   // Every provider verifies: the signature is not what these pin.
   jest.doMock('../../inbound/legacy_signature_headers', () => ({
-    LEGACY_SIGNATURE_HEADERS: new Proxy({}, { get: () => ({ verifyInbound: () => true }) }),
+    builtInVerifierFor: () => ({ verifyInbound: () => true }),
     LEGACY_INTERCEPTS: {},
   }));
   // …nor a built-in on a module line (its declared signed inbound).

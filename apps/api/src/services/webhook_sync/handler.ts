@@ -54,7 +54,7 @@ import { receiveDelivery } from 'movement-engine/public/inbound';
 import { webhookProviderKey } from './urls';
 import { listRemoteAdapters } from '../translation_graph/adapters/remote/store';
 import { mayBeRemoteSlug } from '../translation_graph/adapters/remote/slugs';
-import { LEGACY_INTERCEPTS, LEGACY_SIGNATURE_HEADERS } from '../inbound/legacy_signature_headers';
+import { LEGACY_INTERCEPTS, builtInVerifierFor } from '../inbound/legacy_signature_headers';
 import { builtinModuleInboundVerifier } from '../translation_graph/adapters/builtin_modules';
 
 function jsonb(value: unknown): unknown {
@@ -114,7 +114,12 @@ function signingSecretFor(subscription: InboundSubscription): string {
 function builtInSource(subscription: InboundSubscription): InboundSource | null {
   // A built-in on a module line that declares its inbound is held to the
   // host's one rule for a declared signed inbound; the rest keep their door's.
-  const verifier = builtinModuleInboundVerifier(subscription.providerKey) ?? LEGACY_SIGNATURE_HEADERS[subscription.providerKey];
+  const verifier = builtInVerifierFor({
+    providerKey: subscription.providerKey,
+    secret: signingSecretFor(subscription),
+    grandfatheredUnsigned: subscription.grandfatheredUnsigned,
+    declared: builtinModuleInboundVerifier(subscription.providerKey),
+  });
   if (!verifier) return null;
   return {
     verifier,
@@ -238,6 +243,7 @@ export const platformInboundStore: InboundStore<CapturedReceipts> = {
         'webhook_subscription.provider',
         'webhook_subscription.credentials_id',
         'webhook_subscription.webhook_secret',
+        'webhook_subscription.grandfathered_unsigned',
         'webhook_subscription.external_webhook_id',
         'webhook_subscription.inbound_checkpoint',
       ])
@@ -249,6 +255,7 @@ export const platformInboundStore: InboundStore<CapturedReceipts> = {
       providerKey: row.provider,
       credentialsId: row.credentials_id,
       secret: row.webhook_secret,
+      grandfatheredUnsigned: row.grandfathered_unsigned,
       checkpoint: row.inbound_checkpoint,
     };
   },

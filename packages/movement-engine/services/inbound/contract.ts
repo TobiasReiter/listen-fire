@@ -469,7 +469,7 @@ export function memoryInboundStores(arranged: ContractWorld): {
   const store: InboundStore<DiscriminableEvent> = {
     async findSubscription(id) {
       const row = arranged.subscriptions.find((s) => s.id === id);
-      return row ? ({ ...row, credentialsId: 'credential', checkpoint: null } satisfies InboundSubscription) : null;
+      return row ? ({ ...row, credentialsId: 'credential', grandfatheredUnsigned: false, checkpoint: null } satisfies InboundSubscription) : null;
     },
     knowsProvider: (key) => providers.has(key),
     intercepts: (key) => providers.get(key)?.intercepts ?? [],

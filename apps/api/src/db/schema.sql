@@ -4437,6 +4437,10 @@ CREATE TABLE automations.webhook_subscription (
     -- credential) subscription rows ensureEventSubscription diff-syncs --
     -- only these are auto-retired when the last listen disappears).
     provisioned_by text,
+    -- True for every row that existed when signed inbound became the host's rule
+    -- for Attio, Airtable and Affinity: such a row, while it holds no usable
+    -- secret, is verified as its door always did. False for every later row.
+    grandfathered_unsigned boolean DEFAULT false NOT NULL,
     deleted_at timestamp(3) without time zone,
     created_at timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL

@@ -31,6 +31,9 @@ export interface InboundSubscription {
   providerKey: string;
   credentialsId: string | null;
   secret: string;
+  /** Existed before signed inbound became the rule for its provider: while it
+   *  holds no usable secret it is verified as its provider's door always did. */
+  grandfatheredUnsigned: boolean;
   checkpoint: unknown;
 }
 

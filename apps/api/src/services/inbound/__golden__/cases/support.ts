@@ -11,6 +11,7 @@ export function subscription(overrides: Partial<FakeSubscription> = {}): FakeSub
     provider: 'ATTIO',
     credentials_id: 'cred-1',
     webhook_secret: 'unset',
+    grandfathered_unsigned: false,
     external_webhook_id: null,
     inbound_checkpoint: null,
     ...overrides,

@@ -36,6 +36,8 @@ export default interface WebhookSubscriptionTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+
+  grandfathered_unsigned: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 export type WebhookSubscription = Selectable<WebhookSubscriptionTable>;
