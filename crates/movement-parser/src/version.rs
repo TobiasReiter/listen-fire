@@ -18,3 +18,15 @@ pub fn since(version: u32, n: u32) -> bool {
 pub fn before(version: u32, n: u32) -> bool {
     version < n
 }
+
+/// The run host's units (Henry 2026-10-16): from version 5 every file has
+/// these names in scope, each already connected — `listen to manual fire
+/// hello`, `listen to cron { schedule: "0 9 * * 1" } fire digest` — with no
+/// import and no `connect`. A file's own binding of the name replaces it.
+/// (`RUN_HOST_UNITS` in language_version.ts.)
+pub const RUN_HOST_UNITS: &[&str] = &["cron", "manual"];
+
+/// The units a file pinned to `version` has in scope.
+pub fn run_host_units(version: u32) -> &'static [&'static str] {
+    if since(version, 5) { RUN_HOST_UNITS } else { &[] }
+}

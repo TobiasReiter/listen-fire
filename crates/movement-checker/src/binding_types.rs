@@ -24,6 +24,34 @@ use crate::types::position::{narrow_present, narrow_present_node};
 use crate::types::{TypeEnv, Typing};
 
 impl Checker<'_> {
+    /// The run host's units, in the file scope before any statement: each an
+    /// instance its adapter's credential-free construction would be
+    /// (`declareUnits`).
+    pub(crate) fn declare_units(&mut self, scope: ScopeId) {
+        for unit in movement_parser::version::run_host_units(self.version) {
+            let at = movement_parser::ast::Loc { line: 1, col: 1 };
+            let construct = ConstructionCall { callee: unit.to_string(), args: Vec::new(), span: movement_parser::ast::Span { start: at, end: at } };
+            let instantiated = self.catalog.instantiate(unit, &Args::default());
+            let mut symbol = crate::scope::Symbol::new(*unit, SymbolKind::Instance, construct.span);
+            symbol.unit = true;
+            symbol.adapter = Some(unit.to_string());
+            symbol.instance = Some(Rc::new(crate::families::systems::Instance {
+                adapter: Some(unit.to_string()),
+                schema: instantiated.cloned(),
+                ..Default::default()
+            }));
+            if let Some(found) = instantiated {
+                let schema = self.schemas.entry(found as *const _ as usize).or_insert_with(|| Rc::new(found.clone())).clone();
+                let address = self.address_of(unit, None, &construct, scope);
+                let instance = Rc::new(Instance { name: unit.to_string(), schema, declared: None, address });
+                symbol.types = SymbolTypes { pos: Some(Position::Meta { instance }), ..SymbolTypes::default() };
+            }
+            let id = self.scopes.add_symbol(symbol);
+            self.scopes.declare(scope, id);
+        }
+    }
+
+
     /// A typing of expressions against `scope`.
     pub fn typing_env(&self, scope: ScopeId) -> ScopeEnv<'_> {
         ScopeEnv { scopes: &self.scopes, scope, zones: self.zones, nodes: &self.nodes, upgrading_from: self.upgrading_from, function_values: &self.function_values, record_unions: &self.record_unions }

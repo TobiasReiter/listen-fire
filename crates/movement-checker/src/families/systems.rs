@@ -79,7 +79,9 @@ impl Checker<'_> {
         };
         let symbol = self.scopes.symbol(callee);
         if symbol.kind != SymbolKind::Adapter {
-            let message = if symbol.kind == SymbolKind::FileImport {
+            let message = if symbol.unit {
+                format!("'{0}' is one of the run host's units, always connected — listen to it by name ('listen to {0} … fire …') with no import and no 'connect'", construct.callee)
+            } else if symbol.kind == SymbolKind::FileImport {
                 format!("'{}' is imported from a file (a movement or a node declaration) — only adapter types are constructed", construct.callee)
             } else {
                 format!("'{}' is {}, not an adapter type — only adapter types are constructed", construct.callee, symbol.kind.describe())

@@ -312,6 +312,7 @@ impl<'c> Checker<'c> {
 
     pub fn run(&mut self, statements: &[Statement]) -> ScopeId {
         let file = self.scopes.open(None);
+        self.declare_units(file);
         self.enter_file_facts(statements);
         self.check_statement_list(statements, file);
         self.report_missing_listens();

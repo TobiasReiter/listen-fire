@@ -156,6 +156,8 @@ impl From<RpcError> for CallFailure {
 /// One instance a segment resolved.
 struct Instance {
     id: String,
+    /// A run host unit's instance answers in-process (crate::units).
+    unit: Option<&'static str>,
     running: usize,
     /// The credential it is called under, by its index in the credentials.
     credential: Option<usize>,
@@ -226,6 +228,22 @@ impl<'s> SegmentAdapters<'s> {
 
     fn construct(&self, adapter_type: &str, credentials_id: Option<&str>, dry_run: bool) -> Result<Instance, String> {
         let ext = self.externals;
+        let names = ext.running.iter().filter(|r| !r.is_plugin()).map(|r| r.external.manifest.name.as_str());
+        if let Some(unit) = crate::units::unit_named(adapter_type, names) {
+            let next = self.instances.borrow().len() + 1;
+            return Ok(Instance {
+                id: format!("{}:{next}", self.segment_id),
+                unit: Some(unit),
+                running: usize::MAX,
+                credential: None,
+                credentials_id: String::new(),
+                resolved_type: unit.to_string(),
+                resolved_credential: None,
+                dry_run,
+                cache_scope: uuid::Uuid::new_v4().to_string(),
+                described: RefCell::new(HashMap::new()),
+            });
+        }
         let Some(running) = ext.running.iter().position(|r| r.external.manifest.name == adapter_type) else {
             return Err(format!(
                 "no external \"{adapter_type}\" in {} (install it as a folder there)",
@@ -241,6 +259,7 @@ impl<'s> SegmentAdapters<'s> {
         let next = self.instances.borrow().len() + 1;
         Ok(Instance {
             id: format!("{}:{next}", self.segment_id),
+            unit: None,
             running,
             credential,
             credentials_id: credentials_id_of,
@@ -278,6 +297,17 @@ impl<'s> SegmentAdapters<'s> {
 
     /// `describeInstance`.
     fn describe_instance(&self, instance: &Instance) -> Js {
+        if let Some(unit) = instance.unit {
+            return Js::Obj(obj! {
+                "instance" => Js::str(&instance.id),
+                "adapterType" => Js::str(unit),
+                "supportedTriggers" => Js::strings(["webhook"]),
+                "capabilities" => Js::Obj(Obj::new()),
+                "methods" => Js::strings(crate::units::METHODS),
+                "walksContainers" => Js::Bool(false),
+                "webhookEventTypeId" => Js::str(crate::units::event_type_id(unit)),
+            });
+        }
         let running = self.running(instance);
         let mut methods: Vec<&str> = ADAPTER_METHODS.iter().copied().filter(|m| self.has(instance, m)).collect();
         if self.has(instance, "iterateRelated") {
@@ -336,6 +366,9 @@ impl<'s> SegmentAdapters<'s> {
     /// `adapters.call`: the method's result as data, or its failure.
     pub async fn call(&self, instance_id: &str, method: &str, args: &Hv) -> Result<Option<Js>, CallFailure> {
         let instance = self.instance(instance_id)?;
+        if let Some(unit) = instance.unit {
+            return crate::units::call(unit, method, args).map(Some).map_err(CallFailure::adapter);
+        }
         let adapter_type = self.running(&instance).external.manifest.name.clone();
         if !self.has(&instance, method) && !(method == "iterateRelatedPage") {
             return Err(CallFailure::adapter(format!("the '{adapter_type}' adapter does not implement {method}")));
@@ -576,7 +609,7 @@ impl<'s> SegmentAdapters<'s> {
                     .instances
                     .borrow()
                     .iter()
-                    .filter(|i| i.resolved_type == adapter_type || self.running(i).external.manifest.name == adapter_type)
+                    .filter(|i| i.resolved_type == adapter_type || (i.unit.is_none() && self.running(i).external.manifest.name == adapter_type))
                     .filter(|i| credential_id.is_none() || i.resolved_credential == credential_id || Some(&i.credentials_id) == credential_id.as_ref())
                     .cloned()
                     .collect();

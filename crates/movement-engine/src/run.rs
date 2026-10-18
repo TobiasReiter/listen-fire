@@ -995,6 +995,13 @@ impl Run<'_> {
             let Some(program) = self.checked.file(written).map(|f| &f.program) else {
                 return Err(Stop::Thrown(Failure::engine("MOVENG_RUNTIME", format!("the file {written:?} is not linked"))));
             };
+            // The run host's units, connected before any statement; a file's
+            // own binding of the name replaces one (`declareUnits`).
+            for unit in movement_parser::version::run_host_units(self.version()) {
+                let schema = self.catalog.instantiate(unit, &Args::default()).cloned();
+                let instance = InstanceBinding { name: unit.to_string(), adapter_slug: unit.to_string(), credential_name: None, construction_config: Vec::new(), schema };
+                file.declare(unit.to_string(), Binding::Instance(Rc::new(instance)));
+            }
             for (index, statement) in program.statements.iter().enumerate().filter(|(_, s)| !matches!(s, Statement::Movement(_))) {
                 match statement {
                     Statement::Import(ast::ImportStatement { source: ast::ImportSource::File { path }, names, .. }) => {

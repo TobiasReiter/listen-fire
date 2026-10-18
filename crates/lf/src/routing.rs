@@ -106,14 +106,16 @@ pub fn collect_listens(files: &[MovementFile], language_version: u32) -> Vec<Lis
             }
         }
         for listen in declared {
-            let Some(adapter) = constructions.get(&listen.instance) else { continue };
+            // A unit the file does not bind itself is the host's own.
+            let unit = movement_parser::version::run_host_units(language_version).iter().find(|u| **u == listen.instance).map(|u| u.to_string());
+            let Some(adapter) = constructions.get(&listen.instance).cloned().or(unit) else { continue };
             let mut config = Obj::new();
             for arg in &listen.config {
                 config.insert(arg.name.clone(), config_value_of(arg));
             }
             listens.push(Listen {
                 file: index,
-                adapter: adapter.clone(),
+                adapter,
                 config,
                 movement_name: listen.movement.clone(),
             });

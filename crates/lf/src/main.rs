@@ -76,6 +76,7 @@ mod sources;
 mod store;
 mod store_module;
 mod store_wire;
+mod units;
 mod upgrade;
 mod wire;
 mod wire_results;

@@ -312,6 +312,7 @@ impl Checker<'_> {
         let outer_file = self.imports.current_file.replace(file.clone());
         let outer_listens = self.listens.enter_file();
         let scope = self.scopes.open(None);
+        self.declare_units(scope);
         let (outer_spans, outer_names) = self.enter_file_facts(&file.program.statements);
         self.check_statement_list(&file.program.statements, scope);
         (self.file_statement_spans, self.file_names) = (outer_spans, outer_names);

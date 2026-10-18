@@ -62,11 +62,14 @@ pub struct Symbol {
     /// For a movement's parameter: the event its type names on an instance
     /// the catalog has no description of (`ScopeSymbol.undescribedEvent`).
     pub undescribed_event: Option<crate::families::walks::UndescribedEvent>,
+    /// One of the run host's units (`cron`, `manual`): in scope with no
+    /// import, and a file's own binding of the name replaces it.
+    pub unit: bool,
 }
 
 impl Symbol {
     pub fn new(name: impl Into<String>, kind: SymbolKind, span: Span) -> Self {
-        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false, types: Default::default(), instance: None, undescribed_event: None }
+        Symbol { name: name.into(), kind, span, imported_name: None, adapter: None, is_closure: false, types: Default::default(), instance: None, undescribed_event: None, unit: false }
     }
 
     /// `isFunctionSymbol`: a name a call can run.
@@ -159,7 +162,7 @@ impl Scopes {
     pub fn shadowing(&self, scope: ScopeId, name: &str) -> Option<Shadowing> {
         for id in self.chain(scope).skip(1) {
             let s = &self.scopes[id.0];
-            if let Some(symbol) = s.symbols.get(name) {
+            if let Some(symbol) = s.symbols.get(name).filter(|id| !self.symbols[id.0].unit) {
                 return Some(Shadowing::Bound(*symbol));
             }
             if s.pending.contains(name) {

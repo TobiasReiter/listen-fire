@@ -36,6 +36,12 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
     let mut enumerated = credential_specs.clone();
     movement_parser::util::js::object_key_order(&mut enumerated);
     let mut adapters = Obj::new();
+    let external_names: Vec<&str> = running.iter().filter(|r| !r.is_plugin()).map(|r| r.external.manifest.name.as_str()).collect();
+    for unit in movement_parser::version::RUN_HOST_UNITS {
+        if let Some(unit) = crate::units::unit_named(unit, external_names.iter().copied()) {
+            adapters.insert(unit.to_string(), unit_snapshot(unit));
+        }
+    }
     for r in running.iter().filter(|r| !r.is_plugin()) {
         let name = &r.external.manifest.name;
         // The hosted product holds a remote install's secret itself, so there
@@ -69,6 +75,17 @@ pub fn catalog_of(running: &[RunningExternal], schemas: &IndexMap<String, Js>, c
         "plugins" => Js::from(plugins_of(running)),
         "files" => Js::from(files),
     })
+}
+
+/// A unit's entry: credential-free, its schema projected from its own
+/// introspection as an external's is.
+fn unit_snapshot(unit: &str) -> Js {
+    let entries = crate::units::entry_points(unit);
+    let descriptors: IndexMap<String, Js> =
+        crate::units::descriptors(unit).into_iter().map(|d| (d.get("typeId").and_then(Js::as_str).unwrap_or_default().to_string(), d)).collect();
+    let schema = crate::schema::describe_external_schema(unit, &entries, &descriptors);
+    let schemas: Obj = [(instance_schema_key(None), schema)].into_iter().collect();
+    adapter_snapshot_of(&["webhook".to_string()], &crate::units::listen_vocabulary(unit), Vec::new(), &[], schemas)
 }
 
 fn declared_names(declarations: &[crate::oauth2::Declaration]) -> Vec<String> {

@@ -104,7 +104,7 @@ impl Checker<'_> {
             );
         }
         let id = self.scopes.add_symbol(symbol);
-        self.scopes.declare(scope, id)
+        self.scopes.declare(scope, id).filter(|replaced| !self.scopes.symbol(*replaced).unit)
     }
 
     /// `resolveName`: every name a program reads comes through here, so this
