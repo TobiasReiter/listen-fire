@@ -89,6 +89,7 @@ async fn catalog_of_project(project: Option<&Project>, log: &mut Vec<String>) ->
         Some(project) => match open_checking(project).await {
             Ok(Opened::Ready(checking)) => Some(checking.catalog),
             Ok(Opened::MissingCredentials(lines)) => {
+                let lines: Vec<&str> = lines.iter().map(|missing| missing.message.as_str()).collect();
                 log.push(format!("the externals did not start: {}", lines.join("; ")));
                 None
             }
