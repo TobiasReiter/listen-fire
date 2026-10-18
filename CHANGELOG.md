@@ -50,6 +50,10 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-lsp
+
+**`lf lsp`, a language server for movement files.** Diagnostics (the Rust checker, against the project's catalog, 200 ms after an edit), completion (what is in scope, fields after `.` and through a hop's alias, the edges a walk can take next, built-ins as version 5 spells them, module tags in imports, a listen's settings keys, credential names after `using`), hover with a link to the versioned docs, go to definition, and the checker's fixes as quick fixes. The service is the new crate `listen-fire-language`, written from scratch over the checker's own results ([docs/contracts/language-service.md](docs/contracts/language-service.md)).
+
 ### r-limits
 
 - Drain pools: `lf drain --kinds poll_listen` (or `resume_timer,wake_await,fire_event,fire_callback`, and `cron` for the cron ticks) claims only work of those kinds, so polls and run steps can be drained by separately sized fleets. Both stores and the store wire (`work.claimDue`'s `kinds`) take the filter; the run host contract holds every store to it.

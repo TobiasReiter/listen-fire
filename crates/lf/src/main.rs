@@ -14,6 +14,7 @@
 //!   lf call <callback-id> [--body <values.json>]
 //!   lf cancel <run-id> [--reason <text>]
 //!   lf catalog [--dir <project>]        the catalog snapshot `check` reads, as JSON
+//!   lf lsp [--dir <project>]            the language server, over stdio (src/lsp.rs)
 //!   lf connect [<module>]               set a module up (src/connect.rs)
 //!   lf credential add|update|delete|list   user credentials (src/credential_cmd.rs)
 //!   lf completion <bash|zsh|fish>       the shell's tab completion
@@ -60,6 +61,7 @@ mod json_repair;
 mod limiter;
 mod limiter_module;
 mod llm_calls;
+mod lsp;
 mod models;
 mod oauth2;
 mod oauth_redirect;
@@ -91,7 +93,7 @@ mod wire_results;
 use std::io::Write;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
+const USAGE: &str = "usage: lf <init|check|catalog|lsp|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
        lf run <movement> [--dry-run]
        lf run --event <file.json> [--dry-run]
        lf run --poll <movement>
@@ -112,6 +114,7 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   init      scaffold a starter project in the folder (default: the current one): lf.yaml, a movement, .gitignore
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
+  lsp       the language server (LSP over stdin/stdout): diagnostics, completion, hover, definitions and fixes for the movement files
   run       run <movement>: one manual invocation, to the `listen to manual fire <movement>` listens; --event: route the event file's event to the listens it matches and run each; --poll <movement>: poll now, once, the source of each listen that fires it on a polled source (its manifest declares `poll`), and run the listen on each new event
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
@@ -312,6 +315,7 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 Ok(1)
             }
         },
+        "lsp" => lsp::run(&args.dir, &mut out).await,
         "upgrade" => upgrade::run(&load()?, upgrade::UpgradeOptions { check_only: args.check_only, all: args.all }, &mut out).await,
         "run" => {
             if let (Some(external), Some(body)) = (&args.webhook, &args.body) {

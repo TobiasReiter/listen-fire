@@ -601,6 +601,7 @@ dependencies = [
  "jiff",
  "listen-fire-checker",
  "listen-fire-engine",
+ "listen-fire-language",
  "listen-fire-parser",
  "rusqlite",
  "rustls",
