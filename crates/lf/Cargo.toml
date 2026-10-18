@@ -43,6 +43,8 @@ movement-checker = { package = "listen-fire-checker", version = "0.11.0", path =
 # The engine, natively: a segment runs in this process, its requests served
 # by the run host here (src/segment.rs), with the native environment
 # services (zones, URLs, Unicode data) the engine's default feature links.
+# The language service `lf lsp` serves (src/lsp.rs).
+movement-language = { package = "listen-fire-language", version = "0.11.0", path = "../movement-language" }
 movement-engine = { package = "listen-fire-engine", version = "0.11.0", path = "../movement-engine" }
 serde = { version = "1", features = ["derive"], optional = true }
 # As the parser's. `preserve_order` must stay off: features unify across the

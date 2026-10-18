@@ -14,6 +14,7 @@ mod diagnostic;
 pub mod families;
 pub mod host;
 mod meta;
+pub mod query;
 pub mod scope;
 pub mod slots;
 pub mod types;

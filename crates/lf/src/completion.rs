@@ -14,7 +14,7 @@ use crate::externals::scan_externals;
 use crate::project::load_project;
 use crate::secrets::load_secrets;
 
-const SUBCOMMANDS: &str = "init check upgrade run resume serve runs call cancel connect credential completion catalog";
+const SUBCOMMANDS: &str = "init check lsp upgrade run resume serve runs call cancel connect credential completion catalog";
 const CREDENTIAL_ACTIONS: &str = "add update delete list";
 const FLAGS: &str = "--dir --ephemeral --dry-run --event --poll --webhook --body --install --header --port --reason --module --credential --url --redirect-port --no-browser --headless --public --no-reauthorize --help --version";
 const SHELLS: &str = "bash zsh fish";

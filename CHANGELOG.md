@@ -53,6 +53,9 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 ### r-json
 
 - `lf` gains `--json` on `check`, `catalog`, `run`, `resume`, `call`, `cancel`, `runs`, `connect` and `credential list`: one stable JSON document per command, so agents need not parse the human text (docs/lf-json.md). New `lf runs show <run-id>`: one run's status, event, trace, writes, cost and what it is parked on.
+### r-lsp
+
+**`lf lsp`, a language server for movement files.** Diagnostics (the Rust checker, against the project's catalog, 200 ms after an edit), completion (what is in scope, fields after `.` and through a hop's alias, the edges a walk can take next, built-ins as version 5 spells them, module tags in imports, a listen's settings keys, credential names after `using`), hover with a link to the versioned docs, go to definition, and the checker's fixes as quick fixes. The service is the new crate `listen-fire-language`, written from scratch over the checker's own results ([docs/contracts/language-service.md](docs/contracts/language-service.md)).
 
 ### r-limits
 
