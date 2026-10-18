@@ -5064,6 +5064,17 @@ fn sort_by_function(args: &[CallArg]) -> bool {
     }
 }
 
+/// A whole number of seconds as the longest unit-suffixed duration that
+/// spells it exactly (`300` is `5m`, `90` is `90s`).
+fn seconds_as_duration(seconds: u64) -> String {
+    for (unit, size) in [("w", 604_800), ("d", 86_400), ("h", 3_600), ("m", 60)] {
+        if seconds % size == 0 {
+            return format!("{}{unit}", seconds / size);
+        }
+    }
+    format!("{seconds}s")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5205,15 +5216,4 @@ mod tests {
         let ast = crate::parse_program("x = MAP(xs, `ab`  )", 2).unwrap();
         assert_eq!(ast.pointer("/statements/0/value/collection/fn/span/end/col"), Some(&json!(19)));
     }
-}
-
-/// A whole number of seconds as the longest unit-suffixed duration that
-/// spells it exactly (`300` is `5m`, `90` is `90s`).
-fn seconds_as_duration(seconds: u64) -> String {
-    for (unit, size) in [("w", 604_800), ("d", 86_400), ("h", 3_600), ("m", 60)] {
-        if seconds % size == 0 {
-            return format!("{}{unit}", seconds / size);
-        }
-    }
-    format!("{seconds}s")
 }
