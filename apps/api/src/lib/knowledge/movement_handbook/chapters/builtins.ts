@@ -173,6 +173,14 @@ key = Text.lower(msg.From)
 code = Text.upper(Text.trim(msg.Subject))
 \`\`\`
 
+### Text.includes
+
+\`Text.includes(text, part)\` → \`boolean\` — whether the text contains \`part\`, ignoring case. The same test as \`CONTAINS\` in a \`WHERE\`.
+
+\`\`\`
+urgent = Text.includes(msg.Subject, "urgent")
+\`\`\`
+
 ### Text.length
 
 \`Text.length(text)\` → \`number\`, always present — the character count of a text (an emoji is one character). \`0\` for null. A list's length is \`count(xs)\`.
@@ -429,6 +437,14 @@ host2 = Url.host("acme.com")                             # "acme.com" — no sch
 
 \`\`\`
 total = List.sum(co-[o:Orders]->.Amount)
+\`\`\`
+
+### List.includes
+
+\`List.includes(list, value)\` → \`boolean\` — whether the list holds \`value\`. The same test as \`IN\` in a \`WHERE\`.
+
+\`\`\`
+known = List.includes(["won", "lost"], deal.Stage)
 \`\`\`
 
 ### List.avg

@@ -4,6 +4,7 @@
 
 mod builtins;
 mod complete;
+pub mod docs;
 mod hover;
 pub mod recover;
 pub mod text;
@@ -19,15 +20,8 @@ use movement_parser::ast::Span;
 use movement_parser::catalog::types::CatalogSnapshot;
 use movement_parser::util::form::external_text;
 
+pub use crate::docs::{DOCS_BASE, DOCS_SITE, docs_url};
 use crate::text::{Text, loc_of, range_of};
-
-/// The online docs for language version 5. A placeholder until the docs
-/// site is published (CONCERNS.md).
-pub const DOCS_BASE: &str = "https://listen-fire.github.io/docs/v5";
-
-pub fn docs_url(page: &str, anchor: &str) -> String {
-    format!("{DOCS_BASE}/{page}#{anchor}")
-}
 
 /// The code a file that does not parse is reported under.
 pub const PARSE_CODE: &str = "MOV_PARSE";

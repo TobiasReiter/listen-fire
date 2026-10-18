@@ -30,7 +30,7 @@ Not a versioned contract: an editor speaks LSP, and LSP is the contract. This pa
 ## The LSP methods
 
 - **Diagnostics** (`textDocument/publishDiagnostics`): the checker's diagnostics for each open file, against the project's catalog. They are recomputed 200 ms after the last edit. Open buffers stand in for their files when another file imports them.
-- **Hover:** the type, a one-line doc, and a link to the versioned docs page: `https://listen-fire.github.io/docs/v5/<page>#<anchor>`.
+- **Hover:** the type, a one-line doc, and a link to the versioned docs page: `https://listen-fire.github.io/listen-fire/docs/v5/<page>#<anchor>` (every target is a built page and heading; the base is one constant in the crate).
 - **Completion:** the table above, picked by what the text just before the cursor is.
 - **Go to definition:** a binding, parameter, function or node goes to where it is declared. An imported name goes to its declaration in the library file.
 - **Code actions:** each diagnostic's own fix (`MOV_V5_SPELLING` and every other fix the checker offers) as a quick fix. A "did you mean 'x'" in a message becomes a quick fix that replaces the misspelled name.

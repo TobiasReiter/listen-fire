@@ -107,7 +107,7 @@ fn an_editor_session_over_stdio() {
     // `shout` on line 2: its type.
     let hover = client.request("textDocument/hover", json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 21 } }));
     let contents = hover.pointer("/contents/value").and_then(Value::as_str).unwrap_or_else(|| panic!("{hover}"));
-    assert!(contents.contains("shout: text") && contents.contains("https://listen-fire.github.io/docs/v5/"), "{contents}");
+    assert!(contents.contains("shout: text") && contents.contains("https://listen-fire.github.io/listen-fire/docs/v5/"), "{contents}");
 
     // `hello` in the listen: the function's declaration.
     let definition = client.request("textDocument/definition", json!({ "textDocument": { "uri": uri }, "position": { "line": 5, "character": 24 } }));
