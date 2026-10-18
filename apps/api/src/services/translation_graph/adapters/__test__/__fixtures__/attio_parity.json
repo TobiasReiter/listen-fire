@@ -5285,6 +5285,7 @@
             "recordType": "companies",
             "eventType": "record.created",
             "changeType": "create",
+            "idempotencyKey": "attio:record.created:companies:company-northwind",
             "actor": {
               "type": "user",
               "id": "1"
