@@ -3,6 +3,7 @@
 //!
 //!   lf init [dir]                       scaffold a starter project
 //!   lf check [--dir <project>]          every diagnostic the project's files have
+//!   lf run <movement> [--dry-run]      run a movement a `listen to manual` fires
 //!   lf run --event <file> [--dry-run]   route an event to its listens and run each
 //!   lf resume [<run-id>]                step a parked run, or drain due work and every parked run
 //!   lf upgrade [--check] [--all]        rewrite the movement files into the current language version
@@ -85,6 +86,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
+       lf run <movement> [--dry-run]
        lf run --event <file.json> [--dry-run]
        lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
        lf resume [<run-id>]
@@ -101,11 +103,11 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   init      scaffold a starter project in the folder (default: the current one): lf.yaml, a movement, .gitignore
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
-  run       route the event file's event to the listens it matches and run each (as `lf run --event`)
+  run       run <movement>: one manual invocation, to the `listen to manual fire <movement>` listens; --event: route the event file's event to the listens it matches and run each
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   runs      the runs in the state file, most recent first (as `lf runs`)
-  drain     claim due work rows one at a time and run them; with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
+  drain     fire each cron listen's due tick (once, however many workers drain), then claim due work rows one at a time and run them; with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
   serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
   call      call a callback, as its url's POST does (the values: a JSON object)
   cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
@@ -289,8 +291,14 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 return runs::report(&serve::receive_webhook(&session, delivery).await?, &mut out);
             }
             let Some(event_file) = &args.event else {
-                eprintln!("lf run needs --event <file> or --webhook <external> --body <file>");
-                return Ok(2);
+                let Some(movement) = args.rest.first() else {
+                    eprintln!("lf run needs a movement (run on manual), --event <file>, or --webhook <external> --body <file>");
+                    return Ok(2);
+                };
+                let project = load()?;
+                let store = store_of(&args, &project)?;
+                let session = runs::open_session(project, args.ephemeral, &store).await?;
+                return session.run_manual(movement, None, args.dry_run).await?.report(&mut out);
             };
             let project = load()?;
             let store = store_of(&args, &project)?;

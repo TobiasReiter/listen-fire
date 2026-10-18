@@ -149,12 +149,12 @@ pub fn manual_event(fired_at: &str, user: &Js, text: Option<&str>) -> Js {
     Js::Obj(obj! { "payload" => Js::Obj(payload) })
 }
 
-/// The event one cron occurrence is. Its idempotency key is the occurrence,
-/// so two workers firing it run it once.
-pub fn tick_event(fired_at: &str, schedule: &str) -> Js {
+/// The event one cron occurrence is. Its idempotency key is the schedule's
+/// occurrence, so however many workers find it due, a listen runs it once.
+pub fn tick_event(fired_at: &str, schedule: &str, timezone: Option<&str>) -> Js {
     Js::Obj(obj! {
         "payload" => Js::Obj(obj! { "firedAt" => Js::str(fired_at), "schedule" => Js::str(schedule) }),
-        "idempotencyKey" => Js::Str(format!("tick:{fired_at}")),
+        "idempotencyKey" => Js::Str(format!("tick:{schedule}:{}:{fired_at}", timezone.unwrap_or("UTC"))),
     })
 }
 
@@ -162,5 +162,158 @@ fn js_obj(value: serde_json::Value) -> Obj {
     match js_of_json(&value) {
         Js::Obj(map) => map,
         _ => Obj::new(),
+    }
+}
+
+/// A cron listen's schedule, read as packages/shared/cron reads it (five
+/// fields, names for months and weekdays, 7 also Sunday; both day fields
+/// restricted means either matches), in the listen's zone or UTC.
+pub struct Schedule {
+    minutes: Vec<bool>,
+    hours: Vec<bool>,
+    days_of_month: Vec<bool>,
+    months: Vec<bool>,
+    days_of_week: Vec<bool>,
+    any_day_of_month: bool,
+    any_day_of_week: bool,
+    zone: jiff::tz::TimeZone,
+}
+
+const MONTHS: &[&str] = &["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const WEEKDAYS: &[&str] = &["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/// One field's values, `min..=max`, and whether it is `*`.
+fn field(text: &str, min: usize, max: usize, names: &[&str], first_name: usize) -> Result<(Vec<bool>, bool), String> {
+    let value = |s: &str| -> Result<usize, String> {
+        if let Some(i) = names.iter().position(|n| n.eq_ignore_ascii_case(s)) {
+            return Ok(i + first_name);
+        }
+        s.parse::<usize>().ok().filter(|n| (min..=max).contains(n)).ok_or_else(|| format!("'{s}' is not a value in {min}-{max}"))
+    };
+    let mut set = vec![false; max + 1];
+    for item in text.split(',') {
+        let (range, step) = match item.split_once('/') {
+            Some((range, step)) => (range, step.parse::<usize>().ok().filter(|s| *s > 0).ok_or_else(|| format!("'{step}' is not a step"))?),
+            None => (item, 1),
+        };
+        let (from, to) = match range {
+            "*" => (min, max),
+            r => match r.split_once('-') {
+                Some((a, b)) => (value(a)?, value(b)?),
+                None if step > 1 => (value(r)?, max),
+                None => (value(r)?, value(r)?),
+            },
+        };
+        if from > to {
+            return Err(format!("range {range} runs backwards"));
+        }
+        for n in (from..=to).step_by(step) {
+            set[n] = true;
+        }
+    }
+    Ok((set, text == "*"))
+}
+
+pub fn parse_schedule(expression: &str, timezone: Option<&str>) -> Result<Schedule, String> {
+    let fields: Vec<&str> = expression.split_whitespace().collect();
+    let [minute, hour, dom, month, dow] = fields.as_slice() else {
+        return Err(format!("a schedule has five fields, got {}", fields.len()));
+    };
+    let (mut days_of_week, any_day_of_week) = field(dow, 0, 7, WEEKDAYS, 0)?;
+    if days_of_week[7] {
+        days_of_week[0] = true;
+    }
+    let (days_of_month, any_day_of_month) = field(dom, 1, 31, &[], 0)?;
+    let zone = match timezone {
+        Some(name) => jiff::tz::TimeZone::get(name).map_err(|e| format!("'{name}' is not a time zone: {e}"))?,
+        None => jiff::tz::TimeZone::UTC,
+    };
+    Ok(Schedule {
+        minutes: field(minute, 0, 59, &[], 0)?.0,
+        hours: field(hour, 0, 23, &[], 0)?.0,
+        days_of_month,
+        months: field(month, 1, 12, MONTHS, 1)?.0,
+        days_of_week,
+        any_day_of_month,
+        any_day_of_week,
+        zone,
+    })
+}
+
+/// How far back a worker looks for a missed occurrence.
+const LOOKBACK_MINUTES: i64 = 366 * 24 * 60;
+
+impl Schedule {
+    /// Whether the minute starting at `ms` is an occurrence.
+    fn matches(&self, ms: i64) -> bool {
+        let Ok(at) = jiff::Timestamp::from_millisecond(ms) else { return false };
+        let local = at.to_zoned(self.zone.clone());
+        let (dom, dow) = (self.days_of_month[local.day() as usize], self.days_of_week[local.weekday().to_sunday_zero_offset() as usize]);
+        let day = match (self.any_day_of_month, self.any_day_of_week) {
+            (false, false) => dom || dow,
+            (false, true) => dom,
+            (true, false) => dow,
+            (true, true) => true,
+        };
+        day && self.minutes[local.minute() as usize] && self.hours[local.hour() as usize] && self.months[local.month() as usize]
+    }
+
+    /// The latest occurrence after `after_ms` and no later than `until_ms`
+    /// (each a minute's start), when there is one.
+    pub fn latest_in(&self, after_ms: i64, until_ms: i64) -> Option<i64> {
+        let mut at = until_ms - until_ms.rem_euclid(60_000);
+        let floor = after_ms.max(until_ms - LOOKBACK_MINUTES * 60_000);
+        while at > floor {
+            if self.matches(at) {
+                return Some(at);
+            }
+            at -= 60_000;
+        }
+        None
+    }
+}
+
+/// An instant as `Date.prototype.toISOString` writes it.
+pub fn iso_of(ms: i64) -> String {
+    let ts = jiff::Timestamp::from_millisecond(ms).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    format!("{}.{:03}Z", ts.strftime("%Y-%m-%dT%H:%M:%S"), ms.rem_euclid(1000))
+}
+
+/// An ISO instant's milliseconds.
+pub fn ms_of(iso: &str) -> Option<i64> {
+    iso.parse::<jiff::Timestamp>().ok().map(|t| t.as_millisecond())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(iso: &str) -> i64 {
+        ms_of(iso).unwrap()
+    }
+
+    #[test]
+    fn the_latest_occurrence_in_a_window_is_the_one_a_worker_fires() {
+        let weekly = parse_schedule("0 9 * * mon", None).unwrap();
+        // 2026-10-12 and 2026-10-19 are Mondays.
+        assert_eq!(weekly.latest_in(at("2026-10-01T00:00:00Z"), at("2026-10-18T00:00:00Z")).map(iso_of).as_deref(), Some("2026-10-12T09:00:00.000Z"));
+        assert_eq!(weekly.latest_in(at("2026-10-12T09:00:00Z"), at("2026-10-18T00:00:00Z")), None);
+        let every_five = parse_schedule("*/5 * * * *", None).unwrap();
+        assert_eq!(every_five.latest_in(at("2026-10-18T10:00:00Z"), at("2026-10-18T10:07:30Z")).map(iso_of).as_deref(), Some("2026-10-18T10:05:00.000Z"));
+    }
+
+    #[test]
+    fn a_zoned_schedule_is_wall_clock_time_there() {
+        let london = parse_schedule("0 9 * * *", Some("Europe/London")).unwrap();
+        // British Summer Time: 09:00 in London is 08:00 UTC.
+        assert_eq!(london.latest_in(at("2026-07-01T00:00:00Z"), at("2026-07-01T12:00:00Z")).map(iso_of).as_deref(), Some("2026-07-01T08:00:00.000Z"));
+    }
+
+    #[test]
+    fn both_day_fields_restricted_match_either() {
+        let s = parse_schedule("0 0 1 * fri", None).unwrap();
+        // 2026-10-16 is a Friday; 2026-10-01 is the first.
+        assert_eq!(s.latest_in(at("2026-10-02T00:00:00Z"), at("2026-10-17T00:00:00Z")).map(iso_of).as_deref(), Some("2026-10-16T00:00:00.000Z"));
+        assert_eq!(s.latest_in(at("2026-09-30T00:00:00Z"), at("2026-10-02T00:00:00Z")).map(iso_of).as_deref(), Some("2026-10-01T00:00:00.000Z"));
     }
 }

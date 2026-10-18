@@ -241,10 +241,15 @@ impl Session {
     /// runs nothing. A dry run notes no receipt, so the real delivery after
     /// it still runs.
     pub async fn fire_event(&self, external: &str, event: &Js, dry_run: bool) -> Result<Fired, String> {
+        self.fire_to(external, event, dry_run, |_| true).await
+    }
+
+    /// `fire_event`, to the listens `to` keeps of those the event reaches.
+    async fn fire_to(&self, external: &str, event: &Js, dry_run: bool, to: impl Fn(&Listen) -> bool) -> Result<Fired, String> {
         let event_types = self.event_types_of(external).await?;
         let key = event.get("idempotencyKey").and_then(Js::as_str).filter(|k| !k.is_empty());
         let mut fired = Fired::default();
-        for listen in self.listens.iter().filter(|l| l.adapter == external && event_matches_trigger_scope(event, &l.config)) {
+        for listen in self.listens.iter().filter(|l| l.adapter == external && event_matches_trigger_scope(event, &l.config) && to(l)) {
             let run_id = uuid::Uuid::new_v4().to_string();
             let file = &self.files[listen.file];
             let pipeline = format!("listen:{}:{}", file.name, listen.movement_name);
@@ -259,6 +264,58 @@ impl Session {
             fired.outcomes.push(self.run_listen(&run_id, listen, trigger, dry_run).await?);
         }
         Ok(fired)
+    }
+
+    /// `lf run <movement>`: one invocation on the manual unit, to the listens
+    /// that fire `movement` (`listen to manual fire <movement>`).
+    pub async fn run_manual(&self, movement: &str, text: Option<&str>, dry_run: bool) -> Result<Fired, String> {
+        let manual = |l: &Listen| l.adapter == crate::units::MANUAL && l.movement_name == movement;
+        if !self.listens.iter().any(manual) {
+            return Err(format!("no listen fires '{movement}' on manual: add `listen to manual fire {movement}` to run it with `lf run {movement}`"));
+        }
+        let event = crate::units::manual_event(&iso(0), &self.user, text);
+        self.fire_to(crate::units::MANUAL, &event, dry_run, |l| l.movement_name == movement).await
+    }
+
+    /// The cron unit's due ticks (scale from zero): for each cron listen, the
+    /// latest occurrence since the last one it was fired for, fired once —
+    /// a tick missed while no worker ran fires on the next drain, and the
+    /// occurrence's receipt keeps a second worker from firing it again. A
+    /// listen seen for the first time starts from now: nothing before it is
+    /// owed.
+    pub async fn fire_due_ticks(&self, log: &mut impl Write) -> Result<Vec<RunOutcome>, String> {
+        let names = self.running.iter().filter(|r| !r.is_plugin()).map(|r| r.external.manifest.name.as_str());
+        if crate::units::unit_named(crate::units::CRON, names).is_none() {
+            return Ok(Vec::new());
+        }
+        let now = iso(self.due_offset_ms);
+        let now_ms = crate::units::ms_of(&now).ok_or("the clock reads no instant")?;
+        let mut outcomes = Vec::new();
+        for (index, listen) in self.listens.iter().enumerate().filter(|(_, l)| l.adapter == crate::units::CRON) {
+            let Some(schedule) = listen.config.get("schedule").and_then(Js::as_str) else { continue };
+            let timezone = listen.config.get("timezone").and_then(Js::as_str);
+            let file = &self.files[listen.file];
+            let subscription = format!("cron:{}:{}:{schedule}:{}", file.name, listen.movement_name, timezone.unwrap_or("UTC"));
+            let after = self.store.inbound_checkpoint(&subscription).map_err(|e| e.to_string())?;
+            let Some(after_ms) = after.as_ref().and_then(|c| c.get("after")).and_then(Js::as_str).and_then(crate::units::ms_of) else {
+                self.store.save_inbound_checkpoint(&subscription, &Js::Obj(obj! { "after" => Js::str(&now) })).map_err(|e| e.to_string())?;
+                continue;
+            };
+            let parsed = match crate::units::parse_schedule(schedule, timezone) {
+                Ok(parsed) => parsed,
+                Err(message) => {
+                    let _ = writeln!(log, "{}:{} schedule \"{schedule}\": {message}", file.name, listen.movement_name);
+                    continue;
+                }
+            };
+            let Some(due_ms) = parsed.latest_in(after_ms, now_ms) else { continue };
+            let due = crate::units::iso_of(due_ms);
+            let event = crate::units::tick_event(&due, schedule, timezone);
+            let fired = self.fire_to(crate::units::CRON, &event, false, |l| std::ptr::eq(l, &self.listens[index])).await?;
+            self.store.save_inbound_checkpoint(&subscription, &Js::Obj(obj! { "after" => Js::str(&due) })).map_err(|e| e.to_string())?;
+            outcomes.extend(fired.outcomes);
+        }
+        Ok(outcomes)
     }
 
     async fn event_types_of(&self, external: &str) -> Result<Vec<Js>, String> {
@@ -497,7 +554,7 @@ impl Session {
     /// elsewhere or they failed). How many rows were claimed, and what the
     /// runs they stepped came to.
     pub async fn drain_work(&self, limit: i64, log: &mut impl Write) -> Result<(usize, Vec<RunOutcome>), String> {
-        let mut outcomes = Vec::new();
+        let mut outcomes = self.fire_due_ticks(log).await?;
         let due = self.store.claim_due(limit, WORK_LEASE_MS, Some(&self.due_by())).map_err(|e| e.to_string())?;
         let claimed_rows = due.len();
         for claimed in due {

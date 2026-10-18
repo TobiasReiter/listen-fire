@@ -1,5 +1,6 @@
 //! `lf init [dir]`: scaffold a starter project (lf.yaml, the movements and
-//! externals folders, and one movement that checks clean with no external).
+//! externals folders, and one movement that checks clean with no external and
+//! runs with `lf run hello`).
 //! Existing files are never overwritten; a re-run reports what it made.
 
 use std::fs;
@@ -8,15 +9,22 @@ use std::path::Path;
 
 use crate::project::CURRENT_ENGINE_VERSION;
 
-const STARTER_MOVEMENT: &str = r#"# A movement is a program the host runs when something happens. This one needs
-# no external system, so `lf check` passes straight away. To react to events
-# from a system, install it under externals/ and add
+const STARTER_MOVEMENT: &str = r#"# A movement is a program the host runs when something happens. This one runs
+# when you ask: `lf run hello`. `manual` and `cron` are the host's own, so they
+# need no import; to run on a schedule instead, write
+#
+#   listen to cron { schedule: "0 9 * * 1" } fire hello
+#
+# (and type the parameter `<cron-[:Tick]->>`). To react to a system's events,
+# install it under externals/ and connect it:
 #
 #   import { crm } from adapters
 #   listen to crm { events: ["company.created"] } fire greet
-function greet(name: <text>) {
-  return "Hello, ${name}!"
+function hello(run: <manual-[:Invocation]->>) {
+  return "Hello, ${run.`Run by (name)`}!"
 }
+
+listen to manual fire hello
 "#;
 
 const PROJECT_TAIL: &str = "# Who events act as on this machine (@user_name, @user_email). Defaults to the OS user;
