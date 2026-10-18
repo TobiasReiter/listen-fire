@@ -126,7 +126,7 @@ create table if not exists work (
 /// The core's park reasons (`CORE_PARK_REASONS`).
 pub const CORE_PARK_REASONS: &[&str] = &["timer", "await", "limit"];
 /// The work kinds lf queues.
-pub const WORK_KINDS: &[&str] = &["resume_timer", "wake_await", "fire_event", "fire_callback"];
+pub const WORK_KINDS: &[&str] = &["resume_timer", "wake_await", "fire_event", "fire_callback", "poll_listen"];
 
 /// Columns a state file written by an earlier lf lacks, added on open.
 const ADDED_RUN_COLUMNS: &[&str] = &["cancel_requested_at", "cancel_reason"];

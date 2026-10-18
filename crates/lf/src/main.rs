@@ -5,6 +5,7 @@
 //!   lf check [--dir <project>]          every diagnostic the project's files have
 //!   lf run <movement> [--dry-run]      run a movement a `listen to manual` fires
 //!   lf run --event <file> [--dry-run]   route an event to its listens and run each
+//!   lf run --poll <movement>            poll now the polled sources of the listens that fire it
 //!   lf resume [<run-id>]                step a parked run, or drain due work and every parked run
 //!   lf upgrade [--check] [--all]        rewrite the movement files into the current language version
 //!   lf runs                             the runs, most recent first
@@ -88,6 +89,7 @@ use std::path::PathBuf;
 const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|call|cancel|upgrade|connect|credential|completion> [--dir <project folder>] [--ephemeral] [--store <state.db|postgres://…>] [--team <uuid>]
        lf run <movement> [--dry-run]
        lf run --event <file.json> [--dry-run]
+       lf run --poll <movement>
        lf run --webhook <external> --body <file> [--install <credential>] [--header k:v]...
        lf resume [<run-id>]
        lf drain [--until-idle] [--max-seconds <n>]
@@ -103,11 +105,11 @@ const USAGE: &str = "usage: lf <init|check|catalog|run|resume|runs|drain|serve|c
   init      scaffold a starter project in the folder (default: the current one): lf.yaml, a movement, .gitignore
   check     every diagnostic the project's movement files have (as `lf check`)
   catalog   the catalog snapshot the files are checked against, as JSON
-  run       run <movement>: one manual invocation, to the `listen to manual fire <movement>` listens; --event: route the event file's event to the listens it matches and run each
+  run       run <movement>: one manual invocation, to the `listen to manual fire <movement>` listens; --event: route the event file's event to the listens it matches and run each; --poll <movement>: poll now, once, the source of each listen that fires it on a polled source (its manifest declares `poll`), and run the listen on each new event
   resume    step every parked leaf of one run, or drain due work and every parked run (as `lf resume`)
   upgrade   rewrite the movement files by the fixes that keep their meaning (--all: every fix offered; --check: print the diff, write nothing)
   runs      the runs in the state file, most recent first (as `lf runs`)
-  drain     fire each cron listen's due tick (once, however many workers drain), then claim due work rows one at a time and run them; with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
+  drain     fire each cron listen's due tick (once, however many workers drain), then claim due work rows one at a time and run them (a polled listen's row is its next poll, due every interval its source declares); with --until-idle exit once none is due, with --max-seconds stop claiming after n seconds
   serve     the inbound doors, the callback door and the work queue's drain (as `lf serve`)
   call      call a callback, as its url's POST does (the values: a JSON object)
   cancel    cancel a run: settled failed now, or at its next statement if another lf is stepping it
@@ -131,6 +133,7 @@ struct Args {
     dry_run: bool,
     event: Option<PathBuf>,
     webhook: Option<String>,
+    poll: Option<String>,
     check_only: bool,
     all: bool,
     body: Option<PathBuf>,
@@ -160,6 +163,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         dry_run: false,
         event: None,
         webhook: None,
+        poll: None,
         check_only: false,
         all: false,
         body: None,
@@ -186,6 +190,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--dir" => args.dir = PathBuf::from(value("--dir")?),
             "--event" => args.event = Some(PathBuf::from(value("--event")?)),
             "--webhook" => args.webhook = Some(value("--webhook")?),
+            "--poll" => args.poll = Some(value("--poll")?),
             "--check" => args.check_only = true,
             "--all" => args.all = true,
             "--body" => args.body = Some(PathBuf::from(value("--body")?)),
@@ -289,6 +294,12 @@ async fn run(argv: Vec<String>) -> Result<i32, String> {
                 let session = runs::open_session(project, args.ephemeral, &store).await?;
                 let delivery = serve::WebhookFile { external, install: args.install.as_deref(), body, headers: &args.headers };
                 return runs::report(&serve::receive_webhook(&session, delivery).await?, &mut out);
+            }
+            if let Some(movement) = &args.poll {
+                let project = load()?;
+                let store = store_of(&args, &project)?;
+                let session = runs::open_session(project, args.ephemeral, &store).await?;
+                return session.run_poll(movement).await?.report(&mut out);
             }
             let Some(event_file) = &args.event else {
                 let Some(movement) = args.rest.first() else {

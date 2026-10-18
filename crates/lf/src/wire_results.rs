@@ -174,6 +174,7 @@ fn actor() -> S {
 fn discriminable_event() -> S {
     obj(vec![
         req("payload", S::Unknown),
+        opt("idempotencyKey", S::Str),
         opt("externalId", S::Str),
         opt("tag", S::Str),
         opt("actor", actor()),
@@ -216,7 +217,7 @@ fn result_schema(method: &str) -> Option<S> {
         "getFieldValue" | "invokeFieldFunction" => S::Unknown,
         "getRelated" => arr(related_result()),
         "iterateRelated" | "iterateRelatedPage" => related_page(),
-        "preprocessInbound" => obj(vec![req("events", arr(discriminable_event())), opt("checkpoint", S::Unknown)]),
+        "preprocessInbound" | "poll" => obj(vec![req("events", arr(discriminable_event())), opt("checkpoint", S::Unknown)]),
         "listEventTypes" => arr(obj(vec![
             req("tag", S::Str),
             req("positionType", S::Str),

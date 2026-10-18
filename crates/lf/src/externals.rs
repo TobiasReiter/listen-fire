@@ -199,6 +199,9 @@ pub struct RunningExternal {
     pub manifest_answer: Js,
     /// How its manifest says its webhooks are signed (crate::doors).
     pub inbound: Option<crate::inbound::Declaration>,
+    /// How often its manifest says to call `poll` per listen (`poll:
+    /// { intervalSeconds }`); None for a source that is not polled.
+    pub poll_interval_seconds: Option<u64>,
     /// The started process; killed when this is dropped.
     _child: Option<Child>,
 }
@@ -290,6 +293,7 @@ pub async fn start_externals(project: &Project, externals: &[External], credenti
             settings: setting_names(&raw),
             manifest_answer: raw,
             inbound: manifest.inbound,
+            poll_interval_seconds: manifest.poll_interval_seconds,
             _child: child,
         });
     }
@@ -306,6 +310,7 @@ struct WireManifest {
     webhook_event_type_id: Option<String>,
     plugins: Option<Js>,
     inbound: Option<crate::inbound::Declaration>,
+    poll_interval_seconds: Option<u64>,
 }
 
 impl WireManifest {
@@ -344,7 +349,34 @@ impl WireManifest {
         let webhook_event_type_id = raw.get("webhookEventTypeId").and_then(Js::as_str).map(str::to_string);
         let plugins = plugins_declaration(raw, &methods)?;
         let inbound = raw.get("inbound").map(crate::inbound::Declaration::read).transpose().map_err(|issue| format!("inbound.{issue}"))?;
-        Ok(WireManifest { adapter_type, supported_triggers, listen: listen_declarations(raw)?, methods, runtime_capabilities, webhook_event_type_id, plugins, inbound })
+        let poll_interval_seconds = poll_declaration(raw, &methods)?;
+        Ok(WireManifest {
+            adapter_type,
+            supported_triggers,
+            listen: listen_declarations(raw)?,
+            methods,
+            runtime_capabilities,
+            webhook_event_type_id,
+            plugins,
+            inbound,
+            poll_interval_seconds,
+        })
+    }
+}
+
+/// `WirePollDeclaration`, paired with the `poll` method as the manifest
+/// schema pairs them: its interval, a positive whole number of seconds.
+fn poll_declaration(raw: &Js, methods: &[String]) -> Result<Option<u64>, String> {
+    let lists = methods.iter().any(|m| m == "poll");
+    let Some(declared) = raw.get("poll") else {
+        return if lists { Err("poll: lists `poll` in methods but declares no `poll`".into()) } else { Ok(None) };
+    };
+    if !lists {
+        return Err("methods: declares `poll` but does not list `poll` in methods".into());
+    }
+    match declared.get("intervalSeconds") {
+        Some(Js::Num(n)) => n.as_u64().filter(|s| *s > 0).map(Some).ok_or_else(|| "poll.intervalSeconds: expected a positive whole number".into()),
+        _ => Err("poll.intervalSeconds: expected a positive whole number".into()),
     }
 }
 

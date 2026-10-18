@@ -30,6 +30,9 @@ use crate::backend::{RunHostStore, StoreSpec, open_store};
 use crate::store::iso;
 use crate::wire_results;
 
+/// A polled listen's row in the work queue: its next poll.
+const POLL_WORK_KIND: &str = "poll_listen";
+
 /// How many due work rows one drain of `lf resume` or `lf serve` claims.
 pub const WORK_ROWS_PER_DRAIN: i64 = 100;
 
@@ -318,6 +321,97 @@ impl Session {
         Ok(outcomes)
     }
 
+    /// The listens on a polled source (its manifest declares `poll`), each
+    /// with its source and the subscription its checkpoint is kept under.
+    fn polled_listens(&self) -> impl Iterator<Item = (&Listen, &RunningExternal, String)> {
+        self.listens.iter().filter_map(|listen| {
+            let running = self.running.iter().find(|r| !r.is_plugin() && r.external.manifest.name == listen.adapter && r.poll_interval_seconds.is_some())?;
+            let file = &self.files[listen.file];
+            let config = Js::Obj(listen.config.clone()).to_json();
+            Some((listen, running, format!("poll:{}:{}:{}:{config}", listen.adapter, file.name, listen.movement_name)))
+        })
+    }
+
+    /// Give each polled listen seen for the first time its `poll_listen` work
+    /// row, due now. The row then lives as long as the listen: each poll
+    /// releases it for the next interval, so whichever worker claims it
+    /// (under the work lease, so never two at once) polls, and a poll due
+    /// while no worker ran is one poll on the next drain.
+    fn arm_polls(&self) -> Result<(), String> {
+        for (_, _, subscription) in self.polled_listens() {
+            if self.store.inbound_checkpoint(&subscription).map_err(|e| e.to_string())?.is_some() {
+                continue;
+            }
+            self.store.save_inbound_checkpoint(&subscription, &Js::Obj(obj! { "armed" => Js::Bool(true) })).map_err(|e| e.to_string())?;
+            let payload = Js::Obj(obj! { "subscription" => Js::str(&subscription) });
+            self.store.enqueue(POLL_WORK_KIND, &format!("{POLL_WORK_KIND}:{subscription}"), &payload, None, None).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// One poll of one listen's source: `poll({ config, checkpoint? })`, each
+    /// event it returns fired to that listen as a webhook's is (a redelivered
+    /// `idempotencyKey` runs nothing), then the source's checkpoint kept for
+    /// the next poll — only once its events are in, so a failed poll is
+    /// polled again from where the last good one ended.
+    async fn poll_once(&self, listen: &Listen, running: &RunningExternal, subscription: &str) -> Result<Fired, String> {
+        let state = self.store.inbound_checkpoint(subscription).map_err(|e| e.to_string())?;
+        let mut params = serde_json::json!({ "config": crate::wire::json_of_js(&Js::Obj(listen.config.clone())) });
+        if let Some(checkpoint) = state.as_ref().and_then(|s| s.get("checkpoint")) {
+            params["checkpoint"] = crate::wire::json_of_js(checkpoint);
+        }
+        let raw = rpc(running, &self.credentials, LOCAL_TENANT, "poll", params).await?;
+        let answer = wire_results::check("poll", &listen.adapter, &raw)?;
+        let mut fired = Fired::default();
+        for event in answer.get("events").and_then(Js::as_array).unwrap_or(&[]) {
+            let one = self.fire_to(&listen.adapter, event, false, |l| std::ptr::eq(l, listen)).await?;
+            fired.outcomes.extend(one.outcomes);
+            fired.redelivered.extend(one.redelivered);
+        }
+        let mut kept = obj! { "armed" => Js::Bool(true) };
+        if let Some(checkpoint) = answer.get("checkpoint").filter(|c| **c != Js::Null) {
+            kept.insert("checkpoint".into(), checkpoint.clone());
+        }
+        self.store.save_inbound_checkpoint(subscription, &Js::Obj(kept)).map_err(|e| e.to_string())?;
+        Ok(fired)
+    }
+
+    /// A `poll_listen` row: poll its listen, and say when it is next due — the
+    /// listen's `pollIntervalSeconds`, else its source's interval. A row whose
+    /// listen is gone is done, and its checkpoint forgotten.
+    async fn poll_row(&self, subscription: &str) -> Result<(Next, Vec<RunOutcome>), String> {
+        let Some((listen, running, _)) = self.polled_listens().find(|(_, _, s)| s == subscription) else {
+            self.store.save_inbound_checkpoint(subscription, &Js::Null).map_err(|e| e.to_string())?;
+            return Ok((Next::Done, Vec::new()));
+        };
+        let fired = self.poll_once(listen, running, subscription).await?;
+        for line in &fired.redelivered {
+            eprintln!("lf: {line}");
+        }
+        let seconds = match listen.config.get("pollIntervalSeconds") {
+            Some(Js::Num(n)) => n.as_u64().filter(|s| *s > 0),
+            _ => None,
+        };
+        let interval_ms = seconds.or(running.poll_interval_seconds).unwrap_or(1) as i64 * 1000;
+        Ok((Next::DueAt(iso(self.due_offset_ms + interval_ms)), fired.outcomes))
+    }
+
+    /// `lf run --poll <movement>`: poll now, once, the source of every listen
+    /// that fires `movement` on a polled source.
+    pub async fn run_poll(&self, movement: &str) -> Result<Fired, String> {
+        let listens: Vec<_> = self.polled_listens().filter(|(l, _, _)| l.movement_name == movement).collect();
+        if listens.is_empty() {
+            return Err(format!("no listen on a polled source fires '{movement}': a source is polled when its manifest declares `poll`"));
+        }
+        let mut fired = Fired::default();
+        for (listen, running, subscription) in listens {
+            let one = self.poll_once(listen, running, &subscription).await?;
+            fired.outcomes.extend(one.outcomes);
+            fired.redelivered.extend(one.redelivered);
+        }
+        Ok(fired)
+    }
+
     async fn event_types_of(&self, external: &str) -> Result<Vec<Js>, String> {
         let Some(running) = self.running.iter().find(|r| r.external.manifest.name == external) else { return Ok(Vec::new()) };
         if !running.methods.iter().any(|m| m == "listEventTypes") {
@@ -555,17 +649,19 @@ impl Session {
     /// runs they stepped came to.
     pub async fn drain_work(&self, limit: i64, log: &mut impl Write) -> Result<(usize, Vec<RunOutcome>), String> {
         let mut outcomes = self.fire_due_ticks(log).await?;
+        self.arm_polls()?;
         let due = self.store.claim_due(limit, WORK_LEASE_MS, Some(&self.due_by())).map_err(|e| e.to_string())?;
         let claimed_rows = due.len();
         for claimed in due {
             match self.do_work(&claimed.kind, &claimed.payload).await {
-                Ok((busy, done)) => {
+                Ok((next, done)) => {
                     outcomes.extend(done);
-                    if busy {
-                        self.store.release_work(&claimed.id, &claimed.claim, Some(&iso(BUSY_RETRY_MS))).map_err(|e| e.to_string())?;
-                    } else {
-                        self.store.complete(&claimed.id, &claimed.claim).map_err(|e| e.to_string())?;
+                    match next {
+                        Next::Done => self.store.complete(&claimed.id, &claimed.claim),
+                        Next::Busy => self.store.release_work(&claimed.id, &claimed.claim, Some(&iso(BUSY_RETRY_MS))),
+                        Next::DueAt(at) => self.store.release_work(&claimed.id, &claimed.claim, Some(&at)),
                     }
+                    .map_err(|e| e.to_string())?;
                 }
                 Err(message) => {
                     let _ = writeln!(log, "work {} failed: {message}", claimed.key);
@@ -576,7 +672,7 @@ impl Session {
         Ok((claimed_rows, outcomes))
     }
 
-    async fn do_work(&self, kind: &str, payload: &Js) -> Result<(bool, Vec<RunOutcome>), String> {
+    async fn do_work(&self, kind: &str, payload: &Js) -> Result<(Next, Vec<RunOutcome>), String> {
         let text = |k: &str| payload.get(k).and_then(Js::as_str).map(str::to_string).ok_or_else(|| format!("a {kind} row has no {k}"));
         match kind {
             "fire_event" => {
@@ -585,17 +681,17 @@ impl Session {
                 for line in &fired.redelivered {
                     eprintln!("lf: {line}");
                 }
-                Ok((false, fired.outcomes))
+                Ok((Next::Done, fired.outcomes))
             }
             "resume_timer" => {
                 let run_id = text("runId")?;
                 if self.store.run(&run_id).map_err(|e| e.to_string())?.is_none() {
-                    return Ok((false, Vec::new()));
+                    return Ok((Next::Done, Vec::new()));
                 }
                 Ok(match self.drive_parked_run(&run_id, Drain::DueTimers).await? {
-                    Parked::Busy => (true, Vec::new()),
-                    Parked::NotStepped => (false, Vec::new()),
-                    Parked::Stepped(outcome) => (false, vec![outcome]),
+                    Parked::Busy => (Next::Busy, Vec::new()),
+                    Parked::NotStepped => (Next::Done, Vec::new()),
+                    Parked::Stepped(outcome) => (Next::Done, vec![outcome]),
                 })
             }
             "wake_await" => {
@@ -615,20 +711,31 @@ impl Session {
                         Parked::Stepped(outcome) => outcomes.push(outcome),
                     }
                 }
-                Ok((busy, outcomes))
+                Ok((if busy { Next::Busy } else { Next::Done }, outcomes))
             }
             "fire_callback" => {
                 let index = payload.get("callIndex").and_then(|n| if let Js::Num(n) = n { n.as_u64() } else { None });
                 let index = index.ok_or("a fire_callback row has no callIndex")? as usize;
                 Ok(match self.run_recorded_body(&text("callbackId")?, index).await? {
-                    BodyRun::Ran(outcomes) => (false, outcomes),
-                    BodyRun::Busy => (true, Vec::new()),
-                    BodyRun::Refused => (false, Vec::new()),
+                    BodyRun::Ran(outcomes) => (Next::Done, outcomes),
+                    BodyRun::Busy => (Next::Busy, Vec::new()),
+                    BodyRun::Refused => (Next::Done, Vec::new()),
                 })
             }
+            POLL_WORK_KIND => self.poll_row(&text("subscription")?).await,
             other => Err(format!("not a work kind: {other}")),
         }
     }
+}
+
+/// What becomes of a work row once it is done.
+enum Next {
+    /// Deleted (unless something re-armed it meanwhile).
+    Done,
+    /// Its run was held elsewhere: tried again shortly.
+    Busy,
+    /// Kept, due again then (a polled listen's next poll).
+    DueAt(String),
 }
 
 /// Which of a parked run's leaves a drain steps.
