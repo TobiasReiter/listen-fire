@@ -93,6 +93,9 @@ pub struct Scope {
     pub pending: HashSet<String>,
     /// Names bound inside a closed traversal block, with the block's binding name.
     pub escaped: IndexMap<String, Option<String>>,
+    /// Every symbol ever bound here, in order: a name bound twice is two
+    /// symbols, and a position between them sees the first (crate::query).
+    pub declared: Vec<SymbolId>,
 }
 
 pub enum Resolution {
@@ -117,7 +120,7 @@ impl Scopes {
     /// A new scope under `parent`: the file's (none), a movement's or a
     /// closure's body, a traversal block's, or an `if` arm's.
     pub fn open(&mut self, parent: Option<ScopeId>) -> ScopeId {
-        self.scopes.push(Scope { parent, symbols: IndexMap::new(), pending: HashSet::new(), escaped: IndexMap::new() });
+        self.scopes.push(Scope { parent, symbols: IndexMap::new(), pending: HashSet::new(), escaped: IndexMap::new(), declared: Vec::new() });
         ScopeId(self.scopes.len() - 1)
     }
 
@@ -151,6 +154,7 @@ impl Scopes {
         let name = self.symbols[symbol.0].name.clone();
         let scope = &mut self.scopes[scope.0];
         scope.pending.remove(&name);
+        scope.declared.push(symbol);
         scope.symbols.insert(name, symbol)
     }
 

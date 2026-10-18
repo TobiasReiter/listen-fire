@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/lf", "crates/movement-checker", "crates/movement-engine", "crates/movement-parser", "examples/rust-embed"]
+members = ["crates/lf", "crates/movement-checker", "crates/movement-engine", "crates/movement-language", "crates/movement-parser", "examples/rust-embed"]
 
 # One release version for the toolchain: the three library crates and the
 # `listen-fire` facade (crates/lf, which installs `lf`) publish together.

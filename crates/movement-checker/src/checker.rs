@@ -112,6 +112,9 @@ pub struct Checker<'c> {
     pub packages: std::collections::HashMap<String, Vec<movement_parser::catalog::packages::PackageMember>>,
     /// Whether this check applies the union rule, and whether it withheld it.
     pub record_unions: crate::types::unions::RecordUnions,
+    /// Each scope a body of the program checked opens, with the text it
+    /// covers (crate::query): what a position in the file can see.
+    pub extents: Vec<(Span, ScopeId)>,
 }
 
 /// What a closure's caller supplies (`checkClosure`'s `suppliedParams`): the
@@ -273,6 +276,7 @@ impl<'c> Checker<'c> {
             file_names: Default::default(),
             packages: Default::default(),
             record_unions: Default::default(),
+            extents: Vec::new(),
         }
     }
 
@@ -303,6 +307,14 @@ impl<'c> Checker<'c> {
                 }
             }
             self.push(diagnostic);
+        }
+    }
+
+    /// `scope` is the one the text at `span` of the program checked sees
+    /// (not a library's, not a walk made only to learn types).
+    pub(crate) fn note_extent(&mut self, span: Span, scope: ScopeId) {
+        if self.type_only == 0 && self.imports.current_path().is_none() {
+            self.extents.push((span, scope));
         }
     }
 
@@ -548,6 +560,7 @@ impl<'c> Checker<'c> {
             }
             RValue::InlineBlock { inline_block } => {
                 let block_scope = self.scopes.open(Some(scope));
+                self.note_extent(inline_block.span, block_scope);
                 self.check_statement_list(&inline_block.body, block_scope);
                 self.report_inline_block_retired(inline_block);
             }
@@ -701,6 +714,7 @@ impl<'c> Checker<'c> {
         let mut arm_terminates = Vec::new();
         for arm in &statement.arms {
             let arm_scope = self.scopes.open(Some(scope));
+            self.note_extent(arm.span, arm_scope);
             self.declare_eliminated(&ruled_out, scope, arm_scope);
             self.check_condition_slot(&arm.condition, arm_scope, Some(arm_scope));
             self.check_statement_list(&arm.body, arm_scope);
@@ -716,6 +730,7 @@ impl<'c> Checker<'c> {
         }
         let Some(else_arm) = &statement.else_arm else { return };
         let else_scope = self.scopes.open(Some(scope));
+        self.note_extent(else_arm.span, else_scope);
         self.declare_eliminated(&ruled_out, scope, else_scope);
         for arm in &statement.arms {
             self.narrow_condition_negation(&arm.condition, else_scope, else_scope);
@@ -855,6 +870,7 @@ impl<'c> Checker<'c> {
             self.note_movement_params(movement, scope);
         }
         let body = self.scopes.open(Some(scope));
+        self.note_extent(movement.span, body);
         for param in &movement.params {
             let Some(type_) = &param.type_ else {
                 self.report_param_needs_type(&param.name, param.span, &format!("'{}'", movement.name));
@@ -933,6 +949,7 @@ impl<'c> Checker<'c> {
     pub fn check_closure_supplied(&mut self, closure: &ClosureExpression, scope: ScopeId, self_name: Option<&str>, label: &str, given: Supplied) -> (Body, bool) {
         let Supplied { count: supplied, types, keeps } = given;
         let body = self.scopes.open(Some(scope));
+        self.note_extent(closure.span, body);
         for (index, param) in closure.params.iter().enumerate() {
             if param.type_.is_none() && index >= supplied {
                 self.report_param_needs_type(&param.name, param.span, label);
@@ -1214,6 +1231,7 @@ impl<'c> Checker<'c> {
         self.report_head_off_maybe_absent(&block.head, scope);
         let walk = self.walk_head(&block.head, scope, false);
         let body = self.open_landing(scope, &aliases, block.head.span);
+        self.note_extent(block.span, body);
         self.type_hop_aliases(body, &aliases, walk.as_ref());
         let what = assigned.map_or_else(|| "this block".to_string(), |name| format!("the block bound to '{name}'"));
         let returned = self.check_body(&block.body, body, what).value;

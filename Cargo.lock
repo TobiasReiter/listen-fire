@@ -643,6 +643,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "listen-fire-language"
+version = "0.11.0"
+dependencies = [
+ "listen-fire-checker",
+ "listen-fire-parser",
+ "serde_json",
+]
+
+[[package]]
 name = "listen-fire-parser"
 version = "0.11.0"
 dependencies = [
