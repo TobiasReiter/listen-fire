@@ -58,6 +58,9 @@ refuses a LinkedIn profile or gated document address by name. The sections below
 ### r-async
 
 - Embedding the engine in Rust: the typed host interface is always asynchronous, in one shape. Every host trait method returns a future (`HostFuture`; an in-memory host returns `embed::ready(…)`), and `embed::run`, `resume` and `fire` are async. A run starts every request the engine has pending at once and answers each as it lands, in any order, as `lf` does over the JSON route: two 100 ms calls in the arms of an `all(...)` take 100 ms, not 200. Plain futures, no runtime dependency. **Breaking** for an embedder of 0.11.0's synchronous traits (not yet published).
+### r-every
+
+- A polled listen's own poll interval is spelled `every: 5m` from language version 5 (`listen to feed { every: 5m } fire seen`); versions 1 to 4 keep `pollIntervalSeconds: 300`, and under 5 that key is `MOV_V5_SPELLING` with the `every` fix. The platform's poll worker and lf both read it; every polled lf module accepts it.
 
 ### r-poll
 

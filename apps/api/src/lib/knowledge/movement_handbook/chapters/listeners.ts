@@ -18,6 +18,7 @@ listen as "Deal intake" to inbox { key: "deals" } fire \`Intake\`
 - You listen to the instance (\`inbox\`), never the adapter.
 - \`as "…"\` names the listener in run history and lists. Two listeners firing the same automation need distinct names.
 - The \`{ … }\` block is **trigger configuration** — it defines which events are passed through, and differs by system. Its keys are the system's own (a routing key, an \`events\` list of change kinds); the system's chapter says what it offers.
+- A system that is polled rather than pushed (Granola, Gmail) checks on its own interval; \`every: 5m\` in the block sets how often this listener looks (\`listen to notes { every: 5m } fire summarise\`).
 - \`fire\` names the automation that runs; its parameter is the event, typed to the same instance (\`function intake(m: <inbox-[:Email]->>)\`).
 
 Saving the file registers its listeners; if one can't go live, the save says so. Schedules come from the \`cron\` system, and ad-hoc runs — "Run now", pasted text, uploaded files — from \`manual\`; each has its own chapter.

@@ -40,6 +40,9 @@ use crate::families::names::spell_name;
 use crate::families::systems::{is_boolean_literal, is_value_param_type};
 use crate::meta::did_you_mean;
 use crate::scope::{Resolution, ScopeId, SymbolId, SymbolKind};
+
+const EVERY_KEY: &str = "every";
+const POLL_INTERVAL_KEY: &str = "pollIntervalSeconds";
 use crate::slots::{expression_of_slot, is_bare_ident};
 
 pub(crate) mod event_types;
@@ -658,17 +661,34 @@ impl Checker<'_> {
         read: &mut ConfigRead,
     ) {
         let vocabulary: &[String] = spec.and_then(|s| s.trigger_config.as_deref()).unwrap_or(&[]);
-        if spec.is_some() && !vocabulary.contains(&arg.name) {
+        // From version 5 a source's poll interval is spelled `every`; the
+        // manifests still declare it as `pollIntervalSeconds`, which the
+        // parser already refuses under 5 with the fix.
+        let from_five = self.version >= 5;
+        let polled = vocabulary.iter().any(|k| k == POLL_INTERVAL_KEY);
+        let known = vocabulary.contains(&arg.name) || (from_five && polled && arg.name == EVERY_KEY);
+        if spec.is_some() && !known {
             let accepted = if vocabulary.is_empty() {
                 " — they take no config".to_string()
             } else {
-                format!(" — they accept: {}", vocabulary.join(", "))
+                let shown: Vec<&str> = vocabulary.iter().map(|k| if from_five && k == POLL_INTERVAL_KEY { EVERY_KEY } else { k.as_str() }).collect();
+                format!(" — they accept: {}", shown.join(", "))
             };
             self.report(
                 codes::LISTEN_BAD_CONFIG,
                 format!("'{adapter}' listeners do not accept a config key '{}'{accepted}", arg.name),
                 arg.value.span,
             );
+            return;
+        }
+        if from_five && polled && arg.name == EVERY_KEY {
+            if crate::families::flow::duration_ms(arg.value.raw.trim()).is_none_or(|ms| ms == 0) {
+                self.report(
+                    codes::LISTEN_BAD_CONFIG,
+                    format!("'{}' is not a valid poll interval — use a unit-suffixed duration like 30s, 5m, 1h", arg.value.raw.trim()),
+                    arg.value.span,
+                );
+            }
             return;
         }
         let raw = arg.value.raw.trim();

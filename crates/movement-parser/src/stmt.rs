@@ -4496,10 +4496,40 @@ impl Parser {
                     self.pos += 1;
                     continue;
                 }
+                let key_start = self.pos;
                 let name = self.read_ident("a config key in the listener config")?;
                 self.skip_inline_ws();
                 self.expect(":", &format!("after the config key '{name}'"))?;
                 self.skip_inline_ws();
+                // From version 5 a listen's own poll interval is the setting
+                // `every: <duration>`, as `until`'s cadence is.
+                if name == "every" && since(self.version, 5) {
+                    let duration = self.parse_duration()?;
+                    config.push(NamedArg { name, value: self.slot(duration.raw, duration.span), is_type: None });
+                    self.skip_inline_ws();
+                    if self.is(',') {
+                        self.pos += 1;
+                    }
+                    continue;
+                }
+                if name == "pollIntervalSeconds" && since(self.version, 5) {
+                    let value_start = self.pos;
+                    let (slot, stop) = self.read_expr_slot(Scan::new(",\n}", format!("for the config key '{name}'")))?;
+                    let value_end = value_start + crate::util::form::utf16_len(slot.raw.trim_end());
+                    let seconds = slot.raw.trim().parse::<u64>().ok().filter(|s| *s > 0);
+                    let fix = seconds.map_or("<duration>".to_string(), seconds_as_duration);
+                    self.spelling(
+                        format!("from language version 5 a listen's poll interval is the setting `every: {fix}`"),
+                        key_start,
+                        value_end,
+                        seconds.map(|_| vec![(key_start, value_end, format!("every: {fix}"))]).unwrap_or_default(),
+                    );
+                    config.push(NamedArg { name, value: slot, is_type: None });
+                    if stop == Some(unit(',')) {
+                        self.pos += 1;
+                    }
+                    continue;
+                }
                 if self.is('<') {
                     // A TYPE value — `type: <company>` in a kg listen; the AST
                     // stores the bare spelling.
@@ -5175,4 +5205,15 @@ mod tests {
         let ast = crate::parse_program("x = MAP(xs, `ab`  )", 2).unwrap();
         assert_eq!(ast.pointer("/statements/0/value/collection/fn/span/end/col"), Some(&json!(19)));
     }
+}
+
+/// A whole number of seconds as the longest unit-suffixed duration that
+/// spells it exactly (`300` is `5m`, `90` is `90s`).
+fn seconds_as_duration(seconds: u64) -> String {
+    for (unit, size) in [("w", 604_800), ("d", 86_400), ("h", 3_600), ("m", 60)] {
+        if seconds % size == 0 {
+            return format!("{}{unit}", seconds / size);
+        }
+    }
+    format!("{seconds}s")
 }

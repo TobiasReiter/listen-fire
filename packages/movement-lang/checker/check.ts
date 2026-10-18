@@ -14512,13 +14512,30 @@ class Checker {
       // with NO declared config vocabulary accepts NONE — an unknown key is an
       // error, not silently passed. (An unresolved adapter — no `spec` — stays
       // silent: the unknown-stays-silent contract.)
-      if (spec && !(vocabulary ?? []).includes(arg.name)) {
-        const accepted = vocabulary ?? [];
+      // From version 5 a source's poll interval is spelled `every`; the
+      // manifests still declare it as `pollIntervalSeconds`, which the parser
+      // already refuses under 5 with the fix.
+      const fromFive = since(this.languageVersion, 5);
+      const polled = (vocabulary ?? []).includes('pollIntervalSeconds');
+      const known = (vocabulary ?? []).includes(arg.name) || (fromFive && polled && arg.name === 'every');
+      if (spec && !known) {
+        const accepted = (vocabulary ?? []).map(k => (fromFive && k === 'pollIntervalSeconds' ? 'every' : k));
         this.report(
           DiagnosticCodes.LISTEN_BAD_CONFIG,
           `'${adapterName}' listeners do not accept a config key '${arg.name}'${accepted.length ? ` — they accept: ${accepted.join(', ')}` : ' — they take no config'}`,
           arg.value.span,
         );
+        continue;
+      }
+      if (fromFive && polled && arg.name === 'every') {
+        const written = arg.value.raw.trim();
+        if (!isValidDuration(written) || durationToMs(written) === 0) {
+          this.report(
+            DiagnosticCodes.LISTEN_BAD_CONFIG,
+            `'${written}' is not a valid poll interval — use a unit-suffixed duration like 30s, 5m, 1h`,
+            arg.value.span,
+          );
+        }
         continue;
       }
       if (arg.isType) {

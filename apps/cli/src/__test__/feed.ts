@@ -55,16 +55,16 @@ module.exports = defineModule({
 `;
 
 /** The example project with only the notes movement, on the feed. */
-export function feedProject(): string {
+export function feedProject(listen?: string): string {
   const dir = project();
   rmSync(join(dir, 'movements'), { recursive: true });
   mkdirSync(join(dir, 'movements'));
-  return withFeed(dir);
+  return withFeed(dir, listen);
 }
 
 /** `dir` with the feed module installed and a movement listening to it
- *  (`notes:seen`, which fails naming each note it is fired with). */
-export function withFeed(dir: string): string {
+ *  (`notes:seen`, which fails naming each note it is fired with; `listen` is the listen statement). */
+export function withFeed(dir: string, listen = 'listen to f fire seen'): string {
   mkdirSync(join(dir, 'externals/feed'));
   writeFileSync(join(dir, 'externals/feed/lf-external.yaml'), 'name: feed\nmodule: ./feed.ts\n');
   writeFileSync(join(dir, 'externals/feed/feed.ts'), FEED_MODULE);
@@ -74,7 +74,7 @@ export function withFeed(dir: string): string {
   ]);
   writeFileSync(
     join(dir, 'movements/notes.mvt'),
-    `import { feed } from adapters\n\nf = connect feed\n\nfunction seen(n: <f-[:Note]->>) {\n  fail("seen \${n.Title}")\n}\n\nlisten to f fire seen\n`,
+    `import { feed } from adapters\n\nf = connect feed\n\nfunction seen(n: <f-[:Note]->>) {\n  fail("seen \${n.Title}")\n}\n\n${listen}\n`,
   );
   return dir;
 }
