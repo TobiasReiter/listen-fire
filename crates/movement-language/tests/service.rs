@@ -178,10 +178,10 @@ fn hover_shows_the_type_a_doc_line_and_a_versioned_link() {
     let service = service();
     let hover = service.hover(PROGRAM, after(PROGRAM, "return greet(gree", 0)).unwrap();
     assert!(hover.contents.contains("greeting: text"), "{}", hover.contents);
-    assert!(hover.contents.contains("https://listen-fire.github.io/docs/v5/language#bindings"), "{}", hover.contents);
+    assert!(hover.contents.contains("https://listen-fire.github.io/listen-fire/docs/v5/reference#top-level"), "{}", hover.contents);
     let hover = service.hover(PROGRAM, after(PROGRAM, "Text.up", 0)).unwrap();
     assert!(hover.contents.contains("Text.upper(text)") && hover.contents.contains("`UPPER`"), "{}", hover.contents);
-    assert!(hover.contents.contains("/docs/v5/functions#text-upper"), "{}", hover.contents);
+    assert!(hover.contents.contains("/docs/v5/builtins#textupper"), "{}", hover.contents);
     let hover = service.hover(PROGRAM, after(PROGRAM, "run.`Te", 0)).unwrap();
     assert!(hover.contents.contains("Text: text"), "{}", hover.contents);
     let hover = service.hover(PROGRAM, after(PROGRAM, "m.Sco", 0)).unwrap();

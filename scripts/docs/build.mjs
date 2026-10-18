@@ -10,6 +10,8 @@ import { renderMarkdown } from './markdown.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const siteDir = join(root, 'site');
+// The deploy base lives in one place, beside the links the language server emits.
+const SITE_URL = readFileSync(join(root, 'crates/movement-language/src/docs.rs'), 'utf8').match(/DOCS_SITE: &str = "([^"]+)"/)[1];
 const REPO_URL = 'https://github.com/listen-fire/listen-fire';
 
 const VERSIONS = [{ number: 5, name: 'Dancing Wren', slug: 'v5' }];
@@ -55,6 +57,7 @@ for (const name of HANDBOOK_CHAPTERS) {
 }
 addFile('Guides', 'getting-started-lf', 'docs/getting-started-lf.md');
 addFile('Guides', 'core-slots', 'docs/core-slots.md');
+addFile('Guides', 'lf-json', 'docs/lf-json.md');
 addFile('Guides', 'embedding', 'docs/embedding.md');
 addFile('Guides', 'adapter-protocol', 'docs/adapter-protocol.md');
 addFile('Guides', 'dancing-wren-migration', 'docs/language/dancing-wren-migration.md');
@@ -95,6 +98,7 @@ function layout({ version, page, title, body, toc }) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · listen-fire docs v${version.number}</title>
+<link rel="canonical" href="${SITE_URL}/docs/${version.slug}/${page}.html">
 <style>
 :root{--bg:#fff;--fg:#1d2127;--muted:#5c6570;--line:#dfe3e8;--code:#f4f6f8;--accent:#2457c5}
 @media(prefers-color-scheme:dark){:root{--bg:#14171b;--fg:#e4e7eb;--muted:#9aa4af;--line:#2b3138;--code:#1e2328;--accent:#7ea6ff}}

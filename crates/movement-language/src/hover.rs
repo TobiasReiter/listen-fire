@@ -5,6 +5,7 @@ use movement_checker::scope::SymbolKind;
 use movement_checker::types::position::describe_position;
 
 use crate::text::{Pos, Range, Text, inside_backticks, is_word_char, loc_of, trailing_word, utf16_len};
+use crate::docs::{FIELD, WALK, builtin_page, page_of};
 use crate::{Service, builtins, docs_url, walk};
 
 #[derive(Debug, Clone)]
@@ -63,32 +64,14 @@ pub fn word_at(text: &Text<'_>, pos: Pos) -> Option<Word> {
     Some(Word { name, range: Range { start, end }, after_dot, receiver, in_hop })
 }
 
-fn page_of(kind: SymbolKind) -> (&'static str, &'static str) {
-    match kind {
-        SymbolKind::Binding | SymbolKind::Param => ("language", "bindings"),
-        SymbolKind::Movement => ("language", "functions"),
-        SymbolKind::Shape => ("language", "nodes"),
-        SymbolKind::Type => ("language", "types"),
-        SymbolKind::Alias => ("language", "walks"),
-        SymbolKind::FileImport => ("language", "imports"),
-        SymbolKind::Adapter | SymbolKind::Instance => ("modules", "connect"),
-        SymbolKind::Credential => ("modules", "credentials"),
-        SymbolKind::Plugin => ("modules", "plugins"),
-    }
-}
-
 fn card(header: &str, line: &str, (page, anchor): (&str, &str)) -> String {
     format!("```movement\n{header}\n```\n{line}\n\n[Docs]({})", docs_url(page, anchor))
 }
 
 pub fn builtin_card(name: &str) -> Option<String> {
     let builtin = builtins::by_name(name)?;
-    Some(card(&builtin.signature(), &builtin.doc(), ("functions", &slug(builtin.name))))
-}
-
-/// `Text.upper` → `text-upper`.
-pub fn slug(name: &str) -> String {
-    name.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect()
+    let (page, anchor) = builtin_page(builtin.name);
+    Some(card(&builtin.signature(), &builtin.doc(), (page, &anchor)))
 }
 
 pub fn hover(service: &Service, source: &str, pos: Pos) -> Option<Hover> {
@@ -107,7 +90,7 @@ pub fn hover(service: &Service, source: &str, pos: Pos) -> Option<Hover> {
         let analysis = &analyzed?.analysis;
         if let Some(position) = walk::receiver(analysis, &word.receiver, at, version) {
             let ty = walk::field_type(&position, &word.name).unwrap_or_else(|| "not a field it has".into());
-            return finish(card(&format!("{}: {ty}", crate::text::written_name(&word.name)), &format!("A field of {}.", describe_position(&position)), ("language", "fields")));
+            return finish(card(&format!("{}: {ty}", crate::text::written_name(&word.name)), &format!("A field of {}.", describe_position(&position)), FIELD));
         }
         // A package's member, bound as `web.fetchUrl`.
         let id = analysis.resolve(at, &format!("{receiver_name}.{}", word.name))?;
@@ -119,7 +102,7 @@ pub fn hover(service: &Service, source: &str, pos: Pos) -> Option<Hover> {
         let analysis = &analyzed?.analysis;
         let position = walk::receiver(analysis, &word.receiver, at, version)?;
         let (_, landing) = walk::edges(&position, version).into_iter().find(|(edge, _)| *edge == word.name)?;
-        return finish(card(&format!("-[:{}]->", crate::text::written_name(&word.name)), &format!("An edge of {}, landing on {landing}.", describe_position(&position)), ("language", "walks")));
+        return finish(card(&format!("-[:{}]->", crate::text::written_name(&word.name)), &format!("An edge of {}, landing on {landing}.", describe_position(&position)), WALK));
     }
     if let Some(analyzed) = &analyzed
         && let Some(id) = analyzed.analysis.resolve(at, &word.name)
