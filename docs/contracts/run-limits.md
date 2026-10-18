@@ -59,6 +59,22 @@ Reviewed for this release:
 - **A stored document is read only inside the project's own folder.** A handle with `..` or an empty part is refused, and a handle outside the team's folder is not this project's.
 - **lf's other outbound requests are the host's, not the movement's:** a credential's token refresh, a provider's OAuth exchange, the model provider.
 
+## Measured peaks, and why the defaults stand
+
+Measured 2026-10-18 by instrumenting the engine (a counter beside each check, not kept): every program the repository's tests run on the Rust engine. That is the Rust crates' tests (the oracle and frozen programs, lf, the embedding example), the TypeScript engine package's tests and the platform's `movement_engine` tests (both on the WASM build), 3,378 + 743 + 721 tests. The lf examples were not run: they need a live external system.
+
+| limit | highest observed in one segment | default | default over peak |
+|---|---|---|---|
+| Steps | 198 | 10,000,000 | about 50,000 times |
+| One text | 902 bytes | 16 MiB | about 18,000 times |
+| One list or map | 5 members | 1,000,000 | about 200,000 times |
+| Result as JSON | 34,396 bytes | 64 MiB | about 2,000 times |
+| Wall clock | not measured (the tests run in milliseconds) | 900 s | not applicable |
+
+- The defaults are kept. The corpus is small test programs, so its peaks say only that no repository program comes near a limit.
+- Setting each default 10 to 100 times over these peaks would put steps near 20,000 and a list near 500, below ordinary real work (a loop over a few thousand records). A limit that low would refuse legitimate movements.
+- A default should be tightened from production runs (the largest real segments), not from tests. Until there are such runs, the defaults stay generous: they stop a runaway, and never a real workload.
+
 ## Not covered
 
 - **Memory as a whole.** The size limits bound each value, not their sum. A movement could still hold many values each under the limits; the step budget bounds how many it can build.
