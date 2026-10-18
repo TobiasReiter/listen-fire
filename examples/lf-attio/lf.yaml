@@ -1,0 +1,6 @@
+engine: 0.11.0
+movements: movements
+externals: externals
+# Where Attio reaches `lf serve` (a tunnel to it, or a host). `lf serve`
+# registers Attio's webhook at <publicUrl>/api/public/webhook-sync/attio/<credential>.
+# publicUrl: https://lf.example.com

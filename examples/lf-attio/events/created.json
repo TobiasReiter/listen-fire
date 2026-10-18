@@ -1,0 +1,10 @@
+{
+  "external": "attio",
+  "event": {
+    "payload": { "event_type": "record.created", "action": "record.created", "id": { "object_id": "companies", "record_id": "1" } },
+    "externalId": "1",
+    "recordType": "companies",
+    "eventType": "record.created",
+    "changeType": "create"
+  }
+}

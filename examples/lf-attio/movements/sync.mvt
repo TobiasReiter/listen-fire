@@ -1,0 +1,18 @@
+import { `@lf/attio` as attio } from adapters
+import { henry_attio } from credentials
+
+crm = connect attio using henry_attio
+
+# A company created in Attio gets a description; the write finds it by
+# name, so it updates that record rather than making another.
+function stamp(ev: <crm-[e:`Webhook Event` WHERE e.action == "record.created"]->>) {
+  ev-[company:Companies]-> {
+    write crm-[:Companies]-> {
+      unique by (Name)
+      Name: company.Name
+      Description: "Seen by lf"
+    }
+  }
+}
+
+listen to crm { events: ["record.created"] } fire stamp
