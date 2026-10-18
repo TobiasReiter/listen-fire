@@ -8,21 +8,20 @@ export const MANUAL_HANDBOOK_SECTION: HandbookSection = {
   title: 'Run now — ad-hoc runs, text, and files (manual)',
   content: `## Run now — ad-hoc runs, text, and files (manual)
 
-Use \`connect manual\` to let a person — or an agent — start a run by hand. "Run now", pasted text, and uploaded files all arrive as its \`Invocation\` event:
+Listen to \`manual\` to let a person — or an agent — start a run by hand. It is the host's own — no import, no \`connect\`. "Run now", pasted text, and uploaded files all arrive as its \`Invocation\` event:
 
 \`\`\`
-import { \`@lf/manual\` as manual, \`@lf/attio\` as attio } from adapters
+import { \`@lf/attio\` as attio } from adapters
 import { acme_main } from credentials
 
-runs = connect manual
-crm  = connect attio using acme_main
+crm = connect attio using acme_main
 
 node Company: "each company named in the supplied text or files" {
   name:   <text> "the company's name"
   domain: <text> "the company's web domain, if given"
 }
 
-function \`Import Companies\`(go: <runs-[:Invocation]->>) {
+function \`Import Companies\`(go: <manual-[:Invocation]->>) {
   found = extract([go.Text, ...go-[:Files]->.File], Company)
 
   map(found, (c) => {
@@ -34,7 +33,7 @@ function \`Import Companies\`(go: <runs-[:Invocation]->>) {
   })
 }
 
-listen as "Import companies" to runs {} fire \`Import Companies\`
+listen as "Import companies" to manual fire \`Import Companies\`
 \`\`\`
 
 - The example is the whole pattern: whatever the person supplied — \`go.Text\`, uploaded \`Files\` — goes into the extraction's content, and the writes fan out from what was found.

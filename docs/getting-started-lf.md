@@ -12,9 +12,25 @@ This writes `lf.yaml`, a starter movement in `movements/`, `externals/` and `.lf
 
 A working project to read or copy is [`examples/lf-acme`](../examples/lf-acme): one movement, one external, a sample secrets file (copy it to `.lf/secrets.yaml`).
 
+The starter runs straight away: `lf check`, then `lf run hello`.
+
 ## 2. Write a movement
 
-Put a `.mvt` file in `movements/`:
+`manual` and `cron` are the host's own sources, so a movement listens to them with no import:
+
+```
+function hello(run: <manual-[:Invocation]->>) {
+  return "Hello, ${run.`Run by (name)`}!"
+}
+listen to manual fire hello                                    # lf run hello
+
+function digest(t: <cron-[:Tick]->>) {
+  return t.`Fired at`
+}
+listen to cron { schedule: "0 9 * * 1" } fire digest           # lf serve or lf drain fires it
+```
+
+A system's events need its external. Put a `.mvt` file in `movements/`:
 
 ```
 import { acme_crm } from adapters
@@ -53,6 +69,7 @@ This signs you in at the provider (OAuth) or asks for the module's fields, and s
 ## 5. Run
 
 ```
+lf run hello                                   # run a movement a `listen to manual` fires
 lf run --event events/company_created.json     # route one event to the listens it matches
 lf run --event events/company_created.json --dry-run
 lf runs                                        # the runs, most recent first
@@ -65,7 +82,7 @@ lf resume [<run-id>]                           # step a parked run, or every due
 lf serve [--port N]
 ```
 
-`lf serve` receives webhooks and callbacks and drains due work, so listens fire on their own. Set `publicUrl` in `lf.yaml` when the outside world reaches it at another address. `lf call <callback-id>` and `lf cancel <run-id>` act on a parked or running run.
+`lf serve` receives webhooks and callbacks, fires `cron` listens on their schedule, and drains due work, so listens fire on their own. `lf drain` does the same work once and exits (`--until-idle`): a tick missed while nothing ran fires once on the next drain. Set `publicUrl` in `lf.yaml` when the outside world reaches it at another address. `lf call <callback-id>` and `lf cancel <run-id>` act on a parked or running run.
 
 ## 7. Upgrade a project
 

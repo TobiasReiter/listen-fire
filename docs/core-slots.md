@@ -18,6 +18,21 @@ core:
 
 A slot accepts only a module of its own kind; `lf check` and `lf run` refuse anything else, naming the slots.
 
+## Units: `cron` and `manual`
+
+Two sources are the run host's own, not modules: every host has them, and a movement listens to them with no import and no `connect` (from language version 5).
+
+```
+function digest(t: <cron-[:Tick]->>) { … }
+listen to cron { schedule: "0 9 * * 1", timezone: "Europe/London" } fire digest
+
+function backfill(run: <manual-[:Invocation]->>) { … }
+listen to manual fire backfill
+```
+
+- `manual` fires when you ask: `lf run backfill` here, "Run now" on the platform.
+- `cron` fires on its schedule. `lf serve` and `lf drain` fire each due tick. A tick that came due while no worker ran fires once on the next drain (only the latest one missed), however many workers drain the store.
+
 ## Filling a slot
 
 1. Name the module in `lf.yaml`'s `core:` (not needed for a default).

@@ -8,16 +8,12 @@ export const CRON_HANDBOOK_SECTION: HandbookSection = {
   title: 'Schedules — time-triggered runs (cron)',
   content: `## Schedules — time-triggered runs (cron)
 
-Use \`connect cron\` to run an automation on a schedule:
+Listen to \`cron\` to run an automation on a schedule. It is the host's own — no import, no \`connect\`:
 
 \`\`\`
-import { \`@lf/cron\` as cron } from adapters
+function \`Weekly Digest\`(t: <cron-[:Tick]->>) { … }
 
-timer = connect cron
-
-function \`Weekly Digest\`(t: <timer-[:Tick]->>) { … }
-
-listen as "Weekly digest" to timer { schedule: "0 9 * * 1" } fire \`Weekly Digest\`
+listen as "Weekly digest" to cron { schedule: "0 9 * * 1" } fire \`Weekly Digest\`
 \`\`\`
 
 - \`schedule\` (required): five-field cron — \`"0 9 * * 1"\` is 09:00 every Monday. UTC by default; add \`timezone: "Europe/London"\` (an IANA name, daylight-saving aware) for wall-clock time.

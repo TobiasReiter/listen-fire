@@ -312,8 +312,8 @@ mod tests {
     #[test]
     fn both_day_fields_restricted_match_either() {
         let s = parse_schedule("0 0 1 * fri", None).unwrap();
-        // 2026-10-16 is a Friday; 2026-10-01 is the first.
+        // 2026-10-16 is a Friday (a Thursday is the first).
         assert_eq!(s.latest_in(at("2026-10-02T00:00:00Z"), at("2026-10-17T00:00:00Z")).map(iso_of).as_deref(), Some("2026-10-16T00:00:00.000Z"));
-        assert_eq!(s.latest_in(at("2026-09-30T00:00:00Z"), at("2026-10-02T00:00:00Z")).map(iso_of).as_deref(), Some("2026-10-01T00:00:00.000Z"));
+        assert_eq!(s.latest_in(at("2026-09-30T00:00:00Z"), at("2026-10-01T12:00:00Z")).map(iso_of).as_deref(), Some("2026-10-01T00:00:00.000Z"));
     }
 }

@@ -3195,7 +3195,8 @@ mod tests {
         let kinds: Vec<(&str, &str)> = kinds.iter().map(|(n, k)| (*n, k.as_str())).collect();
         assert_eq!(
             kinds,
-            [("m", "movement"), ("email", "opaque"), ("fetch", "opaque"), ("inbox", "instance"), ("rules", "value"), ("Lead", "shape"), ("tag", "value")]
+            // The run host's units come first: the file scope holds them before any statement.
+            [("m", "movement"), ("cron", "instance"), ("manual", "instance"), ("email", "opaque"), ("fetch", "opaque"), ("inbox", "instance"), ("rules", "value"), ("Lead", "shape"), ("tag", "value")]
         );
         assert_eq!(file["fetch"], json!({ "kind": "opaque", "what": "a plugin", "name": "fetch" }));
         assert_eq!(file["Lead"], json!({ "kind": "shape", "name": "Lead" }));

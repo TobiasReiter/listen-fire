@@ -50,6 +50,11 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-units
+
+- `cron` and `manual` are run-host units (from language version 5): in every file's scope, already connected, with no import — `listen to manual fire hello`, `listen to cron { schedule: "0 9 * * 1" } fire digest`, the parameter typed `<manual-[:Invocation]->>` / `<cron-[:Tick]->>`. A file's own import or binding of the name replaces the unit; `connect manual` is told to listen by name. Versions 1–4 unchanged. Both checkers, the Rust engine, the platform's listen derivation (trigger rows, Run now) and lf.
+- lf: the units are built in (catalog, `lf check`); `lf run <movement>` fires a manual invocation; `lf serve` and `lf drain` fire each cron listen's due tick, a tick missed while no worker ran once on the next drain (the occurrence's receipt keeps it to once across workers). `lf init`'s starter is `listen to manual fire hello`, so init → check → run needs nothing installed.
+
 ### r-crates
 
 - The Rust crates are ready to publish (not published): `listen-fire-parser`, `listen-fire-checker`, `listen-fire-engine`, and the facade `listen-fire`, which re-exports them and installs `lf` (`cargo install listen-fire`; crates/lf is that crate, its CLI dependencies behind the default `cli` feature). All four at 0.11.0; `cargo publish --dry-run` of the four together is green. `cargo build -p lf` is now `-p listen-fire`.
