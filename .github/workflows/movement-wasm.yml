@@ -10,8 +10,7 @@ name: movement-wasm
 #  - parser-tests runs both crates' tests (including the strict programs
 #    harness) and the movement-lang parser pins through the committed
 #    artifact: every corpus program and expression text parses as pinned;
-#    and the catalog differential: the Rust catalog answers every lookup the
-#    checker corpus makes as the TypeScript one does; and the engine's
+#    (the catalog differential runs in the ship gate with the corpus); and the engine's
 #    TypeScript shim, against a double and through the committed artifact;
 #    the Rust engine's oracle regenerated from the TypeScript and diffed;
 #    the version 1 and 2 conformance corpora (which run on the TypeScript
@@ -142,13 +141,9 @@ jobs:
       - name: Parser pins through the committed artifact
         working-directory: packages/movement-lang
         run: pnpm run test --testPathPattern 'programs_regression|trees_regression|rust_entry_points|lowering_regression|lowering_vocabulary|checks_regression|catalog_depth|loader|env_services'
-      # The TypeScript catalog stays in use until the checker is ported, so
-      # the Rust one is held to it on every change to either.
-      - name: Catalog differential through the committed artifact
-        working-directory: packages/movement-lang
-        env:
-          MOVEMENT_CATALOG_DIFFERENTIAL: "1"
-        run: pnpm run test --testPathPattern 'catalog_differential'
+      # The catalog differential needs the assembled checks corpus
+      # (`pnpm checks:corpus`, ~16 min with a test database), so it runs in
+      # the ship gate, not CI (Henry 2026-10-17: corpus checks are gate, not CI).
       - name: Engine shim, against a double and through the committed artifact
         working-directory: packages/movement-engine
         run: pnpm run test --testPathPattern 'movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_traverse|rust_verbs)\.unit\.test\.ts$'
