@@ -19,7 +19,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 # The AST, the expression lowering and the catalog snapshot it reads.
-movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.1", path = "../movement-parser" }
+movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.2", path = "../movement-parser" }
 indexmap = "2"
 serde = { version = "1", features = ["derive"] }
 # As the parser's: `preserve_order` off, so every emitted object's keys sort.

@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/evertrace",
   "license": "Apache-2.0",
-  "version": "0.12.0-rc.1",
+  "version": "0.12.0-rc.2",
   "description": "Evertrace (signals about founders, saved searches, lists) as a module: polled for new signals and list additions, with a write surface over searches, lists and list entries. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"

@@ -17,6 +17,6 @@ include = ["src/**/*", "Cargo.toml", "README.md"]
 name = "movement_language"
 
 [dependencies]
-movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.1", path = "../movement-parser" }
-movement-checker = { package = "listen-fire-checker", version = "0.12.0-rc.1", path = "../movement-checker" }
+movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.2", path = "../movement-parser" }
+movement-checker = { package = "listen-fire-checker", version = "0.12.0-rc.2", path = "../movement-checker" }
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }

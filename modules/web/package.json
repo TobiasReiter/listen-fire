@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/web",
   "license": "Apache-2.0",
-  "version": "0.12.0-rc.1",
+  "version": "0.12.0-rc.2",
   "description": "The six bundled plugins (fetch a page, scan a message for links worth fetching, find a person's profile, read what they are doing now, find a company's own site, research a subject) as one plugin module. Loaded in process by the platform with its own tools, served by serve-module everywhere else with the standalone tools (Anthropic, Bright Data, a plain fetch). Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"

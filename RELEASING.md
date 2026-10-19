@@ -1,8 +1,8 @@
 # Releasing
 
-## Pre-release 0.12.0-rc.1 (run in this order, from a clean `main`)
+## Pre-release 0.12.0-rc.2 (run in this order, from a clean `main`)
 
-Every crate and every `@listen-fire/*` package is at `0.12.0-rc.1`.
+Every crate and every `@listen-fire/*` package is at `0.12.0-rc.2`.
 A suffixed tag never moves `:latest`, npm `latest`, or the default docs.
 
 1. Push the branch.
@@ -11,8 +11,8 @@ A suffixed tag never moves `:latest`, npm `latest`, or the default docs.
    ```
 2. Push the three tags (images, `lf` binaries + pre-release GitHub release, docs under `/docs/next/`).
    ```sh
-   git tag v0.12.0-rc.1 && git tag lf-v0.12.0-rc.1 && git tag docs-v0.12.0-rc.1
-   git push origin v0.12.0-rc.1 lf-v0.12.0-rc.1 docs-v0.12.0-rc.1
+   git tag v0.12.0-rc.2 && git tag lf-v0.12.0-rc.2 && git tag docs-v0.12.0-rc.2
+   git push origin v0.12.0-rc.2 lf-v0.12.0-rc.2 docs-v0.12.0-rc.2
    ```
 3. Publish the crates, in dependency order (wait a minute between each for the index).
    ```sh
@@ -22,7 +22,7 @@ A suffixed tag never moves `:latest`, npm `latest`, or the default docs.
    cargo publish -p listen-fire-language
    cargo publish -p listen-fire
    ```
-   A pre-release version is never picked by `cargo install listen-fire` without `--version 0.12.0-rc.1`.
+   A pre-release version is never picked by `cargo install listen-fire` without `--version 0.12.0-rc.2`.
 4. Publish the npm packages; each has `publishConfig.tag: "next"`, so none takes `latest`.
    ```sh
    pnpm -r build
@@ -37,4 +37,4 @@ A suffixed tag never moves `:latest`, npm `latest`, or the default docs.
 3. Repeat the steps above with plain tags (`v0.12.0`, `lf-v0.12.0`, `docs-v0.12.0`): images also get `:latest`, the GitHub release is a full release, docs become the default.
 4. npm: publish without `--tag next`, or move `latest` explicitly: `npm dist-tag add @listen-fire/<name>@0.12.0 latest`. Remove `publishConfig.tag` from the packages before publishing, otherwise they still take `next`.
 
-Note: `0.12.0-rc.1` sorts above the released `0.11.0` and below `0.12.0`. The docs stay under `/docs/next/` until the plain `docs-v0.12.0` tag publishes `/docs/v5/` (and the language server's links switch with the crate version).
+Note: `0.12.0-rc.2` sorts above the released `0.11.0` and below `0.12.0`. The docs stay under `/docs/next/` until the plain `docs-v0.12.0` tag publishes `/docs/v5/` (and the language server's links switch with the crate version).

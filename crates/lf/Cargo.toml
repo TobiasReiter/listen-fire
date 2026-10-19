@@ -36,16 +36,16 @@ default = ["cli"]
 cli = ["dep:serde", "dep:serde_json", "dep:serde_yaml", "dep:indexmap", "dep:tokio", "dep:hyper", "dep:hyper-util", "dep:hmac", "dep:base64", "dep:http-body-util", "dep:bytes", "dep:rusqlite", "dep:tokio-postgres", "dep:getrandom", "dep:uuid", "dep:sha2", "dep:jiff", "dep:rustls", "dep:tokio-rustls", "dep:webpki-roots", "dep:url"]
 
 [dependencies]
-movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.1", path = "../movement-parser" }
+movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.2", path = "../movement-parser" }
 # The checker with its native zone database: the same one the engine's
 # artifact answers zones from.
-movement-checker = { package = "listen-fire-checker", version = "0.12.0-rc.1", path = "../movement-checker" }
+movement-checker = { package = "listen-fire-checker", version = "0.12.0-rc.2", path = "../movement-checker" }
 # The engine, natively: a segment runs in this process, its requests served
 # by the run host here (src/segment.rs), with the native environment
 # services (zones, URLs, Unicode data) the engine's default feature links.
 # The language service `lf lsp` serves (src/lsp.rs).
-movement-language = { package = "listen-fire-language", version = "0.12.0-rc.1", path = "../movement-language" }
-movement-engine = { package = "listen-fire-engine", version = "0.12.0-rc.1", path = "../movement-engine" }
+movement-language = { package = "listen-fire-language", version = "0.12.0-rc.2", path = "../movement-language" }
+movement-engine = { package = "listen-fire-engine", version = "0.12.0-rc.2", path = "../movement-engine" }
 serde = { version = "1", features = ["derive"], optional = true }
 # As the parser's. `preserve_order` must stay off: features unify across the
 # workspace, and the parser's sorted output depends on it being off.

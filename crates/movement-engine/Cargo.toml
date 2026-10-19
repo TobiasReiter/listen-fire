@@ -22,11 +22,11 @@ crate-type = ["cdylib", "rlib"]
 # Parsing, lowering and the catalog. Its ABI (alloc, dealloc, last_panic and
 # the parse exports) is linked into this crate's artifact as-is, which is
 # what makes the one artifact serve both the parser and the engine.
-movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.1", path = "../movement-parser" }
+movement-parser = { package = "listen-fire-parser", version = "0.12.0-rc.2", path = "../movement-parser" }
 # The checker, an alternative answer to `check.program` behind
 # `SegmentInput::native_check` (off by default). Its ABI export
 # (`check_program`) is linked into this crate's artifact as the parser's is.
-movement-checker = { package = "listen-fire-checker", version = "0.12.0-rc.1", path = "../movement-checker" }
+movement-checker = { package = "listen-fire-checker", version = "0.12.0-rc.2", path = "../movement-checker" }
 serde = { version = "1", features = ["derive"] }
 # As the parser's: `preserve_order` off, so every emitted object's keys sort.
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
