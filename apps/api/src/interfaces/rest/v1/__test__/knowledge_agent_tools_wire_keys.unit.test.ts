@@ -65,6 +65,16 @@ jest.mock('../../../../services/translation_graph/movement/provision', () => ({
   listMovements: (teamId: string) => listMovementsMock(teamId),
 }));
 
+const upgradeMovementMock = jest.fn(async (_input: unknown) => ({
+  status: 'already_current' as const,
+  from: { version: 5, name: 'v5' },
+  to: { version: 5, name: 'v5' },
+  diagnostics: [],
+}));
+jest.mock('../../../../services/translation_graph/movement/language_upgrade', () => ({
+  upgradeMovement: (input: unknown) => upgradeMovementMock(input),
+}));
+
 const getByIdMock = jest.fn(async (): Promise<{ email: string; username: string | null }> => ({
   email: 'user@example.com',
   username: null,
@@ -102,6 +112,7 @@ import {
   describeInstanceHandler,
   connectCredentialHandler,
   runMovementHandler,
+  upgradeMovementHandler,
   deleteMovementHandler,
   cancelRunHandler,
 } from '../knowledge_agent_tools';
@@ -328,6 +339,32 @@ describe('POST /automations/run — wire key `automation` reaches runMovementAsy
     await call(runMovementHandler, { automation: 'ghost', team: 'T1' }, res);
 
     expect(runMovementAsyncMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(res.body)).toContain("No automation 'ghost'");
+  });
+});
+
+describe('POST /automations/upgrade — id or name resolves to the team\'s automation id', () => {
+  it('passes an id through', async () => {
+    const res = fakeRes();
+    await call(upgradeMovementHandler, { automation: 'mv-1', team: 'T1' }, res);
+    expect(upgradeMovementMock).toHaveBeenCalledWith(expect.objectContaining({ teamId: 'T1', id: 'mv-1' }));
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('resolves a name to its id', async () => {
+    getMovementMock.mockRejectedValueOnce(new Error('not a uuid'));
+    listMovementsMock.mockResolvedValueOnce([{ id: 'mv-7', name: 'Nightly sync' }]);
+    const res = fakeRes();
+    await call(upgradeMovementHandler, { automation: 'Nightly sync', team: 'T1' }, res);
+    expect(upgradeMovementMock).toHaveBeenCalledWith(expect.objectContaining({ teamId: 'T1', id: 'mv-7' }));
+  });
+
+  it('reports an error and upgrades nothing for an unknown name', async () => {
+    getMovementMock.mockResolvedValueOnce(null);
+    upgradeMovementMock.mockClear();
+    const res = fakeRes();
+    await call(upgradeMovementHandler, { automation: 'ghost', team: 'T1' }, res);
+    expect(upgradeMovementMock).not.toHaveBeenCalled();
     expect(JSON.stringify(res.body)).toContain("No automation 'ghost'");
   });
 });

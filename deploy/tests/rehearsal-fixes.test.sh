@@ -43,4 +43,8 @@ LF_FRESH_OBJECTSTORE=1 warns minio_password; check "fresh store requested -> sil
 grep -q 'rclone check .* &&' "$DEPLOY/legacy-minio.yml" && grep -q 'touch /config/minio_copy_done' "$DEPLOY/legacy-minio.yml"
 check "copy-from-minio records completion after the check" "$?"
 
+# the demo automation seed leaves an existing automation (and its language pin) alone
+grep -q 'getMovementRowByName({ teamId: seed.teamId, name: FIXTURE_MOVEMENT_NAME })' "$ROOT/apps/api/src/scripts/dev/movement.ts"
+check "demo seed skips an existing demo automation" "$?"
+
 [ "$failures" -eq 0 ] && echo "all passed" || { echo "$failures failed"; exit 1; }

@@ -97,6 +97,7 @@ import {
  *   - credentials `` `Dev Loop Attio` `` / `` `Dev Loop Slack` `` — credentials
  *     are imported by their NAME (backticked when it carries spaces).
  */
+const FIXTURE_MOVEMENT_NAME = 'dealflow_intake';
 const FIXTURE_MOVEMENT = `
 import { email, attio, slack } from adapters
 import { \`Dev Loop Attio\`, \`Dev Loop Slack\` } from credentials
@@ -479,6 +480,21 @@ async function main() {
     : FIXTURE_MOVEMENT;
 
   const movementName = argValue(args, '--movement');
+  // The demo seed runs on every `up.sh --demo`, including on an installation
+  // upgraded from an older language version. Re-saving the fixture would
+  // rewrite that automation in the current spelling against its old pin
+  // (invalid), and would overwrite a self-hoster's own edits. An existing
+  // demo automation stays as it is; moving it forward is the product's
+  // explicit upgrade.
+  if (file === undefined && movementName === undefined) {
+    const existing = await getMovementRowByName({ teamId: seed.teamId, name: FIXTURE_MOVEMENT_NAME });
+    if (existing) {
+      console.log(
+        `'${FIXTURE_MOVEMENT_NAME}' already exists (language version ${existing.languageVersion}); left untouched.`,
+      );
+      return;
+    }
+  }
   // saveMovement: the canonical `automations.movement` row is written first,
   // then gated + the file's listeners reconciled — same path the editor
   // uses. The inbound key now lives in the file's `listen` config.

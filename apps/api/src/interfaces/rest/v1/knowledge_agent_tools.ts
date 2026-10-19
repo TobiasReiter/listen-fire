@@ -984,9 +984,12 @@ const upgradeMovementHandler: RequestHandler = jsonHandler(
   upgradeMovementSchema,
   'body',
   async (input) => {
+    const teamId = await resolveToolTeam(input.team);
+    const id = await resolveMovementIdInTeam({ teamId, idOrName: input.automation });
+    if (id === null) return { error: `No automation '${input.automation}' in this team.` };
     const result = await upgradeMovement({
-      teamId: await resolveToolTeam(input.team),
-      id: input.automation,
+      teamId,
+      id,
       acknowledge: input.acknowledge === true,
       applyAllFixes: input.applyAllFixes === true,
     });
