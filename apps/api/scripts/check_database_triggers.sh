@@ -127,6 +127,9 @@ audit_triggers=`psql -v ON_ERROR_STOP=ON "$DATABASE_URL" <<-EOSQL
       'automations.join_pending', 'automations.join_branch_export', 'automations.adapter_await',
       'automations.callback', 'automations.record_binding', 'automations.exposed_file',
       'automations.work',
+      -- park_library_source: immutable, content-addressed library texts a park
+      -- pins (no id column, never edited or deleted), written only by the engine.
+      'automations.park_library_source',
       'automations.system_event', 'automations.deploy_check',
       -- automations vault + channel identity: single-use links and handshake
       -- tokens, a picker's grant records, echo-recognition tokens, and the
