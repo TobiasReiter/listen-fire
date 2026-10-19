@@ -4,7 +4,7 @@ Language version 5, **Dancing Wren**, follows Luminous Owl (4). The [changelog e
 
 Section 2 respells the whole surface; nothing in it changes what a program means. The four changes after it share one idea: there is no engine-side store and there are no meta edges. Everything a movement reads or writes is an edge or a record that a system declares, and a plugin is a function.
 
-> **Preview.** Dancing Wren ships as a preview in the 0.11.0 pre-release. Existing automations keep their version 1 to 4 pins and run unchanged; version 5 is opt-in, through the explicit upgrade only.
+> **Preview.** Dancing Wren ships as a preview in the 0.12.0 pre-release. Existing automations keep their version 1 to 4 pins and run unchanged; version 5 is opt-in, through the explicit upgrade only.
 
 ## Contents
 

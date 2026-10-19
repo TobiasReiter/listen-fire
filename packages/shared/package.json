@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/shared",
   "license": "Apache-2.0",
-  "version": "0.11.0-rc.1",
+  "version": "0.12.0-rc.1",
   "description": "Shared library for Listen-Fire code to be used across client and server",
   "engines": {
     "node": "22.20.0"

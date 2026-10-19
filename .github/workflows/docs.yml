@@ -2,9 +2,9 @@ name: docs
 
 # Publishes the versioned documentation site. Never runs on a branch push: a
 # `docs-v*` tag (cut when a language version's docs are ready) or a manual run.
-# A tag with a pre-release suffix (`docs-v0.11.0-rc.1`) deploys under `/next/`
+# A tag with a pre-release suffix (`docs-v0.12.0-rc.1`) deploys under `/docs/next/`
 # and keeps the current docs (built from the newest unsuffixed `docs-v*` tag)
-# as the default; with no such tag yet, the root redirects to `/next/`.
+# as the default; with no such tag yet, the root redirects to `/docs/next/`.
 on:
   push:
     tags: ['docs-v*']
@@ -39,9 +39,9 @@ jobs:
                 (cd "$RUNNER_TEMP/stable" && node scripts/docs/build.mjs)
                 mkdir -p site && cp -R "$RUNNER_TEMP/stable/site/." site/
               fi
-              DOCS_PREFIX=next node scripts/docs/build.mjs
+              node scripts/docs/build.mjs
               if [ -z "$stable" ]; then
-                echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=next/index.html">' > site/index.html && touch site/.nojekyll
+                echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=docs/next/index.html">' > site/index.html && touch site/.nojekyll
               fi
               ;;
             *) node scripts/docs/build.mjs ;;

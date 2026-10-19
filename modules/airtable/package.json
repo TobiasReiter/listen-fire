@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/airtable",
   "license": "Apache-2.0",
-  "version": "0.11.0-rc.1",
+  "version": "0.12.0-rc.1",
   "description": "Airtable (bases, tables, records, attachments) as a module: read, written, and MAC-signed webhooks that pull their payloads. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"

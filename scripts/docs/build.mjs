@@ -16,7 +16,10 @@ const siteDir = join(root, 'site', PREFIX);
 const SITE_URL = readFileSync(join(root, 'crates/movement-language/src/docs.rs'), 'utf8').match(/DOCS_SITE: &str = "([^"]+)"/)[1] + (PREFIX ? `/${PREFIX}` : '');
 const REPO_URL = 'https://github.com/listen-fire/listen-fire';
 
-const VERSIONS = [{ number: 5, name: 'Dancing Wren', slug: 'v5' }];
+// A pre-release build (the crate version has a `-` suffix) publishes under `docs/next/`, beside the
+// current `docs/v5/`; the language server derives the same slug from the same version.
+const PRERELEASE = /^version = "[^"]*-/m.test(readFileSync(join(root, 'Cargo.toml'), 'utf8'));
+const VERSIONS = [{ number: 5, name: 'Dancing Wren', slug: PRERELEASE ? 'next' : 'v5' }];
 const CURRENT = VERSIONS[VERSIONS.length - 1];
 
 const HANDBOOK_DIR = 'apps/api/src/lib/knowledge/movement_handbook/chapters';
@@ -136,11 +139,14 @@ function build(version) {
   writeFileSync(join(dir, 'index.html'), layout({ version, page: 'index', title: `listen-fire v${version.number} ${version.name}`, body: intro, toc: [] }));
 }
 
-rmSync(siteDir, { recursive: true, force: true });
+// A pre-release leaves whatever else is in `site/` (the current docs) alone.
+if (PRERELEASE) rmSync(join(siteDir, 'docs', CURRENT.slug), { recursive: true, force: true });
+else rmSync(siteDir, { recursive: true, force: true });
 for (const v of VERSIONS) build(v);
-writeFileSync(
+if (!PRERELEASE) writeFileSync(
   join(siteDir, 'index.html'),
   `<!doctype html><meta charset="utf-8"><title>listen-fire docs</title><meta http-equiv="refresh" content="0;url=docs/${CURRENT.slug}/index.html"><a href="docs/${CURRENT.slug}/index.html">listen-fire docs</a>`,
 );
+mkdirSync(siteDir, { recursive: true });
 writeFileSync(join(siteDir, '.nojekyll'), '');
 console.log(`docs: built ${pages.length} pages x ${VERSIONS.length} version(s) into ${relative(root, siteDir)}/`);

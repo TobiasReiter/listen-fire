@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/granola",
   "license": "Apache-2.0",
-  "version": "0.11.0-rc.1",
+  "version": "0.12.0-rc.1",
   "description": "Granola (meeting notes) as a module: polled for new and changed notes, readable back-catalogue through Meetings. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"

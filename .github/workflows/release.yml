@@ -4,7 +4,7 @@ name: release
 # that tag and at `latest`; nothing else publishes anything, and there is no
 # schedule — a release happens because somebody tagged.
 #
-# A pre-release tag (anything after a `-`, e.g. `v0.11.0-rc.1`) publishes at
+# A pre-release tag (anything after a `-`, e.g. `v0.12.0-rc.1`) publishes at
 # that tag ONLY: it never moves `latest`, so an installation that follows
 # `latest` stays on the last full release. This workflow creates no GitHub
 # Release; the lf-release workflow does, and marks suffixed tags pre-release.

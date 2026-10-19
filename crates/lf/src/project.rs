@@ -13,7 +13,7 @@ pub const PROJECT_FILE: &str = "lf.yaml";
 
 /// The engine version this release runs (`ENGINE_VERSION` in
 /// packages/movement-engine/public/movement-engine.ts); a test holds the two equal.
-pub const CURRENT_ENGINE_VERSION: &str = "0.11.0";
+pub const CURRENT_ENGINE_VERSION: &str = "0.12.0";
 
 /// lf runs on the Rust engine alone, which runs version 5 and later;
 /// versions 1–4 run only on the hosted TypeScript engine.
@@ -168,7 +168,7 @@ pub fn load_project(from: &Path) -> Result<Project, String> {
     let value = if value.is_null() { serde_yaml::Value::Mapping(Default::default()) } else { value };
     let file: ProjectFile = serde_yaml::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
     if !is_semver(&file.engine) {
-        return Err(format!("{}: engine: a semver version, e.g. 0.11.0", path.display()));
+        return Err(format!("{}: engine: a semver version, e.g. 0.12.0", path.display()));
     }
     if let Some(url) = &file.public_url
         && !is_http_url(url)
@@ -218,8 +218,9 @@ mod tests {
 
     #[test]
     fn a_newer_engine_is_refused_and_an_older_one_runs_the_current_version() {
-        assert!(language_version_of_engine("0.12.0").unwrap_err().contains("newer than this lf"));
+        assert!(language_version_of_engine("0.13.0").unwrap_err().contains("newer than this lf"));
         assert_eq!(language_version_of_engine("0.6.0"), Ok(CURRENT_LANGUAGE_VERSION));
+        assert_eq!(language_version_of_engine("0.11.0"), Ok(CURRENT_LANGUAGE_VERSION));
     }
 
     #[test]
@@ -255,7 +256,7 @@ mod tests {
 
     #[test]
     fn semver_is_three_numbers() {
-        assert!(is_semver("0.11.0"));
+        assert!(is_semver("0.12.0"));
         assert!(!is_semver("0.11"));
         assert!(!is_semver("0.11.x"));
     }

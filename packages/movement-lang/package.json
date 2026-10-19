@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/movement-lang",
   "license": "Apache-2.0",
-  "version": "0.11.0-rc.1",
+  "version": "0.12.0-rc.1",
   "description": "The data-movement language: parser, checker, and lowering for movements",
   "engines": {
     "node": "22.20.0"

@@ -13,11 +13,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/); versions are the git tags desc
 
 ## [Unreleased]
 
-## [0.11.0-rc.1] - 2026-10-19 (pre-release)
+## [0.12.0-rc.1] - 2026-10-19 (pre-release)
 
 This is a pre-release for trying out, not the full 0.11.0 line's replacement: container images are
 published at this tag only (never `latest`), npm packages under the `next` tag, the GitHub releases
-are marked pre-release, and the docs are under `/next/`. The big change is language version 5; the
+are marked pre-release, and the docs are under `/docs/next/`. The big change is language version 5; the
 rest of this section is its detail.
 
 **Language version 5, Dancing Wren, is a PREVIEW.** Existing automations keep their version 1 to 4
@@ -1971,6 +1971,6 @@ Releases before v0.11 are kept one file per minor line, newest first:
 - [v0.2.x](docs/changelog/v0.2.md) (v0.2.0)
 - [v0.1.x](docs/changelog/v0.1.md) (v0.1.0 to v0.1.2)
 
-[Unreleased]: https://github.com/listen-fire/listen-fire/compare/v0.11.0-rc.1...HEAD
-[0.11.0-rc.1]: https://github.com/listen-fire/listen-fire/compare/v0.11.0...v0.11.0-rc.1
+[Unreleased]: https://github.com/listen-fire/listen-fire/compare/v0.12.0-rc.1...HEAD
+[0.12.0-rc.1]: https://github.com/listen-fire/listen-fire/compare/v0.11.0...v0.12.0-rc.1
 [v0.11.0]: https://github.com/listen-fire/listen-fire/compare/v0.10.9...v0.11.0

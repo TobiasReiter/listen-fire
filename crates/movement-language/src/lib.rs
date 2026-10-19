@@ -20,7 +20,7 @@ use movement_parser::ast::Span;
 use movement_parser::catalog::types::CatalogSnapshot;
 use movement_parser::util::form::external_text;
 
-pub use crate::docs::{DOCS_BASE, DOCS_SITE, docs_url};
+pub use crate::docs::{DOCS_SITE, DOCS_SLUG, docs_base, docs_url};
 use crate::text::{Text, loc_of, range_of};
 
 /// The code a file that does not parse is reported under.

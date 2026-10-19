@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/module-kit",
   "license": "Apache-2.0",
-  "version": "0.11.0-rc.1",
+  "version": "0.12.0-rc.1",
   "description": "How an integration is built once and loaded everywhere: `defineModule` (an adapter or a set of plugins, its declarations and its methods over a host context), the in-process transport the platform loads a module with, the adapter protocol's server kit, and `serve-module`, which serves any module as a protocol-2 process for lf, the Rust host, the cloud and embedders. A module may not reach the hosted product, a database or the recording layer (scripts/check-module-boundary.cjs). Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"

@@ -50,4 +50,4 @@ export {
 
 /** This release of the engine. `lf` pins a new project to it and refuses a pin
  *  newer than it; lf's copy is held equal to this one by a cargo test. */
-export const ENGINE_VERSION = '0.11.0';
+export const ENGINE_VERSION = '0.12.0';

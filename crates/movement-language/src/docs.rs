@@ -11,11 +11,30 @@ use crate::builtins;
 /// constant (`scripts/docs/build.mjs` reads it from here for its canonical links).
 pub const DOCS_SITE: &str = "https://listen-fire.github.io/listen-fire";
 
-/// The docs for language version 5 (`DOCS_SITE` plus `/docs/v5`; the `docs_links` test keeps them equal).
-pub const DOCS_BASE: &str = "https://listen-fire.github.io/listen-fire/docs/v5";
+/// The docs section this build links to: a pre-release build (a `-` in the crate version) links to
+/// `docs/next/`, a plain version to `docs/v5/`. `scripts/docs/build.mjs` derives the same slug from
+/// the same version, so the two cannot drift.
+pub const DOCS_SLUG: &str = if is_prerelease(env!("CARGO_PKG_VERSION")) { "next" } else { "v5" };
+
+const fn is_prerelease(version: &str) -> bool {
+    let bytes = version.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'-' {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// `DOCS_SITE` plus `/docs/<DOCS_SLUG>`.
+pub fn docs_base() -> String {
+    format!("{DOCS_SITE}/docs/{DOCS_SLUG}")
+}
 
 pub fn docs_url(page: &str, anchor: &str) -> String {
-    format!("{DOCS_BASE}/{page}#{anchor}")
+    format!("{}/{page}#{anchor}", docs_base())
 }
 
 /// The handbook section a symbol of this kind is explained in.

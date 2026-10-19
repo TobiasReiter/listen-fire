@@ -97,6 +97,6 @@ lf serve [--port N]
 
 ## 7. Upgrade a project
 
-> Language version 5 (Dancing Wren) is a **preview** in the 0.11.0 pre-release. Existing projects keep their version 1 to 4 pins and run unchanged; moving to 5 is opt-in, by this explicit upgrade.
+> Language version 5 (Dancing Wren) is a **preview** in the 0.12.0 pre-release. Existing projects keep their version 1 to 4 pins and run unchanged; moving to 5 is opt-in, by this explicit upgrade.
 
 `lf upgrade --check` prints what would change; `lf upgrade` rewrites the movement files into the current language version.

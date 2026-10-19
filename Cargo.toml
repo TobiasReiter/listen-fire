@@ -5,7 +5,7 @@ members = ["crates/lf", "crates/movement-checker", "crates/movement-engine", "cr
 # One release version for the toolchain: the three library crates and the
 # `listen-fire` facade (crates/lf, which installs `lf`) publish together.
 [workspace.package]
-version = "0.11.0-rc.1"
+version = "0.12.0-rc.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/listen-fire/listen-fire"
