@@ -52,11 +52,17 @@ jest.mock('../../../../services/translation_graph/movement/run_now', () => ({
 }));
 
 const deleteMovementMock = jest.fn(async () => true);
+// Run-by-name resolution: a hit by id wins, otherwise the team's list is
+// searched by name. Default: every id resolves to itself.
+const getMovementMock = jest.fn(
+  async (input: { teamId: string; id: string }): Promise<{ id: string } | null> => ({ id: input.id }),
+);
+const listMovementsMock = jest.fn(async (_teamId: string): Promise<{ id: string; name: string }[]> => []);
 jest.mock('../../../../services/translation_graph/movement/provision', () => ({
   deleteMovement: (...args: unknown[]) => deleteMovementMock(...(args as [])),
   saveMovement: jest.fn(),
-  getMovement: jest.fn(),
-  listMovements: jest.fn(),
+  getMovement: (input: { teamId: string; id: string }) => getMovementMock(input),
+  listMovements: (teamId: string) => listMovementsMock(teamId),
 }));
 
 const getByIdMock = jest.fn(async (): Promise<{ email: string; username: string | null }> => ({
@@ -296,6 +302,33 @@ describe('POST /automations/run — wire key `automation` reaches runMovementAsy
       actor: { email: 'user@example.com' },
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('resolves an automation name to its id in the resolved team', async () => {
+    getMovementMock.mockRejectedValueOnce(new Error('not a uuid'));
+    listMovementsMock.mockResolvedValueOnce([
+      { id: 'mv-other', name: 'Other' },
+      { id: 'mv-7', name: 'Nightly sync' },
+    ]);
+    const res = fakeRes();
+    await call(runMovementHandler, { automation: 'Nightly sync', team: 'T1' }, res);
+
+    expect(listMovementsMock).toHaveBeenCalledWith('T1');
+    expect(runMovementAsyncMock).toHaveBeenCalledWith({
+      teamId: 'T1',
+      movementId: 'mv-7',
+      actor: { email: 'user@example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('reports an error and runs nothing when no automation matches', async () => {
+    getMovementMock.mockResolvedValueOnce(null);
+    const res = fakeRes();
+    await call(runMovementHandler, { automation: 'ghost', team: 'T1' }, res);
+
+    expect(runMovementAsyncMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(res.body)).toContain("No automation 'ghost'");
   });
 });
 
