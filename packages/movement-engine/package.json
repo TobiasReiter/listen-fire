@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/engine",
   "license": "Apache-2.0",
-  "version": "0.11.0",
+  "version": "0.11.0-rc.1",
   "description": "The movement engine and its host contract, moved out of apps/api so every shell (the hosted product, the `lf` command line) runs the same engine: the TypeScript engine, the Rust engine's shim, the EngineHost families, and the adapter and model types they reach. Paths mirror apps/api/src so the move stayed mechanical. Its own tests borrow apps/api's jest runner (jest.config.borrowed.cjs); engine tests that need the platform still live in apps/api. Embedders reach it only through public/* (the exports map); the internals resolve only under the `movement-engine-internals` condition, which only test runners set",
   "engines": {
     "node": "22.20.0"
@@ -69,6 +69,7 @@
           "dist/public/*"
         ]
       }
-    }
+    },
+    "tag": "next"
   }
 }

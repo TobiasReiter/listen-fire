@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/file-text",
   "license": "Apache-2.0",
-  "version": "0.11.0",
+  "version": "0.11.0-rc.1",
   "description": "A file's text: PDF (text layer, then an injected OCR), PowerPoint decks, spreadsheets and CSV, and audio (an injected transcriber). Bytes, OCR, transcription, the spreadsheet model call and the logger are all injected, so any shell can read files without the hosted product",
   "engines": {
     "node": "22.20.0"
@@ -62,6 +62,7 @@
           "*"
         ]
       }
-    }
+    },
+    "tag": "next"
   }
 }

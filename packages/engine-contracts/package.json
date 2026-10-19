@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/engine-contracts",
   "license": "Apache-2.0",
-  "version": "0.11.0",
+  "version": "0.11.0-rc.1",
   "description": "The contracts the movement engine speaks: the tenant id, the host families and entry-point inputs, the parked state, file descriptors and the adapter protocol. While private, its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"
@@ -63,6 +63,7 @@
           "*"
         ]
       }
-    }
+    },
+    "tag": "next"
   }
 }

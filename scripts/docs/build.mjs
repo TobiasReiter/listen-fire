@@ -9,9 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { renderMarkdown } from './markdown.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const siteDir = join(root, 'site');
+// A pre-release build (DOCS_PREFIX=next) lands under `site/next/`, so it can sit beside the current docs.
+const PREFIX = process.env.DOCS_PREFIX ?? '';
+const siteDir = join(root, 'site', PREFIX);
 // The deploy base lives in one place, beside the links the language server emits.
-const SITE_URL = readFileSync(join(root, 'crates/movement-language/src/docs.rs'), 'utf8').match(/DOCS_SITE: &str = "([^"]+)"/)[1];
+const SITE_URL = readFileSync(join(root, 'crates/movement-language/src/docs.rs'), 'utf8').match(/DOCS_SITE: &str = "([^"]+)"/)[1] + (PREFIX ? `/${PREFIX}` : '');
 const REPO_URL = 'https://github.com/listen-fire/listen-fire';
 
 const VERSIONS = [{ number: 5, name: 'Dancing Wren', slug: 'v5' }];

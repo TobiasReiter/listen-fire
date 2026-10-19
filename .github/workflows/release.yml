@@ -4,6 +4,11 @@ name: release
 # that tag and at `latest`; nothing else publishes anything, and there is no
 # schedule — a release happens because somebody tagged.
 #
+# A pre-release tag (anything after a `-`, e.g. `v0.11.0-rc.1`) publishes at
+# that tag ONLY: it never moves `latest`, so an installation that follows
+# `latest` stays on the last full release. This workflow creates no GitHub
+# Release; the lf-release workflow does, and marks suffixed tags pre-release.
+#
 # `workflow_dispatch` builds the same matrix against any ref and pushes
 # NOTHING, which is how a change to a Dockerfile or to this file is proved
 # before it is tagged.
@@ -83,6 +88,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Image tags
+        id: tags
+        run: |
+          image="ghcr.io/listen-fire/${{ matrix.name }}"
+          {
+            echo "list<<EOF"
+            echo "$image:${GITHUB_REF_NAME}"
+            case "$GITHUB_REF_NAME" in
+              *-*) ;; # pre-release: this tag only
+              *) echo "$image:latest" ;;
+            esac
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v6
         with:
@@ -94,9 +113,7 @@ jobs:
           # A dry run builds every layer and publishes nothing, so it proves
           # the build without minting a version.
           push: ${{ github.event_name == 'push' }}
-          tags: |
-            ghcr.io/listen-fire/${{ matrix.name }}:${{ github.ref_name }}
-            ghcr.io/listen-fire/${{ matrix.name }}:latest
+          tags: ${{ steps.tags.outputs.list }}
           build-args: ${{ matrix.build-args }}
           labels: |
             org.opencontainers.image.source=https://github.com/listen-fire/listen-fire

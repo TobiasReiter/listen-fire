@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/affinity",
   "license": "Apache-2.0",
-  "version": "0.11.0",
+  "version": "0.11.0-rc.1",
   "description": "Affinity (organizations, people, opportunities, lists, notes, files) as a module: read, written, and signed webhooks. Loaded in process by the platform, served by serve-module everywhere else. Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"
@@ -68,6 +68,7 @@
           "*"
         ]
       }
-    }
+    },
+    "tag": "next"
   }
 }

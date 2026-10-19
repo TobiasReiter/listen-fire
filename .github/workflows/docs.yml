@@ -2,6 +2,9 @@ name: docs
 
 # Publishes the versioned documentation site. Never runs on a branch push: a
 # `docs-v*` tag (cut when a language version's docs are ready) or a manual run.
+# A tag with a pre-release suffix (`docs-v0.11.0-rc.1`) deploys under `/next/`
+# and keeps the current docs (built from the newest unsuffixed `docs-v*` tag)
+# as the default; with no such tag yet, the root redirects to `/next/`.
 on:
   push:
     tags: ['docs-v*']
@@ -21,11 +24,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Build the site and check its links
-        run: node scripts/docs/build.mjs && node scripts/docs/check-links.mjs
+        run: |
+          case "$GITHUB_REF_NAME" in
+            docs-v*-*)
+              stable="$(git tag --list 'docs-v*' --sort=-v:refname | grep -v -e '-' | head -n1 || true)"
+              if [ -n "$stable" ]; then
+                git worktree add "$RUNNER_TEMP/stable" "$stable"
+                (cd "$RUNNER_TEMP/stable" && node scripts/docs/build.mjs)
+                mkdir -p site && cp -R "$RUNNER_TEMP/stable/site/." site/
+              fi
+              DOCS_PREFIX=next node scripts/docs/build.mjs
+              if [ -z "$stable" ]; then
+                echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=next/index.html">' > site/index.html && touch site/.nojekyll
+              fi
+              ;;
+            *) node scripts/docs/build.mjs ;;
+          esac
+          node scripts/docs/check-links.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

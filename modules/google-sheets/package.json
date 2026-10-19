@@ -1,7 +1,7 @@
 {
   "name": "@listen-fire/google-sheets",
   "license": "Apache-2.0",
-  "version": "0.11.0",
+  "version": "0.11.0-rc.1",
   "description": "Google Sheets (granted spreadsheets: their tables, tabs, named cells and cells) as a module: read, append, unique-by overwrite, create and share. Loaded in process by the platform, served by serve-module everywhere else. Also the Google OAuth constants every Google module shares (google_oauth.ts). Its tests borrow apps/api's jest runner (jest.config.borrowed.cjs)",
   "engines": {
     "node": "22.20.0"
@@ -65,6 +65,7 @@
           "*"
         ]
       }
-    }
+    },
+    "tag": "next"
   }
 }
