@@ -18,9 +18,10 @@ name: movement-wasm
 #    engine by their pin); and those corpora's recorded engine runs replay
 #    on the TypeScript engine in process and over the HTTP host double.
 #
-# The committed artifact was built on macOS; the path remapping and pinned
-# toolchain in scripts/build-movement-wasm.sh are meant to make Linux produce the
-# same bytes, and this workflow's first green run is what verifies that.
+# The committed artifacts are built on macOS; the pinned toolchain, the path
+# remapping and the rustc wrapper in scripts/build-movement-wasm.sh make Linux
+# produce the same bytes (see crates/movement-parser/README.md,
+# "Reproducibility").
 on:
   pull_request:
     paths:
@@ -29,6 +30,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/build-movement-wasm.sh"
+      - "scripts/build-movement-wasm-rustc.sh"
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
       - "packages/shared/timezone/**"
@@ -56,6 +58,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/build-movement-wasm.sh"
+      - "scripts/build-movement-wasm-rustc.sh"
       - "packages/movement-lang/**"
       - "packages/shared/expression/**"
       - "packages/shared/timezone/**"
@@ -149,6 +152,11 @@ jobs:
       - name: Engine shim, against a double and through the committed artifact
         working-directory: packages/movement-engine
         run: pnpm run test --testPathPattern 'movement_engine/__test__/(rust_engine|rust_engine_abi|rust_run|rust_traverse|rust_verbs)\.unit\.test\.ts$'
+      # What the platform's cases, the oracle generator and the corpora's
+      # suites import reaches the generated Prisma client. The root package
+      # has no prisma binary, so it runs in the api package (as in
+      # typecheck.yml).
+      - run: pnpm --filter api exec prisma generate
       - name: Engine shim, the cases that still need the platform
         working-directory: apps/api
         run: pnpm run test:unit --testPathPattern 'movement_engine/__test__/(rust_write|rust_extract|program_check|seam_guard)\.unit\.test\.ts$'
@@ -176,8 +184,6 @@ jobs:
             echo "::error::crates/movement-engine/tests/env is stale: regenerate it (see generate.ts) and commit it, then make the crate tests pass."
             exit 1
           }
-      # The corpora's suites import the generated Prisma client's types.
-      - run: pnpm prisma generate
       # Versions 1 and 2 run on the TypeScript engine by their pin; which
       # engine runs a run is the pin alone, so there is no engine setting.
       - name: Conformance corpora, versions 1 and 2

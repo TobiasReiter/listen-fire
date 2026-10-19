@@ -76,11 +76,21 @@ derives with hand readers, as the lowering already did.
 
 ## Reproducibility
 
-The committed artifact is built on a laptop; `--remap-path-prefix` in the build
-script and the pinned toolchain are meant to make the Linux CI rebuild
-byte-identical. That is unproven until the first green run of
-`.github/workflows/movement-wasm.yml`, which fails with the two hashes when they
-differ.
+The committed artifacts are built on a laptop and rebuilt in Linux CI
+(`.github/workflows/movement-wasm.yml`, which fails with the two hashes when
+they differ). Three things make the two builds byte-identical (a macOS arm64
+and a Linux x86_64 build matched, 2026-10-19):
+
+- the pinned toolchain (`rust-toolchain.toml`);
+- `--remap-path-prefix` for the checkout and the cargo home, so panic
+  locations name no machine's paths;
+- the rustc wrapper `scripts/build-movement-wasm-rustc.sh`, which replaces
+  cargo's per-crate hash for the wasm crates. Cargo's hash covers the build
+  scripts and proc macros, which are compiled for the build machine, so it
+  differed by host and changed the artifacts' bytes but not their size.
+
+The build has its own target directory (`target/movement-wasm`), because
+cargo would otherwise reuse dependencies built without the wrapper.
 
 ## The ABI (`src/abi.rs`)
 

@@ -1837,9 +1837,13 @@ mod tests {
     }
 
     const ROOMY: usize = 256 << 20;
-    /// Far too small to recurse over a chain of a million: what refuses one
-    /// must walk, build and drop it with loops.
-    const TIGHT: usize = 256 << 10;
+    /// Far too small to recurse over a chain of a million (or of the 200,000
+    /// links between parentheses below): what refuses one must walk, build and
+    /// drop it with loops. Not smaller, because the grammar's own recursion
+    /// through five parentheses takes between 512 and 768 KiB in an
+    /// unoptimised x86_64 Linux build (measured 2026-10-19; 256 KiB was
+    /// enough on aarch64 macOS and overflowed in CI).
+    const TIGHT: usize = 2 << 20;
 
     #[test]
     fn a_chain_is_bounded_at_its_limit() {

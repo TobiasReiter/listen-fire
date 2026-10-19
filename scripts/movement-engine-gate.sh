@@ -19,6 +19,6 @@ cd apps/api
 echo "== ME unit"; npx jest -c src/test/jest-unit.config.ts --testPathPattern 'services/movement_engine/__test__' 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL "
 for v in v1 v2; do echo "== conformance $v"; pnpm -s test:conformance:$v 2>&1 | grep -E "^Tests:|^Test Suites:|FAIL "; done
 cd ../..
-echo "== artifacts"; scripts/build-movement-wasm.sh 2>&1 | grep -E "wasm|raw"; cargo clean -p listen-fire-engine --release --target wasm32-unknown-unknown >/dev/null 2>&1; cargo clean -p listen-fire-parser --release --target wasm32-unknown-unknown >/dev/null 2>&1; scripts/build-movement-wasm.sh 2>&1 | grep -E "wasm|raw"; git status --short packages/movement-lang/wasm
+echo "== artifacts"; scripts/build-movement-wasm.sh 2>&1 | grep -E "wasm|raw"; cargo clean --target-dir target/movement-wasm -p listen-fire-engine --release --target wasm32-unknown-unknown >/dev/null 2>&1; cargo clean --target-dir target/movement-wasm -p listen-fire-parser --release --target wasm32-unknown-unknown >/dev/null 2>&1; scripts/build-movement-wasm.sh 2>&1 | grep -E "wasm|raw"; git status --short packages/movement-lang/wasm
 echo "== type-check"; (cd apps/api && NODE_OPTIONS=--max-old-space-size=8192 npx tsc -p tsconfig.json --noEmit >/dev/null 2>&1; echo "api tsc exit $?"); (cd apps/web && NODE_OPTIONS=--max-old-space-size=8192 pnpm -s code:type-check >/dev/null 2>&1; echo "web tsc exit $?")
 echo "== done"

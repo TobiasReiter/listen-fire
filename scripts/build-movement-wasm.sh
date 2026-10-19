@@ -27,6 +27,16 @@ cd "$ROOT_DIR"
 # between 512 and 768 KiB of it (measured 2026-10-06), so about a third.
 RUSTFLAGS="--remap-path-prefix=$ROOT_DIR=/listen-fire --remap-path-prefix=$CARGO_HOME_DIR=/cargo -C link-arg=--stack-first -C link-arg=-zstack-size=2097152"
 export RUSTFLAGS
+# Cargo's per-crate hashes depend on the build machine's target triple; the
+# wrapper replaces them for the wasm crates (see its header). It takes the
+# place of any wrapper set in the environment.
+#
+# The build has a target directory of its own: cargo does not see what the
+# wrapper changes, so in a directory shared with builds made without it, it
+# would reuse their dependencies, hashes and all.
+RUSTC_WRAPPER="$ROOT_DIR/scripts/build-movement-wasm-rustc.sh"
+CARGO_TARGET_DIR="$ROOT_DIR/target/movement-wasm"
+export RUSTC_WRAPPER CARGO_TARGET_DIR
 cargo build --locked --release --target wasm32-unknown-unknown -p listen-fire-engine
 cargo build --locked --release --target wasm32-unknown-unknown -p listen-fire-parser
 
@@ -34,7 +44,7 @@ WASM_DIR="$ROOT_DIR/packages/movement-lang/wasm"
 for artifact in movement_engine:movement movement_parser:movement_parser; do
   built="${artifact%%:*}"
   out="$WASM_DIR/${artifact##*:}.wasm"
-  cp "$ROOT_DIR/target/wasm32-unknown-unknown/release/$built.wasm" "$out"
+  cp "$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/$built.wasm" "$out"
   chmod 644 "$out"
   if command -v sha256sum >/dev/null; then
     sha256sum "$out"
