@@ -50,6 +50,9 @@ module served as a process hands out its files' bytes at one-use URLs under `MOD
 (else the address it binds), never under the address a caller claims. Off the platform, `@lf/web`
 refuses a LinkedIn profile or gated document address by name. The sections below, one per stream
 (`ev4-*`), have the detail.
+### r-fileown
+- **Files uploaded before the upgrade are readable again by the team that used them.** A migration gives each older upload (stored as `<uuid>/<name>`, such as a Run-now upload a parked run still holds) the document row the file check reads, for the one team whose events, runs, parks, callbacks, asks or documents reference it. A file two teams reference gets no owner (the deploy log counts them); a file nothing references stays unreadable. The check itself is unchanged.
+
 ### r-rehearsal-fixes
 
 - **The `migrate` log no longer shows the database password** (the runner reads `DATABASE_URL` from the environment; the AWS and Fly guides stop passing it as an argument). **The MinIO warning ends once the copy is done:** a successful `copy-from-minio` records `minio_copy_done` in the config volume. **`up.sh --demo`** now starts the fake CRM the seed needs. **`POST /automations/run`** accepts an automation name.
