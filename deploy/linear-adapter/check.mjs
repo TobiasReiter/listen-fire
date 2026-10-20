@@ -41,7 +41,7 @@ async function call(method, params, secret = 's3cret') {
 
 assert.equal((await call('listEntryPoints', {}, 'wrong')).status, 401);
 assert.equal((await call('describe', { typeId: 'Nope' })).body.result, null);
-assert.equal((await call('describe', { typeId: 'Team' })).body.result.references[0].writable, true);
+assert.equal((await call('listEntryPoints', {})).body.result.find((e) => e.typeId === 'Issue').writable, true);
 
 const teams = (await call('getRelated', { position: { adapterType: 'linear', recordType: 'meta', identity: { kind: 'unstable' } }, fieldId: 'Team', direction: 'outgoing' })).body.result;
 assert.equal(teams[0].position.identity.data.Key, 'INV');
@@ -49,8 +49,8 @@ assert.equal((await call('getFieldValue', { position: teams[0].position, fieldId
 
 const write = (labels) => call('createRecord', {
   recordType: 'Issue',
-  fields: { Title: 'Example Fund', Description: 'summary', Labels: labels },
-  parentLinks: [{ recordType: 'Team', externalId: 't1', edgeName: 'Issues' }],
+  fields: { Team: 'Investments & Research', Title: 'Example Fund', Description: 'summary', Labels: labels },
+  parentLinks: [],
   mutationContext: {},
 });
 const ok = (await write(['pipeline', 'venture'])).body;
@@ -61,6 +61,9 @@ const missing = (await write(['pipeline', 'Real Estate'])).body;
 assert.equal(missing.ok, false);
 assert.match(missing.error.message, /"Real Estate"/);
 assert.equal(created.length, 1);
+
+const noTeam = (await call('createRecord', { recordType: 'Issue', fields: { Team: 'Nope', Title: 'x' }, parentLinks: [] })).body;
+assert.match(noTeam.error.message, /no team named "Nope"/);
 
 assert.equal((await call('updateRecord', {})).body.error.code, 'method_not_implemented');
 

@@ -2,8 +2,11 @@
 // adapter wire protocol (apps/api/src/services/translation_graph/protocol),
 // translated to Linear's GraphQL API. No dependencies; Node 20+.
 //
-// Graph:  linear -[:Team]-> Team { Name, Key } -[:Issues]-> Issue
-//         (Issues is create-only; nothing is read back from Linear but teams.)
+// Graph:  linear -[:Team]-> Team { Name, Key }       (read)
+//         linear -[:Issue]-> Issue { Team, Title, … }  (create only)
+// Issue is a root write naming its team by name or key, not a write under a
+// Team: v0.11.0's remote shim drops the parent type's descriptor between read
+// and write, so `team-[:Issues]->` fails as drift.
 //
 // Env: ADAPTER_SECRET (the bearer TARS sends), LINEAR_API_KEY (a personal
 // `lin_api_…` key, or an OAuth access token), PORT.
@@ -22,12 +25,13 @@ const TYPES = {
     typeId: 'Team',
     displayName: 'Team',
     fields: [str('Name'), str('Key')],
-    references: [{ fieldId: 'Issues', targetTypeId: 'Issue', cardinality: 'many', readable: false, writable: true }],
+    references: [],
   },
   Issue: {
     typeId: 'Issue',
     displayName: 'Issue',
     fields: [
+      str('Team', { writable: true, required: true }),
       str('Title', { writable: true, required: true }),
       str('Description', { writable: true }),
       str('Labels', { writable: true, cardinality: 'many' }),
@@ -40,7 +44,7 @@ const TYPES = {
 
 const ENTRY_POINTS = [
   { typeId: 'Team', displayName: 'Team', scope: 'self-configured', readable: true, writable: false },
-  { typeId: 'Issue', displayName: 'Issue', scope: 'self-configured', readable: false, writable: false },
+  { typeId: 'Issue', displayName: 'Issue', scope: 'self-configured', readable: false, writable: true },
 ];
 
 class AdapterError extends Error {
@@ -50,6 +54,8 @@ class AdapterError extends Error {
     this.retryable = retryable;
   }
 }
+
+const listTeams = async () => (await linear(`query { teams(first: 250) { nodes { id name key } } }`)).teams.nodes;
 
 async function linear(query, variables) {
   const res = await fetch(LINEAR_URL, {
@@ -101,17 +107,18 @@ const methods = {
 
   getRelated: async ({ position, fieldId }) => {
     if (position?.recordType === 'meta' && fieldId === 'Team') {
-      const data = await linear(`query { teams(first: 250) { nodes { id name key } } }`);
-      return data.teams.nodes.map((t) => ({ position: teamPosition(t) }));
+      return (await listTeams()).map((t) => ({ position: teamPosition(t) }));
     }
     return [];
   },
 
-  createRecord: async ({ recordType, fields, parentLinks }) => {
+  createRecord: async ({ recordType, fields }) => {
     if (recordType !== 'Issue') throw new AdapterError('bad_request', `cannot create a ${recordType}`);
-    const teamId = parentLinks?.find((p) => p.recordType === 'Team')?.externalId;
-    if (!teamId) throw new AdapterError('bad_request', 'an Issue is created under a Team: write team-[:Issues]-> { … }');
     if (!fields.Title) throw new AdapterError('bad_request', 'an Issue needs a Title');
+    const wanted = String(fields.Team ?? '').toLowerCase();
+    const team = (await listTeams()).find((t) => t.name.toLowerCase() === wanted || t.key.toLowerCase() === wanted);
+    if (!team) throw new AdapterError('bad_request', `Linear has no team named "${fields.Team ?? ''}"`);
+    const teamId = team.id;
 
     const data = await linear(
       `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }`,
