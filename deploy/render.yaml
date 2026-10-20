@@ -445,15 +445,18 @@ services:
       # exactly the providers the API is configured to accept.
 
   # Linear for TARS automations, as a remote adapter (deploy/linear-adapter).
-  # Private: only the API reaches it, at http://<this service's name>:10000
-  # — install it in TARS under Settings → Remote adapters with that address
-  # and the same ADAPTER_SECRET.
-  - type: pserv
+  # Free plan: public (every call needs ADAPTER_SECRET as a bearer) and it
+  # sleeps after 15 idle minutes, so the first call after a pause waits ~1 min.
+  # Free services cannot use the private network, so install it in TARS
+  # (Settings → Remote adapters) at its https://….onrender.com/ address.
+  # Moving to `type: pserv` + `plan: starter` makes it private and always on.
+  - type: web
     name: linear-adapter
     runtime: node
     rootDir: deploy/linear-adapter
     region: frankfurt   # must match on every service (see the header)
-    plan: starter
+    plan: free
+    healthCheckPath: /
     buildCommand: node check.mjs
     startCommand: node server.mjs
     buildFilter:
