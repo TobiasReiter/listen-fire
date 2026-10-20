@@ -1,0 +1,10 @@
+{
+  "adapterType": "linear",
+  "displayName": "Linear",
+  "description": "Create issues in Linear teams.",
+  "baseUrl": "http://linear-adapter:10000/",
+  "authStrategy": { "kind": "bearer" },
+  "supportedTriggers": [],
+  "runtimeCapabilities": { "traversal": { "incoming": false, "edgeProperties": false }, "resources": false },
+  "methods": ["listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated", "createRecord"]
+}

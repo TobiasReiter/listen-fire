@@ -443,3 +443,27 @@ services:
       # API service (GOOGLE_AUTH_CLIENT_ID / MICROSOFT_CLIENT_ID, above), which
       # serves them to the login page at run time — so a published image offers
       # exactly the providers the API is configured to accept.
+
+  # Linear for TARS automations, as a remote adapter (deploy/linear-adapter).
+  # Private: only the API reaches it, at http://<this service's name>:10000
+  # — install it in TARS under Settings → Remote adapters with that address
+  # and the same ADAPTER_SECRET.
+  - type: pserv
+    name: linear-adapter
+    runtime: node
+    rootDir: deploy/linear-adapter
+    region: frankfurt   # must match on every service (see the header)
+    plan: starter
+    buildCommand: node check.mjs
+    startCommand: node server.mjs
+    buildFilter:
+      paths:
+        - deploy/linear-adapter/**
+    envVars:
+      - key: PORT
+        value: '10000'
+      - key: ADAPTER_SECRET
+        generateValue: true
+      # A personal `lin_api_…` key for now; a Linear OAuth app's token later.
+      - key: LINEAR_API_KEY
+        sync: false
