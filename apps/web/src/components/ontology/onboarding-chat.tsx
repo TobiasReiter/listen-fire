@@ -145,7 +145,7 @@ export function OnboardingChat() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">
-                  Welcome to Listen-Fire
+                  Welcome to TARS
                 </h2>
                 <p className="mt-1 text-[13px] text-gray-500">
                   Your data model is empty. Tell the assistant about your work — the

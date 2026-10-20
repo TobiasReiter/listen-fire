@@ -1151,8 +1151,8 @@ function getLinkedObjectDisplayName(lo: { data?: unknown; external_id: string; e
 }
 
 const ADAPTER_LABELS: Record<string, string> = {
-  "native-valuations": "Listen-Fire Valuations",
-  "kg": "Listen-Fire",
+  "native-valuations": "TARS Valuations",
+  "kg": "TARS",
   attio: "Attio",
   affinity: "Affinity",
 };
@@ -1400,7 +1400,7 @@ export default function NodePage() {
     node?.properties[0]?.value_text ??
     nodeId.slice(0, 8);
 
-  usePageTitle(node ? `${displayName} \u2014 Listen-Fire` : "Listen-Fire");
+  usePageTitle(node ? `${displayName} \u2014 TARS` : "TARS");
 
   const invalidate = () => {
     utils.views.knowledge.graph.getNode.invalidate({ id: nodeId });

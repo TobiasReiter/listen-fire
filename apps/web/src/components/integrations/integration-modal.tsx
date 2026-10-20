@@ -21,7 +21,7 @@ const CREDENTIAL_TYPE_OPTIONS = [
   { label: "Affinity", value: ExternalServiceType.AFFINITY, icon: typeIcon(ExternalServiceType.AFFINITY) },
   { label: "Airtable", value: ExternalServiceType.AIRTABLE, icon: typeIcon(ExternalServiceType.AIRTABLE) },
   { label: "Attio", value: ExternalServiceType.ATTIO, icon: typeIcon(ExternalServiceType.ATTIO) },
-  { label: "Listen-Fire Valuations", value: ExternalServiceType.NATIVE_VALUATIONS, icon: typeIcon(ExternalServiceType.NATIVE_VALUATIONS) },
+  { label: "TARS Valuations", value: ExternalServiceType.NATIVE_VALUATIONS, icon: typeIcon(ExternalServiceType.NATIVE_VALUATIONS) },
   { label: "Dealroom", value: ExternalServiceType.DEALROOM, icon: typeIcon(ExternalServiceType.DEALROOM) },
   { label: "Dropbox", value: ExternalServiceType.DROPBOX, icon: typeIcon(ExternalServiceType.DROPBOX) },
   { label: "Evertrace", value: ExternalServiceType.EVERTRACE, icon: typeIcon(ExternalServiceType.EVERTRACE) },
@@ -664,12 +664,12 @@ export function IntegrationModal({
             )}
             {type === ExternalServiceType.SLACK && (
               <p className="mt-2 text-[11px] text-gray-400">
-                Listen-Fire joins a public channel automatically the first time it posts there. For it
+                TARS joins a public channel automatically the first time it posts there. For it
                 to post in (or react to messages in) a{" "}
                 <span className="font-medium text-gray-500">private</span> channel, add it first:
                 open the channel, then Integrations → Add apps (or type{" "}
                 <code className="rounded bg-gray-100 px-1 text-gray-600">/invite</code> and pick
-                the Listen-Fire app). Bots cannot self-join private channels, so this is required once
+                the TARS app). Bots cannot self-join private channels, so this is required once
                 per private channel.
               </p>
             )}

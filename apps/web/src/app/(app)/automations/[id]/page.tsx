@@ -22,7 +22,7 @@ export default function AutomationRedirectPage() {
   const id = params?.id ?? "";
   const router = useRouter();
 
-  usePageTitle("Automations — Listen-Fire");
+  usePageTitle("Automations — TARS");
 
   const { data, error } = trpc.views.triggers.getAutomationDetail.useQuery(
     { id },

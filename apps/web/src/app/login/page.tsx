@@ -102,7 +102,7 @@ function AuthShell({ children }: { children: React.ReactNode }) {
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <span className="text-lg font-bold uppercase tracking-[0.2em] text-primary">
-            Listen-Fire
+            TARS
           </span>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
@@ -123,7 +123,7 @@ function LoginForm({
   const searchParams = useSearchParams();
   const isSignup = searchParams.get("mode") === "signup";
 
-  usePageTitle(isSignup ? "Sign up — Listen-Fire" : "Sign in — Listen-Fire");
+  usePageTitle(isSignup ? "Sign up — TARS" : "Sign in — TARS");
 
   const { isAuthenticated } = useAuth();
   const router = useRouter();

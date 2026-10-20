@@ -407,25 +407,32 @@ services:
       - key: AWS_S3_FORCE_PATH_STYLE
         value: 'true'
 
-  # The sign-in surface and authoring UI, from the published image. It bakes in
-  # no API origin: `output: standalone` plus a runtime API_INTERNAL_URL makes
-  # the server-side proxy the only thing that knows where the API is, which is
-  # what lets one image run anywhere.
+  # The sign-in surface and authoring UI, BUILT FROM THIS BRANCH (the TARS
+  # rebrand lives in apps/web), per deploy/guides/render.md's appendix. The
+  # branch must stay on the same release as the API image above: merge the
+  # matching upstream tag into it whenever that tag moves.
   - type: web
     name: listen-fire-web
-    runtime: image
-    image:
-      # ─── THE SAME RELEASE AS THE API ABOVE. Edit both lines together. ───
-      url: ghcr.io/listen-fire/web:v0.11.0
+    runtime: node
+    rootDir: apps/web
     region: frankfurt   # must match on every service (see the header)
     plan: starter
-    autoDeploy: false
     healthCheckPath: /login
+    buildCommand: pnpm install --frozen-lockfile --prod=false --filter web... && pnpm --filter web build
+    startCommand: pnpm --filter web start
+    buildFilter:
+      paths:
+        - apps/web/**
+        - packages/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
     envVars:
-      # The image sets NODE_ENV=production itself; declared here so the
-      # dashboard shows what this service runs as.
       - key: NODE_ENV
         value: production
+      # `next start -p ${WEB_PORT:-3003}` (apps/web/package.json); Render routes to 10000.
+      - key: WEB_PORT
+        value: '10000'
       # The SERVER-side proxy target — the browser only ever calls
       # same-origin. Operator-set for the same suffix reason as AWS_S3_ENDPOINT
       # above: the value is `http://<api service name>:10000` on Render's

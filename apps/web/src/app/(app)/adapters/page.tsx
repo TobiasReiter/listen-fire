@@ -134,7 +134,7 @@ function ConnectCell({
 }
 
 export default function AdaptersPage() {
-  usePageTitle("Adapters — Listen-Fire");
+  usePageTitle("Adapters — TARS");
 
   const { data } = trpc.views.adapters.list.useQuery();
   const [connectType, setConnectType] = useState<ExternalServiceType | null>(
@@ -165,7 +165,7 @@ export default function AdaptersPage() {
 
       <PageBody>
         <PageIntro>
-          Every kind of system Listen-Fire knows how to talk to. Connecting one
+          Every kind of system TARS knows how to talk to. Connecting one
           creates a credential, which movements import by name from{" "}
           <code className="rounded bg-gray-50 px-1 font-mono text-[11px] text-gray-600">
             credentials

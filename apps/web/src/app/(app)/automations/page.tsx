@@ -167,7 +167,7 @@ function AutomationsTable({ movements }: { movements: MovementListItem[] }) {
 }
 
 export default function AutomationsPage() {
-  usePageTitle("Automations — Listen-Fire");
+  usePageTitle("Automations — TARS");
 
   const { data: movements, isLoading } = trpc.views.movement.list.useQuery();
 

@@ -77,15 +77,15 @@ export function ObjectIcon({ className = defaultClass }: IconProps) {
 
 /**
  * The product mark from public/logo.svg, in its native 200×200
- * coordinate space — the two monogram letters as filled outlines, since
+ * coordinate space — the three TARS slabs as filled outlines, since
  * every surface here fills rather than strokes. The mark is fattened by
  * an 8-unit stroke wherever it renders. Shared by the static
  * AssistantIcon below and the launcher's MorphingAssistantIcon.
  */
 export const LISTEN_FIRE_MARK_PATHS = {
-  letterL: "M 40,40 L 60,40 L 60,140 L 96,140 L 96,160 L 40,160 Z",
-  letterF: "M 102,40 L 160,40 L 160,60 L 122,60 L 122,160 L 102,160 Z",
-  letterFBar: "M 102,90 L 150,90 L 150,110 L 102,110 Z",
+  slabMiddle: "M 82.7,154 L 102.5,154 L 119.3,44 L 99.5,44 Z",
+  slabLeft: "M 46,48 L 66,48 L 66,150 L 46,150 Z",
+  slabRight: "M 134,48 L 154,48 L 154,150 L 134,150 Z",
 } as const;
 
 /**
@@ -104,9 +104,9 @@ export function AssistantIcon({ className = defaultClass }: IconProps) {
         strokeLinejoin="miter"
         strokeLinecap="butt"
       >
-        <path d={LISTEN_FIRE_MARK_PATHS.letterL} />
-        <path d={LISTEN_FIRE_MARK_PATHS.letterF} />
-        <path d={LISTEN_FIRE_MARK_PATHS.letterFBar} />
+        <path d={LISTEN_FIRE_MARK_PATHS.slabLeft} />
+        <path d={LISTEN_FIRE_MARK_PATHS.slabMiddle} />
+        <path d={LISTEN_FIRE_MARK_PATHS.slabRight} />
       </g>
     </svg>
   );

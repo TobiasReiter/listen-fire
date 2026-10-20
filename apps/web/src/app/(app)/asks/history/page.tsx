@@ -12,7 +12,7 @@ import { QuestionRow } from "@/components/asks/question-row";
 import { EmptyState, PageBody, PageHeader, PageIntro } from "@/components/ui";
 
 export default function AsksHistoryPage() {
-  usePageTitle("History — Listen-Fire");
+  usePageTitle("History — TARS");
 
   const { data: questions, isLoading } =
     trpc.views.controlTower.listAskRecords.useQuery();

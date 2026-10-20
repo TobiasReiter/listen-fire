@@ -51,7 +51,7 @@ export default function CompanyPage() {
     { enabled: slug !== "" },
   );
 
-  usePageTitle(company ? `${company.name} — Portfolio — Listen-Fire` : "Portfolio — Listen-Fire");
+  usePageTitle(company ? `${company.name} — Portfolio — TARS` : "Portfolio — TARS");
 
   const updateTab = (value: string) => {
     const next = new URLSearchParams(searchParams.toString());

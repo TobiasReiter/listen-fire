@@ -62,7 +62,7 @@ export default function ApiKeysPage() {
   return (
     <Card>
       <p className="text-[12px] text-gray-400">
-        API keys allow external applications to authenticate with the Listen-Fire API.
+        API keys allow external applications to authenticate with the TARS API.
         Keep your keys secure and never share them publicly.
       </p>
 

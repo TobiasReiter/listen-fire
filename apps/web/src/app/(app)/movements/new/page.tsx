@@ -9,6 +9,6 @@ import { usePageTitle } from "@/components/page-title";
 import { MovementWorkbench } from "@/components/movements/movement-workbench";
 
 export default function NewMovementPage() {
-  usePageTitle("New movement — Listen-Fire");
+  usePageTitle("New movement — TARS");
   return <MovementWorkbench starter="automation" />;
 }

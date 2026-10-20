@@ -48,7 +48,7 @@ const TYPE_LABELS: Record<string, string> = {
   AFFINITY: "Affinity",
   AIRTABLE: "Airtable",
   ATTIO: "Attio",
-  NATIVE_VALUATIONS: "Listen-Fire Valuations",
+  NATIVE_VALUATIONS: "TARS Valuations",
   DEALROOM: "Dealroom",
   DROPBOX: "Dropbox",
   EVERTRACE: "Evertrace",
@@ -99,7 +99,7 @@ function ReadWriteBadges({
 }
 
 export default function ConnectionsPage() {
-  usePageTitle("Credentials — Listen-Fire");
+  usePageTitle("Credentials — TARS");
 
   const { data } = trpc.views.connections.getAll.useQuery();
   const [modalOpen, setModalOpen] = useState(false);
@@ -567,14 +567,14 @@ function ConnectTelegramRow() {
         </div>
         {!link ? (
           <div className="mt-0.5 text-[12px] text-gray-400">
-            Connect your team to the shared Listen-Fire bot, then link your Telegram
-            account to message Listen-Fire directly.
+            Connect your team to the shared TARS bot, then link your Telegram
+            account to message TARS directly.
           </div>
         ) : (
           <div className="mt-1 flex flex-col gap-1">
             {teamConnected && (
               <div className="text-[12px] text-emerald-600">
-                Your team is connected to the shared Listen-Fire bot.
+                Your team is connected to the shared TARS bot.
               </div>
             )}
             <div className="text-[12px] text-gray-500">

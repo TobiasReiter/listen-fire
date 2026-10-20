@@ -1461,8 +1461,8 @@ function getLinkedObjectDisplayName(lo: { data?: unknown; external_id: string; e
 }
 
 const ADAPTER_LABELS: Record<string, string> = {
-  "native-valuations": "Listen-Fire Valuations",
-  "kg": "Listen-Fire",
+  "native-valuations": "TARS Valuations",
+  "kg": "TARS",
   attio: "Attio",
   affinity: "Affinity",
 };

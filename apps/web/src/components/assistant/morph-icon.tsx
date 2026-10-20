@@ -22,9 +22,9 @@
 import { useEffect, useRef, useState } from "react";
 import { LISTEN_FIRE_MARK_PATHS } from "@/components/icons";
 
-const MARK_BODY = LISTEN_FIRE_MARK_PATHS.letterL;
-const MARK_PART_TOP = LISTEN_FIRE_MARK_PATHS.letterF;
-const MARK_PART_BOTTOM = LISTEN_FIRE_MARK_PATHS.letterFBar;
+const MARK_BODY = LISTEN_FIRE_MARK_PATHS.slabMiddle;
+const MARK_PART_TOP = LISTEN_FIRE_MARK_PATHS.slabLeft;
+const MARK_PART_BOTTOM = LISTEN_FIRE_MARK_PATHS.slabRight;
 // Mark placement, centred on the 24×24 icon box. At 1.5× the bubble's
 // footprint (~31px) it deliberately overflows the viewBox — the svg
 // renders overflow-visible, and inside the 48px launcher there's room —

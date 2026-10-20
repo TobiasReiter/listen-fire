@@ -29,7 +29,7 @@ import {
 } from "@/components/ui";
 
 export default function PluginsPage() {
-  usePageTitle("Plugins — Listen-Fire");
+  usePageTitle("Plugins — TARS");
 
   const { data } = trpc.views.plugins.list.useQuery();
 
@@ -132,7 +132,7 @@ export default function PluginsPage() {
               </div>
               <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
                 Registering new plugins isn&apos;t self-serve yet — the ones
-                above ship with Listen-Fire. The guide is on its way — see the
+                above ship with TARS. The guide is on its way — see the
                 plugin-authoring handbook in the Library.
               </p>
               <Link

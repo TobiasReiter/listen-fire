@@ -1,11 +1,11 @@
 {
-  "name": "Listen-Fire",
-  "short_name": "Listen-Fire",
-  "description": "Listen-Fire Knowledge Platform",
+  "name": "TARS",
+  "short_name": "TARS",
+  "description": "TARS",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#334155",
+  "theme_color": "#3B4048",
   "icons": [
     {
       "src": "/icon-192.png",

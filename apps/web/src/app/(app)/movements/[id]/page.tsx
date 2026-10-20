@@ -20,7 +20,7 @@ export default function MovementPage() {
     { enabled: id !== "", refetchOnWindowFocus: false },
   );
   usePageTitle(
-    movement ? `${movement.name} — Movements — Listen-Fire` : "Movements — Listen-Fire",
+    movement ? `${movement.name} — Movements — TARS` : "Movements — TARS",
   );
 
   if (isLoading) {

@@ -35,7 +35,7 @@ export default function ObjectTypePage() {
   const { data: ontology } =
     trpc.views.knowledge.ontology.getOntologySummary.useQuery();
 
-  usePageTitle(nodeType ? `${nodeType.name} — Listen-Fire` : "Listen-Fire");
+  usePageTitle(nodeType ? `${nodeType.name} — TARS` : "TARS");
 
   return (
     <div className="flex h-full flex-col">

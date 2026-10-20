@@ -143,7 +143,7 @@ function ConnectReminder() {
 }
 
 export default function DashboardPage() {
-  usePageTitle("Home — Listen-Fire");
+  usePageTitle("Home — TARS");
 
   const { data, isLoading } = trpc.views.home.getDashboard.useQuery();
 
