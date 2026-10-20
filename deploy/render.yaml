@@ -88,7 +88,7 @@
 databases:
   - name: listen-fire-postgres
     plan: basic-1gb
-    # region: oregon   # pick one; it must match on every service (see the header)
+    region: frankfurt   # must match on every service (see the header)
     postgresMajorVersion: '16'
     # Public-internet access is not needed; every consumer is another Render
     # service on the same private network.
@@ -100,7 +100,7 @@ services:
   - type: keyvalue
     name: listen-fire-redis
     plan: starter
-    # region: oregon   # pick one; it must match on every service (see the header)
+    region: frankfurt   # must match on every service (see the header)
     ipAllowList: []
     maxmemoryPolicy: noeviction
 
@@ -134,7 +134,7 @@ services:
     runtime: image
     image:
       url: cgr.dev/chainguard/minio
-    # region: oregon   # pick one; it must match on every service (see the header)
+    region: frankfurt   # must match on every service (see the header)
     plan: starter
     healthCheckPath: /minio/health/live
     # Render runs this through its own shell, so a quoted `/bin/sh -c "…"`
@@ -167,8 +167,8 @@ services:
     runtime: image
     image:
       # ─── THE RELEASE THIS DEPLOYMENT RUNS. Edit this line to upgrade. ───
-      url: ghcr.io/listen-fire/api:v0.1.0
-    # region: oregon   # pick one; it must match on every service (see the header)
+      url: ghcr.io/listen-fire/api:v0.11.0
+    region: frankfurt   # must match on every service (see the header)
     plan: standard
     numInstances: 1
     # Nothing redeploys this service on its own: not a push to a branch, and not
@@ -416,8 +416,8 @@ services:
     runtime: image
     image:
       # ─── THE SAME RELEASE AS THE API ABOVE. Edit both lines together. ───
-      url: ghcr.io/listen-fire/web:v0.1.0
-    # region: oregon   # pick one; it must match on every service (see the header)
+      url: ghcr.io/listen-fire/web:v0.11.0
+    region: frankfurt   # must match on every service (see the header)
     plan: starter
     autoDeploy: false
     healthCheckPath: /login
