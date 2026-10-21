@@ -167,7 +167,9 @@ services:
     runtime: image
     image:
       # ─── THE RELEASE THIS DEPLOYMENT RUNS. Edit this line to upgrade. ───
-      url: ghcr.io/listen-fire/api:v0.11.0
+      # Skaala: the release plus patches (deploy/tars-api/Dockerfile, built by
+      # .github/workflows/tars-api.yml). Upgrading = bump both, then this tag.
+      url: ghcr.io/tobiasreiter/tars-api:v0.11.0-skaala.1
     region: frankfurt   # must match on every service (see the header)
     plan: standard
     numInstances: 1
