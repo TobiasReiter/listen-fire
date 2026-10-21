@@ -36,6 +36,7 @@ const TYPES = {
       str('Description', { writable: true }),
       str('Project', { writable: true }),
       str('Labels', { writable: true, cardinality: 'many' }),
+      str('Files', { kind: 'file', writable: true, cardinality: 'many' }),
       str('Identifier'),
       str('URL'),
     ],
@@ -106,6 +107,31 @@ async function projectId(teamId, name) {
   return project.id;
 }
 
+// A file TARS hands over (a FileRef carrying a short-lived `url`) uploaded to
+// Linear's storage. Done before the issue exists, so a file that cannot be
+// fetched or stored fails the write without leaving a half-made issue.
+async function upload(ref) {
+  if (!ref?.url) throw new AdapterError('bad_request', `file "${ref?.name ?? '?'}" came without a url`);
+  const res = await fetch(ref.url, { signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new AdapterError('adapter_error', `could not fetch "${ref.name}": HTTP ${res.status}`, true);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  const name = ref.name ?? 'attachment';
+  const contentType = ref.contentType ?? res.headers.get('content-type') ?? 'application/octet-stream';
+  const { fileUpload } = await linear(
+    `mutation($type: String!, $name: String!, $size: Int!) { fileUpload(contentType: $type, filename: $name, size: $size) { uploadFile { uploadUrl assetUrl headers { key value } } } }`,
+    { type: contentType, name, size: bytes.length },
+  );
+  const { uploadUrl, assetUrl, headers } = fileUpload.uploadFile;
+  const put = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'content-type': contentType, 'cache-control': 'public, max-age=31536000', ...Object.fromEntries(headers.map((h) => [h.key, h.value])) },
+    body: bytes,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!put.ok) throw new AdapterError('adapter_error', `Linear refused the upload of "${name}": HTTP ${put.status}`, true);
+  return { title: name, url: assetUrl };
+}
+
 const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]).map(String).filter((s) => s.trim() !== '');
 
 const methods = {
@@ -128,6 +154,7 @@ const methods = {
     const team = (await listTeams()).find((t) => t.name.toLowerCase() === wanted || t.key.toLowerCase() === wanted);
     if (!team) throw new AdapterError('bad_request', `Linear has no team named "${fields.Team ?? ''}"`);
     const teamId = team.id;
+    const files = await Promise.all((Array.isArray(fields.Files) ? fields.Files : fields.Files ? [fields.Files] : []).map(upload));
 
     const data = await linear(
       `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }`,
@@ -142,6 +169,9 @@ const methods = {
       },
     );
     const issue = data.issueCreate.issue;
+    for (const f of files) {
+      await linear(`mutation($input: AttachmentCreateInput!) { attachmentCreate(input: $input) { success } }`, { input: { issueId: issue.id, ...f } });
+    }
     return {
       adapterType: ADAPTER,
       externalId: issue.id,

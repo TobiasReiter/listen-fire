@@ -6,13 +6,22 @@ import http from 'node:http';
 import assert from 'node:assert/strict';
 
 const created = [];
+const attached = [];
+const uploaded = [];
+let base;
 const linearStub = http.createServer(async (req, res) => {
   let body = '';
   for await (const c of req) body += c;
+  // The stub doubles as TARS's file buffer and Linear's upload bucket.
+  if (req.url === '/blob') return res.end('PDFBYTES');
+  if (req.method === 'GET') { res.statusCode = 404; return res.end(); }
+  if (req.url === '/put') { uploaded.push({ body, meta: req.headers['x-goog-meta'] }); return res.end(); }
   const { query, variables } = JSON.parse(body);
   assert.equal(req.headers.authorization, 'lin_api_test');
   let data;
-  if (query.includes('teams')) data = { teams: { nodes: [{ id: 't1', name: 'Investments & Research', key: 'INV' }] } };
+  if (query.includes('fileUpload')) data = { fileUpload: { uploadFile: { uploadUrl: `${base}/put`, assetUrl: 'https://uploads.linear.app/deck.pdf', headers: [{ key: 'x-goog-meta', value: '1' }] } } };
+  else if (query.includes('attachmentCreate')) { attached.push(variables.input); data = { attachmentCreate: { success: true } }; }
+  else if (query.includes('teams')) data = { teams: { nodes: [{ id: 't1', name: 'Investments & Research', key: 'INV' }] } };
   else if (query.includes('projects')) data = { team: { projects: { nodes: [{ id: 'p1', name: 'Deal Flow & Pipeline' }] } } };
   else if (query.includes('issueLabels')) data = { issueLabels: { nodes: [{ id: 'l1', name: 'pipeline', isGroup: false }, { id: 'l2', name: 'Venture', isGroup: false }, { id: 'g', name: 'Asset class', isGroup: true }] } };
   else {
@@ -22,6 +31,7 @@ const linearStub = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ data }));
 });
 await new Promise((r) => linearStub.listen(0, r));
+base = `http://127.0.0.1:${linearStub.address().port}`;
 
 process.env.ADAPTER_SECRET = 's3cret';
 process.env.LINEAR_API_KEY = 'lin_api_test';
@@ -64,6 +74,14 @@ assert.equal(created.at(-1).projectId, 'p1');
 const noProject = (await call('createRecord', { recordType: 'Issue', fields: { Team: 'INV', Title: 'P', Project: 'Nope' }, parentLinks: [] })).body;
 assert.match(noProject.error.message, /no project named "Nope"/);
 created.pop();
+
+const withFile = (await call('createRecord', { recordType: 'Issue', fields: { Team: 'INV', Title: 'F', Files: [{ name: 'deck.pdf', contentType: 'application/pdf', url: `${base}/blob` }] }, parentLinks: [] })).body;
+assert.equal(withFile.ok, true);
+assert.deepEqual(uploaded, [{ body: 'PDFBYTES', meta: '1' }]);
+assert.deepEqual(attached, [{ issueId: 'i1', title: 'deck.pdf', url: 'https://uploads.linear.app/deck.pdf' }]);
+const badFile = (await call('createRecord', { recordType: 'Issue', fields: { Team: 'INV', Title: 'F', Files: [{ name: 'gone.pdf', url: `${base}/missing-404` }] }, parentLinks: [] })).body;
+assert.equal(badFile.ok, false);
+created.splice(1);
 
 const missing = (await write(['pipeline', 'Real Estate'])).body;
 assert.equal(missing.ok, false);
