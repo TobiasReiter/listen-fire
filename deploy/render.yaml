@@ -232,6 +232,12 @@ services:
         sync: false
       - key: WEB_BASE_URL
         sync: false
+      # The API's public origin again (same value as API_BASE_URL), for the
+      # file links handed to remote adapters (`/api/files/blob/:id`). Unset,
+      # those links fall back to OAUTH_REDIRECT_BASE_URL, the web app, which
+      # does not proxy that path: every file written to a remote adapter 404s.
+      - key: EXPOSED_FILE_PUBLIC_BASE_URL
+        sync: false
 
       # ---- secrets compose's `init` container mints on first boot; nothing
       # does that here, so they are minted or supplied at the service level.
