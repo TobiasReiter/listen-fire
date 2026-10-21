@@ -34,6 +34,7 @@ const TYPES = {
       str('Team', { writable: true, required: true }),
       str('Title', { writable: true, required: true }),
       str('Description', { writable: true }),
+      str('Project', { writable: true }),
       str('Labels', { writable: true, cardinality: 'many' }),
       str('Identifier'),
       str('URL'),
@@ -97,6 +98,14 @@ async function labelIds(teamId, names) {
   return names.map((n) => byName.get(n.toLowerCase()));
 }
 
+// A project by name, among the team's. Unknown fails the write, as labels do.
+async function projectId(teamId, name) {
+  const data = await linear(`query($team: String!) { team(id: $team) { projects(first: 250) { nodes { id name } } } }`, { team: teamId });
+  const project = data.team.projects.nodes.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!project) throw new AdapterError('adapter_error', `Linear has no project named "${name}" in this team`);
+  return project.id;
+}
+
 const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]).map(String).filter((s) => s.trim() !== '');
 
 const methods = {
@@ -127,6 +136,7 @@ const methods = {
           teamId,
           title: String(fields.Title),
           ...(fields.Description ? { description: String(fields.Description) } : {}),
+          ...(fields.Project ? { projectId: await projectId(teamId, String(fields.Project)) } : {}),
           labelIds: await labelIds(teamId, asList(fields.Labels)),
         },
       },

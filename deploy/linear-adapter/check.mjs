@@ -13,6 +13,7 @@ const linearStub = http.createServer(async (req, res) => {
   assert.equal(req.headers.authorization, 'lin_api_test');
   let data;
   if (query.includes('teams')) data = { teams: { nodes: [{ id: 't1', name: 'Investments & Research', key: 'INV' }] } };
+  else if (query.includes('projects')) data = { team: { projects: { nodes: [{ id: 'p1', name: 'Deal Flow & Pipeline' }] } } };
   else if (query.includes('issueLabels')) data = { issueLabels: { nodes: [{ id: 'l1', name: 'pipeline', isGroup: false }, { id: 'l2', name: 'Venture', isGroup: false }, { id: 'g', name: 'Asset class', isGroup: true }] } };
   else {
     created.push(variables.input);
@@ -56,6 +57,13 @@ const write = (labels) => call('createRecord', {
 const ok = (await write(['pipeline', 'venture'])).body;
 assert.equal(ok.result.data.Identifier, 'INV-1');
 assert.deepEqual(created[0], { teamId: 't1', title: 'Example Fund', description: 'summary', labelIds: ['l1', 'l2'] });
+
+const withProject = (await call('createRecord', { recordType: 'Issue', fields: { Team: 'INV', Title: 'P', Project: 'deal flow & pipeline' }, parentLinks: [] })).body;
+assert.equal(withProject.ok, true);
+assert.equal(created.at(-1).projectId, 'p1');
+const noProject = (await call('createRecord', { recordType: 'Issue', fields: { Team: 'INV', Title: 'P', Project: 'Nope' }, parentLinks: [] })).body;
+assert.match(noProject.error.message, /no project named "Nope"/);
+created.pop();
 
 const missing = (await write(['pipeline', 'Real Estate'])).body;
 assert.equal(missing.ok, false);
