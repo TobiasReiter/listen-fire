@@ -113,7 +113,7 @@ async function projectId(teamId, name) {
 async function upload(ref) {
   if (!ref?.url) throw new AdapterError('bad_request', `file "${ref?.name ?? '?'}" came without a url`);
   const res = await fetch(ref.url, { signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) throw new AdapterError('adapter_error', `could not fetch "${ref.name}": HTTP ${res.status}`, true);
+  if (!res.ok) throw new AdapterError('adapter_error', `could not fetch "${ref.name}" from ${new URL(res.url).host}: HTTP ${res.status}`, true);
   const bytes = Buffer.from(await res.arrayBuffer());
   const name = ref.name ?? 'attachment';
   const contentType = ref.contentType ?? res.headers.get('content-type') ?? 'application/octet-stream';
