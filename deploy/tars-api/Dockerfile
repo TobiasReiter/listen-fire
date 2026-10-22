@@ -22,3 +22,14 @@ RUN f=build/services/translation_graph/adapters/gmail/poll.js \
  && sed -i "s|messages\.push(\(.*\)(await input\.client\.getMessage(ref\.id)));|let message; try { message = await input.client.getMessage(ref.id); } catch (error) { if (error?.failure === 'no_such_mailbox') continue; throw error; } messages.push(\1(message));|" "$f" \
  && grep -q "error?.failure === 'no_such_mailbox'" "$f" \
  && node --check "$f"
+
+# A PEM key in an env var arrives with its line breaks escaped as two
+# characters (\n). lib/google_cloud.ts unescapes them, but v0.11.0 hands
+# GOOGLE_PRIVATE_KEY to the OCR adapter raw, so OpenSSL refuses it ("DECODER
+# routines::unsupported"). Unescape there too; a key with real newlines is
+# unchanged. (char codes 92,110 = backslash n, 10 = newline: no escaping games.)
+RUN f=build/services.js \
+ && test "$(grep -c 'privateKey: GOOGLE_PRIVATE_KEY,' "$f")" = 1 \
+ && sed -i 's|privateKey: GOOGLE_PRIVATE_KEY,|privateKey: GOOGLE_PRIVATE_KEY.split(String.fromCharCode(92, 110)).join(String.fromCharCode(10)),|' "$f" \
+ && grep -q 'GOOGLE_PRIVATE_KEY.split(String.fromCharCode(92, 110))' "$f" \
+ && node --check "$f"
