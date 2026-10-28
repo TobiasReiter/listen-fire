@@ -2,7 +2,7 @@
 
 ## Setting up
 
-You need Docker (for Postgres and Redis), Node 22.20.0 (the version pinned in [`.nvmrc`](.nvmrc)), and pnpm 9.5 or later (the root `package.json` pins `pnpm@9.5.0` as its `packageManager` and declares `"pnpm": "^9.5.0"` in `engines`).
+You need Docker (for Postgres and Redis), Node 22.23.4 (the version pinned in [`.nvmrc`](.nvmrc)), and pnpm 9.5 or later (the root `package.json` pins `pnpm@9.5.0` as its `packageManager` and declares `"pnpm": "^9.5.0"` in `engines`).
 
 ```bash
 nvm install && nvm use          # reads .nvmrc

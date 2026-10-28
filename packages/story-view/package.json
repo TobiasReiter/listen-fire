@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "description": "The movement story renderer: one React rendering of a StoryView, mounted by the workbench panel and by the standalone HTML page",
   "engines": {
-    "node": "22.20.0"
+    "node": "22.23.4"
   },
   "scripts": {
     "build": "tsc",

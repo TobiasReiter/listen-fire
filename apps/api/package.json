@@ -4,7 +4,7 @@
   "license": "UNLICENSED",
   "version": "1.0.0",
   "engines": {
-    "node": "22.20.0"
+    "node": "22.23.4"
   },
   "prettier": "./prettier.js",
   "prisma": {

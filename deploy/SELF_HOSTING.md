@@ -134,7 +134,7 @@ One value in that volume is not one of those secrets: the bundled object store's
 
 ```bash
 docker run --rm -v listen-fire_listen-fire-config:/config -v "$PWD:/out" \
-  node:22.20.0-slim tar czf /out/listen-fire-config-backup.tgz -C /config .
+  node:22.23.4-slim tar czf /out/listen-fire-config-backup.tgz -C /config .
 ```
 
 Three of those values are one-way doors, which is why the generator refuses to overwrite a config volume that already exists:

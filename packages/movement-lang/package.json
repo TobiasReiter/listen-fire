@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "description": "The data-movement language: parser, checker, and lowering for movements",
   "engines": {
-    "node": "22.20.0"
+    "node": "22.23.4"
   },
   "scripts": {
     "build": "tsc",

@@ -9,7 +9,7 @@
 #   docker build -f deploy/Dockerfile -t listen-fire-api .
 # The compose file here already says so.
 
-FROM node:22.20.0-slim
+FROM node:22.23.4-slim
 
 # psql: the migration runner is a shell script over src/db/migrations/*.sql.
 # curl: the compose healthcheck. openssl: Prisma's engine needs it.

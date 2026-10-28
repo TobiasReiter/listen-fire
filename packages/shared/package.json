@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "description": "Shared library for Listen-Fire code to be used across client and server",
   "engines": {
-    "node": "22.20.0"
+    "node": "22.23.4"
   },
   "scripts": {
     "build": "tsc",

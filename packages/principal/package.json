@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "description": "The identity contract every product imports: Principal + Directory types, the ambient principal store, the static single-tenant provider, and an express adapter",
   "engines": {
-    "node": "22.20.0"
+    "node": "22.23.4"
   },
   "scripts": {
     "code:type-check": "tsc --pretty --noEmit",
