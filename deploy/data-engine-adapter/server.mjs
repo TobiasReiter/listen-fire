@@ -3,29 +3,28 @@
 // `deal-ingest` edge function (SKA-406). No dependencies; Node 20+.
 //
 // Graph:  data_engine -[:Deal]-> Deal { Title, LinearIdentifier, … }  (create only)
-// A Deal write registers the deal at intake (`POST /register-deal`). The
-// automation's extracted fields go to `intake` unedited; the deal's own
+// A Deal write registers the deal at intake (`POST …/register-deal`). The
+// automation's extracted fields go to `intake` as extracted; the deal's own
 // fields that the intake cannot know (kind, sleeve, manager, fund, currency)
-// are left out.
+// are sent as null. The function refuses unknown keys and a top-level "".
 //
-// Env: ADAPTER_SECRET (the bearer TARS sends), DEAL_INGEST_URL (the
-// `deal-ingest` function's base URL), DEAL_INTAKE_TOKEN (its register-only
+// Env: ADAPTER_SECRET (the bearer TARS sends), DEAL_INGEST_URL (the full
+// `…/deal-ingest/register-deal` URL), DEAL_INTAKE_TOKEN (its register-only
 // token), PORT.
 
 import http from 'node:http';
 
 const ADAPTER = process.env.ADAPTER_TYPE ?? 'data_engine';
 const SECRET = process.env.ADAPTER_SECRET;
-const INGEST_URL = process.env.DEAL_INGEST_URL?.replace(/\/+$/, '');
+const INGEST_URL = process.env.DEAL_INGEST_URL;
 const INTAKE_TOKEN = process.env.DEAL_INTAKE_TOKEN;
 
 const field = (fieldId, kind = 'string', extra = {}) => ({ fieldId, displayName: fieldId, kind, writable: true, required: false, ...extra });
 
-// Deal field → intake key, for the nine fields the triage extracts.
+// Deal field → intake key, for the fields the triage extracts.
 const INTAKE = {
   IsDeal: 'is_deal',
   Name: 'name',
-  AssetClass: 'asset_class',
   Sender: 'sender',
   Ask: 'ask',
   Summary: 'summary',
@@ -43,6 +42,7 @@ const TYPES = {
       field('Description', 'text'),
       field('LinearIdentifier', 'string', { required: true }),
       field('LinearURL'),
+      field('AssetClass'),
       ...Object.keys(INTAKE).map((f) => field(f, f === 'IsDeal' ? 'boolean' : 'string')),
       field('DealId', 'string', { writable: false }),
     ],
@@ -61,7 +61,7 @@ class AdapterError extends Error {
 }
 
 async function registerDeal(payload) {
-  const res = await fetch(`${INGEST_URL}/register-deal`, {
+  const res = await fetch(INGEST_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${INTAKE_TOKEN}` },
     body: JSON.stringify(payload),
@@ -69,13 +69,13 @@ async function registerDeal(payload) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const reason = typeof body.error === 'string' ? body.error : body.error?.message ?? body.message;
+    const reason = [body.code, body.error].filter((v) => typeof v === 'string').join(': ');
     throw new AdapterError('adapter_error', `data engine refused the deal: HTTP ${res.status}${reason ? ` (${reason})` : ''}`, res.status >= 500 || res.status === 429);
   }
   return body;
 }
 
-// Blank text is no value: the intake carries what was extracted, not ''.
+// A top-level field with no value is null: the function refuses "".
 const value = (v) => (v == null || (typeof v === 'string' && v.trim() === '') ? null : v);
 
 const methods = {
@@ -95,8 +95,14 @@ const methods = {
       linear_identifier: String(fields.LinearIdentifier),
       linear_url: value(fields.LinearURL),
       asset_class: value(fields.AssetClass),
+      kind: null,
+      sleeve: null,
+      manager_id: null,
+      fund_id: null,
+      currency: null,
       source: 'listen_fire',
-      intake: Object.fromEntries(Object.entries(INTAKE).map(([f, key]) => [key, value(fields[f])])),
+      // Inside intake "" is fine; an absent text is "", an absent IsDeal null.
+      intake: Object.fromEntries(Object.entries(INTAKE).map(([f, key]) => [key, fields[f] ?? (f === 'IsDeal' ? null : '')])),
     });
     const dealId = String(body.deal_id ?? body.id ?? fields.LinearIdentifier);
     return { adapterType: ADAPTER, externalId: dealId, recordType: 'Deal', data: { DealId: dealId } };

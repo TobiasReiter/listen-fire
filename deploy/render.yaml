@@ -500,7 +500,7 @@ services:
         value: '10000'
       - key: ADAPTER_SECRET
         generateValue: true
-      # https://<project-ref>.supabase.co/functions/v1/deal-ingest
+      # https://<project-ref>.supabase.co/functions/v1/deal-ingest/register-deal
       - key: DEAL_INGEST_URL
         sync: false
       - key: DEAL_INTAKE_TOKEN
