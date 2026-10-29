@@ -1,0 +1,10 @@
+{
+  "adapterType": "data_engine",
+  "displayName": "Data engine",
+  "description": "Register pipeline deals in Skaala's data engine.",
+  "baseUrl": "https://data-engine-adapter-XXXX.onrender.com/",
+  "authStrategy": { "kind": "bearer" },
+  "supportedTriggers": [],
+  "runtimeCapabilities": { "traversal": { "incoming": false, "edgeProperties": false }, "resources": false },
+  "methods": ["listEntryPoints", "describe", "resolveEntity", "getFieldValue", "getRelated", "createRecord"]
+}

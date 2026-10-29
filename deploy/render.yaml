@@ -478,3 +478,30 @@ services:
       # A personal `lin_api_…` key for now; a Linear OAuth app's token later.
       - key: LINEAR_API_KEY
         sync: false
+
+  # The data engine for TARS automations, as a remote adapter
+  # (deploy/data-engine-adapter): registers pipeline deals through the
+  # `deal-ingest` function with its register-only DEAL_INTAKE_TOKEN (SKA-406).
+  # Same shape as linear-adapter: free plan, public, bearer ADAPTER_SECRET.
+  - type: web
+    name: data-engine-adapter
+    runtime: node
+    rootDir: deploy/data-engine-adapter
+    region: frankfurt   # must match on every service (see the header)
+    plan: free
+    healthCheckPath: /
+    buildCommand: node check.mjs
+    startCommand: node server.mjs
+    buildFilter:
+      paths:
+        - deploy/data-engine-adapter/**
+    envVars:
+      - key: PORT
+        value: '10000'
+      - key: ADAPTER_SECRET
+        generateValue: true
+      # https://<project-ref>.supabase.co/functions/v1/deal-ingest
+      - key: DEAL_INGEST_URL
+        sync: false
+      - key: DEAL_INTAKE_TOKEN
+        sync: false
