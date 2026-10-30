@@ -505,3 +505,6 @@ services:
         sync: false
       - key: DEAL_INTAKE_TOKEN
         sync: false
+      # e.g. https://acme.slack.com: turns TARS's slack:// post links into web links
+      - key: SLACK_WORKSPACE_URL
+        sync: false

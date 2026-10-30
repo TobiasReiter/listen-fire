@@ -14,7 +14,8 @@
 // Env: ADAPTER_SECRET (the bearer TARS sends), DEAL_INGEST_URL (the full
 // `…/deal-ingest/register-deal` URL; the file routes sit beside it),
 // DEAL_INTAKE_TOKEN (its token for registering deals and storing their
-// files), PORT.
+// files), SLACK_WORKSPACE_URL (e.g. https://acme.slack.com, to turn TARS's
+// `slack://archives/…` post links into web links), PORT.
 
 import http from 'node:http';
 import { createHash } from 'node:crypto';
@@ -23,6 +24,7 @@ const ADAPTER = process.env.ADAPTER_TYPE ?? 'data_engine';
 const SECRET = process.env.ADAPTER_SECRET;
 const INGEST_URL = process.env.DEAL_INGEST_URL;
 const BASE = INGEST_URL?.replace(/\/register-deal\/?$/, '');
+const SLACK_WORKSPACE_URL = process.env.SLACK_WORKSPACE_URL?.replace(/\/+$/, '');
 const INTAKE_TOKEN = process.env.DEAL_INTAKE_TOKEN;
 
 const field = (fieldId, kind = 'string', extra = {}) => ({ fieldId, displayName: fieldId, kind, writable: true, required: false, ...extra });
@@ -37,6 +39,7 @@ const INTAKE = {
   Links: 'links',
   Points: 'points',
   Amount: 'amount',
+  SlackURL: 'slack_url',
 };
 
 const TYPES = {
@@ -134,6 +137,11 @@ async function storeFile(linearIdentifier, ref) {
   return 'stored';
 }
 
+// TARS links a Slack post as `slack://archives/<channel>/p<ts>`, which only
+// the desktop app opens; the same path under the workspace's address is the
+// message's web permalink.
+const slackWebUrl = (v) => (typeof v === 'string' && SLACK_WORKSPACE_URL ? v.replace(/^slack:\/\//, `${SLACK_WORKSPACE_URL}/`) : v);
+
 // A top-level field with no value is null: the function refuses "".
 const value = (v) => (v == null || (typeof v === 'string' && v.trim() === '') ? null : v);
 
@@ -161,7 +169,7 @@ const methods = {
       currency: null,
       source: 'listen_fire',
       // Inside intake "" is fine; an absent text is "", an absent IsDeal null.
-      intake: Object.fromEntries(Object.entries(INTAKE).map(([f, key]) => [key, fields[f] ?? (f === 'IsDeal' ? null : '')])),
+      intake: Object.fromEntries(Object.entries(INTAKE).map(([f, key]) => [key, (f === 'SlackURL' ? slackWebUrl(fields[f]) : fields[f]) ?? (f === 'IsDeal' ? null : '')])),
     }, 'the deal');
     const dealId = String(body.deal_id ?? body.id ?? fields.LinearIdentifier);
 

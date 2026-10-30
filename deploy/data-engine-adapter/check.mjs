@@ -38,6 +38,7 @@ base = `http://127.0.0.1:${ingestStub.address().port}`;
 
 process.env.ADAPTER_SECRET = 's3cret';
 process.env.DEAL_INTAKE_TOKEN = 'intake-token';
+process.env.SLACK_WORKSPACE_URL = 'https://example.slack.com/';
 process.env.DEAL_INGEST_URL = `http://127.0.0.1:${ingestStub.address().port}/functions/v1/deal-ingest/register-deal`;
 const { handle } = await import('./server.mjs');
 const adapter = http.createServer(handle);
@@ -71,6 +72,7 @@ const ok = (await write({
   Summary: 'A fund.',
   Links: '',
   Points: '',
+  SlackURL: 'slack://archives/C1/p1',
 })).body;
 assert.equal(ok.result.data.DealId, 'd1');
 assert.deepEqual(received[0], {
@@ -85,7 +87,7 @@ assert.deepEqual(received[0], {
   fund_id: null,
   currency: null,
   source: 'listen_fire',
-  intake: { is_deal: true, name: 'Example Fund', sender: 'someone', ask: '$5m Series A', summary: 'A fund.', links: '', points: '', amount: '' },
+  intake: { is_deal: true, name: 'Example Fund', sender: 'someone', ask: '$5m Series A', summary: 'A fund.', links: '', points: '', amount: '', slack_url: 'https://example.slack.com/archives/C1/p1' },
 });
 
 assert.match((await write({ Title: 'x' })).body.error.message, /LinearIdentifier/);
