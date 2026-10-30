@@ -98,6 +98,8 @@ await write({ Title: 'x', LinearIdentifier: 'INV-3', LinearURL: '', AssetClass: 
 assert.equal(received[1].linear_url, null);
 assert.equal(received[1].asset_class, null);
 assert.equal(received[1].class_key, null);
+await write({ Title: 'x', LinearIdentifier: 'INV-6', AssetClass: 'Macro / Multi-asset' });
+assert.equal(received[2].class_key, 'absolute_return');
 assert.equal(received[1].description, null);
 
 // Files: one stored (typed by extension), one already stored, two skipped,

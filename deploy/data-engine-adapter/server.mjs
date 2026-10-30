@@ -43,10 +43,11 @@ const INTAKE = {
 };
 
 // The triage's asset class → the data engine's fixed class_key (SKA-416).
-// Unclear and Macro / Multi-asset have no sure match: they go as null and
-// the deal shows as Unassigned for the team to set.
+// Macro / Multi-asset counts as absolute return, as Tars maps it. Unclear
+// goes as null and the deal shows as Unassigned for the team to set.
 const CLASS_KEYS = {
   'Absolute Return': 'absolute_return',
+  'Macro / Multi-asset': 'absolute_return',
   'Public Equity': 'public_equity',
   Venture: 'venture',
   'Private Equity': 'private_equity',
