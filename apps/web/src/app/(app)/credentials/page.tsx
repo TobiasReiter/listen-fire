@@ -567,14 +567,14 @@ function ConnectTelegramRow() {
         </div>
         {!link ? (
           <div className="mt-0.5 text-[12px] text-gray-400">
-            Connect your team to the shared TARS bot, then link your Telegram
-            account to message TARS directly.
+            Connect your team to the shared KIPP bot, then link your Telegram
+            account to message KIPP directly.
           </div>
         ) : (
           <div className="mt-1 flex flex-col gap-1">
             {teamConnected && (
               <div className="text-[12px] text-emerald-600">
-                Your team is connected to the shared TARS bot.
+                Your team is connected to the shared KIPP bot.
               </div>
             )}
             <div className="text-[12px] text-gray-500">

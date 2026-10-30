@@ -664,12 +664,12 @@ export function IntegrationModal({
             )}
             {type === ExternalServiceType.SLACK && (
               <p className="mt-2 text-[11px] text-gray-400">
-                TARS joins a public channel automatically the first time it posts there. For it
+                KIPP joins a public channel automatically the first time it posts there. For it
                 to post in (or react to messages in) a{" "}
                 <span className="font-medium text-gray-500">private</span> channel, add it first:
                 open the channel, then Integrations → Add apps (or type{" "}
                 <code className="rounded bg-gray-100 px-1 text-gray-600">/invite</code> and pick
-                the TARS app). Bots cannot self-join private channels, so this is required once
+                the KIPP app). Bots cannot self-join private channels, so this is required once
                 per private channel.
               </p>
             )}
