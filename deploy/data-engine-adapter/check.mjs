@@ -1,22 +1,40 @@
 // Self-check: `node check.mjs`. Stands up the adapter against a stub
 // `deal-ingest` and walks the calls TARS makes: auth, schema, register a
-// deal, a refusal.
+// deal, a refusal, and storing its files (stored, duplicate, skipped, failed).
 
 import http from 'node:http';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 const received = [];
+const slots = [];
+const puts = [];
+const completed = [];
 let refuse = false;
+let base;
+// The stub doubles as TARS's file buffer (/blob/…) and the storage bucket (/put).
 const ingestStub = http.createServer(async (req, res) => {
-  let body = '';
-  for await (const c of req) body += c;
-  assert.equal(req.url, '/functions/v1/deal-ingest/register-deal');
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const body = Buffer.concat(chunks);
+  if (req.url === '/blob/deck.pdf' || req.url === '/blob/deck.bin') return res.end('PDFBYTES');
+  if (req.url === '/blob/old.pdf') return res.end('OLDBYTES');
+  if (req.method === 'GET') { res.statusCode = 404; return res.end(); }
+  if (req.url === '/put') { puts.push({ body: body.toString(), type: req.headers['content-type'], auth: req.headers.authorization }); return res.end(); }
   assert.equal(req.headers.authorization, 'Bearer intake-token');
+  const json = JSON.parse(body.toString());
+  if (req.url === '/functions/v1/deal-ingest/deal-files/upload-url') {
+    slots.push(json);
+    return res.end(JSON.stringify(json.name === 'old.pdf' ? { duplicate: true } : { upload_id: `u${slots.length}`, upload_url: `${base}/put` }));
+  }
+  if (req.url === '/functions/v1/deal-ingest/deal-files/complete') { completed.push(json); return res.end('{}'); }
+  assert.equal(req.url, '/functions/v1/deal-ingest/register-deal');
   if (refuse) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'unknown key: foo', code: 'invalid_payload' })); }
-  received.push(JSON.parse(body));
+  received.push(json);
   res.end(JSON.stringify({ created: true, deal_id: 'd1', intake_version: 1 }));
 });
 await new Promise((r) => ingestStub.listen(0, r));
+base = `http://127.0.0.1:${ingestStub.address().port}`;
 
 process.env.ADAPTER_SECRET = 's3cret';
 process.env.DEAL_INTAKE_TOKEN = 'intake-token';
@@ -77,6 +95,33 @@ await write({ Title: 'x', LinearIdentifier: 'INV-3', LinearURL: '', AssetClass: 
 assert.equal(received[1].linear_url, null);
 assert.equal(received[1].asset_class, null);
 assert.equal(received[1].description, null);
+
+// Files: one stored (typed by extension), one already stored, two skipped,
+// one that cannot be fetched. None of them fails the write.
+const withFiles = (await write({
+  Title: 'F', LinearIdentifier: 'INV-4',
+  Files: [
+    { name: 'deck.bin', contentType: 'application/octet-stream', url: `${base}/blob/deck.bin` },
+    { name: 'deck.pdf', contentType: 'application/pdf', url: `${base}/blob/deck.pdf` },
+    { name: 'old.pdf', contentType: 'application/pdf', url: `${base}/blob/old.pdf` },
+    { name: 'movie.mp4', contentType: 'video/mp4', url: `${base}/blob/movie.mp4` },
+    { name: 'huge.pdf', contentType: 'application/pdf', size: 16 * 1024 * 1024, url: `${base}/blob/huge.pdf` },
+    { name: 'gone.pdf', contentType: 'application/pdf', url: `${base}/blob/gone.pdf` },
+  ],
+})).body;
+assert.equal(withFiles.ok, true);
+assert.equal(withFiles.result.data.Skipped, 'deck.bin (unsupported type application/octet-stream)\nmovie.mp4 (unsupported type video/mp4)\nhuge.pdf (over 15 MiB)');
+assert.equal(withFiles.result.data.Stored, 'deck.pdf\nold.pdf (already stored)');
+assert.equal(withFiles.result.data.Failed, 'gone.pdf (could not fetch it: HTTP 404)');
+const sha = createHash('sha256').update('PDFBYTES').digest('hex');
+assert.deepEqual(slots[0], { linear_identifier: 'INV-4', name: 'deck.pdf', size: 8, content_type: 'application/pdf', sha256: sha });
+assert.deepEqual(puts, [{ body: 'PDFBYTES', type: 'application/pdf', auth: undefined }]);
+assert.deepEqual(completed, [{ ...slots[0], upload_id: 'u1' }]);
+assert.equal(slots.length, 2);
+
+// An extension the engine accepts types an octet-stream attachment.
+await write({ Title: 'F', LinearIdentifier: 'INV-5', Files: [{ name: 'notes.MD', contentType: 'application/octet-stream', url: `${base}/blob/deck.pdf` }] });
+assert.equal(slots.at(-1).content_type, 'text/markdown');
 
 refuse = true;
 const refused = (await write({ Title: 'x', LinearIdentifier: 'INV-2' })).body;

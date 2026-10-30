@@ -7,16 +7,22 @@
 // automation's extracted fields go to `intake` as extracted; the deal's own
 // fields that the intake cannot know (kind, sleeve, manager, fund, currency)
 // are sent as null. The function refuses unknown keys and a top-level "".
+// Then each of the Deal's Files is stored through `deal-files` (upload-url,
+// PUT, complete). A file that is skipped or fails never fails the write: it
+// comes back in Skipped / Failed for the automation to report.
 //
 // Env: ADAPTER_SECRET (the bearer TARS sends), DEAL_INGEST_URL (the full
-// `…/deal-ingest/register-deal` URL), DEAL_INTAKE_TOKEN (its register-only
-// token), PORT.
+// `…/deal-ingest/register-deal` URL; the file routes sit beside it),
+// DEAL_INTAKE_TOKEN (its token for registering deals and storing their
+// files), PORT.
 
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 
 const ADAPTER = process.env.ADAPTER_TYPE ?? 'data_engine';
 const SECRET = process.env.ADAPTER_SECRET;
 const INGEST_URL = process.env.DEAL_INGEST_URL;
+const BASE = INGEST_URL?.replace(/\/register-deal\/?$/, '');
 const INTAKE_TOKEN = process.env.DEAL_INTAKE_TOKEN;
 
 const field = (fieldId, kind = 'string', extra = {}) => ({ fieldId, displayName: fieldId, kind, writable: true, required: false, ...extra });
@@ -44,7 +50,12 @@ const TYPES = {
       field('LinearURL'),
       field('AssetClass'),
       ...Object.keys(INTAKE).map((f) => field(f, f === 'IsDeal' ? 'boolean' : 'string')),
+      field('Files', 'file', { cardinality: 'many' }),
       field('DealId', 'string', { writable: false }),
+      // One line per file, "name (reason)"; empty when there are none.
+      field('Stored', 'string', { writable: false }),
+      field('Skipped', 'string', { writable: false }),
+      field('Failed', 'string', { writable: false }),
     ],
     references: [],
   },
@@ -60,8 +71,8 @@ class AdapterError extends Error {
   }
 }
 
-async function registerDeal(payload) {
-  const res = await fetch(INGEST_URL, {
+async function ingest(path, payload, what) {
+  const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${INTAKE_TOKEN}` },
     body: JSON.stringify(payload),
@@ -70,9 +81,57 @@ async function registerDeal(payload) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const reason = [body.code, body.error].filter((v) => typeof v === 'string').join(': ');
-    throw new AdapterError('adapter_error', `data engine refused the deal: HTTP ${res.status}${reason ? ` (${reason})` : ''}`, res.status >= 500 || res.status === 429);
+    throw new AdapterError('adapter_error', `data engine refused ${what}: HTTP ${res.status}${reason ? ` (${reason})` : ''}`, res.status >= 500 || res.status === 429);
   }
   return body;
+}
+
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
+
+// The types the data engine stores, by MIME type and by extension (mail
+// attachments often arrive as application/octet-stream).
+const TYPES_BY_EXT = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  csv: 'text/csv',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  eml: 'message/rfc822',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+const ALLOWED_TYPES = new Set(Object.values(TYPES_BY_EXT));
+
+function contentTypeOf(ref) {
+  const given = String(ref.contentType ?? '').split(';')[0].trim().toLowerCase();
+  if (ALLOWED_TYPES.has(given)) return given;
+  return TYPES_BY_EXT[String(ref.name ?? '').split('.').pop().toLowerCase()];
+}
+
+// One file into the data engine. Returns 'stored' or 'already stored', or
+// throws { skip } / an error with the reason.
+async function storeFile(linearIdentifier, ref) {
+  const name = ref.name ?? 'attachment';
+  const contentType = contentTypeOf(ref);
+  if (!contentType) throw Object.assign(new Error(`unsupported type ${ref.contentType ?? 'unknown'}`), { skip: true });
+  if (ref.size > MAX_FILE_BYTES) throw Object.assign(new Error('over 15 MiB'), { skip: true });
+  if (!ref.url) throw new Error('came without a url');
+  const res = await fetch(ref.url, { signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new Error(`could not fetch it: HTTP ${res.status}`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (bytes.length > MAX_FILE_BYTES) throw Object.assign(new Error('over 15 MiB'), { skip: true });
+
+  const meta = { linear_identifier: linearIdentifier, name, size: bytes.length, content_type: contentType, sha256: createHash('sha256').update(bytes).digest('hex') };
+  const slot = await ingest('/deal-files/upload-url', meta, `"${name}"`);
+  if (slot.duplicate === true) return 'already stored';
+  const put = await fetch(slot.upload_url, { method: 'PUT', headers: { 'content-type': contentType }, body: bytes, signal: AbortSignal.timeout(60_000) });
+  if (!put.ok) throw new Error(`the upload was refused: HTTP ${put.status}`);
+  await ingest('/deal-files/complete', { ...meta, upload_id: slot.upload_id }, `"${name}"`);
+  return 'stored';
 }
 
 // A top-level field with no value is null: the function refuses "".
@@ -89,7 +148,7 @@ const methods = {
     if (recordType !== 'Deal') throw new AdapterError('bad_request', `cannot create a ${recordType}`);
     if (!value(fields.Title)) throw new AdapterError('bad_request', 'a Deal needs a Title');
     if (!value(fields.LinearIdentifier)) throw new AdapterError('bad_request', 'a Deal needs a LinearIdentifier');
-    const body = await registerDeal({
+    const body = await ingest('/register-deal', {
       title: String(fields.Title),
       description: value(fields.Description),
       linear_identifier: String(fields.LinearIdentifier),
@@ -103,9 +162,27 @@ const methods = {
       source: 'listen_fire',
       // Inside intake "" is fine; an absent text is "", an absent IsDeal null.
       intake: Object.fromEntries(Object.entries(INTAKE).map(([f, key]) => [key, fields[f] ?? (f === 'IsDeal' ? null : '')])),
-    });
+    }, 'the deal');
     const dealId = String(body.deal_id ?? body.id ?? fields.LinearIdentifier);
-    return { adapterType: ADAPTER, externalId: dealId, recordType: 'Deal', data: { DealId: dealId } };
+
+    const outcome = { Stored: [], Skipped: [], Failed: [] };
+    for (const ref of Array.isArray(fields.Files) ? fields.Files : fields.Files ? [fields.Files] : []) {
+      const name = ref?.name ?? 'attachment';
+      try {
+        const done = await storeFile(String(fields.LinearIdentifier), ref ?? {});
+        outcome.Stored.push(done === 'stored' ? name : `${name} (${done})`);
+      } catch (err) {
+        outcome[err.skip ? 'Skipped' : 'Failed'].push(`${name} (${err.message})`);
+      }
+    }
+    if (outcome.Skipped.length + outcome.Failed.length > 0) console.log(`${fields.LinearIdentifier}: ${JSON.stringify(outcome)}`);
+    const lines = (list) => list.join('\n');
+    return {
+      adapterType: ADAPTER,
+      externalId: dealId,
+      recordType: 'Deal',
+      data: { DealId: dealId, Stored: lines(outcome.Stored), Skipped: lines(outcome.Skipped), Failed: lines(outcome.Failed) },
+    };
   },
 };
 
