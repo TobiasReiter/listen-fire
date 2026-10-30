@@ -522,7 +522,7 @@ function MemberRow({
 }
 
 export default function TeamPage() {
-  usePageTitle("Team — TARS");
+  usePageTitle("Team — KIPP");
 
   const overview = trpc.views.teamMembers.overview.useQuery();
   const utils = trpc.useUtils();

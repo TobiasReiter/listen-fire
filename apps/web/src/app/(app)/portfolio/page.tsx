@@ -26,7 +26,7 @@ import { parsePortfolioQuery, serializePortfolioQuery } from "@/components/portf
 import type { PortfolioConfig, PortfolioFilter } from "@/components/portfolio/list/types";
 
 export default function PortfolioPage() {
-  usePageTitle("Portfolio — TARS");
+  usePageTitle("Portfolio — KIPP");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

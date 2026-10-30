@@ -91,7 +91,7 @@ export default function WebhooksPage() {
   return (
     <Card>
       <p className="text-[12px] text-gray-400">
-        Inbound webhook subscriptions. Each row tells an integration where to deliver change events. TARS auto-registers
+        Inbound webhook subscriptions. Each row tells an integration where to deliver change events. KIPP auto-registers
         with providers that support it (Attio, Valuations); manual providers (Affinity) need the secret pasted into the
         source system.
       </p>

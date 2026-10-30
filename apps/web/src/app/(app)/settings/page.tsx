@@ -55,12 +55,12 @@ function ConnectClaudeSection() {
     <Card id="connect" testId="settings-connect-section">
       <h2 className="text-[13px] font-semibold text-gray-900">Connect Claude</h2>
       <p className="mt-1 text-[12px] text-gray-400">
-        You build automations by talking to Claude. Add TARS to Claude, then
+        You build automations by talking to Claude. Add KIPP to Claude, then
         teach it the skill.
       </p>
 
       <h3 className="mt-5 text-[13px] font-medium text-gray-900">
-        Add TARS to Claude
+        Add KIPP to Claude
       </h3>
       <div className="mt-2">
         {CLAUDE_DIRECTORY_URL ? (
@@ -71,7 +71,7 @@ function ConnectClaudeSection() {
             className={buttonClass({ variant: "primary" })}
             data-testid="add-to-claude"
           >
-            Add TARS to Claude
+            Add KIPP to Claude
           </a>
         ) : (
           <ConnectorUrlSteps />
@@ -173,7 +173,7 @@ function VersionSection() {
     <Card testId="settings-version-section">
       <h2 className="text-[13px] font-semibold text-gray-900">About</h2>
       <p className="mt-1 text-[12px] text-gray-400">
-        Running TARS{" "}
+        Running KIPP{" "}
         <span className="font-mono text-gray-600">{data.version}</span>.
       </p>
     </Card>

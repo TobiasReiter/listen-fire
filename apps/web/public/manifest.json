@@ -1,7 +1,7 @@
 {
-  "name": "TARS",
-  "short_name": "TARS",
-  "description": "TARS",
+  "name": "KIPP",
+  "short_name": "KIPP",
+  "description": "KIPP",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

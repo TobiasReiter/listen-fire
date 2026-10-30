@@ -174,7 +174,7 @@ function BookReader({ book, onBack }: { book: Book; onBack: () => void }) {
 }
 
 export default function LibraryPage() {
-  usePageTitle("Library — TARS");
+  usePageTitle("Library — KIPP");
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -219,7 +219,7 @@ export default function LibraryPage() {
         <PageBody width="wide">
           <PageIntro>
             Handbooks for each part of the platform — how to write movements,
-            design and query your knowledge model, and build on top of TARS.
+            design and query your knowledge model, and build on top of KIPP.
           </PageIntro>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {books.map((book) => (

@@ -250,7 +250,7 @@ export default function EdgePage() {
     trpc.views.knowledge.ontology.getOntologySummary.useQuery();
 
   usePageTitle(
-    edge ? `${edge.outbound_name} \u2014 TARS` : "TARS",
+    edge ? `${edge.outbound_name} \u2014 KIPP` : "KIPP",
   );
 
   const invalidate = () => {

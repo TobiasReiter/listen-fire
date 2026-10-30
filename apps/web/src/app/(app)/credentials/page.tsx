@@ -48,7 +48,7 @@ const TYPE_LABELS: Record<string, string> = {
   AFFINITY: "Affinity",
   AIRTABLE: "Airtable",
   ATTIO: "Attio",
-  NATIVE_VALUATIONS: "TARS Valuations",
+  NATIVE_VALUATIONS: "KIPP Valuations",
   DEALROOM: "Dealroom",
   DROPBOX: "Dropbox",
   EVERTRACE: "Evertrace",
@@ -99,7 +99,7 @@ function ReadWriteBadges({
 }
 
 export default function ConnectionsPage() {
-  usePageTitle("Credentials — TARS");
+  usePageTitle("Credentials — KIPP");
 
   const { data } = trpc.views.connections.getAll.useQuery();
   const [modalOpen, setModalOpen] = useState(false);

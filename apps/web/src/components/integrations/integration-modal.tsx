@@ -21,7 +21,7 @@ const CREDENTIAL_TYPE_OPTIONS = [
   { label: "Affinity", value: ExternalServiceType.AFFINITY, icon: typeIcon(ExternalServiceType.AFFINITY) },
   { label: "Airtable", value: ExternalServiceType.AIRTABLE, icon: typeIcon(ExternalServiceType.AIRTABLE) },
   { label: "Attio", value: ExternalServiceType.ATTIO, icon: typeIcon(ExternalServiceType.ATTIO) },
-  { label: "TARS Valuations", value: ExternalServiceType.NATIVE_VALUATIONS, icon: typeIcon(ExternalServiceType.NATIVE_VALUATIONS) },
+  { label: "KIPP Valuations", value: ExternalServiceType.NATIVE_VALUATIONS, icon: typeIcon(ExternalServiceType.NATIVE_VALUATIONS) },
   { label: "Dealroom", value: ExternalServiceType.DEALROOM, icon: typeIcon(ExternalServiceType.DEALROOM) },
   { label: "Dropbox", value: ExternalServiceType.DROPBOX, icon: typeIcon(ExternalServiceType.DROPBOX) },
   { label: "Evertrace", value: ExternalServiceType.EVERTRACE, icon: typeIcon(ExternalServiceType.EVERTRACE) },

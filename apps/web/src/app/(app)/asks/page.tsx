@@ -15,7 +15,7 @@ import { QuestionRow } from "@/components/asks/question-row";
 import { EmptyState, PageBody, PageHeader, PageIntro } from "@/components/ui";
 
 export default function AsksPage() {
-  usePageTitle("Inbox — TARS");
+  usePageTitle("Inbox — KIPP");
 
   const utils = trpc.useUtils();
   const { data: questions, isLoading } =

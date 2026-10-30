@@ -9,23 +9,23 @@ export const metadata: Metadata = {
   // Render (PORT=10000) leaks `http://localhost:10000/og.png` into link previews.
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: {
-    default: "TARS",
-    template: "%s — TARS",
+    default: "KIPP",
+    template: "%s — KIPP",
   },
   description:
-    "TARS — the automation layer over the tools you already use, run by your own Claude.",
+    "KIPP — the automation layer over the tools you already use, run by your own Claude.",
   openGraph: {
-    title: "TARS — the automation layer over the tools you already use, run by your own Claude",
+    title: "KIPP — the automation layer over the tools you already use, run by your own Claude",
     description:
-      "TARS — the automation layer over the tools you already use, run by your own Claude.",
+      "KIPP — the automation layer over the tools you already use, run by your own Claude.",
     type: "website",
     images: ["/og.png"],
   },
   twitter: {
     card: "summary_large_image",
-    title: "TARS — the automation layer over the tools you already use, run by your own Claude",
+    title: "KIPP — the automation layer over the tools you already use, run by your own Claude",
     description:
-      "TARS — the automation layer over the tools you already use, run by your own Claude.",
+      "KIPP — the automation layer over the tools you already use, run by your own Claude.",
     images: ["/og.png"],
   },
   icons: {

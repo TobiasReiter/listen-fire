@@ -16,12 +16,12 @@ export default function NotFound() {
     <div className="flex min-h-dvh flex-col items-center justify-center bg-white px-6 py-12 text-center">
       <Link
         href="/"
-        aria-label="TARS home"
+        aria-label="KIPP home"
         className="mb-10 flex items-center gap-3 text-[#8778F7]"
       >
         <img src="/logo.svg" alt="" className="h-8 w-8" />
         <span className="text-[22px] font-medium tracking-[0.15em]">
-          TARS
+          KIPP
         </span>
       </Link>
 

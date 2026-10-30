@@ -12,7 +12,7 @@ import Link from "next/link";
 import { usePageTitle } from "@/components/page-title";
 
 export default function DataPage() {
-  usePageTitle("Data — TARS");
+  usePageTitle("Data — KIPP");
 
   return (
     <div className="flex h-full flex-col">

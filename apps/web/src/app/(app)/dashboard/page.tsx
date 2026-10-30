@@ -143,7 +143,7 @@ function ConnectReminder() {
 }
 
 export default function DashboardPage() {
-  usePageTitle("Home — TARS");
+  usePageTitle("Home — KIPP");
 
   const { data, isLoading } = trpc.views.home.getDashboard.useQuery();
 

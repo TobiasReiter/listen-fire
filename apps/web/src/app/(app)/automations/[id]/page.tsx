@@ -22,7 +22,7 @@ export default function AutomationRedirectPage() {
   const id = params?.id ?? "";
   const router = useRouter();
 
-  usePageTitle("Automations — TARS");
+  usePageTitle("Automations — KIPP");
 
   const { data, error } = trpc.views.triggers.getAutomationDetail.useQuery(
     { id },

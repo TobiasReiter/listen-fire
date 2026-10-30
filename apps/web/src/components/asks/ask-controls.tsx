@@ -471,7 +471,7 @@ function DraftControl({ ask, variant }: ControlProps) {
     <div>
       <AskHeading ask={ask} variant={variant} />
       <p className="rounded-lg bg-amber-50 px-3 py-2.5 text-[13px] leading-relaxed text-amber-800">
-        This response is put together in the TARS app, where you can review and
+        This response is put together in the KIPP app, where you can review and
         edit the details. A richer editor for this kind of request is coming soon.
       </p>
     </div>

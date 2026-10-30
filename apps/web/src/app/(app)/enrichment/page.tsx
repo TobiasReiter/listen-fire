@@ -194,7 +194,7 @@ function HeadersEditor({
 }
 
 export default function PluginsPage() {
-  usePageTitle("Enrichment — TARS");
+  usePageTitle("Enrichment — KIPP");
 
   const { data: plugins, isLoading } =
     trpc.views.knowledge.extractionGraph.getPlugins.useQuery();

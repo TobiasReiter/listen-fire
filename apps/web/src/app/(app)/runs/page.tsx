@@ -145,7 +145,7 @@ function ParkedRow({
 }
 
 export default function RunsPage() {
-  usePageTitle("Runs — TARS");
+  usePageTitle("Runs — KIPP");
 
   const utils = trpc.useUtils();
 

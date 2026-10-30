@@ -202,7 +202,7 @@ export default function RemoteAdaptersPage() {
       return;
     }
     if (!isEdit && !editing.secret.trim()) {
-      setFormError("Enter the secret TARS authenticates to the adapter with.");
+      setFormError("Enter the secret KIPP authenticates to the adapter with.");
       return;
     }
 
@@ -263,8 +263,8 @@ export default function RemoteAdaptersPage() {
   return (
     <Card>
       <p className="text-[12px] text-gray-400">
-        Remote adapters let TARS talk to a system we don&rsquo;t host
-        ourselves — you point TARS at the adapter&rsquo;s address and it
+        Remote adapters let KIPP talk to a system we don&rsquo;t host
+        ourselves — you point KIPP at the adapter&rsquo;s address and it
         handles reading and writing data there. Install one from a manifest
         file, then edit its details here.
       </p>
@@ -319,7 +319,7 @@ export default function RemoteAdaptersPage() {
                 placeholder="my-crm"
               />
               <p className="mt-1 text-[11px] text-gray-400">
-                A short slug TARS uses to refer to this adapter.
+                A short slug KIPP uses to refer to this adapter.
               </p>
             </div>
 
@@ -382,7 +382,7 @@ export default function RemoteAdaptersPage() {
               <p className="mt-1 text-[11px] text-gray-400">
                 {editing.credentialsId
                   ? "A secret is already stored for this adapter. Leave blank to keep it, or enter a new one to replace it."
-                  : "TARS encrypts this and uses it to authenticate to the adapter. It is stored bound to this adapter and never leaves the server."}
+                  : "KIPP encrypts this and uses it to authenticate to the adapter. It is stored bound to this adapter and never leaves the server."}
               </p>
             </div>
 
@@ -475,7 +475,7 @@ export default function RemoteAdaptersPage() {
                 No remote adapters yet
               </p>
               <p className="mx-auto mt-1 max-w-sm text-[12px] text-gray-400">
-                A remote adapter connects TARS to a system you host yourself.
+                A remote adapter connects KIPP to a system you host yourself.
                 Install one from its manifest file to get started.
               </p>
               <button onClick={openAdd} className={`${btnPrimary} mt-4`}>

@@ -377,12 +377,12 @@ export function Sidebar({
         >
           <img
             src="/logo.svg"
-            alt="TARS — home"
+            alt="KIPP — home"
             className="h-[24px] w-[24px] flex-shrink-0"
           />
           {!iconOnly && (
             <span className="flex-0 whitespace-nowrap text-[20px] tracking-[0.15em]">
-              TARS
+              KIPP
             </span>
           )}
         </Link>

@@ -3,19 +3,19 @@ import Link from "next/link";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Attio integration — TARS",
+  title: "Attio integration — KIPP",
   description:
-    "Connect Attio to TARS. Describe an automation in plain language — TARS extracts from emails and documents, writes records, lists, notes, and tasks into Attio, and reacts to changes in your workspace.",
+    "Connect Attio to KIPP. Describe an automation in plain language — KIPP extracts from emails and documents, writes records, lists, notes, and tasks into Attio, and reacts to changes in your workspace.",
 };
 
 const CAPABILITIES = [
   {
     title: "Write records",
-    body: "TARS extracts structured fields from emails, meetings, and documents, then creates or updates Companies, People, Deals, or any custom object in Attio. Values are checked against your attribute types — selects, statuses, currencies, references — before they're written.",
+    body: "KIPP extracts structured fields from emails, meetings, and documents, then creates or updates Companies, People, Deals, or any custom object in Attio. Values are checked against your attribute types — selects, statuses, currencies, references — before they're written.",
   },
   {
     title: "Deduplicate on write",
-    body: "TARS honours your workspace's uniqueness rules, plus any matching rules you add, so an inbound mention updates the existing record instead of creating a copy. Fields can be set-once, so a value entered by hand is never overwritten.",
+    body: "KIPP honours your workspace's uniqueness rules, plus any matching rules you add, so an inbound mention updates the existing record instead of creating a copy. Fields can be set-once, so a value entered by hand is never overwritten.",
   },
   {
     title: "Maintain lists",
@@ -35,7 +35,7 @@ const CAPABILITIES = [
   },
   {
     title: "React to changes in Attio",
-    body: "Trigger automations when records are created, updated, or deleted in Attio — move a deal to Won and let TARS handle what follows. TARS recognises its own writes, so nothing loops.",
+    body: "Trigger automations when records are created, updated, or deleted in Attio — move a deal to Won and let KIPP handle what follows. KIPP recognises its own writes, so nothing loops.",
   },
   {
     title: "Query and backfill",
@@ -53,7 +53,7 @@ const STEPS = [
     detail: (
       <>
         Open <span className="font-medium text-gray-900">Credentials</span> in
-        the TARS sidebar, click{" "}
+        the KIPP sidebar, click{" "}
         <span className="font-medium text-gray-900">Add credential</span>, and
         pick Attio. A pop-up runs the Attio authorization flow — approve the
         requested scopes (see <a href="#permissions" className="underline underline-offset-2 hover:text-primary-700">Permissions</a> below).
@@ -89,7 +89,7 @@ const STEPS = [
 const SCOPES = [
   {
     name: "object_configuration:read",
-    desc: "Enumerate objects and their attributes so TARS can show available fields and validate types before writing.",
+    desc: "Enumerate objects and their attributes so KIPP can show available fields and validate types before writing.",
   },
   {
     name: "record_permission:read",
@@ -113,7 +113,7 @@ const SCOPES = [
   },
   {
     name: "task:read",
-    desc: "Fetch task content for webhooks. Attio's webhook only references the task ID, so we retrieve the body to reflect edits in TARS.",
+    desc: "Fetch task content for webhooks. Attio's webhook only references the task ID, so we retrieve the body to reflect edits in KIPP.",
   },
   {
     name: "task:write",
@@ -142,7 +142,7 @@ export default function AttioIntegrationDocs() {
           href="/"
           className="text-[15px] font-bold tracking-wide text-primary-600"
         >
-          TARS
+          KIPP
         </Link>
         <div className="flex items-center gap-4">
           <Link
@@ -160,7 +160,7 @@ export default function AttioIntegrationDocs() {
           <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-gray-100 bg-gray-50 p-1.5">
             <Image
               src="/listen-fire-icon-1024.png"
-              alt="TARS"
+              alt="KIPP"
               width={56}
               height={56}
             />
@@ -182,11 +182,11 @@ export default function AttioIntegrationDocs() {
           Turn unstructured signal into Attio records.
         </h1>
         <p className="mx-auto max-w-xl text-[16px] leading-relaxed text-gray-600">
-          TARS reads your emails, meetings, and documents and writes the
+          KIPP reads your emails, meetings, and documents and writes the
           structured result back into Attio — records, list entries, notes,
           tasks, and file attachments — deduplicated against your workspace,
           with every value traceable to its source. Describe what you want in
-          plain language; TARS turns it into an automation you can read.
+          plain language; KIPP turns it into an automation you can read.
         </p>
       </section>
 
@@ -194,7 +194,7 @@ export default function AttioIntegrationDocs() {
       <section className="mx-auto w-full max-w-5xl px-6 py-12">
         <div className="mb-5 flex items-baseline gap-2">
           <h2 className="text-[18px] font-semibold tracking-tight text-gray-900">
-            What TARS can do in Attio
+            What KIPP can do in Attio
           </h2>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -275,7 +275,7 @@ export default function AttioIntegrationDocs() {
           ))}
         </div>
         <p className="mt-4 rounded-xl border border-dashed border-gray-200 px-5 py-4 text-[13px] leading-relaxed text-gray-500">
-          TARS only stores the data needed to run your automations. Tokens are
+          KIPP only stores the data needed to run your automations. Tokens are
           scoped to the workspace that authorized them and can be revoked at any
           time from{" "}
           <a
@@ -286,7 +286,7 @@ export default function AttioIntegrationDocs() {
           >
             app.attio.com
           </a>{" "}
-          or from your TARS Integrations page.
+          or from your KIPP Integrations page.
         </p>
       </section>
 

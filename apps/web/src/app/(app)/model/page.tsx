@@ -22,7 +22,7 @@ import { TAB_ORIGIN_ID } from "@/lib/tab-origin";
 type ModalId = "nodeType" | "edgeType" | "edgeGroup" | "template" | null;
 
 export default function OntologyPage() {
-  usePageTitle("Model — TARS");
+  usePageTitle("Model — KIPP");
   const router = useRouter();
   const isMobile = useIsMobile();
   const [rightOpen, setRightOpen] = useState(false);

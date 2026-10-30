@@ -52,7 +52,7 @@ function serializeFilter(current: URLSearchParams, filter: ChangelogFilter): str
 }
 
 export default function ChangelogPage() {
-  usePageTitle("Portfolio changelog — TARS");
+  usePageTitle("Portfolio changelog — KIPP");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
