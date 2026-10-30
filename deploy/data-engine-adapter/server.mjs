@@ -39,7 +39,7 @@ const TYPES = {
     displayName: 'Deal',
     fields: [
       field('Title', 'string', { required: true }),
-      field('Description', 'text'),
+      field('Description'),
       field('LinearIdentifier', 'string', { required: true }),
       field('LinearURL'),
       field('AssetClass'),
