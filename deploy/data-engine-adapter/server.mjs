@@ -42,6 +42,18 @@ const INTAKE = {
   SlackURL: 'slack_url',
 };
 
+// The triage's asset class → the data engine's fixed class_key (SKA-416).
+// Unclear and Macro / Multi-asset have no sure match: they go as null and
+// the deal shows as Unassigned for the team to set.
+const CLASS_KEYS = {
+  'Absolute Return': 'absolute_return',
+  'Public Equity': 'public_equity',
+  Venture: 'venture',
+  'Private Equity': 'private_equity',
+  'Private Credit': 'private_credit',
+  'Real Assets': 'real_assets',
+};
+
 const TYPES = {
   Deal: {
     typeId: 'Deal',
@@ -162,6 +174,7 @@ const methods = {
       linear_identifier: String(fields.LinearIdentifier),
       linear_url: value(fields.LinearURL),
       asset_class: value(fields.AssetClass),
+      class_key: CLASS_KEYS[fields.AssetClass] ?? null,
       kind: null,
       sleeve: null,
       manager_id: null,

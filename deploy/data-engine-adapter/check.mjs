@@ -81,6 +81,7 @@ assert.deepEqual(received[0], {
   linear_identifier: 'INV-1',
   linear_url: 'https://linear.app/x/issue/INV-1',
   asset_class: 'Venture',
+  class_key: 'venture',
   kind: null,
   sleeve: null,
   manager_id: null,
@@ -96,6 +97,7 @@ assert.match((await write({ Title: 'x' })).body.error.message, /LinearIdentifier
 await write({ Title: 'x', LinearIdentifier: 'INV-3', LinearURL: '', AssetClass: ' ' });
 assert.equal(received[1].linear_url, null);
 assert.equal(received[1].asset_class, null);
+assert.equal(received[1].class_key, null);
 assert.equal(received[1].description, null);
 
 // Files: one stored (typed by extension), one already stored, two skipped,
